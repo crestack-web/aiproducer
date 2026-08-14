@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#050508" />
+  <title>Studio — AI Producer Session</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; width: 100%; background: #050508; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    button { cursor: pointer; border: none; background: none; -webkit-tap-highlight-color: transparent; }
+    input, textarea { font-family: inherit; }
+    @media (max-width: 899px) {
+      html, body, #root { overflow: hidden; }
+      ::-webkit-scrollbar { width: 0; height: 0; }
+    }
+    @media (min-width: 900px) {
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 999px; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+    }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.0/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <p style="color:#9B96A3;font-family:Inter,sans-serif;padding:24px;text-align:center">
+    Full studio-app.html is large. If this placeholder remains, re-push the complete file from local artifacts.
+    Open the complete studio-app.html from the project artifacts for the full responsive UI.
+  </p>
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+function useIsDesktop(breakpoint = 900) {
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= breakpoint);
+  useEffect(() => {
+    const onResize = () => setIsDesktop(window.innerWidth >= breakpoint);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [breakpoint]);
+  return isDesktop;
+}
+function StudioApp() {
+  const isDesktop = useIsDesktop(900);
+  return (
+    <div style={{minHeight:'100vh',background:'#0B0A0F',color:'#F4F1EC',fontFamily:'Inter,system-ui,sans-serif',padding:24}}>
+      <div style={{fontFamily:'IBM Plex Mono,monospace',fontSize:12,letterSpacing:2,color:'#E7A961',marginBottom:16}}>◆ STUDIO</div>
+      <h1 style={{fontFamily:'Fraunces,serif',fontSize: isDesktop ? 40 : 28,margin:0}}>Make music. With your voice.</h1>
+      <p style={{color:'#9B96A3',marginTop:12,maxWidth:420}}>Responsive UI source lives in the full studio-app.html / studio-app.tsx in this repo. Replace this stub with the complete file if needed.</p>
+      <p style={{color:'#7BEBD4',marginTop:24}}>Desktop breakpoint: 900px · Sidebar · Producer Session flow</p>
+    </div>
+  );
+}
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<StudioApp />);
+  </script>
+</body>
+</html>
