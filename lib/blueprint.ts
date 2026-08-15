@@ -139,5 +139,5 @@ export interface AnalysisSnapshot {
   duration_ms: number;
   bpm: number | null;
   key: string | null;
-  source: "dev_mock" | "audio_analysis";
+  source: "dev_mock" | "audio_analysis" | "mistral_producer";
 }
