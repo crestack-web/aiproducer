@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { isDevMode } from "@/lib/env";
 import { generateDevBlueprint, type AnalysisSnapshot } from "@/lib/blueprint";
+import { planProduction, toDbTaskType } from "@/lib/production-planner";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
  * POST /api/projects/:id/analyze
- * DEV_MODE: deterministic analysis + blueprint + recording_tasks (no LLM cost).
+ * 1) Song blueprint (sections)
+ * 2) Production blueprint (ProductionTasks via ProductionPlanner)
  */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -62,15 +64,12 @@ export async function POST(_req: Request, ctx: Ctx) {
         .update({
           status: "queued",
           stage: "queued",
-          error: "Analysis provider not configured. Use DEV_MODE=true for free deterministic blueprint.",
+          error: "Analysis provider not configured. Use DEV_MODE=true.",
         })
         .eq("id", analyzeJob!.id);
 
       return NextResponse.json(
-        {
-          message: "Set DEV_MODE=true for free analyze + blueprint, or configure audio analysis.",
-          job_id: analyzeJob?.id,
-        },
+        { message: "Set DEV_MODE=true for free analyze + blueprint.", job_id: analyzeJob?.id },
         { status: 202 }
       );
     }
@@ -99,15 +98,15 @@ export async function POST(_req: Request, ctx: Ctx) {
         project_id: projectId,
         type: "CREATE_BLUEPRINT",
         status: "processing",
-        progress: 50,
-        stage: "planning",
+        progress: 40,
+        stage: "song_structure",
         started_at: new Date().toISOString(),
         attempts: 1,
       })
       .select()
       .single();
 
-    const sections = generateDevBlueprint({
+    const songSections = generateDevBlueprint({
       genre: project.genre,
       mood: project.mood,
       bpm: analysis.bpm,
@@ -117,7 +116,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     await supabase.from("recording_tasks").delete().eq("project_id", projectId);
     await supabase.from("song_sections").delete().eq("project_id", projectId);
 
-    const sectionRows = sections.map((s) => ({
+    const sectionRows = songSections.map((s) => ({
       project_id: projectId,
       type: s.type,
       label: s.label,
@@ -139,24 +138,47 @@ export async function POST(_req: Request, ctx: Ctx) {
 
     const sectionByOrder = new Map(insertedSections.map((s) => [s.order_index, s]));
 
-    const taskRows = [];
-    for (const sec of sections) {
-      const dbSec = sectionByOrder.get(sec.order_index);
-      for (const t of sec.tasks) {
-        taskRows.push({
-          project_id: projectId,
-          section_id: dbSec?.id ?? null,
-          type: t.type,
-          instruction: t.instruction,
-          start_ms: sec.start_ms,
-          end_ms: sec.end_ms,
-          required: t.required,
-          priority: t.priority,
-          status: "pending",
-          metadata: { section_label: sec.label, section_type: sec.type },
-        });
-      }
-    }
+    await supabase
+      .from("jobs")
+      .update({ progress: 70, stage: "production_plan" })
+      .eq("id", bpJob!.id);
+
+    const production = planProduction({
+      genre: project.genre,
+      mood: project.mood,
+      sections: songSections.map((s) => ({
+        type: s.type,
+        label: s.label,
+        start_ms: s.start_ms,
+        end_ms: s.end_ms,
+        order_index: s.order_index,
+        energy: s.energy,
+      })),
+    });
+
+    const taskRows = production.tasks.map((t) => {
+      const dbSec = sectionByOrder.get(t.section_order);
+      return {
+        project_id: projectId,
+        section_id: dbSec?.id ?? null,
+        type: toDbTaskType(t.type),
+        title: t.title,
+        instruction: t.instruction,
+        reason: t.reason,
+        start_ms: t.start_ms,
+        end_ms: t.end_ms,
+        required: t.required,
+        priority: t.priority,
+        status: "pending",
+        metadata: {
+          ...t.metadata,
+          section_label: t.section_label,
+          section_type: t.section_type,
+          production_type: t.type,
+          depends_on_type: t.depends_on_type,
+        },
+      };
+    });
 
     const { data: insertedTasks, error: tErr } = await supabase
       .from("recording_tasks")
@@ -174,6 +196,8 @@ export async function POST(_req: Request, ctx: Ctx) {
         output_data: {
           section_count: insertedSections.length,
           task_count: insertedTasks?.length ?? 0,
+          energy_curve: production.energy_curve,
+          planner_notes: production.notes,
         },
         completed_at: new Date().toISOString(),
       })
@@ -183,6 +207,12 @@ export async function POST(_req: Request, ctx: Ctx) {
 
     return NextResponse.json({
       analysis,
+      song_blueprint: { sections: insertedSections },
+      production_blueprint: {
+        energy_curve: production.energy_curve,
+        notes: production.notes,
+        tasks: insertedTasks,
+      },
       sections: insertedSections,
       tasks: insertedTasks,
       dev_mode: true,
