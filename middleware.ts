@@ -1,6 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+type CookieToSet = {
+  name: string;
+  value: string;
+  options?: Record<string, unknown>;
+};
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -13,7 +19,7 @@ export async function middleware(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet: CookieToSet[]) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
         supabaseResponse = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) =>
@@ -30,13 +36,18 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const isAuthPage = path.startsWith("/auth");
   const isOnboarding = path.startsWith("/onboarding");
-  const isProtected = path.startsWith("/app") || path.startsWith("/onboarding");
+  const isProtected =
+    path.startsWith("/app") ||
+    path.startsWith("/onboarding") ||
+    path.startsWith("/api/projects") ||
+    path.startsWith("/api/recording-tasks") ||
+    path.startsWith("/api/jobs");
 
   if (path === "/" || path.startsWith("/welcome")) {
     return supabaseResponse;
   }
 
-  if (isProtected && !user) {
+  if (isProtected && !user && !path.startsWith("/api/")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/auth";
     redirect.searchParams.set("mode", "login");
