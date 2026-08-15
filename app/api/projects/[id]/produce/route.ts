@@ -2,10 +2,16 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { enqueueProduceSong, tickProduceJob, getPipelineMode } from "@/lib/audio/pipeline";
 import { createServiceClient } from "@/lib/supabase/server";
-import { createSignedDownloadUrl } from "@/lib/storage";
+import { createSignedDownloadUrl, isStoragePath } from "@/lib/storage";
+import { getRoexEnv } from "@/lib/env";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/**
+ * POST /api/projects/:id/produce
+ * Authenticates, verifies ownership, enqueues job, returns 202 immediately.
+ * Processing continues via poll (GET this route or /status) — does not hold HTTP for RoEx.
+ */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
   const { user, error } = await requireUser();
@@ -13,56 +19,59 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const service = createServiceClient();
+  const { data: project } = await service
+    .from("projects")
+    .select("id, user_id, status")
+    .eq("id", projectId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!project) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const result = await enqueueProduceSong(projectId, user.id);
 
-    // Always advance the job in this request. There is no separate worker.
-    // Previously only mock mode was ticked, so real jobs stayed stuck in "queued".
+    // Fire-and-forget one tick so mock jobs finish quickly and RoEx jobs start.
+    // Never await the full mix/master lifecycle here.
     if (result.status === "queued" || result.status === "processing") {
-      try {
-        await tickProduceJob(result.job_id);
-      } catch (e) {
-        console.error("produce tick", e);
-        const msg = e instanceof Error ? e.message : "Produce pipeline failed";
-        return NextResponse.json(
-          {
-            job_id: result.job_id,
-            status: "failed",
-            error: msg,
-            mode: getPipelineMode(),
-          },
-          { status: 500 }
-        );
-      }
+      void tickProduceJob(result.job_id, { maxWorkMs: 20_000 }).catch((e) => {
+        console.error("produce background tick", e);
+      });
     }
-
-    const service = createServiceClient();
-    const { data: job } = await service.from("jobs").select("*").eq("id", result.job_id).maybeSingle();
 
     return NextResponse.json(
       {
+        jobId: result.job_id,
         job_id: result.job_id,
-        status: job?.status || result.status,
+        status: result.status,
         deduped: result.deduped,
         mode: getPipelineMode(),
-        error: job?.error || null,
+        roex_env: getRoexEnv(),
       },
-      { status: job?.status === "failed" ? 500 : result.deduped ? 200 : 202 }
+      { status: result.deduped && result.status === "complete" ? 200 : 202 }
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not start produce";
-    return NextResponse.json({ error: msg }, { status: 400 });
+    const status = msg.includes("not owned") || msg.includes("Not found") ? 404 : 400;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
 
+/**
+ * GET — status + advance stuck produce jobs (resume/poll provider tasks).
+ */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
-  const { user, supabase, error } = await requireUser();
+  const { user, error } = await requireUser();
   if (error || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: project } = await supabase
+  const service = createServiceClient();
+  const { data: project } = await service
     .from("projects")
     .select("id, status")
     .eq("id", projectId)
@@ -70,7 +79,6 @@ export async function GET(_req: Request, ctx: Ctx) {
     .maybeSingle();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const service = createServiceClient();
   let { data: job } = await service
     .from("jobs")
     .select("*")
@@ -80,14 +88,15 @@ export async function GET(_req: Request, ctx: Ctx) {
     .limit(1)
     .maybeSingle();
 
-  // Advance stuck jobs when the client polls
   if (job && (job.status === "queued" || job.status === "processing")) {
     try {
-      await tickProduceJob(job.id);
+      await tickProduceJob(job.id, { maxWorkMs: 20_000 });
       const { data: refreshed } = await service.from("jobs").select("*").eq("id", job.id).maybeSingle();
       if (refreshed) job = refreshed;
     } catch (e) {
       console.error("produce poll tick", e);
+      const { data: refreshed } = await service.from("jobs").select("*").eq("id", job.id).maybeSingle();
+      if (refreshed) job = refreshed;
     }
   }
 
@@ -101,7 +110,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     .maybeSingle();
 
   let master_url: string | null = null;
-  if (master?.audio_path && !String(master.audio_path).startsWith("mock://")) {
+  if (master?.audio_path && isStoragePath(master.audio_path)) {
     try {
       master_url = await createSignedDownloadUrl(master.audio_path, 3600);
     } catch {
@@ -117,5 +126,6 @@ export async function GET(_req: Request, ctx: Ctx) {
     master,
     master_url,
     mode: getPipelineMode(),
+    roex_env: getRoexEnv(),
   });
 }
