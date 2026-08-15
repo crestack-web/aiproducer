@@ -4,7 +4,6 @@ import { createSignedDownloadUrl, createSignedUploadUrl, recordingPath } from "@
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** GET /api/recording-tasks/:id/recordings — list takes + signed URLs */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: taskId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -18,9 +17,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     .eq("id", taskId)
     .maybeSingle();
 
-  if (!task) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!task) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { data: project } = await supabase
     .from("projects")
@@ -29,9 +26,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { data: recordings, error: rErr } = await supabase
     .from("recordings")
@@ -39,9 +34,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     .eq("task_id", taskId)
     .order("take_number", { ascending: true });
 
-  if (rErr) {
-    return NextResponse.json({ error: "Could not list recordings" }, { status: 500 });
-  }
+  if (rErr) return NextResponse.json({ error: "Could not list recordings" }, { status: 500 });
 
   const withUrls = await Promise.all(
     (recordings ?? []).map(async (r) => {
@@ -58,10 +51,6 @@ export async function GET(_req: Request, ctx: Ctx) {
   return NextResponse.json({ recordings: withUrls });
 }
 
-/**
- * POST /api/recording-tasks/:id/recordings
- * Multipart form field "file" for direct upload, or JSON for signed PUT URL.
- */
 export async function POST(req: Request, ctx: Ctx) {
   const { id: taskId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -75,9 +64,7 @@ export async function POST(req: Request, ctx: Ctx) {
     .eq("id", taskId)
     .maybeSingle();
 
-  if (!task) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!task) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { data: project } = await supabase
     .from("projects")
@@ -86,9 +73,7 @@ export async function POST(req: Request, ctx: Ctx) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const { count } = await supabase
     .from("recordings")
@@ -109,7 +94,9 @@ export async function POST(req: Request, ctx: Ctx) {
       ? "wav"
       : (file.type || "").includes("mpeg") || (file.type || "").includes("mp3")
         ? "mp3"
-        : "webm";
+        : (file.type || "").includes("mp4")
+          ? "mp4"
+          : "webm";
 
     const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
     const { createServiceClient } = await import("@/lib/supabase/server");
@@ -126,22 +113,47 @@ export async function POST(req: Request, ctx: Ctx) {
 
     const durationMs = Number(form.get("duration_ms") || 0) || null;
 
+    await supabase.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+
     const { data: recording, error: insErr } = await supabase
       .from("recordings")
       .insert({
         project_id: task.project_id,
         task_id: taskId,
         audio_path: path,
+        original_path: path,
         duration_ms: durationMs,
         take_number: takeNumber,
         status: "uploaded",
+        is_selected: true,
       })
       .select()
       .single();
 
     if (insErr) {
-      console.error("insert recording", insErr);
-      return NextResponse.json({ error: "Could not save recording" }, { status: 500 });
+      const { data: fallback, error: fbErr } = await supabase
+        .from("recordings")
+        .insert({
+          project_id: task.project_id,
+          task_id: taskId,
+          audio_path: path,
+          duration_ms: durationMs,
+          take_number: takeNumber,
+          status: "uploaded",
+        })
+        .select()
+        .single();
+      if (fbErr || !fallback) {
+        return NextResponse.json({ error: "Could not save recording" }, { status: 500 });
+      }
+      await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+      let audio_url: string | null = null;
+      try {
+        audio_url = await createSignedDownloadUrl(path, 3600);
+      } catch {
+        /* ignore */
+      }
+      return NextResponse.json({ recording: { ...fallback, audio_url } }, { status: 201 });
     }
 
     await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
