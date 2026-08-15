@@ -1,7 +1,26 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { MockMixProvider } from "@/lib/providers/mock-mix";
-import { RoExMixProvider, mapMusicalStyle } from "@/lib/providers/roex";
+import { RoExMixProvider, mapMusicalStyle, stemToInstrumentGroup } from "@/lib/providers/roex";
 import type { ArrangementPlacement, AudioMixProvider, StemKind } from "@/lib/audio/types";
+
+type RecordingRow = { id: string; task_id: string; is_selected: boolean | null };
+
+type TakeRow = {
+  id: string;
+  task_id: string;
+  audio_path: string | null;
+  original_path?: string | null;
+  processed_path?: string | null;
+  duration_ms?: number | null;
+  recording_tasks?: {
+    id: string;
+    type: string;
+    start_ms: number | null;
+    end_ms: number | null;
+  } | null;
+};
+
+type StemRow = { audio_path: string; kind: string };
 
 export function getPipelineMode(): "mock" | "roex" {
   const m = (process.env.AUDIO_PIPELINE_MODE || "").toLowerCase();
@@ -42,13 +61,14 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     .select("id, task_id, is_selected")
     .eq("project_id", projectId);
 
-  const hasSelected = (selected || []).some((r) => r.is_selected);
-  const hasAny = (selected || []).length > 0;
+  const rows = (selected || []) as RecordingRow[];
+  const hasSelected = rows.some((r: RecordingRow) => Boolean(r.is_selected));
+  const hasAny = rows.length > 0;
   if (!hasAny) throw new Error("No recordings found. Complete at least one take first.");
 
   if (!hasSelected) {
     const byTask = new Map<string, string>();
-    for (const r of selected || []) byTask.set(r.task_id, r.id);
+    for (const r of rows) byTask.set(r.task_id, r.id);
     for (const recId of byTask.values()) {
       await supabase.from("recordings").update({ is_selected: true }).eq("id", recId);
     }
@@ -106,24 +126,30 @@ export async function tickProduceJob(jobId: string) {
   try {
     await supabase.from("jobs").update({ progress: 15, stage: "prepare_vocals" }).eq("id", jobId);
 
-    const { data: takes } = await supabase
+    const { data: takesRaw } = await supabase
       .from("recordings")
       .select("*, recording_tasks(id, type, start_ms, end_ms, title)")
       .eq("project_id", projectId)
       .eq("is_selected", true);
 
-    for (const take of takes || []) {
+    const takes = (takesRaw || []) as TakeRow[];
+
+    for (const take of takes) {
       const original = take.original_path || take.audio_path;
       await supabase
         .from("recordings")
-        .update({ original_path: original, processed_path: take.processed_path || original, status: "ready" })
+        .update({
+          original_path: original,
+          processed_path: take.processed_path || original,
+          status: "ready",
+        })
         .eq("id", take.id);
     }
 
     await supabase.from("jobs").update({ progress: 35, stage: "arrange" }).eq("id", jobId);
 
-    const placements: ArrangementPlacement[] = (takes || []).map((t) => {
-      const task = t.recording_tasks as { id: string; type: string; start_ms: number | null; end_ms: number | null } | null;
+    const placements: ArrangementPlacement[] = takes.map((t: TakeRow) => {
+      const task = t.recording_tasks;
       return {
         recording_id: t.id,
         task_id: task?.id || t.task_id,
@@ -168,14 +194,14 @@ export async function tickProduceJob(jobId: string) {
     let order = 1;
     for (const [kind, list] of byKind) {
       const first = list[0];
-      const rec = (takes || []).find((t) => t.id === first.recording_id);
+      const rec = takes.find((t: TakeRow) => t.id === first.recording_id);
       stemRows.push({
         project_id: projectId,
         kind,
         audio_path: rec?.processed_path || rec?.audio_path || "mock://empty",
         duration_ms: rec?.duration_ms,
         order_index: order++,
-        source_recording_ids: list.map((l) => l.recording_id),
+        source_recording_ids: list.map((l: ArrangementPlacement) => l.recording_id),
         metadata: { placements: list, mock_render: mode === "mock" },
       });
     }
@@ -187,17 +213,21 @@ export async function tickProduceJob(jobId: string) {
     const { data: project } = await supabase.from("projects").select("*").eq("id", projectId).single();
     const style = mapMusicalStyle(project?.genre);
     const previewOnly = mode === "mock" || process.env.ROEX_ALLOW_FULL !== "true";
-    const mixTracks = (await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data || [];
+    const mixTracks = ((await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data ||
+      []) as StemRow[];
 
     const mixStart = await provider.startMix(
-      mixTracks.map((s) => ({
-        path: s.audio_path,
-        kind: s.kind as StemKind,
-        instrumentGroup: s.kind === "INSTRUMENTAL" ? "OTHER_GROUP" : "VOCAL_GROUP",
-        presenceSetting: (s.kind === "LEAD" ? "LEAD" : "NORMAL") as "LEAD" | "NORMAL",
-        panPreference: "CENTRE" as const,
-        reverbPreference: (s.kind === "LEAD" ? "LOW" : "NONE") as "LOW" | "NONE",
-      })),
+      mixTracks.map((s: StemRow) => {
+        const kind = s.kind as StemKind;
+        return {
+          path: s.audio_path,
+          kind,
+          instrumentGroup: stemToInstrumentGroup(kind),
+          presenceSetting: (kind === "LEAD" ? "LEAD" : "NORMAL") as "LEAD" | "NORMAL",
+          panPreference: "CENTRE" as const,
+          reverbPreference: (kind === "LEAD" ? "LOW" : "NONE") as "LOW" | "NONE",
+        };
+      }),
       { musicalStyle: style, preview: previewOnly }
     );
 
@@ -215,7 +245,8 @@ export async function tickProduceJob(jobId: string) {
       .order("version", { ascending: false })
       .limit(1);
     const nextVer = (versions?.[0]?.version || 0) + 1;
-    const mixPath = mixDone.download_url || mixDone.local_path || beat?.audio_path || `mock://mix/${projectId}/v${nextVer}`;
+    const mixPath =
+      mixDone.download_url || mixDone.local_path || beat?.audio_path || `mock://mix/${projectId}/v${nextVer}`;
 
     const { data: mixVersion } = await supabase
       .from("audio_versions")
@@ -246,7 +277,12 @@ export async function tickProduceJob(jobId: string) {
     if (analysis.status === "fail") {
       await supabase
         .from("jobs")
-        .update({ status: "failed", stage: "mix_gate", error: "Mix quality gate failed", completed_at: new Date().toISOString() })
+        .update({
+          status: "failed",
+          stage: "mix_gate",
+          error: "Mix quality gate failed",
+          completed_at: new Date().toISOString(),
+        })
         .eq("id", jobId);
       await supabase.from("projects").update({ status: "failed" }).eq("id", projectId);
       return { failed: true, stage: "mix_gate" };
@@ -309,13 +345,22 @@ export async function tickProduceJob(jobId: string) {
         status: "complete",
         progress: 100,
         stage: "complete",
-        output_data: { mix_version_id: mixVersion?.id, master_version_id: masterVersion?.id, mode },
+        output_data: {
+          mix_version_id: mixVersion?.id,
+          master_version_id: masterVersion?.id,
+          mode,
+        },
         completed_at: new Date().toISOString(),
       })
       .eq("id", jobId);
 
     await supabase.from("projects").update({ status: "complete" }).eq("id", projectId);
-    return { complete: true, mix_version_id: mixVersion?.id, master_version_id: masterVersion?.id, mode };
+    return {
+      complete: true,
+      mix_version_id: mixVersion?.id,
+      master_version_id: masterVersion?.id,
+      mode,
+    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Produce pipeline failed";
     console.error("tickProduceJob", jobId, e);
