@@ -4,6 +4,7 @@ import {
   createSignedDownloadUrl,
   createSignedUploadUrl,
   customBeatPath,
+  getStorageBucket,
 } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
 
@@ -116,7 +117,7 @@ export async function POST(req: Request, ctx: Ctx) {
             error:
               e instanceof Error
                 ? e.message
-                : "Could not create upload URL. Check studio storage bucket.",
+                : "Could not create upload URL. Check STORAGE_BUCKET / studio storage bucket (case-sensitive).",
           },
           { status: 500 }
         );
@@ -190,7 +191,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const service = createServiceClient();
   const buf = Buffer.from(await file.arrayBuffer());
-  const { error: upErr } = await service.storage.from("studio").upload(path, buf, {
+  const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
     contentType: file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`,
     upsert: true,
   });
@@ -198,7 +199,7 @@ export async function POST(req: Request, ctx: Ctx) {
     console.error("custom beat upload", upErr);
     return NextResponse.json(
       {
-        error: `Upload failed: ${upErr.message || "storage error"}. Ensure the "studio" bucket exists.`,
+        error: `Upload failed: ${upErr.message || "storage error"}. Ensure the storage bucket exists (default name: studio). Set STORAGE_BUCKET if your bucket name differs (names are case-sensitive).`,
       },
       { status: 500 }
     );
