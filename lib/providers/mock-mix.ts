@@ -1,14 +1,23 @@
-import type { AudioMixProvider, MasterResult, MixAnalysis, MixResult, MixTrackInput } from "@/lib/audio/types";
+import type {
+  AudioMixProvider,
+  MasterResult,
+  MixAnalysis,
+  MixResult,
+  MixTrackInput,
+} from "@/lib/audio/types";
 import { randomUUID } from "crypto";
 
 export class MockMixProvider implements AudioMixProvider {
   readonly name = "mock";
 
-  async uploadStem(_body: Buffer, filename: string): Promise<{ readableUrl: string }> {
+  async uploadStem(_body: Buffer, filename: string, _contentType: string): Promise<{ readableUrl: string }> {
     return { readableUrl: `mock://upload/${filename}` };
   }
 
-  async startMix(tracks: MixTrackInput[], opts: { musicalStyle: string; preview: boolean }): Promise<MixResult> {
+  async startMix(
+    tracks: MixTrackInput[],
+    opts: { musicalStyle: string; preview: boolean; webhookUrl?: string; sampleRate?: number }
+  ): Promise<MixResult> {
     return {
       provider_task_id: `mock-mix-${randomUUID()}`,
       preview: opts.preview,
@@ -21,7 +30,10 @@ export class MockMixProvider implements AudioMixProvider {
     return { provider_task_id: providerTaskId, preview: true, metadata: { mock: true, status: "complete" } };
   }
 
-  async analyzeMix(): Promise<MixAnalysis> {
+  async analyzeMix(
+    _audioUrl: string,
+    _opts: { musicalStyle: string; isMaster: boolean }
+  ): Promise<MixAnalysis> {
     return {
       status: "pass",
       metrics: { mock: true, lufs: -14, true_peak: -1.0, dynamic_range: 8 },
@@ -29,7 +41,15 @@ export class MockMixProvider implements AudioMixProvider {
     };
   }
 
-  async startMaster(_mixUrl: string, opts: { musicalStyle: string; desiredLoudness: string; preview: boolean }): Promise<MasterResult> {
+  async startMaster(
+    _mixUrl: string,
+    opts: {
+      musicalStyle: string;
+      desiredLoudness: "LOW" | "MEDIUM" | "HIGH";
+      preview: boolean;
+      webhookUrl?: string;
+    }
+  ): Promise<MasterResult> {
     return {
       provider_task_id: `mock-master-${randomUUID()}`,
       preview: opts.preview,
