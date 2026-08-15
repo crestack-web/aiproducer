@@ -43,10 +43,8 @@ export async function GET(req: Request, ctx: Ctx) {
   let audioPath: string | null = version?.audio_path ?? null;
   let source: string = version ? `audio_versions.${version.kind}.v${version.version}` : "none";
 
-  // Only fall back to songs table for finished masters — never to the raw beat.
-  // The beat has its own endpoint (/beat). Falling back to beat made the UI think
-  // a brand-new project already had a mastered download and skip plan + recording.
-  if (!audioPath) {
+  // Songs table fallback for finished masters only — never for early project stages
+  if (!audioPath || audioPath.startsWith("mock://")) {
     const { data: song } = await service
       .from("songs")
       .select("*")
@@ -54,9 +52,29 @@ export async function GET(req: Request, ctx: Ctx) {
       .order("version", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (song?.audio_path) {
+    if (song?.audio_path && !String(song.audio_path).startsWith("mock://")) {
       audioPath = song.audio_path;
       source = "songs";
+    }
+  }
+
+  // After produce completes in mock mode, master may still be mock://.
+  // Serve the real beat file so the user can download *something* listenable.
+  // Only when project is complete — never for draft/beat_ready (that skipped the flow).
+  if (
+    (!audioPath || audioPath.startsWith("mock://")) &&
+    (project.status === "complete" || project.status === "mixing" || project.status === "mastering")
+  ) {
+    const { data: beat } = await service
+      .from("beats")
+      .select("audio_path")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (beat?.audio_path && !String(beat.audio_path).startsWith("mock://")) {
+      audioPath = beat.audio_path;
+      source = "beat_fallback_after_produce";
     }
   }
 
