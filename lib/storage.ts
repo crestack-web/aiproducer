@@ -1,6 +1,9 @@
 import { createServiceClient } from "@/lib/supabase/server";
 
-const BUCKET = "studio";
+/** Supabase Storage bucket. Case-sensitive. Override with STORAGE_BUCKET if needed. */
+export function getStorageBucket() {
+  return (process.env.STORAGE_BUCKET || "studio").trim() || "studio";
+}
 
 export function beatPath(userId: string, projectId: string, filename = "beat.wav") {
   return `users/${userId}/projects/${projectId}/beats/${filename}`;
@@ -25,7 +28,9 @@ export function isStoragePath(path: string | null | undefined): boolean {
 
 export async function createSignedDownloadUrl(path: string, expiresIn = 3600) {
   const supabase = createServiceClient();
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn);
+  const { data, error } = await supabase.storage
+    .from(getStorageBucket())
+    .createSignedUrl(path, expiresIn);
   if (error) throw error;
   return data.signedUrl;
 }
@@ -58,7 +63,9 @@ export function customBeatPath(userId: string, projectId: string, ext = "wav") {
 
 export async function createSignedUploadUrl(path: string) {
   const supabase = createServiceClient();
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
+  const { data, error } = await supabase.storage
+    .from(getStorageBucket())
+    .createSignedUploadUrl(path);
   if (error) throw error;
   return { signedUrl: data.signedUrl, token: data.token, path };
 }
@@ -69,7 +76,7 @@ export async function uploadBuffer(
   contentType: string
 ) {
   const supabase = createServiceClient();
-  const { error } = await supabase.storage.from(BUCKET).upload(path, body, {
+  const { error } = await supabase.storage.from(getStorageBucket()).upload(path, body, {
     contentType,
     upsert: true,
   });
