@@ -48,6 +48,14 @@ export function songMasterPath(userId: string, projectId: string, version: numbe
   return `users/${userId}/projects/${projectId}/masters/master_v${version}.wav`;
 }
 
+export function samplePath(userId: string, projectId: string, sampleId: string, ext = "wav") {
+  return `users/${userId}/projects/${projectId}/samples/${sampleId}.${ext}`;
+}
+
+export function customBeatPath(userId: string, projectId: string, ext = "wav") {
+  return `users/${userId}/projects/${projectId}/beats/custom.${ext}`;
+}
+
 export async function createSignedUploadUrl(path: string) {
   const supabase = createServiceClient();
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
