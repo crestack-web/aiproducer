@@ -4,6 +4,13 @@ export const metadata: Metadata = {
   title: "Studio — AI Music Producer",
   description:
     "Create a beat. Get guided through recording. Finish a real song with your voice.",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/logo.svg", type: "image/svg+xml" },
+    ],
+    apple: "/logo.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
