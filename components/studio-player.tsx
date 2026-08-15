@@ -168,40 +168,13 @@ export function CoverArt({
   );
 }
 
-/**
- * Full beat / song player matching studio-app.html BeatReadyScreen visual:
- * cover · title · meta · animated waveform · times · play button
- */
-export function StudioPlayer({
-  src,
-  title,
-  subtitle,
-  coverUrl,
-  seed,
-  accent = "signal",
-  compact = false,
-}: {
-  src: string | null | undefined;
-  title: string;
-  subtitle?: string | null;
-  coverUrl?: string | null;
-  seed?: string;
-  accent?: "signal" | "brass";
-  compact?: boolean;
-}) {
+function useAudioEngine(src: string | null | undefined) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [liveBars, setLiveBars] = useState<number[] | null>(null);
 
-  const waveSeed = seed || title || "studio";
-  const baseBars = useMemo(() => makeWave(waveSeed, compact ? 36 : 46), [waveSeed, compact]);
-  const gradient = useMemo(() => coverGradientFor(waveSeed), [waveSeed]);
-  const waveColor = accent === "brass" ? C.brass : C.signal;
-
-  // Sync audio element
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
@@ -259,7 +232,58 @@ export function StudioPlayer({
     };
   }, []);
 
-  // Animate bar heights slightly while playing (live feel from HTML)
+  const toggle = useCallback(async () => {
+    const el = audioRef.current;
+    if (!el || !src) return;
+    try {
+      if (el.paused) await el.play();
+      else el.pause();
+    } catch {
+      /* ignore */
+    }
+  }, [src]);
+
+  const seekRatio = useCallback(
+    (ratio: number) => {
+      const el = audioRef.current;
+      if (!el || !duration) return;
+      const r = Math.max(0, Math.min(1, ratio));
+      el.currentTime = r * duration;
+      setProgress(r);
+      setTime(r * duration);
+    },
+    [duration]
+  );
+
+  return { audioRef, playing, progress, time, duration, toggle, seekRatio };
+}
+
+/** Full beat / song player — cover · title · waveform · play */
+export function StudioPlayer({
+  src,
+  title,
+  subtitle,
+  coverUrl,
+  seed,
+  accent = "signal",
+  compact = false,
+}: {
+  src: string | null | undefined;
+  title: string;
+  subtitle?: string | null;
+  coverUrl?: string | null;
+  seed?: string;
+  accent?: "signal" | "brass";
+  compact?: boolean;
+}) {
+  const { audioRef, playing, progress, time, duration, toggle, seekRatio } = useAudioEngine(src);
+  const [liveBars, setLiveBars] = useState<number[] | null>(null);
+
+  const waveSeed = seed || title || "studio";
+  const baseBars = useMemo(() => makeWave(waveSeed, compact ? 36 : 46), [waveSeed, compact]);
+  const gradient = useMemo(() => coverGradientFor(waveSeed), [waveSeed]);
+  const waveColor = accent === "brass" ? C.brass : C.signal;
+
   useEffect(() => {
     if (!playing) {
       setLiveBars(null);
@@ -276,49 +300,15 @@ export function StudioPlayer({
     return () => clearInterval(id);
   }, [playing, baseBars]);
 
-  const toggle = useCallback(async () => {
-    const el = audioRef.current;
-    if (!el || !src) return;
-    try {
-      if (el.paused) {
-        await el.play();
-      } else {
-        el.pause();
-      }
-    } catch {
-      /* autoplay / user gesture */
-    }
-  }, [src]);
-
-  const seek = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const el = audioRef.current;
-      if (!el || !duration) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      el.currentTime = ratio * duration;
-      setProgress(ratio);
-      setTime(ratio * duration);
-    },
-    [duration]
-  );
-
   const bars = liveBars || baseBars;
   const coverSize = compact ? 72 : 168;
   const playSize = compact ? 52 : 60;
 
   return (
     <div style={{ width: "100%" }}>
-      <audio ref={audioRef} preload="metadata" playsInline style={{ display: "none" }} />
+      <audio ref={audioRef} preload="metadata" playsInline controls={false} style={{ display: "none" }} />
 
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          marginTop: compact ? 8 : 12,
-        }}
-      >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: compact ? 8 : 12 }}>
         <CoverArt gradient={gradient} size={coverSize} radius={compact ? 16 : 22} imageUrl={coverUrl} />
         <div
           style={{
@@ -355,16 +345,14 @@ export function StudioPlayer({
           aria-valuemax={100}
           aria-valuenow={Math.round(progress * 100)}
           aria-label="Seek"
-          onClick={seek}
+          onClick={(e) => {
+            if (!src) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            seekRatio((e.clientX - rect.left) / rect.width);
+          }}
           style={{ cursor: src ? "pointer" : "default" }}
         >
-          <Waveform
-            bars={bars}
-            progress={progress}
-            height={compact ? 40 : 56}
-            color={waveColor}
-            live={playing}
-          />
+          <Waveform bars={bars} progress={progress} height={compact ? 40 : 56} color={waveColor} live={playing} />
         </div>
         <div
           style={{
@@ -381,15 +369,7 @@ export function StudioPlayer({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 22,
-          marginTop: 18,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 22, marginTop: 18 }}>
         <div style={{ width: 17 }} />
         <button
           type="button"
@@ -420,28 +400,112 @@ export function StudioPlayer({
   );
 }
 
-/** Compact inline player (section / take review) */
+/**
+ * Inline take / recording review player — no native controls.
+ * Play button + animated waveform + times, fits session review UI.
+ */
 export function CompactAudioPlayer({
   src,
-  label = "Take",
+  label = "Your take",
   seed = "take",
 }: {
   src: string | null | undefined;
   label?: string;
   seed?: string;
 }) {
+  const { audioRef, playing, progress, time, duration, toggle, seekRatio } = useAudioEngine(src);
+  const [liveBars, setLiveBars] = useState<number[] | null>(null);
+  const baseBars = useMemo(() => makeWave(seed || label || "take", 40), [seed, label]);
+
+  useEffect(() => {
+    if (!playing) {
+      setLiveBars(null);
+      return;
+    }
+    const id = setInterval(() => {
+      setLiveBars(
+        baseBars.map((h, i) => {
+          const wobble = 0.1 * Math.sin(Date.now() / 160 + i * 0.6);
+          return Math.max(0.12, Math.min(1, h + wobble));
+        })
+      );
+    }, 100);
+    return () => clearInterval(id);
+  }, [playing, baseBars]);
+
   if (!src) return null;
+
+  const bars = liveBars || baseBars;
+
   return (
     <div
       style={{
-        marginTop: 12,
-        padding: 12,
-        borderRadius: 14,
+        marginTop: 14,
+        padding: "14px 14px 12px",
+        borderRadius: 16,
         background: C.surface,
         border: `1px solid ${C.border}`,
       }}
     >
-      <StudioPlayer src={src} title={label} seed={seed} compact accent="signal" />
+      {/* Hidden engine — never show native controls */}
+      <audio ref={audioRef} preload="auto" playsInline controls={false} style={{ display: "none", width: 0, height: 0 }} />
+
+      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 10, letterSpacing: 0.3 }}>{label}</div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pause take" : "Play take"}
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 999,
+            border: "none",
+            flexShrink: 0,
+            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#1A1208",
+            boxShadow: "0 8px 20px -8px rgba(231,169,97,0.55)",
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+        </button>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            role="slider"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(progress * 100)}
+            aria-label="Seek take"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              seekRatio((e.clientX - rect.left) / rect.width);
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            <Waveform bars={bars} progress={progress} height={36} color={C.signal} live={playing} />
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: 6,
+              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+              fontSize: 10.5,
+              color: C.textFaint,
+            }}
+          >
+            <span>{fmtTime(time)}</span>
+            <span>{fmtTime(duration)}</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
