@@ -41,6 +41,7 @@ type ProjectMeta = {
 };
 
 type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
+type Phase = "ready" | "countdown" | "recording" | "review";
 
 const C = {
   bg: "#0B0A0F",
@@ -74,7 +75,8 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [producing, setProducing] = useState(false);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"ready" | "recording" | "review">("ready");
+  const [phase, setPhase] = useState<Phase>("ready");
+  const [countdown, setCountdown] = useState(3);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
@@ -85,15 +87,17 @@ export default function ProjectDetailPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const startedAtRef = useRef(0);
+  const mimeRef = useRef("audio/webm");
 
   const current = tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
   const isRetake = current ? isTaskDone(current) : false;
 
   function selectTask(taskId: string) {
-    if (phase === "recording") return;
+    if (phase === "recording" || phase === "countdown") return;
     setError(null);
     setLocalBlobUrl(null);
     setSavedRecordingId(null);
@@ -144,6 +148,13 @@ export default function ProjectDetailPage() {
     if (project.status === "produced" || project.status === "done") setScreen("done");
   }, [project?.status]);
 
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
   async function startProducerSession() {
     setAnalyzing(true);
     setError(null);
@@ -184,6 +195,69 @@ export default function ProjectDetailPage() {
     }
   }
 
+  function beginMediaCapture(stream: MediaStream, task: Task) {
+    chunksRef.current = [];
+    let mime = "audio/webm";
+    for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
+      if (MediaRecorder.isTypeSupported(t)) {
+        mime = t;
+        break;
+      }
+    }
+    mimeRef.current = mime;
+    const rec = new MediaRecorder(stream, { mimeType: mime });
+    mediaRecorderRef.current = rec;
+    rec.ondataavailable = (e) => {
+      if (e.data?.size) chunksRef.current.push(e.data);
+    };
+    rec.onstop = async () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setMicStream(null);
+      beatAudioRef.current?.pause();
+      const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
+      setLocalBlobUrl(URL.createObjectURL(blob));
+      setPhase("review");
+      setUploading(true);
+      try {
+        const form = new FormData();
+        form.append("file", blob, "take.webm");
+        form.append("duration_ms", String(Date.now() - startedAtRef.current));
+        const res = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
+          method: "POST",
+          body: form,
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.error || "Upload failed");
+        if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
+        setSavedRecordingId(j.recording.id);
+        await fetch(`/api/recording-tasks/${task.id}/recordings/${j.recording.id}/select`, {
+          method: "POST",
+        }).catch(() => undefined);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Save failed");
+        setSavedRecordingId(null);
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    startedAtRef.current = Date.now();
+    setRecordSeconds(0);
+    timerRef.current = setInterval(
+      () => setRecordSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000)),
+      250
+    );
+    if (beatAudioRef.current && beatUrl) {
+      beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+      beatAudioRef.current.volume = 0.55;
+      beatAudioRef.current.play().catch(() => undefined);
+    }
+    rec.start(250);
+    setPhase("recording");
+  }
+
   async function startRecording() {
     if (!current) return;
     setError(null);
@@ -194,68 +268,45 @@ export default function ProjectDetailPage() {
       });
       streamRef.current = stream;
       setMicStream(stream);
-      chunksRef.current = [];
-      let mime = "audio/webm";
-      for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
-        if (MediaRecorder.isTypeSupported(t)) {
-          mime = t;
-          break;
-        }
-      }
-      const rec = new MediaRecorder(stream, { mimeType: mime });
-      mediaRecorderRef.current = rec;
-      rec.ondataavailable = (e) => {
-        if (e.data?.size) chunksRef.current.push(e.data);
-      };
-      rec.onstop = async () => {
-        if (timerRef.current) clearInterval(timerRef.current);
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-        setMicStream(null);
-        beatAudioRef.current?.pause();
-        const blob = new Blob(chunksRef.current, { type: mime.split(";")[0] });
-        setLocalBlobUrl(URL.createObjectURL(blob));
-        setPhase("review");
-        setUploading(true);
-        try {
-          const form = new FormData();
-          form.append("file", blob, "take.webm");
-          form.append("duration_ms", String(Date.now() - startedAtRef.current));
-          const res = await fetch(`/api/recording-tasks/${current.id}/recordings`, {
-            method: "POST",
-            body: form,
-          });
-          const j = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(j.error || "Upload failed");
-          if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
-          setSavedRecordingId(j.recording.id);
-          await fetch(`/api/recording-tasks/${current.id}/recordings/${j.recording.id}/select`, {
-            method: "POST",
-          }).catch(() => undefined);
-        } catch (e) {
-          setError(e instanceof Error ? e.message : "Save failed");
-          setSavedRecordingId(null);
-        } finally {
-          setUploading(false);
-        }
-      };
-      startedAtRef.current = Date.now();
-      setRecordSeconds(0);
-      timerRef.current = setInterval(
-        () => setRecordSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000)),
-        250
-      );
+      setCountdown(3);
+      setPhase("countdown");
+
+      // Optional: soft section preview under countdown
       if (beatAudioRef.current && beatUrl) {
-        beatAudioRef.current.currentTime = (current.start_ms ?? 0) / 1000;
-        beatAudioRef.current.volume = 0.55;
+        beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
+        beatAudioRef.current.volume = 0.35;
         beatAudioRef.current.play().catch(() => undefined);
       }
-      rec.start(250);
-      setPhase("recording");
+
+      let n = 3;
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownRef.current = setInterval(() => {
+        n -= 1;
+        if (n <= 0) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          countdownRef.current = null;
+          setCountdown(0);
+          beginMediaCapture(stream, current);
+        } else {
+          setCountdown(n);
+        }
+      }, 1000);
     } catch (e) {
       setMicStream(null);
+      setPhase("ready");
       setError(e instanceof Error ? e.message : "Microphone error");
     }
+  }
+
+  function cancelCountdown() {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = null;
+    beatAudioRef.current?.pause();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setMicStream(null);
+    setPhase("ready");
+    setCountdown(3);
   }
 
   function stopRecording() {
@@ -358,7 +409,7 @@ export default function ProjectDetailPage() {
   const wrap: React.CSSProperties = {
     maxWidth: 480,
     margin: "0 auto",
-    padding: "20px 18px 28px",
+    padding: "20px 18px 40px",
     minHeight: "100%",
     background: "transparent",
     color: C.text,
@@ -460,14 +511,14 @@ export default function ProjectDetailPage() {
               type="button"
               style={{ background: "none", border: "none", color: C.textMuted, marginBottom: 12, cursor: "pointer" }}
               onClick={() => setScreen("plan")}
-              disabled={phase === "recording"}
+              disabled={phase === "recording" || phase === "countdown"}
             >
               ← Plan
             </button>
             <SessionSteps
               tasks={tasks}
               highlightId={current.id}
-              locked={phase === "recording" || phase === "review"}
+              locked={phase === "recording" || phase === "review" || phase === "countdown"}
               compact
               onSelect={selectTask}
             />
@@ -505,6 +556,47 @@ export default function ProjectDetailPage() {
                     Skip this part
                   </button>
                 )}
+              </div>
+            )}
+
+            {phase === "countdown" && (
+              <div
+                style={{
+                  marginTop: 18,
+                  padding: "36px 20px",
+                  borderRadius: 20,
+                  border: `1px solid rgba(231,169,97,0.4)`,
+                  background: "radial-gradient(ellipse at 50% 30%, rgba(231,169,97,0.16), transparent 60%), rgba(255,255,255,0.03)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1.4, textTransform: "uppercase", color: C.brass }}>
+                  Get ready
+                </div>
+                <div
+                  key={countdown}
+                  style={{
+                    fontFamily: "Georgia, Fraunces, serif",
+                    fontSize: 88,
+                    fontWeight: 500,
+                    color: C.text,
+                    lineHeight: 1,
+                    margin: "12px 0 8px",
+                    animation: "countPop 0.35s ease",
+                  }}
+                >
+                  {countdown}
+                </div>
+                <p style={{ margin: 0, fontSize: 14, color: C.textMuted }}>Recording starts after 1…</p>
+                <button type="button" style={{ ...btn2, marginTop: 20, maxWidth: 200 }} onClick={cancelCountdown}>
+                  Cancel
+                </button>
+                <style>{`
+                  @keyframes countPop {
+                    0% { transform: scale(0.7); opacity: 0.4; }
+                    100% { transform: scale(1); opacity: 1; }
+                  }
+                `}</style>
               </div>
             )}
 
