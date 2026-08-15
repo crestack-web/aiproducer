@@ -76,7 +76,7 @@ export class RoExMixProvider implements AudioMixProvider {
     const put = await fetch(json.signed_url, {
       method: "PUT",
       headers: { "Content-Type": contentType },
-      body,
+      body: new Uint8Array(body),
     });
     if (!put.ok) throw new Error(`RoEx signed PUT failed: ${put.status}`);
     return { readableUrl: json.readable_url };
