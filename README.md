@@ -1,68 +1,38 @@
 # Studio — AI Music Producer
 
-Create a beat. Get guided through recording. Assemble and mix a complete song with **your real voice**.
+Create a beat. Get guided through recording. Finish a real song with **your real voice**.
 
-> You bring the voice. Your AI producer helps you make the song.
+## Product path (wired)
 
-## Repo status
+```
+/  welcome
+ → /auth          Supabase email auth
+ → /onboarding    profile setup
+ → /app           create project → generate-beat → analyze
+ → /app/projects/:id   beat + recording tasks from API
+```
 
-| Layer | Status |
-|-------|--------|
-| UI prototype | `studio-app.html` (upload full file if still a stub) |
-| Backend scaffold | **Phase 1 done** — Next.js 15 + Supabase schema + project APIs |
-| Real audio / AI | Not yet — see `docs/BACKEND_BRIEF.md` |
-
-## Quick start (backend)
+## Setup
 
 ```bash
-git clone https://github.com/crestack-web/aiproducer.git
-cd aiproducer
 npm install
 cp .env.example .env.local
-# Fill Supabase URL + keys
+# fill NEXT_PUBLIC_SUPABASE_URL, ANON KEY, SERVICE_ROLE_KEY
+# DEV_MODE=true
 npm run dev
 ```
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Paste env vars into `.env.local`
-3. Run `supabase/migrations/20260814000000_init.sql` in the Supabase SQL editor
-4. Create a **private** Storage bucket named `studio`
-5. Open http://localhost:3000
+### Supabase
 
-## APIs (Phase 1)
+1. Run migrations in SQL editor (init + profile_onboarding)
+2. Storage bucket **studio** (private)
+3. Auth → Email provider enabled
 
-- `POST /api/projects` — create project
-- `GET /api/projects` — list yours
-- `GET /api/projects/:id`
-- `GET /api/projects/:id/status`
-- `GET /api/jobs/:id`
+## Static design prototypes
 
-All require Supabase auth. RLS enforces ownership.
+`/welcome.html`, `/auth.html`, `/onboarding.html`
 
-## Product flow (UI)
+## Phases
 
-```
-Home → Create → Generate beat → Beat Ready
-  → AI analyzes → Song Blueprint
-  → Producer Session (guided vocal tasks)
-  → Assembly → Final song
-```
-
-## Responsive UI
-
-- Mobile (< 900px): bottom tabs
-- Desktop (≥ 900px): sidebar + grid
-
-## Brand
-
-- Teal `#7BEBD4` — voice
-- Brass `#E7A961` — AI producer
-
-## Docs
-
-- `PHASE1.md` — what shipped in this phase
-- `docs/BACKEND_BRIEF.md` — full implementation plan
-
-## Next
-
-Phase 2: beat generation (DEV_MODE mock) + storage signed URLs + real mic upload path.
+- PHASE1–3: schema, beat mock, analyze/blueprint
+- PHASE4: auth + onboarding + app shell wired to APIs
