@@ -155,7 +155,7 @@ export default function WelcomePage() {
               <div className="cost-label">Studio app</div>
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
-              <div className="cost-total">From $0–$4<span> / song</span></div>
+              <div className="cost-total">From $4.99<span> / song</span></div>
               <div className="cost-sub">Session: $4.99/song · Creator: ~$3.60/song · Pro: ~$3.20/song</div>
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
@@ -177,28 +177,61 @@ export default function WelcomePage() {
         <section className="section" id="pricing">
           <div className="section-head">
             <h2>Simple pricing</h2>
-            <p>No free tier — buy a single session or a monthly credit pack. Every finished song includes mix & master.</p>
+            <p>
+              Buy a single session or a monthly credit pack. Every finished song includes
+              professional mix & master (powered by RoEx) so every release can sound radio-ready.
+            </p>
           </div>
           <div className="pricing">
-            <div className="price-card featured">
+            <div className="price-card">
               <div className="price-name">Session</div>
               <div className="price-amount">$4.99 <span>/ song</span></div>
-              <p>1 song credit · Guided session · RoEx mix & master · WAV + MP3</p>
-              <Link href={START_HREF} className="primary block">Buy a session</Link>
+              <p className="price-desc">One full song so you can experience the producer flow end-to-end.</p>
+              <ul className="price-list">
+                <li>1 finished song credit</li>
+                <li>AI beat + song plan</li>
+                <li>Guided recording session</li>
+                <li>Professional mix & master (RoEx)</li>
+                <li>WAV + MP3 export</li>
+                <li>Unlimited takes per song</li>
+                <li>Commercial use license</li>
+              </ul>
+              <Link href={START_HREF} className="secondary block">Buy a session</Link>
             </div>
-            <div className="price-card">
+            <div className="price-card featured">
+              <div className="price-badge">Popular</div>
               <div className="price-name">Creator</div>
-              <div className="price-amount">$29 <span>/ mo</span></div>
-              <p>8 song credits · ~$3.60/song · Commercial use</p>
-              <Link href={START_HREF} className="secondary block">Start Creator</Link>
+              <div className="price-amount">$29 <span>/ month</span></div>
+              <p className="price-desc">For artists shipping singles regularly with real mastering cost covered.</p>
+              <ul className="price-list">
+                <li>8 finished songs / month</li>
+                <li>Everything in Session</li>
+                <li>Professional mix & master (RoEx)</li>
+                <li>WAV + MP3 export</li>
+                <li>Unlimited takes per song</li>
+                <li>Commercial use license</li>
+              </ul>
+              <Link href={START_HREF} className="primary block">Start Creator</Link>
             </div>
             <div className="price-card">
               <div className="price-name">Pro</div>
-              <div className="price-amount">$79 <span>/ mo</span></div>
-              <p>25 song credits · Priority queue · Stem export when available</p>
+              <div className="price-amount">$79 <span>/ month</span></div>
+              <p className="price-desc">Higher volume for catalogs, EPs, and faster turnaround.</p>
+              <ul className="price-list">
+                <li>25 finished songs / month</li>
+                <li>Everything in Creator</li>
+                <li>Priority mastering queue</li>
+                <li>Stem export (when available)</li>
+                <li>Early access to new producer tools</li>
+                <li>Commercial use license</li>
+              </ul>
               <Link href={START_HREF} className="secondary block">Go Pro</Link>
             </div>
           </div>
+          <p className="price-note">
+            Finished songs include guided recording plus professional mix & master.
+            Extra songs beyond your plan can be purchased as add-ons. Cancel anytime.
+          </p>
         </section>
 
         <section className="bottom-cta">
@@ -291,18 +324,24 @@ const css = `
   .cost-list li.dim{color:var(--muted)}
   .gap-callout{max-width:900px;margin:20px auto 0;padding:18px 20px;border-radius:16px;border:1px solid rgba(231,169,97,.28);background:rgba(231,169,97,.15);font-size:14.5px;line-height:1.55;color:var(--text)}
   .gap-callout strong{color:var(--brass);font-weight:600}
-  .pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-  .price-card{padding:24px 20px;border-radius:20px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;gap:10px}
-  .price-card.featured{border-color:rgba(231,169,97,.45);background:radial-gradient(ellipse at 50% 0%,rgba(231,169,97,.12),transparent 55%),rgba(255,255,255,.05)}
-  .price-name{font-size:14px;font-weight:600;color:var(--muted)}
-  .price-amount{font-family:Fraunces,serif;font-size:2.1rem;font-weight:500}
-  .price-amount span{font-family:Inter,sans-serif;font-size:14px;color:var(--muted);font-weight:500}
-  .price-card>p{font-size:14px;color:var(--muted);line-height:1.45;margin:0 0 8px;flex:1}
+  .pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch}
+  .price-card{position:relative;padding:28px 24px;border-radius:22px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
+  .price-card.featured{border-color:rgba(231,169,97,.45);background:radial-gradient(ellipse at 50% 0%,rgba(231,169,97,.12),transparent 55%),rgba(255,255,255,.05);box-shadow:0 24px 48px -28px rgba(231,169,97,.35)}
+  .price-badge{position:absolute;top:14px;right:14px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#1A1208;background:linear-gradient(180deg,#F0BC80,var(--brass));padding:5px 10px;border-radius:999px}
+  .price-name{font-size:14px;font-weight:600;color:var(--muted);margin-bottom:8px}
+  .price-amount{font-family:Fraunces,serif;font-size:2.4rem;font-weight:500;letter-spacing:-.02em;margin-bottom:4px}
+  .price-amount span{font-family:Inter,sans-serif;font-size:15px;font-weight:500;color:var(--muted)}
+  .price-desc{font-size:14px;color:var(--muted);line-height:1.45;margin:0 0 20px}
+  .price-list{list-style:none;margin:0 0 24px;padding:0;flex:1}
+  .price-list li{font-size:14px;color:var(--text);padding:8px 0;border-top:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;line-height:1.4}
+  .price-list li::before{content:"✓";color:var(--signal);font-weight:600;flex-shrink:0}
+  .price-card .primary.block,.price-card .secondary.block{margin-top:auto}
+  .price-note{text-align:center;margin-top:20px;font-size:13px;color:var(--faint)}
   .bottom-cta{margin-top:72px;text-align:center;padding:48px 24px;border-radius:24px;border:1px solid var(--border);background:radial-gradient(ellipse at 50% 0%,rgba(123,235,212,.1),transparent 55%),rgba(255,255,255,.03)}
   .bottom-cta h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.45rem,3.5vw,2rem);margin:0 0 10px}
   .bottom-cta p{color:var(--muted);margin:0 0 20px}
   footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;color:var(--faint);font-size:13px}
-  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:400px;margin:0 auto}.compare,.cost-compare{grid-template-columns:1fr}}
+  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:420px;margin:0 auto}.compare,.cost-compare{grid-template-columns:1fr}}
   @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.showcase-body{grid-template-columns:1fr}.panel-producer{border-left:none;border-top:1px solid var(--border)}footer{flex-direction:column;align-items:flex-start}}
   @media (max-width:400px){.wrap{padding-left:14px;padding-right:14px}}
 `;
