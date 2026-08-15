@@ -26,7 +26,6 @@ type ProjectMeta = {
   tempo?: number | null;
 };
 
-/** Strict product steps — never skip past recording into download. */
 type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
 
 const C = {
@@ -93,6 +92,8 @@ export default function ProjectDetailPage() {
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  /** When set, user is viewing/retaking this task even if already completed. */
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,14 +103,31 @@ export default function ProjectDetailPage() {
 
   const requiredPending = useMemo(() => requiredOpen(tasks), [tasks]);
   const optionalPending = useMemo(() => optionalOpen(tasks), [tasks]);
-  const current = requiredPending[0] || optionalPending[0] || null;
+  const nextOpen = requiredPending[0] || optionalPending[0] || null;
+  const focused = activeTaskId ? tasks.find((t) => t.id === activeTaskId) || null : null;
+  const current = focused || nextOpen;
+  const isRetake = Boolean(current && isTaskDone(current));
   const completedCount = tasks.filter((t) => isTaskDone(t)).length;
   const requiredTotal = tasks.filter((t) => t.required).length;
   const requiredDone = tasks.filter((t) => t.required && isTaskDone(t)).length;
   const allRequiredDone = requiredTotal > 0 && requiredDone >= requiredTotal;
+  const doneTasks = useMemo(() => tasks.filter((t) => isTaskDone(t)), [tasks]);
 
-  const advanceAfterTaskChange = useCallback((next: Task[]) => {
+  function selectTask(taskId: string) {
+    // Don't interrupt an in-progress recording
+    if (phase === "recording") return;
+    setError(null);
     setLocalBlobUrl(null);
+    setSavedRecordingId(null);
+    setActiveTaskId(taskId);
+    setPhase("ready");
+    setScreen("session");
+  }
+
+  function clearFocusAndAdvance(next: Task[]) {
+    setActiveTaskId(null);
+    setLocalBlobUrl(null);
+    setSavedRecordingId(null);
     const stillRequired = requiredOpen(next);
     if (stillRequired.length > 0) {
       setScreen("session");
@@ -123,7 +141,7 @@ export default function ProjectDetailPage() {
       return;
     }
     setScreen("assemble");
-  }, []);
+  }
 
   const resolveScreen = useCallback(
     (proj: ProjectMeta | null, list: Task[], hasMaster: boolean) => {
@@ -196,14 +214,18 @@ export default function ProjectDetailPage() {
         } else setMasterUrl(null);
       } else setMasterUrl(null);
       const next = resolveScreen(proj, list, hasMaster);
-      setScreen(next);
-      if (next === "session") setPhase("ready");
+      setScreen((prev) => {
+        // Don't yank user off a manual retake focus
+        if (prev === "session" && activeTaskId) return "session";
+        return next;
+      });
+      if (next === "session") setPhase((p) => (p === "recording" || p === "review" ? p : "ready"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, [id, resolveScreen]);
+  }, [id, resolveScreen, activeTaskId]);
 
   useEffect(() => {
     load();
@@ -228,6 +250,7 @@ export default function ProjectDetailPage() {
     setError(null);
     setAnalyzing(true);
     setScreen("analyzing");
+    setActiveTaskId(null);
     try {
       const res = await fetch(`/api/projects/${id}/analyze`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
@@ -340,10 +363,23 @@ export default function ProjectDetailPage() {
       setError("Take is not saved yet. Wait for “Saved”, or record again.");
       return;
     }
+    const wasRetake = isRetake;
     setSavedRecordingId(null);
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
-      advanceAfterTaskChange(next);
+      if (wasRetake) {
+        // Stay on session so user can pick another section or continue
+        setActiveTaskId(null);
+        setLocalBlobUrl(null);
+        setPhase("ready");
+        setScreen("session");
+        // If nothing left open after retake, still allow assemble via nextOpen logic
+        if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) {
+          setScreen("assemble");
+        }
+      } else {
+        clearFocusAndAdvance(next);
+      }
       return next;
     });
   }
@@ -358,7 +394,7 @@ export default function ProjectDetailPage() {
       if (!res.ok) throw new Error(j.error || "Could not skip");
       setTasks((prev) => {
         const next = prev.map((t) => (t.id === current.id ? { ...t, status: "skipped" } : t));
-        advanceAfterTaskChange(next);
+        clearFocusAndAdvance(next);
         return next;
       });
     } catch (e) {
@@ -384,6 +420,7 @@ export default function ProjectDetailPage() {
         const next = prev.map((t) =>
           !t.required && isTaskOpen(t) ? { ...t, status: "skipped" } : t
         );
+        setActiveTaskId(null);
         setLocalBlobUrl(null);
         setScreen("assemble");
         return next;
@@ -493,6 +530,60 @@ export default function ProjectDetailPage() {
     margin: "12px 0 0",
   };
 
+  function TaskPicker({ highlightId }: { highlightId?: string | null }) {
+    if (!tasks.length) return null;
+    return (
+      <div style={{ marginTop: 14, marginBottom: 4 }}>
+        <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 8, letterSpacing: 0.4 }}>
+          TAP ANY SECTION TO RETAKE
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            overflowX: "auto",
+            paddingBottom: 6,
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
+          {tasks.map((t, i) => {
+            const done = isTaskDone(t);
+            const active = t.id === highlightId;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                disabled={phase === "recording" || phase === "review"}
+                onClick={() => selectTask(t.id)}
+                style={{
+                  flex: "0 0 auto",
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: active ? `1px solid ${C.brass}` : `1px solid ${C.border}`,
+                  background: active ? C.brassSoft : C.surface,
+                  color: C.text,
+                  cursor: phase === "recording" || phase === "review" ? "default" : "pointer",
+                  textAlign: "left",
+                  minWidth: 112,
+                  fontFamily: "inherit",
+                }}
+              >
+                <div style={{ fontSize: 10, color: C.brass, fontFamily: "monospace" }}>
+                  {String(i + 1).padStart(2, "0")}
+                  {done ? (t.status === "skipped" ? " · skipped" : " · done") : " · open"}
+                  {!t.required ? " · opt" : ""}
+                </div>
+                <div style={{ fontSize: 12.5, marginTop: 4, fontWeight: 500, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sectionLabel(t)}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div style={page}>
@@ -558,7 +649,7 @@ export default function ProjectDetailPage() {
           </button>
           <h1 style={title}>Here's how we'll make your song</h1>
           <p style={{ color: C.textMuted, fontSize: 14, margin: "8px 0 18px" }}>
-            Required parts must be recorded. Optional layers can be skipped in the session.
+            Required parts must be recorded. You can retake any section later in the session.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {tasks.map((t, i) => (
@@ -584,6 +675,7 @@ export default function ProjectDetailPage() {
             style={{ ...btn, marginTop: 22 }}
             disabled={!tasks.length}
             onClick={() => {
+              setActiveTaskId(null);
               setScreen("session");
               setPhase("ready");
             }}
@@ -601,12 +693,16 @@ export default function ProjectDetailPage() {
           <button type="button" onClick={() => setScreen("plan")} style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }}>
             ← Plan
           </button>
+
+          <TaskPicker highlightId={current.id} />
+
           <div style={{ textAlign: "center", marginTop: 12 }}>
             <div style={{ fontSize: 11, color: C.brass, fontFamily: "monospace" }}>
-              {Math.min(completedCount + 1, tasks.length)} of {tasks.length}
+              {Math.min(completedCount + (isTaskOpen(current) ? 1 : 0), tasks.length)} of {tasks.length}
               {requiredTotal > 0 && (
                 <span style={{ color: C.textFaint }}> · {requiredDone}/{requiredTotal} required</span>
               )}
+              {isRetake && <span style={{ color: C.signal }}> · retake</span>}
             </div>
             <h1 style={{ ...title, fontSize: "1.5rem" }}>{sectionLabel(current)}</h1>
             <p style={{ color: C.brass, fontSize: 14 }}>
@@ -632,16 +728,34 @@ export default function ProjectDetailPage() {
                 🎧 Use headphones · the beat plays while you record
               </p>
               <button type="button" style={btn} onClick={startRecording}>
-                Record
+                {isRetake ? "Retake this section" : "Record"}
               </button>
-              {!current.required && (
+              {!current.required && isTaskOpen(current) && (
                 <button type="button" style={{ ...btn2, marginTop: 8 }} disabled={skipping} onClick={skipCurrent}>
                   {skipping ? "Skipping…" : "Skip this part"}
                 </button>
               )}
-              {!current.required && allRequiredDone && optionalPending.length > 1 && (
+              {!current.required && allRequiredDone && optionalPending.length > 1 && isTaskOpen(current) && (
                 <button type="button" style={{ ...btn2, marginTop: 8, color: C.textMuted }} disabled={skipping} onClick={skipAllOptionalAndFinish}>
                   Skip remaining optional · finish
+                </button>
+              )}
+              {isRetake && (
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8 }}
+                  onClick={() => {
+                    setActiveTaskId(null);
+                    setPhase("ready");
+                    if (allRequiredDone && optionalPending.length === 0) setScreen("assemble");
+                  }}
+                >
+                  {allRequiredDone ? "Done retaking · continue" : "Back to next open part"}
+                </button>
+              )}
+              {allRequiredDone && !isRetake && optionalPending.length === 0 && (
+                <button type="button" style={{ ...btn2, marginTop: 8 }} onClick={() => setScreen("assemble")}>
+                  Continue to produce
                 </button>
               )}
             </>
@@ -667,7 +781,9 @@ export default function ProjectDetailPage() {
                 {uploading
                   ? "Saving take to your project…"
                   : savedRecordingId
-                    ? "Saved ✓ — keep this take or record again"
+                    ? isRetake
+                      ? "Saved ✓ — replace previous take?"
+                      : "Saved ✓ — keep this take or record again"
                     : "How does it feel?"}
               </p>
               {localBlobUrl && <audio controls src={localBlobUrl} style={{ width: "100%", marginTop: 12 }} />}
@@ -677,7 +793,7 @@ export default function ProjectDetailPage() {
                 disabled={uploading || !savedRecordingId}
                 onClick={keepAndContinue}
               >
-                {uploading ? "Saving…" : savedRecordingId ? "Keep take" : "Waiting for save…"}
+                {uploading ? "Saving…" : savedRecordingId ? (isRetake ? "Keep new take" : "Keep take") : "Waiting for save…"}
               </button>
               <button
                 type="button"
@@ -691,7 +807,7 @@ export default function ProjectDetailPage() {
               >
                 Record again
               </button>
-              {!current.required && (
+              {!current.required && isTaskOpen(current) && (
                 <button type="button" style={{ ...btn2, marginTop: 8, color: C.textMuted }} disabled={uploading || skipping} onClick={skipCurrent}>
                   Discard & skip this part
                 </button>
@@ -703,11 +819,12 @@ export default function ProjectDetailPage() {
 
       {screen === "session" && !current && (
         <div style={wrap}>
-          <h1 style={{ ...title, textAlign: "center", marginTop: 40 }}>Takes captured</h1>
+          <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Takes captured</h1>
           <p style={{ textAlign: "center", color: C.textMuted, marginTop: 8 }}>
-            {requiredDone}/{requiredTotal || completedCount} required parts ready. Next: mix & master.
+            {requiredDone}/{requiredTotal || completedCount} required parts ready.
           </p>
-          <button type="button" style={{ ...btn, marginTop: 24 }} onClick={() => setScreen("assemble")}>
+          <TaskPicker highlightId={null} />
+          <button type="button" style={{ ...btn, marginTop: 20 }} onClick={() => setScreen("assemble")}>
             Continue to produce
           </button>
         </div>
@@ -723,8 +840,50 @@ export default function ProjectDetailPage() {
             {completedCount} of {tasks.length} parts handled
             {requiredTotal > 0 ? ` · ${requiredDone}/{requiredTotal} required` : ""}.
             <br />
-            Next: assemble, mix & master.
+            Next: assemble, mix & master — or retake any section first.
           </p>
+
+          {doneTasks.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 8, letterSpacing: 0.4 }}>
+                RETAKE A SECTION
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {doneTasks.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => selectTask(t.id)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                      color: C.text,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span>
+                      <span style={{ color: C.brass, fontSize: 11, fontFamily: "monospace" }}>
+                        {sectionLabel(t)}
+                      </span>
+                      <span style={{ display: "block", fontSize: 13.5, marginTop: 2 }}>
+                        {t.title || humanTitle(t.type)}
+                        {t.status === "skipped" ? " (skipped)" : ""}
+                      </span>
+                    </span>
+                    <span style={{ color: C.brass, fontSize: 13, fontWeight: 600 }}>Retake</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
           <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
             <button type="button" style={btn} disabled={producing || !allRequiredDone} onClick={startProduce}>
@@ -744,6 +903,7 @@ export default function ProjectDetailPage() {
               type="button"
               style={btn2}
               onClick={() => {
+                setActiveTaskId(null);
                 setScreen("session");
                 setPhase("ready");
               }}
