@@ -1,8 +1,13 @@
 import { createServiceClient } from "@/lib/supabase/server";
 
-/** Supabase Storage bucket. Case-sensitive. Override with STORAGE_BUCKET if needed. */
+/**
+ * Supabase Storage bucket name (case-sensitive).
+ * This project uses bucket id/name "Studio".
+ * Override with STORAGE_BUCKET if you rename the bucket.
+ */
 export function getStorageBucket() {
-  return (process.env.STORAGE_BUCKET || "studio").trim() || "studio";
+  const fromEnv = process.env.STORAGE_BUCKET?.trim();
+  return fromEnv || "Studio";
 }
 
 export function beatPath(userId: string, projectId: string, filename = "beat.wav") {
