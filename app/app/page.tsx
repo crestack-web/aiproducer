@@ -283,13 +283,13 @@ export default function StudioAppPage() {
           )}
 
           {tab === "create" && (
-            <section style={{ maxWidth: 560, margin: "0 auto", width: "100%" }}>
+            <section style={{ width: "100%", maxWidth: 920, margin: "0 auto", boxSizing: "border-box" }}>
               <button type="button" onClick={() => setTab("home")} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 13.5, cursor: "pointer", marginBottom: 18, padding: 0 }}>← Back</button>
-              <div style={{ ...S.eyebrow, textAlign: "center" }}>◆ CREATE</div>
-              <h1 style={{ ...S.h1, fontSize: "clamp(1.6rem, 3vw, 2rem)", textAlign: "center", marginBottom: 8 }}>Create your beat</h1>
-              <p style={{ ...S.sub, textAlign: "center", margin: "0 auto 24px" }}>Describe the sound, pick genre and mood, set tempo.</p>
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: 22 }}>
-                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Emotional Afrobeats song about falling in love at night, warm guitars, deep bass, catchy percussion." style={S.prompt} />
+              <div style={S.eyebrow}>◆ CREATE</div>
+              <h1 style={{ ...S.h1, fontSize: "clamp(1.75rem, 3.2vw, 2.35rem)", marginBottom: 8 }}>Create your beat</h1>
+              <p style={{ ...S.sub, margin: "0 0 24px", maxWidth: 520 }}>Describe the sound, pick genre and mood, set tempo — then let your AI producer guide the session.</p>
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "28px 28px 24px", width: "100%", boxSizing: "border-box", overflow: "hidden" }}>
+                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Emotional Afrobeats song about falling in love at night, warm guitars, deep bass, catchy percussion." style={{ ...S.prompt, boxSizing: "border-box", minHeight: 110 }} />
                 <div style={{ marginTop: 20 }}>
                   <div style={S.label}>Genre</div>
                   <div style={S.chips}>{GENRES.map((g) => <button key={g} type="button" style={genre === g ? S.chipOn : S.chip} onClick={() => setGenre(g)}>{g}</button>)}</div>
@@ -394,7 +394,7 @@ const S: Record<string, React.CSSProperties> = {
   heroArt: { width: 200, height: 200, borderRadius: 28, flexShrink: 0, background: `linear-gradient(145deg, ${GRAD[0][0]}, ${C.bgDeep})`, border: `1px solid ${C.border}`, display: "grid", placeItems: "center" },
   primary: { padding: "15px 20px", borderRadius: 16, border: "none", background: `linear-gradient(180deg, #F0BC80, ${C.brass})`, color: "#1A1208", fontWeight: 600, fontSize: 15.5, cursor: "pointer", boxShadow: "0 8px 24px -8px rgba(231,169,97,0.55)", fontFamily: "inherit" },
   secondary: { padding: "14px 20px", borderRadius: 16, border: `1px solid ${C.border}`, background: "rgba(255,255,255,0.04)", color: C.text, fontWeight: 500, fontSize: 15, cursor: "pointer", fontFamily: "inherit" },
-  prompt: { width: "100%", resize: "none", background: "rgba(0,0,0,0.28)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, color: C.text, fontFamily: "Inter, system-ui, sans-serif", fontSize: 14.5, lineHeight: 1.5, outline: "none" },
+  prompt: { width: "100%", resize: "none", background: "rgba(0,0,0,0.28)", border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, color: C.text, fontFamily: "Inter, system-ui, sans-serif", fontSize: 14.5, lineHeight: 1.5, outline: "none", boxSizing: "border-box" },
   label: { fontSize: 12.5, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", color: C.textFaint, marginBottom: 10 },
   chips: { display: "flex", gap: 8, flexWrap: "wrap" },
   chip: { padding: "9px 16px", borderRadius: 999, border: `1px solid ${C.border}`, background: "rgba(255,255,255,0.02)", color: C.textMuted, fontWeight: 500, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit" },
