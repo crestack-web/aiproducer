@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-/** Unauthenticated start path: sign up, then onboarding. */
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
 export default function WelcomePage() {
@@ -14,141 +13,73 @@ export default function WelcomePage() {
             <span className="logo-mark">◆</span> Studio
           </Link>
           <nav className="nav desktop-nav">
-            <a href="#dashboard">Dashboard</a>
             <a href="#how">How it works</a>
             <a href="#pricing">Pricing</a>
-            <Link href="/auth?mode=login&next=/onboarding" className="ghost">
-              Log in
-            </Link>
-            <Link href={START_HREF} className="primary">
-              Start creating
-            </Link>
+            <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
+            <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>
         </header>
 
         <section className="hero">
-          <div className="eyebrow">
-            <span /> AI Music Producer
-          </div>
-          <h1>
-            Radio-ready songs.
-            <br />
-            <em>With your real voice.</em>
-          </h1>
+          <div className="eyebrow"><span /> AI Music Producer</div>
+          <h1>Radio-ready songs.<br /><em>With your real voice.</em></h1>
           <p className="hero-sub">
             Create a beat, follow a clear recording plan, and let Studio assemble, mix, and master —
-            so you leave with a <strong>finished, professional-sounding track</strong>, not a rough
-            freestyle.
+            so you leave with a <strong>finished, professional-sounding track</strong>, not a rough freestyle.
           </p>
           <div className="cta-row">
-            <Link href={START_HREF} className="primary lg">
-              Create a song
-            </Link>
-            <a href="#dashboard" className="secondary">
-              Preview the dashboard
-            </a>
+            <Link href={START_HREF} className="primary lg">Create a song</Link>
+            <a href="#how" className="secondary">See the 5 steps</a>
           </div>
           <p className="trust">No music theory · Pay per finished song · Your voice stays the lead</p>
         </section>
 
-        <section className="section" id="dashboard">
-          <div className="section-head">
-            <h2>Your studio dashboard</h2>
-            <p>
-              This is where songs start. Pick a genre and mood, generate a beat, then the AI producer
-              guides every vocal. Trying it takes you through a short setup first.
-            </p>
+        <div className="showcase" aria-label="Product preview">
+          <div className="showcase-bar">
+            <span className="dot" /><span className="dot" /><span className="dot" />
+            <span className="showcase-title">Producer Session · Late Night · R&B</span>
           </div>
-
-          <div className="dash" aria-label="Studio dashboard preview">
-            <aside className="dash-side">
-              <div className="dash-side-brand">
-                <span className="logo-mark">◆</span> Studio
+          <div className="showcase-body">
+            <div className="panel">
+              <div className="panel-label">◆ Your beat</div>
+              <h3>Warm keys. Deep bass.</h3>
+              <p>AI builds the instrumental. You focus on performance.</p>
+              <div className="wave" aria-hidden>
+                <i style={{ height: "35%" }} /><i style={{ height: "55%" }} /><i style={{ height: "80%" }} />
+                <i style={{ height: "45%" }} /><i style={{ height: "90%" }} /><i style={{ height: "60%" }} />
+                <i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "95%" }} />
+                <i style={{ height: "50%" }} /><i style={{ height: "30%" }} /><i style={{ height: "70%" }} />
+                <i style={{ height: "85%" }} /><i style={{ height: "45%" }} /><i style={{ height: "65%" }} />
+                <i style={{ height: "40%" }} /><i style={{ height: "55%" }} /><i style={{ height: "25%" }} />
               </div>
-              <p className="dash-side-label">Library</p>
-              <div className="dash-nav-item active">Home</div>
-              <div className="dash-nav-item">Sessions</div>
-              <div className="dash-nav-item">Credits</div>
-              <div className="dash-side-foot">
-                <span className="dash-avatar">A</span>
-                <span>Artist</span>
-              </div>
-            </aside>
-
-            <div className="dash-main">
-              <div className="dash-top">
-                <div>
-                  <h3 className="dash-greeting">Make music with your voice</h3>
-                  <p className="dash-sub">Beat → producer plan → guided recording → mix & master</p>
-                </div>
-                <span className="dash-badge">Preview</span>
-              </div>
-
-              <div className="dash-card">
-                <div className="dash-card-title">New song</div>
-                <div className="dash-fields">
-                  <div className="dash-field">
-                    <span>Genre</span>
-                    <div className="dash-select">R&B</div>
-                  </div>
-                  <div className="dash-field">
-                    <span>Mood</span>
-                    <div className="dash-select">Emotional</div>
-                  </div>
-                </div>
-                <div className="dash-modes">
-                  <span className="dash-mode on">AI beat</span>
-                  <span className="dash-mode">Upload my beat</span>
-                </div>
-                <Link href={START_HREF} className="primary dash-cta">
-                  Start producer session
-                </Link>
-                <p className="dash-hint">
-                  You'll create an account and finish a quick onboarding, then land in your real
-                  dashboard to generate the beat.
-                </p>
-              </div>
-
-              <div className="dash-recent">
-                <div className="dash-card-title">Recent sessions</div>
-                <div className="dash-projects">
-                  <div className="dash-project">
-                    <div className="dash-wave" aria-hidden>
-                      <i style={{ height: "40%" }} />
-                      <i style={{ height: "70%" }} />
-                      <i style={{ height: "55%" }} />
-                      <i style={{ height: "90%" }} />
-                      <i style={{ height: "45%" }} />
-                    </div>
-                    <div>
-                      <strong>Late Night · R&B</strong>
-                      <span>Recording · Chorus lead</span>
-                    </div>
-                  </div>
-                  <div className="dash-project">
-                    <div className="dash-wave" aria-hidden>
-                      <i style={{ height: "60%" }} />
-                      <i style={{ height: "35%" }} />
-                      <i style={{ height: "80%" }} />
-                      <i style={{ height: "50%" }} />
-                      <i style={{ height: "65%" }} />
-                    </div>
-                    <div>
-                      <strong>Afrobeats · Confident</strong>
-                      <span>Master ready</span>
-                    </div>
-                  </div>
-                </div>
+              <div>
+                <span className="chip">94 BPM</span>
+                <span className="chip">A minor</span>
+                <span className="chip">Emotional</span>
               </div>
             </div>
+            <div className="panel panel-producer">
+              <div className="panel-label">◆ AI Producer</div>
+              <h3>What to record next</h3>
+              <p>Plain-language cues. One section at a time.</p>
+              <div className="task">
+                <div className="task-num">01</div>
+                <div>
+                  <strong>Chorus · Lead</strong>
+                  <span>Give me your strongest melody here. Keep it open and confident.</span>
+                </div>
+              </div>
+              <div className="task">
+                <div className="task-num">02</div>
+                <div>
+                  <strong>Chorus · Harmony</strong>
+                  <span>Sing softly underneath your main vocal.</span>
+                </div>
+              </div>
+              <Link href={START_HREF} className="primary showcase-cta">Start this session</Link>
+            </div>
           </div>
-
-          <div className="dash-cta-row">
-            <Link href={START_HREF} className="primary lg">
-              Generate my first song
-            </Link>
-          </div>
-        </section>
+        </div>
 
         <section className="section" id="how">
           <div className="section-head">
@@ -165,10 +96,7 @@ export default function WelcomePage() {
             ].map(([n, title, body]) => (
               <div className="pipe-row" key={n}>
                 <div className="pipe-num">{n}</div>
-                <div>
-                  <h3>{title}</h3>
-                  <p>{body}</p>
-                </div>
+                <div><h3>{title}</h3><p>{body}</p></div>
               </div>
             ))}
           </div>
@@ -182,19 +110,11 @@ export default function WelcomePage() {
           <div className="compare">
             <div className="compare-card">
               <h3>Typical AI song apps</h3>
-              <ul>
-                <li>Synthetic vocals</li>
-                <li>Hard to claim as your performance</li>
-                <li>One-shot output, not a session</li>
-              </ul>
+              <ul><li>Synthetic vocals</li><li>Hard to claim as your performance</li><li>One-shot output, not a session</li></ul>
             </div>
             <div className="compare-card yes">
               <h3>Studio</h3>
-              <ul>
-                <li>Your real recorded voice</li>
-                <li>Guided layers & structure</li>
-                <li>Pro mix & master on every credit</li>
-              </ul>
+              <ul><li>Your real recorded voice</li><li>Guided layers & structure</li><li>Pro mix & master on every credit</li></ul>
             </div>
           </div>
         </section>
@@ -228,8 +148,8 @@ export default function WelcomePage() {
 
         <section className="bottom-cta">
           <h2>Your next song can be radio-ready today</h2>
-          <p>Set up once → open the dashboard → generate and record with your AI producer.</p>
-          <Link href={START_HREF} className="primary lg">Generate my first song</Link>
+          <p>Beat → plan → guided vocals → mix & master.</p>
+          <Link href={START_HREF} className="primary lg">Create your first song</Link>
         </section>
 
         <footer>
@@ -251,7 +171,7 @@ const css = `
   .logo-mark{color:var(--signal)}
   .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
   .nav a{color:var(--muted);font-size:14px;font-weight:500;padding:8px 12px;border-radius:999px;text-decoration:none}
-  .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#F0BC80,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none;border:none;cursor:pointer}
+  .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#F0BC80,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none}
   .primary.lg{font-size:16px;padding:14px 28px}.primary.block,.secondary.block{width:100%;text-align:center}
   .secondary,.ghost{display:inline-flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border-hi);color:var(--text)!important;font-weight:500;font-size:14.5px;padding:12px 20px;border-radius:999px;text-decoration:none}
   .ghost{padding:8px 16px;font-size:14px}
@@ -264,41 +184,30 @@ const css = `
   .hero-sub strong{color:var(--text);font-weight:600}
   .cta-row{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:20px}
   .trust{font-size:13px;color:var(--faint);margin:0}
+  .showcase{margin:40px auto 0;max-width:880px;border-radius:24px;border:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:0 40px 80px -40px rgba(0,0,0,.8);overflow:hidden}
+  .showcase-bar{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--border);background:rgba(0,0,0,.25)}
+  .dot{width:10px;height:10px;border-radius:99px;background:#3a3a44}
+  .dot:nth-child(1){background:#ff5f57}.dot:nth-child(2){background:#febc2e}.dot:nth-child(3){background:#28c840}
+  .showcase-title{margin-left:8px;font-size:12.5px;color:var(--faint)}
+  .showcase-body{display:grid;grid-template-columns:1.1fr .9fr;min-height:320px}
+  .panel{padding:28px 24px}
+  .panel-producer{border-left:1px solid var(--border);background:rgba(123,235,212,.03)}
+  .panel-label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass);font-weight:600;margin-bottom:10px}
+  .panel h3{font-family:Fraunces,serif;font-weight:500;font-size:22px;margin:0 0 8px}
+  .panel p{color:var(--muted);font-size:14.5px;line-height:1.5;margin:0 0 18px}
+  .wave{display:flex;align-items:flex-end;gap:3px;height:56px;margin:16px 0 8px}
+  .wave i{flex:1;border-radius:3px;background:linear-gradient(180deg,var(--signal),rgba(123,235,212,.25));opacity:.85;animation:pulse 1.4s ease-in-out infinite}
+  .wave i:nth-child(odd){animation-delay:.15s}.wave i:nth-child(3n){animation-delay:.35s}
+  @keyframes pulse{0%,100%{transform:scaleY(.55);opacity:.55}50%{transform:scaleY(1);opacity:1}}
+  .chip{display:inline-flex;font-size:12px;padding:6px 10px;border-radius:999px;background:rgba(123,235,212,.14);color:var(--signal);border:1px solid rgba(123,235,212,.25);margin-right:6px;margin-bottom:6px}
+  .task{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:14px;background:var(--surface);border:1px solid var(--border);margin-bottom:10px}
+  .task strong{display:block;font-size:13.5px;margin-bottom:2px}.task span{font-size:12.5px;color:var(--muted);line-height:1.4}
+  .task-num{width:28px;height:28px;border-radius:8px;background:rgba(231,169,97,.15);color:var(--brass);font-size:12px;font-weight:600;display:grid;place-items:center;flex-shrink:0}
+  .showcase-cta{display:flex;width:100%;margin-top:14px;padding:12px 16px;font-size:14px}
   .section{margin-top:72px}
   .section-head{text-align:center;max-width:600px;margin:0 auto 32px}
   .section-head h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.55rem,4vw,2.2rem);margin:0 0 12px}
   .section-head p{color:var(--muted);line-height:1.55;font-size:15px;margin:0}
-  .dash{display:grid;grid-template-columns:200px 1fr;border-radius:22px;border:1px solid var(--border);overflow:hidden;background:rgba(0,0,0,.35);box-shadow:0 40px 80px -40px rgba(0,0,0,.85);max-width:960px;margin:0 auto}
-  .dash-side{padding:20px 14px;border-right:1px solid var(--border);background:rgba(255,255,255,.02);display:flex;flex-direction:column;gap:4px;min-width:0}
-  .dash-side-brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;margin-bottom:18px;padding:0 8px}
-  .dash-side-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:0 8px;margin:0 0 6px}
-  .dash-nav-item{padding:10px 12px;border-radius:10px;font-size:13.5px;color:var(--muted)}
-  .dash-nav-item.active{background:rgba(123,235,212,.1);color:var(--signal);font-weight:600}
-  .dash-side-foot{margin-top:auto;padding:12px 8px 4px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);border-top:1px solid var(--border);padding-top:14px}
-  .dash-avatar{width:28px;height:28px;border-radius:8px;background:rgba(231,169,97,.2);color:var(--brass);display:grid;place-items:center;font-size:12px;font-weight:700}
-  .dash-main{padding:22px 22px 26px;min-width:0}
-  .dash-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px}
-  .dash-greeting{font-family:Fraunces,serif;font-weight:500;font-size:1.35rem;margin:0 0 4px}
-  .dash-sub{margin:0;font-size:13.5px;color:var(--muted)}
-  .dash-badge{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--brass);border:1px solid rgba(231,169,97,.35);background:rgba(231,169,97,.12);padding:5px 10px;border-radius:999px;flex-shrink:0}
-  .dash-card{padding:18px;border-radius:16px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px}
-  .dash-card-title{font-size:14px;font-weight:600;margin-bottom:14px}
-  .dash-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
-  .dash-field span{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:500}
-  .dash-select{padding:11px 12px;border-radius:10px;border:1px solid var(--border);background:rgba(0,0,0,.25);font-size:14px;color:var(--text)}
-  .dash-modes{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-  .dash-mode{padding:8px 12px;border-radius:999px;font-size:13px;color:var(--muted);border:1px solid var(--border)}
-  .dash-mode.on{color:var(--signal);border-color:rgba(123,235,212,.35);background:rgba(123,235,212,.1);font-weight:600}
-  .dash-cta{width:100%;padding:13px 18px;font-size:15px}
-  .dash-hint{margin:12px 0 0;font-size:12.5px;color:var(--faint);line-height:1.45}
-  .dash-recent .dash-card-title{margin-bottom:10px}
-  .dash-projects{display:flex;flex-direction:column;gap:8px}
-  .dash-project{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;border:1px solid var(--border);background:rgba(255,255,255,.03)}
-  .dash-project strong{display:block;font-size:13.5px;margin-bottom:2px}
-  .dash-project span{font-size:12px;color:var(--muted)}
-  .dash-wave{display:flex;align-items:flex-end;gap:2px;height:28px;width:36px;flex-shrink:0}
-  .dash-wave i{flex:1;border-radius:2px;background:linear-gradient(180deg,var(--signal),rgba(123,235,212,.25));opacity:.85}
-  .dash-cta-row{display:flex;justify-content:center;margin-top:24px}
   .pipeline{border-radius:20px;border:1px solid var(--border);overflow:hidden;background:rgba(255,255,255,.02);max-width:720px;margin:0 auto}
   .pipe-row{display:grid;grid-template-columns:48px 1fr;gap:0 14px;padding:18px 20px;border-bottom:1px solid var(--border)}
   .pipe-row:last-child{border-bottom:none}
@@ -322,7 +231,7 @@ const css = `
   .bottom-cta h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.45rem,3.5vw,2rem);margin:0 0 10px}
   .bottom-cta p{color:var(--muted);margin:0 0 20px}
   footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;color:var(--faint);font-size:13px}
-  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:400px;margin:0 auto}.compare{grid-template-columns:1fr}.dash{grid-template-columns:1fr}.dash-side{display:none}}
-  @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.dash-fields{grid-template-columns:1fr}.dash-main{padding:16px}footer{flex-direction:column;align-items:flex-start}}
+  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:400px;margin:0 auto}.compare{grid-template-columns:1fr}}
+  @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.showcase-body{grid-template-columns:1fr}.panel-producer{border-left:none;border-top:1px solid var(--border)}footer{flex-direction:column;align-items:flex-start}}
   @media (max-width:400px){.wrap{padding-left:14px;padding-right:14px}}
 `;
