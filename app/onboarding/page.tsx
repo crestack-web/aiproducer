@@ -50,16 +50,18 @@ export default function OnboardingPage() {
     userId: string,
     patch: Record<string, unknown>
   ) {
-    const { data: updated, error: updateErr } = await supabase
-      .from("profiles")
-      .update(patch)
-      .eq("id", userId)
-      .select("id");
+    // Profile is usually created by signup trigger — upsert on primary key only.
+    const { error: upErr } = await supabase.from("profiles").upsert(
+      { id: userId, ...patch },
+      { onConflict: "id" }
+    );
+    if (!upErr) return;
+
+    // Fallback: update only (never insert again — avoids profiles_pkey)
+    const { error: updateErr } = await supabase.from("profiles").update(patch).eq("id", userId);
     if (updateErr) throw updateErr;
-    if (!updated || updated.length === 0) {
-      const { error: insertErr } = await supabase.from("profiles").insert({ id: userId, ...patch });
-      if (insertErr) throw insertErr;
-    }
+    if (/duplicate key|profiles_pkey|23505/i.test(upErr.message || "")) return;
+    // If upsert failed for another reason but update worked, we're fine
   }
 
   async function finish() {
