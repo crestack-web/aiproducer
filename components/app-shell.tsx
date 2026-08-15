@@ -32,13 +32,9 @@ function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?
 function IconStudio({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 3v10.5a3.5 3.5 0 1 1-2-3.175V3h2Z"
-        stroke={color}
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path d="M16 7v2.5a2.5 2.5 0 1 0 2-2.45V7h-2Z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
+      <rect x="9" y="2" width="6" height="11" rx="3" stroke={color} strokeWidth="1.8" />
+      <path d="M5 11a7 7 0 0 0 14 0" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M12 18v3M9 21h6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
