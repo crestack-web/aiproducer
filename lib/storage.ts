@@ -58,6 +58,15 @@ export function songMasterPath(userId: string, projectId: string, version: numbe
   return `users/${userId}/projects/${projectId}/masters/master_v${version}.wav`;
 }
 
+/** Permanent mix/master artifacts for a produce job (never store provider temp URLs as truth). */
+export function productionMixPath(userId: string, projectId: string, jobId: string, ext = "wav") {
+  return `users/${userId}/projects/${projectId}/production/${jobId}/mix.${ext}`;
+}
+
+export function productionMasterPath(userId: string, projectId: string, jobId: string, ext = "wav") {
+  return `users/${userId}/projects/${projectId}/production/${jobId}/master.${ext}`;
+}
+
 export function samplePath(userId: string, projectId: string, sampleId: string, ext = "wav") {
   return `users/${userId}/projects/${projectId}/samples/${sampleId}.${ext}`;
 }
@@ -87,4 +96,27 @@ export async function uploadBuffer(
   });
   if (error) throw error;
   return path;
+}
+
+/**
+ * Download remote audio (e.g. RoEx temporary URL) into our bucket.
+ * Returns the storage path. Rejects empty/corrupt payloads.
+ */
+export async function persistRemoteAudioToStorage(
+  remoteUrl: string,
+  storagePath: string,
+  opts?: { minBytes?: number }
+): Promise<{ path: string; bytes: number; contentType: string }> {
+  const minBytes = opts?.minBytes ?? 500;
+  const res = await fetch(remoteUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to download provider audio: HTTP ${res.status}`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length < minBytes) {
+    throw new Error(`Provider audio too small or empty (${buffer.length} bytes)`);
+  }
+  const contentType = res.headers.get("content-type") || "audio/wav";
+  await uploadBuffer(storagePath, buffer, contentType);
+  return { path: storagePath, bytes: buffer.length, contentType };
 }
