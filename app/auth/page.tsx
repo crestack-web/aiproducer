@@ -30,7 +30,6 @@ export default function AuthPage() {
     setError(null);
     setLoading(true);
     const supabase = createClient();
-
     try {
       if (mode === "signup") {
         if (!name.trim()) throw new Error("Enter an artist name.");
@@ -43,7 +42,6 @@ export default function AuthPage() {
           },
         });
         if (signErr) throw signErr;
-
         if (data.session) {
           await supabase.from("profiles").upsert({
             id: data.session.user.id,
@@ -53,32 +51,20 @@ export default function AuthPage() {
           router.refresh();
           return;
         }
-
         setError("Check your email to confirm your account, then log in.");
         setMode("login");
         return;
       }
-
-      const { error: loginErr } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { error: loginErr } = await supabase.auth.signInWithPassword({ email, password });
       if (loginErr) throw loginErr;
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Login failed.");
-
       const { data: profile } = await supabase
         .from("profiles")
         .select("display_name, role, genre, experience_level")
         .eq("id", user.id)
         .maybeSingle();
-
-      const needsOnboarding =
-        !profile?.role || !profile?.genre || !profile?.experience_level;
-
+      const needsOnboarding = !profile?.role || !profile?.genre || !profile?.experience_level;
       router.push(needsOnboarding ? "/onboarding" : nextPath === "/onboarding" ? "/app" : nextPath);
       router.refresh();
     } catch (err) {
@@ -89,192 +75,77 @@ export default function AuthPage() {
   }
 
   return (
-    <div style={styles.shell}>
-      <aside style={styles.brand}>
-        <Link href="/" style={styles.logo}>
-          <span style={styles.logoMark}>◆</span> Studio
-        </Link>
-        <div>
-          <h1 style={styles.brandTitle}>
-            Your voice.
-            <br />
-            <span style={styles.grad}>A finished song.</span>
-          </h1>
-          <p style={styles.brandText}>
-            Log in to continue producer sessions, or create an account and ship your first
-            radio-ready track.
-          </p>
-        </div>
-        <p style={styles.foot}>You bring the voice. Studio helps you make the song.</p>
-      </aside>
-
-      <main style={styles.main}>
-        <div style={styles.card}>
-          <Link href="/" style={styles.back}>
-            ← Back to Studio
-          </Link>
-
-          <div style={styles.tabs}>
-            <button
-              type="button"
-              style={{ ...styles.tab, ...(mode === "login" ? styles.tabOn : {}) }}
-              onClick={() => setMode("login")}
-            >
-              Log in
-            </button>
-            <button
-              type="button"
-              style={{ ...styles.tab, ...(mode === "signup" ? styles.tabOn : {}) }}
-              onClick={() => setMode("signup")}
-            >
-              Sign up
-            </button>
+    <>
+      <style>{`
+  .auth-shell{min-height:100dvh;min-height:100vh;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);background:#050508;color:#F4F1EC;font-family:Inter,system-ui,sans-serif;width:100%;max-width:100vw;overflow-x:hidden}
+  .auth-brand{padding:40px 48px;border-right:1px solid rgba(255,255,255,.09);display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+  .auth-logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;text-decoration:none;color:inherit}
+  .auth-logo-mark{color:#7BEBD4}
+  .auth-brand-copy{max-width:420px;padding:32px 0}
+  .auth-brand-copy h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:clamp(1.85rem,3vw,2.6rem);line-height:1.12;margin:0 0 16px}
+  .auth-brand-copy h1 em{font-style:normal;background:linear-gradient(120deg,#7BEBD4,#a8f0e0 45%,#E7A961);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .auth-brand-copy p{color:#9B96A3;font-size:15.5px;line-height:1.55;margin:0 0 24px}
+  .auth-points{list-style:none;margin:0;padding:0}
+  .auth-points li{position:relative;padding-left:18px;font-size:14px;color:#9B96A3;line-height:1.45;margin-bottom:12px}
+  .auth-points li::before{content:"";position:absolute;left:0;top:7px;width:7px;height:7px;border-radius:99px;background:#7BEBD4}
+  .auth-foot{color:#5C5866;font-size:13px;margin:0}
+  .auth-main{display:flex;align-items:center;justify-content:center;padding:32px 20px;min-width:0;width:100%}
+  .auth-card{width:100%;max-width:400px;min-width:0}
+  .auth-back{color:#9B96A3;font-size:13.5px;text-decoration:none;display:inline-block;margin-bottom:24px}
+  .auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);margin-bottom:24px}
+  .auth-tab{padding:10px 12px;border-radius:11px;border:none;background:transparent;color:#9B96A3;font-weight:600;font-size:14px;cursor:pointer;font-family:inherit}
+  .auth-tab.on{background:rgba(255,255,255,.08);color:#F4F1EC}
+  .auth-card h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.45rem,4vw,1.75rem);margin:0 0 8px}
+  .auth-sub{color:#9B96A3;font-size:14.5px;margin:0 0 24px;line-height:1.45}
+  .auth-error{margin-bottom:14px;padding:11px 13px;border-radius:12px;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.25);color:#ffb4b4;font-size:13.5px}
+  .auth-field{display:block;font-size:13px;color:#9B96A3;margin-bottom:16px;font-weight:500}
+  .auth-field input{display:block;width:100%;margin-top:8px;padding:13px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.04);color:#F4F1EC;font-size:16px;font-family:inherit;outline:none;box-sizing:border-box}
+  .auth-primary{width:100%;margin-top:8px;padding:14px 18px;border-radius:999px;border:none;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;font-weight:600;font-size:15px;cursor:pointer;font-family:inherit}
+  .auth-primary:disabled{opacity:.55;cursor:not-allowed}
+  @media (max-width:900px){.auth-shell{grid-template-columns:1fr}.auth-brand{display:none}.auth-main{padding:20px 16px 40px;align-items:flex-start}.auth-card{max-width:100%}}
+  @media (max-width:380px){.auth-main{padding-left:14px;padding-right:14px}}
+`}</style>
+      <div className="auth-shell">
+        <aside className="auth-brand">
+          <Link href="/" className="auth-logo"><span className="auth-logo-mark">◆</span> Studio</Link>
+          <div className="auth-brand-copy">
+            <h1>Your voice.<br /><em>A finished song.</em></h1>
+            <p>Log in to continue producer sessions, or create an account and ship your first radio-ready track.</p>
+            <ul className="auth-points">
+              <li>AI plans the structure — you record the lead</li>
+              <li>Guided takes: doubles, harmonies, adlibs</li>
+              <li>Professional mix &amp; master on paid plans</li>
+            </ul>
           </div>
-
-          <h2 style={styles.h2}>{title}</h2>
-          <p style={styles.sub}>
-            {mode === "login"
-              ? "Continue your songs and producer sessions."
-              : "Free includes 1 finished song so you can try the full producer flow."}
-          </p>
-
-          {error && <div style={styles.error}>{error}</div>}
-
-          <form onSubmit={onSubmit}>
-            {mode === "signup" && (
-              <label style={styles.label}>
-                Artist name
-                <input
-                  style={styles.input}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="How should we call you?"
-                  required
-                />
+          <p className="auth-foot">You bring the voice. Studio helps you make the song.</p>
+        </aside>
+        <main className="auth-main">
+          <div className="auth-card">
+            <Link href="/" className="auth-back">← Back to Studio</Link>
+            <div className="auth-tabs">
+              <button type="button" className={mode === "login" ? "auth-tab on" : "auth-tab"} onClick={() => setMode("login")}>Log in</button>
+              <button type="button" className={mode === "signup" ? "auth-tab on" : "auth-tab"} onClick={() => setMode("signup")}>Sign up</button>
+            </div>
+            <h2>{title}</h2>
+            <p className="auth-sub">{mode === "login" ? "Continue your songs and producer sessions." : "Free includes 1 finished song so you can try the full producer flow."}</p>
+            {error && <div className="auth-error">{error}</div>}
+            <form onSubmit={onSubmit}>
+              {mode === "signup" && (
+                <label className="auth-field">Artist name
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="How should we call you?" required />
+                </label>
+              )}
+              <label className="auth-field">Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@email.com" required />
               </label>
-            )}
-            <label style={styles.label}>
-              Email
-              <input
-                style={styles.input}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@email.com"
-                required
-              />
-            </label>
-            <label style={styles.label}>
-              Password
-              <input
-                style={styles.input}
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 6 characters"
-                minLength={6}
-                required
-              />
-            </label>
-            <button type="submit" style={styles.primary} disabled={loading}>
-              {loading ? "Please wait…" : mode === "login" ? "Log in" : "Continue"}
-            </button>
-          </form>
-        </div>
-      </main>
-    </div>
+              <label className="auth-field">Password
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" minLength={6} required />
+              </label>
+              <button type="submit" className="auth-primary" disabled={loading}>{loading ? "Please wait…" : mode === "login" ? "Log in" : "Continue"}</button>
+            </form>
+          </div>
+        </main>
+      </div>
+    </>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    minHeight: "100vh",
-    display: "grid",
-    gridTemplateColumns: "1.05fr 0.95fr",
-    background: "#050508",
-    color: "#F4F1EC",
-    fontFamily: "Inter, system-ui, sans-serif",
-  },
-  brand: {
-    padding: "40px 48px",
-    borderRight: "1px solid rgba(255,255,255,0.09)",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-  },
-  logo: { display: "flex", alignItems: "center", gap: 10, fontWeight: 600, textDecoration: "none", color: "inherit" },
-  logoMark: { color: "#7BEBD4" },
-  brandTitle: {
-    fontFamily: "Fraunces, Georgia, serif",
-    fontWeight: 500,
-    fontSize: "2.4rem",
-    lineHeight: 1.12,
-    margin: "0 0 16px",
-  },
-  grad: {
-    background: "linear-gradient(120deg, #7BEBD4, #a8f0e0 45%, #E7A961)",
-    WebkitBackgroundClip: "text",
-    backgroundClip: "text",
-    color: "transparent",
-  },
-  brandText: { color: "#9B96A3", fontSize: 15.5, lineHeight: 1.55, maxWidth: 420 },
-  foot: { color: "#5C5866", fontSize: 13 },
-  main: { display: "grid", placeItems: "center", padding: 24 },
-  card: { width: "100%", maxWidth: 400 },
-  back: { color: "#9B96A3", fontSize: 13.5, textDecoration: "none", display: "inline-block", marginBottom: 28 },
-  tabs: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 4,
-    padding: 4,
-    borderRadius: 14,
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.09)",
-    marginBottom: 28,
-  },
-  tab: {
-    padding: "10px 12px",
-    borderRadius: 11,
-    border: "none",
-    background: "transparent",
-    color: "#9B96A3",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  tabOn: { background: "rgba(255,255,255,0.08)", color: "#F4F1EC" },
-  h2: { fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: "1.75rem", margin: "0 0 8px" },
-  sub: { color: "#9B96A3", fontSize: 14.5, marginBottom: 24, lineHeight: 1.45 },
-  error: {
-    marginBottom: 14,
-    padding: "11px 13px",
-    borderRadius: 12,
-    background: "rgba(255,107,107,0.1)",
-    border: "1px solid rgba(255,107,107,0.25)",
-    color: "#ffb4b4",
-    fontSize: 13.5,
-  },
-  label: { display: "block", fontSize: 13, color: "#9B96A3", marginBottom: 16, fontWeight: 500 },
-  input: {
-    display: "block",
-    width: "100%",
-    marginTop: 8,
-    padding: "13px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.09)",
-    background: "rgba(255,255,255,0.04)",
-    color: "#F4F1EC",
-    fontSize: 15,
-  },
-  primary: {
-    width: "100%",
-    marginTop: 8,
-    padding: "14px 18px",
-    borderRadius: 999,
-    border: "none",
-    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
-    color: "#1A1208",
-    fontWeight: 600,
-    fontSize: 15,
-    cursor: "pointer",
-  },
-};
