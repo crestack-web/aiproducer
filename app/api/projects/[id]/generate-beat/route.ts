@@ -124,12 +124,16 @@ export async function POST(req: Request, ctx: Ctx) {
       music_job: job,
     });
   } catch (e) {
-    await service
-      .from("projects")
-      .update({ status: "failed" })
-      .eq("id", projectId)
-      .eq("user_id", user.id)
-      .catch(() => undefined);
+    // Best-effort status update — do not fail the error response if this throws
+    try {
+      await service
+        .from("projects")
+        .update({ status: "failed" })
+        .eq("id", projectId)
+        .eq("user_id", user.id);
+    } catch {
+      /* ignore */
+    }
 
     if (e instanceof MusicGenerationError) {
       return NextResponse.json(
