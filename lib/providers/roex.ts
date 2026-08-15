@@ -5,6 +5,7 @@ import type {
   MixResult,
   MixTrackInput,
 } from "@/lib/audio/types";
+import { assertRoexPreviewOnly, getRoexEnv, isRoexFullAllowed } from "@/lib/env";
 
 const BASE = "https://tonn.roexaudio.com";
 
@@ -54,6 +55,10 @@ export function stemToInstrumentGroup(kind: MixTrackInput["kind"]): string {
   }
 }
 
+/**
+ * Preview-only RoEx provider for this milestone.
+ * Paid/final endpoints are blocked when ROEX_ENV=test or ROEX_ALLOW_FULL!=true.
+ */
 export class RoExMixProvider implements AudioMixProvider {
   readonly name = "roex";
 
@@ -86,6 +91,11 @@ export class RoExMixProvider implements AudioMixProvider {
     tracks: MixTrackInput[],
     opts: { musicalStyle: string; preview: boolean; webhookUrl?: string; sampleRate?: number }
   ): Promise<MixResult> {
+    if (!opts.preview) {
+      assertRoexPreviewOnly("full");
+      throw new Error("ROEX_FULL_PRODUCTION_DISABLED_IN_TEST");
+    }
+
     const trackData = tracks.map((t) => ({
       trackURL: t.path,
       instrumentGroup: t.instrumentGroup || stemToInstrumentGroup(t.kind),
@@ -111,8 +121,8 @@ export class RoExMixProvider implements AudioMixProvider {
     if (json.error || !json.multitrack_task_id) throw new Error(json.message || "RoEx mix missing task id");
     return {
       provider_task_id: json.multitrack_task_id,
-      preview: opts.preview,
-      metadata: json as Record<string, unknown>,
+      preview: true,
+      metadata: { ...(json as object), roex_env: getRoexEnv(), endpoint: "mixpreview" } as Record<string, unknown>,
     };
   }
 
@@ -131,7 +141,10 @@ export class RoExMixProvider implements AudioMixProvider {
         preview_mix_url?: string;
         download_url?: string;
       };
+      error?: boolean;
+      message?: string;
     };
+    if (json.error) throw new Error(json.message || "RoEx mix retrieve error");
     const results = json.previewMixTaskResults || {};
     const download =
       results.download_url_preview_mixed || results.preview_mix_url || results.download_url;
@@ -176,6 +189,11 @@ export class RoExMixProvider implements AudioMixProvider {
       webhookUrl?: string;
     }
   ): Promise<MasterResult> {
+    if (!opts.preview) {
+      assertRoexPreviewOnly("full");
+      throw new Error("ROEX_FULL_PRODUCTION_DISABLED_IN_TEST");
+    }
+
     const res = await fetch(`${BASE}/masteringpreview`, {
       method: "POST",
       headers: headers(),
@@ -193,8 +211,8 @@ export class RoExMixProvider implements AudioMixProvider {
     if (json.error || !json.mastering_task_id) throw new Error(json.message || "RoEx master missing task id");
     return {
       provider_task_id: json.mastering_task_id,
-      preview: opts.preview,
-      metadata: json as Record<string, unknown>,
+      preview: true,
+      metadata: { ...(json as object), roex_env: getRoexEnv(), endpoint: "masteringpreview" } as Record<string, unknown>,
     };
   }
 
@@ -211,8 +229,21 @@ export class RoExMixProvider implements AudioMixProvider {
         download_url?: string;
       };
       finalMasterTaskResults?: { download_url?: string };
+      error?: boolean;
+      message?: string;
     };
+    if (json.error) throw new Error(json.message || "RoEx master retrieve error");
     const preview = json.previewMasterTaskResults || {};
+    // Never prefer paid final results in test mode
+    if (getRoexEnv() === "test" || !isRoexFullAllowed()) {
+      const download = preview.download_url_mastered_preview || preview.download_url;
+      return {
+        provider_task_id: providerTaskId,
+        preview: true,
+        download_url: download,
+        metadata: json as Record<string, unknown>,
+      };
+    }
     const final = json.finalMasterTaskResults || {};
     const download =
       preview.download_url_mastered_preview || preview.download_url || final.download_url;
