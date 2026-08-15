@@ -44,8 +44,13 @@ export default function ProjectDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
   const [lastTake, setLastTake] = useState<Take | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [completedCount, setCompletedCount] = useState(0);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const previewAudiosRef = useRef<HTMLAudioElement[]>([]);
+  const previewTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -64,6 +69,7 @@ export default function ProjectDetailPage() {
       if (tasksRes.ok) {
         const list = (await tasksRes.json()).tasks || [];
         setTasks(list);
+        setCompletedCount(list.filter((t: Task) => t.status === "completed").length);
         if (list.length && list.every((t: Task) => t.status === "completed")) {
           setPhase("done");
           setProducerNote("That's enough. Let's put everything together.");
@@ -101,6 +107,117 @@ export default function ProjectDetailPage() {
     return "audio/webm";
   }
 
+  function stopSessionPreview() {
+    previewTimersRef.current.forEach(clearTimeout);
+    previewTimersRef.current = [];
+    previewAudiosRef.current.forEach((a) => {
+      try {
+        a.pause();
+        a.src = "";
+      } catch {
+        /* ignore */
+      }
+    });
+    previewAudiosRef.current = [];
+    if (beatAudioRef.current) {
+      beatAudioRef.current.pause();
+      beatAudioRef.current.volume = 1;
+    }
+    setPreviewPlaying(false);
+  }
+
+  useEffect(() => {
+    return () => {
+      previewTimersRef.current.forEach(clearTimeout);
+      previewAudiosRef.current.forEach((a) => {
+        try {
+          a.pause();
+          a.src = "";
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+  }, []);
+
+  /** Play the beat with every kept vocal take aligned to its section — "what you have so far". */
+  async function playSessionSoFar() {
+    if (previewPlaying) {
+      stopSessionPreview();
+      return;
+    }
+    setError(null);
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/session-preview`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not load session preview");
+
+      const beatSrc: string | null = data.beat_url || beatUrl;
+      if (!beatSrc) throw new Error("No beat available yet");
+
+      stopSessionPreview();
+
+      const beat = new Audio(beatSrc);
+      beat.volume = 0.5;
+      beat.preload = "auto";
+      previewAudiosRef.current.push(beat);
+
+      const layers: Array<{ audio_url: string; start_ms: number }> = [...(data.layers || [])];
+      // Include current local take under review if not already in API layers
+      if (localBlobUrl && current) {
+        layers.push({ audio_url: localBlobUrl, start_ms: current.start_ms ?? 0 });
+      }
+
+      for (const layer of layers) {
+        if (!layer.audio_url) continue;
+        const v = new Audio(layer.audio_url);
+        v.volume = 0.95;
+        v.preload = "auto";
+        previewAudiosRef.current.push(v);
+      }
+
+      await Promise.all(
+        previewAudiosRef.current.map(
+          (a) =>
+            new Promise<void>((resolve) => {
+              if (a.readyState >= 2) return resolve();
+              a.addEventListener("canplaythrough", () => resolve(), { once: true });
+              a.addEventListener("error", () => resolve(), { once: true });
+              a.load();
+            })
+        )
+      );
+
+      beat.currentTime = 0;
+      await beat.play();
+      setPreviewPlaying(true);
+      setProducerNote(
+        layers.length
+          ? `Playing what you have so far — beat + ${layers.length} vocal part${layers.length === 1 ? "" : "s"}.`
+          : "Playing the beat. Record a take to hear your voice with it."
+      );
+
+      layers.forEach((layer, idx) => {
+        const vocal = previewAudiosRef.current[idx + 1];
+        if (!vocal) return;
+        const delay = Math.max(0, layer.start_ms || 0);
+        const t = setTimeout(() => {
+          vocal.currentTime = 0;
+          vocal.play().catch(() => undefined);
+        }, delay);
+        previewTimersRef.current.push(t);
+      });
+
+      beat.onended = () => stopSessionPreview();
+    } catch (e) {
+      stopSessionPreview();
+      setError(e instanceof Error ? e.message : "Could not play session preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
   async function playSection() {
     if (!beatUrl || !beatAudioRef.current) return;
     const el = beatAudioRef.current;
@@ -121,6 +238,7 @@ export default function ProjectDetailPage() {
 
   async function startRecording() {
     setError(null);
+    stopSessionPreview();
     if (!current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -197,7 +315,12 @@ export default function ProjectDetailPage() {
 
   function keepAndContinue() {
     if (!current) return;
-    setTasks((prev) => prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t)));
+    stopSessionPreview();
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
+      setCompletedCount(next.filter((t) => t.status === "completed").length);
+      return next;
+    });
     setLocalBlobUrl(null);
     setLastTake(null);
     const remaining = pending.filter((t) => t.id !== current.id);
@@ -299,6 +422,27 @@ export default function ProjectDetailPage() {
           <section style={styles.card}>
             <div style={styles.cardLabel}>Your beat</div>
             <audio controls src={beatUrl} style={{ width: "100%" }} />
+            <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                style={previewPlaying ? styles.danger : styles.secondary}
+                disabled={previewLoading || !beatUrl}
+                onClick={playSessionSoFar}
+              >
+                {previewLoading
+                  ? "Loading…"
+                  : previewPlaying
+                    ? "Stop preview"
+                    : completedCount > 0 || localBlobUrl
+                      ? "Hear what you have so far"
+                      : "Hear beat only"}
+              </button>
+              <span style={{ fontSize: 12, color: "#71717a" }}>
+                {completedCount > 0
+                  ? `${completedCount} kept take${completedCount === 1 ? "" : "s"} + beat`
+                  : "After your first keep, this plays your voice with the beat"}
+              </span>
+            </div>
           </section>
         )}
         {phase === "done" || (!current && phase !== "recording" && phase !== "review") ? (
@@ -333,6 +477,11 @@ export default function ProjectDetailPage() {
               >
                 Download song
               </button>
+              {(completedCount > 0 || localBlobUrl) && (
+                <button type="button" style={styles.secondary} disabled={previewLoading} onClick={playSessionSoFar}>
+                  {previewPlaying ? "Stop preview" : "Hear raw session"}
+                </button>
+              )}
             </div>
             {masterUrl && <p style={styles.hint}>File: {downloadName}</p>}
           </section>
@@ -363,8 +512,17 @@ export default function ProjectDetailPage() {
               <button
                 type="button"
                 style={styles.secondary}
+                disabled={uploading || previewLoading}
+                onClick={playSessionSoFar}
+              >
+                {previewPlaying ? "Stop mix" : "Play with beat"}
+              </button>
+              <button
+                type="button"
+                style={styles.secondary}
                 disabled={uploading}
                 onClick={() => {
+                  stopSessionPreview();
                   setLocalBlobUrl(null);
                   setLastTake(null);
                   setPhase("task");
