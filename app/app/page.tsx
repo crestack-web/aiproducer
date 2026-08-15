@@ -81,7 +81,12 @@ export default function StudioAppPage() {
       setUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
       if (profile?.genre) setGenre(profile.genre);
       const res = await fetch("/api/projects");
-      if (res.ok) { const json = await res.json(); setProjects(json.projects || []); }
+      if (res.ok) {
+        const json = await res.json();
+        // Hide abandoned drafts (failed creates are deleted; intentional empty drafts stay hidden until beat exists)
+        const list = (json.projects || []).filter((p: Project) => p.status !== "draft");
+        setProjects(list);
+      }
       setLoading(false);
     })();
   }, [router]);
@@ -112,9 +117,22 @@ export default function StudioAppPage() {
     if (!completeRes.ok) { const j = await completeRes.json().catch(() => ({})); throw new Error(j.error || "Could not save uploaded beat"); }
   }
 
+  async function discardFailedProject(projectId: string) {
+    try {
+      await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+
   async function createAndGenerate() {
     setCreating(true); setError(null);
+    let projectId: string | null = null;
     try {
+      if (beatMode === "upload" && !beatFile) {
+        throw new Error("Choose a beat file to upload");
+      }
+
       const createRes = await fetch("/api/projects", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -122,22 +140,37 @@ export default function StudioAppPage() {
           genre, mood, tempo, prompt: prompt.trim() || undefined,
         }),
       });
-      if (!createRes.ok) { const j = await createRes.json().catch(() => ({})); throw new Error(j.error || "Could not create project"); }
+      if (!createRes.ok) {
+        const j = await createRes.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start session");
+      }
       const { project } = await createRes.json();
+      projectId = project.id;
+
       if (beatMode === "upload") {
-        if (!beatFile) throw new Error("Choose a beat file to upload");
-        await uploadCustomBeat(project.id, beatFile);
+        await uploadCustomBeat(project.id, beatFile!);
       } else {
         const beatRes = await fetch(`/api/projects/${project.id}/generate-beat`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ genre, mood, tempo, prompt: prompt.trim() || undefined }),
         });
-        if (!beatRes.ok) { const j = await beatRes.json().catch(() => ({})); throw new Error(j.error || "Beat generation failed"); }
+        if (!beatRes.ok) {
+          const j = await beatRes.json().catch(() => ({}));
+          throw new Error(j.error || "Beat generation failed");
+        }
       }
+
       const analyzeRes = await fetch(`/api/projects/${project.id}/analyze`, { method: "POST" });
-      if (!analyzeRes.ok) { const j = await analyzeRes.json().catch(() => ({})); throw new Error(j.error || "Analyze failed"); }
+      if (!analyzeRes.ok) {
+        const j = await analyzeRes.json().catch(() => ({}));
+        throw new Error(j.error || "Could not build producer plan");
+      }
+
+      // Success only — project is kept and user enters the session
       router.push(`/app/projects/${project.id}`);
     } catch (e) {
+      // Failed beat/upload/analyze should not leave a draft in the library
+      if (projectId) await discardFailedProject(projectId);
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setCreating(false);
