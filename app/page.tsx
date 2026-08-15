@@ -25,10 +25,10 @@ export default function WelcomePage() {
             so you leave with a <strong>finished, professional-sounding track</strong>, not a rough freestyle.
           </p>
           <div className="cta-row">
-            <Link href="/auth?mode=signup" className="primary lg">Create a song — free</Link>
+            <Link href="/auth?mode=signup" className="primary lg">Create a song</Link>
             <a href="#how" className="secondary">See the 5 steps</a>
           </div>
-          <p className="trust">No music theory · No DAW skills · Your voice stays the lead</p>
+          <p className="trust">No music theory · Pay per finished song · Your voice stays the lead</p>
         </section>
 
         <section className="section" id="how">
@@ -52,26 +52,41 @@ export default function WelcomePage() {
           </div>
           <div className="compare">
             <div className="compare-card"><h3>Typical AI song apps</h3><ul><li>Synthetic vocals</li><li>Hard to claim as your performance</li><li>One-shot output, not a session</li></ul></div>
-            <div className="compare-card yes"><h3>Studio</h3><ul><li>Your real recorded voice</li><li>Guided layers & structure</li><li>Pro mix & master on paid plans</li></ul></div>
+            <div className="compare-card yes"><h3>Studio</h3><ul><li>Your real recorded voice</li><li>Guided layers & structure</li><li>Pro mix & master included on every credit</li></ul></div>
           </div>
         </section>
 
         <section className="section" id="pricing">
           <div className="section-head">
             <h2>Simple pricing</h2>
-            <p>One free song to try the full flow. Paid plans cover professional mix & master.</p>
+            <p>No free tier — buy a single session or a monthly credit pack. Every finished song includes mix & master.</p>
           </div>
           <div className="pricing">
-            <div className="price-card"><div className="price-name">Free</div><div className="price-amount">$0</div><p>1 finished song · AI plan · Guided recording · MP3</p><Link href="/auth?mode=signup" className="secondary block">Try one song</Link></div>
-            <div className="price-card featured"><div className="price-name">Creator</div><div className="price-amount">$29 <span>/ mo</span></div><p>8 songs · RoEx master · WAV + MP3 · Commercial use</p><Link href="/auth?mode=signup" className="primary block">Start Creator</Link></div>
-            <div className="price-card"><div className="price-name">Pro</div><div className="price-amount">$79 <span>/ mo</span></div><p>25 songs · Priority queue · Stem export when available</p><Link href="/auth?mode=signup" className="secondary block">Go Pro</Link></div>
+            <div className="price-card featured">
+              <div className="price-name">Session</div>
+              <div className="price-amount">$4.99 <span>/ song</span></div>
+              <p>1 song credit · Guided session · RoEx mix & master · WAV + MP3</p>
+              <Link href="/auth?mode=signup" className="primary block">Buy a session</Link>
+            </div>
+            <div className="price-card">
+              <div className="price-name">Creator</div>
+              <div className="price-amount">$29 <span>/ mo</span></div>
+              <p>8 song credits · ~$3.60/song · Commercial use</p>
+              <Link href="/auth?mode=signup" className="secondary block">Start Creator</Link>
+            </div>
+            <div className="price-card">
+              <div className="price-name">Pro</div>
+              <div className="price-amount">$79 <span>/ mo</span></div>
+              <p>25 song credits · Priority queue · Stem export when available</p>
+              <Link href="/auth?mode=signup" className="secondary block">Go Pro</Link>
+            </div>
           </div>
         </section>
 
         <section className="bottom-cta">
           <h2>Your next song can be radio-ready today</h2>
-          <p>Beat → plan → guided vocals → mix & master.</p>
-          <Link href="/auth?mode=signup" className="primary lg">Create your first song</Link>
+          <p>Beat → plan → guided vocals → mix & master. Pay only when you finish.</p>
+          <Link href="/auth?mode=signup" className="primary lg">Buy a session</Link>
         </section>
 
         <footer>
