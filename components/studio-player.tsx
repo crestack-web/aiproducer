@@ -116,22 +116,77 @@ export function Waveform({
     <div style={{ display: "flex", alignItems: "center", gap, height, width: "100%" }}>
       {bars.map((h, i) => {
         const played = i / bars.length < progress;
+        const barH = Math.max(8, Math.min(height, h * height));
         return (
           <div
             key={i}
             style={{
               flex: 1,
               minWidth: 2,
+              maxWidth: 8,
               borderRadius: 4,
-              height: `${Math.max(8, h * height)}px`,
+              height: barH,
               background: played || live ? color : muted,
-              boxShadow: played || live ? `0 0 8px ${color}55` : "none",
-              opacity: live ? 0.55 + h * 0.45 : 1,
-              transition: live
-                ? "height 80ms linear, opacity 80ms linear"
-                : "background 180ms ease, box-shadow 180ms ease, height 120ms ease",
+              boxShadow: played ? `0 0 8px ${color}40` : "none",
+              opacity: 1,
+              transition: live ? "none" : "background 180ms ease, height 120ms ease",
             }}
           />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Stable live bars for recording — uses scaleY, fixed widths, no layout thrash. */
+function LiveBars({
+  levels,
+  height = 48,
+  color = C.danger,
+}: {
+  levels: number[];
+  height?: number;
+  color?: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        gap: 3,
+        height,
+        width: "100%",
+      }}
+    >
+      {levels.map((v, i) => {
+        const scale = Math.max(0.12, Math.min(1, v));
+        return (
+          <div
+            key={i}
+            style={{
+              flex: "1 1 0",
+              minWidth: 2,
+              maxWidth: 6,
+              height: "100%",
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                borderRadius: 3,
+                background: color,
+                opacity: 0.45 + scale * 0.55,
+                transform: `scaleY(${scale})`,
+                transformOrigin: "center bottom",
+                willChange: "transform",
+              }}
+            />
+          </div>
         );
       })}
     </div>
@@ -414,7 +469,7 @@ export function StudioPlayer({
   );
 }
 
-/** Live mic waveform while recording — uses AnalyserNode when stream is available. */
+/** Live mic waveform while recording — stable scaleY animation. */
 export function RecordingVisualizer({
   stream,
   seconds = 0,
@@ -426,63 +481,85 @@ export function RecordingVisualizer({
   label?: string;
   seed?: string;
 }) {
-  const [bars, setBars] = useState(() => makeWave(seed, 42).map((h) => h * 0.4));
+  const BAR_COUNT = 28;
+  const shape = useMemo(() => makeWave(seed, BAR_COUNT), [seed]);
+  const [levels, setLevels] = useState(() => shape.map((h) => h * 0.35));
   const gradient = useMemo(() => coverGradientFor(seed), [seed]);
   const rafRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
+  const smoothRef = useRef(0.25);
+  const lastUiRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    let usingAnalyser = false;
 
     async function setup() {
       if (!stream) return;
       try {
-        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ctx = new Ctx();
+        const AC =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new AC();
         ctxRef.current = ctx;
         if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
         const source = ctx.createMediaStreamSource(stream);
         const analyser = ctx.createAnalyser();
-        analyser.fftSize = 128;
-        analyser.smoothingTimeConstant = 0.55;
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.7;
         source.connect(analyser);
         analyserRef.current = analyser;
+        usingAnalyser = true;
 
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const tick = () => {
+        const timeData = new Uint8Array(analyser.fftSize);
+
+        const tick = (t: number) => {
           if (cancelled) return;
-          analyser.getByteFrequencyData(data);
-          const n = 42;
-          const next: number[] = [];
-          const step = Math.max(1, Math.floor(data.length / n));
-          for (let i = 0; i < n; i++) {
-            let sum = 0;
-            for (let j = 0; j < step; j++) sum += data[Math.min(data.length - 1, i * step + j)] || 0;
-            const v = sum / step / 255;
-            next.push(Math.max(0.08, Math.min(1, v * 1.35)));
+          analyser.getByteTimeDomainData(timeData);
+          // RMS energy 0..1
+          let sum = 0;
+          for (let i = 0; i < timeData.length; i++) {
+            const v = (timeData[i] - 128) / 128;
+            sum += v * v;
           }
-          setBars(next);
+          const rms = Math.sqrt(sum / timeData.length);
+          const energy = Math.min(1, rms * 3.2);
+          smoothRef.current = smoothRef.current * 0.72 + energy * 0.28;
+
+          // Throttle React updates ~18fps
+          if (t - lastUiRef.current > 55) {
+            lastUiRef.current = t;
+            const e = smoothRef.current;
+            const phase = t / 240;
+            setLevels(
+              shape.map((base, i) => {
+                const wobble = 0.12 * Math.sin(phase + i * 0.45);
+                return Math.max(0.1, Math.min(1, base * (0.22 + e * 0.95) + wobble * e));
+              })
+            );
+          }
           rafRef.current = requestAnimationFrame(tick);
         };
         rafRef.current = requestAnimationFrame(tick);
       } catch {
-        /* fall through to synthetic animation */
+        usingAnalyser = false;
       }
     }
 
     setup();
 
-    // Synthetic fallback / boost when analyser is quiet
+    // Synthetic fallback when analyser unavailable
     const synth = setInterval(() => {
-      if (analyserRef.current) return;
-      setBars((prev) =>
-        prev.map((_, i) => {
-          const pulse = 0.35 + 0.45 * Math.abs(Math.sin(Date.now() / 220 + i * 0.4));
-          return Math.max(0.1, Math.min(1, pulse));
+      if (usingAnalyser || analyserRef.current) return;
+      const t = Date.now();
+      setLevels(
+        shape.map((base, i) => {
+          const pulse = 0.35 + 0.4 * Math.abs(Math.sin(t / 280 + i * 0.35));
+          return Math.max(0.12, Math.min(1, base * pulse));
         })
       );
-    }, 90);
+    }, 70);
 
     return () => {
       cancelled = true;
@@ -496,7 +573,7 @@ export function RecordingVisualizer({
       }
       ctxRef.current = null;
     };
-  }, [stream]);
+  }, [stream, shape]);
 
   return (
     <div
@@ -505,7 +582,8 @@ export function RecordingVisualizer({
         padding: "20px 16px 18px",
         borderRadius: 20,
         border: `1px solid rgba(232,117,106,0.35)`,
-        background: "radial-gradient(ellipse at 50% 0%, rgba(232,117,106,0.12), transparent 55%), rgba(255,255,255,0.04)",
+        background:
+          "radial-gradient(ellipse at 50% 0%, rgba(232,117,106,0.12), transparent 55%), rgba(255,255,255,0.04)",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -557,7 +635,7 @@ export function RecordingVisualizer({
       </div>
 
       <div style={{ marginTop: 18 }}>
-        <Waveform bars={bars} progress={1} height={52} color={C.danger} live />
+        <LiveBars levels={levels} height={48} color={C.danger} />
       </div>
     </div>
   );
@@ -592,11 +670,7 @@ export function PlayerLoadingState({
   return (
     <div style={{ width: "100%", maxWidth: 420, margin: "0 auto", padding: "28px 8px" }}>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div
-          style={{
-            animation: "studioPulse 1.6s ease-in-out infinite",
-          }}
-        >
+        <div style={{ animation: "studioPulse 1.6s ease-in-out infinite" }}>
           <CoverArt gradient={gradient} size={120} radius={22} />
         </div>
         <div
@@ -842,7 +916,8 @@ export function CompactAudioPlayer({
         marginTop: 14,
         padding: "18px 16px 16px",
         borderRadius: 18,
-        background: "radial-gradient(ellipse at 50% 0%, rgba(123,235,212,0.08), transparent 55%), rgba(255,255,255,0.04)",
+        background:
+          "radial-gradient(ellipse at 50% 0%, rgba(123,235,212,0.08), transparent 55%), rgba(255,255,255,0.04)",
         border: `1px solid ${withBeat ? "rgba(123,235,212,0.28)" : C.border}`,
       }}
     >
