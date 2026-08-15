@@ -43,6 +43,9 @@ export async function GET(req: Request, ctx: Ctx) {
   let audioPath: string | null = version?.audio_path ?? null;
   let source: string = version ? `audio_versions.${version.kind}.v${version.version}` : "none";
 
+  // Only fall back to songs table for finished masters — never to the raw beat.
+  // The beat has its own endpoint (/beat). Falling back to beat made the UI think
+  // a brand-new project already had a mastered download and skip plan + recording.
   if (!audioPath) {
     const { data: song } = await service
       .from("songs")
@@ -58,25 +61,12 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 
   if (!audioPath || audioPath.startsWith("mock://")) {
-    const { data: beat } = await service
-      .from("beats")
-      .select("audio_path")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (beat?.audio_path) {
-      audioPath = beat.audio_path;
-      source =
-        source.startsWith("audio_versions") || source === "songs"
-          ? `${source}+beat_fallback`
-          : "beat_fallback";
-    }
-  }
-
-  if (!audioPath) {
     return NextResponse.json(
-      { error: "No audio available yet. Finish recording and produce the song first." },
+      {
+        error: "No mastered audio yet. Finish recording, then produce the song.",
+        project_status: project.status,
+        source: "none",
+      },
       { status: 404 }
     );
   }
