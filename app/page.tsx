@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -11,13 +10,12 @@ export default function WelcomePage() {
       <div className="wrap">
         <header className="header">
           <Link href="/" className="logo">
-            <Image
+            <img
               src="/logo.svg"
               alt="Studio"
               width={28}
               height={28}
               className="logo-img"
-              priority
             />
             Studio
           </Link>
@@ -177,7 +175,7 @@ const css = `
   .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 24px 80px;width:100%}
   .header{display:flex;align-items:center;justify-content:space-between;padding:22px 0;gap:12px}
   .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none}
-  .logo-img{border-radius:6px;flex-shrink:0}
+  .logo-img{border-radius:6px;flex-shrink:0;display:block}
   .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
   .nav a{color:var(--muted);font-size:14px;font-weight:500;padding:8px 12px;border-radius:999px;text-decoration:none}
   .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#F0BC80,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none}
