@@ -1,3 +1,3 @@
-redeploy-trigger: 2026-08-15T23:35Z
-commit-to-deploy: eee0fa32a43a5767608dfa1d7a2ff67f6c915508
-reason: previous failed deploy was 560c0f8 (placeholder page.tsx); tip is healthy
+redeploy-trigger: 2026-08-16T00:45Z
+commit-to-deploy: latest-main
+reason: force deploy recording visualizer, bottom padding, countdown

@@ -112,13 +112,26 @@ export function AppShell({
       <style>{`
         .studio-sidebar { display: flex; }
         .studio-bottom-nav { display: none; }
-        .studio-main-pad { padding-bottom: 24px; }
+        .studio-main-pad {
+          padding-bottom: 32px;
+          box-sizing: border-box;
+        }
+        .studio-main-pad::after {
+          content: "";
+          display: block;
+          width: 100%;
+          height: 0;
+          pointer-events: none;
+        }
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          /* Nav is ~74px + safe-area; extra room so CTAs never sit under the bar */
+          /* Fixed nav ~74px + iOS home indicator; generous slack so CTAs never hide */
           .studio-main-pad {
-            padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
+          }
+          .studio-main-pad::after {
+            height: 24px;
           }
         }
       `}</style>
@@ -298,14 +311,17 @@ const S: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    height: 74,
-    paddingBottom: "env(safe-area-inset-bottom, 0px)",
+    minHeight: 74,
+    height: "auto",
+    paddingTop: 8,
+    paddingBottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
     background: "rgba(11,10,15,0.94)",
     backdropFilter: "blur(16px)",
     borderTop: `1px solid ${C.border}`,
     zIndex: 50,
     alignItems: "stretch",
     justifyContent: "space-around",
+    boxSizing: "border-box",
   },
   bottomItem: {
     flex: 1,
@@ -319,6 +335,7 @@ const S: Record<string, React.CSSProperties> = {
     background: "transparent",
     border: "none",
     cursor: "pointer",
-    paddingBottom: 8,
+    padding: "6px 0 4px",
+    minHeight: 56,
   },
 };
