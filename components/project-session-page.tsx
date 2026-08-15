@@ -1,1 +1,1 @@
-file:///tmp/final_page.tsx
+PLACEHOLDER_SESSION
