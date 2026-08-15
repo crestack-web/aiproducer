@@ -159,7 +159,6 @@ export default function StudioAppPage() {
         }
       }
 
-      // Beat ready — land on beat preview (user starts AI producer session from there)
       router.push(`/app/projects/${project.id}`);
     } catch (e) {
       if (projectId) await discardFailedProject(projectId);
@@ -196,7 +195,7 @@ export default function StudioAppPage() {
               <div style={{ ...S.cover, background: `linear-gradient(145deg, ${g[0]}, ${g[1]})` }}>
                 <IconMusic size={32} />
               </div>
-              <div style={S.title}>{p.title}</div>
+              <div style={S.title} title={p.title}>{p.title}</div>
               <div style={S.meta}>{[p.genre, p.mood].filter(Boolean).join(" · ") || "Untitled"}</div>
               <div style={S.status}>{statusLabel(p.status)}</div>
             </Link>
@@ -228,7 +227,7 @@ export default function StudioAppPage() {
                 <IconMusic size={18} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={S.listTitle}>{p.title || "Untitled"}</div>
+                <div style={S.listTitle} title={p.title || "Untitled"}>{p.title || "Untitled"}</div>
                 <div style={S.listMeta}>{meta || "Untitled"}</div>
               </div>
               <div style={S.listRight}>{date}</div>
@@ -241,7 +240,20 @@ export default function StudioAppPage() {
 
   return (
     <div style={S.shell}>
-      <style>{`\n        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');\n        html, body { height: 100%; overflow: hidden; }\n        .studio-bottom-nav { display: none; }\n        @media (max-width: 860px) {\n          .studio-sidebar { display: none !important; }\n          .studio-bottom-nav { display: flex !important; }\n          .studio-main-inner { padding: 24px 16px 100px !important; }\n          .studio-hero-art { display: none !important; }\n          .studio-cta-row { flex-direction: column !important; }\n        }\n        input[type=range] { -webkit-appearance: none; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.12); width: 100%; }\n        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 999px; background: #E7A961; box-shadow: 0 0 0 4px rgba(231,169,97,0.2); cursor: pointer; }\n      `}</style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+        html, body { height: 100%; overflow: hidden; }
+        .studio-bottom-nav { display: none; }
+        @media (max-width: 860px) {
+          .studio-sidebar { display: none !important; }
+          .studio-bottom-nav { display: flex !important; }
+          .studio-main-inner { padding: 24px 16px 100px !important; }
+          .studio-hero-art { display: none !important; }
+          .studio-cta-row { flex-direction: column !important; }
+        }
+        input[type=range] { -webkit-appearance: none; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.12); width: 100%; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 999px; background: #E7A961; box-shadow: 0 0 0 4px rgba(231,169,97,0.2); cursor: pointer; }
+      `}</style>
 
       <aside className="studio-sidebar" style={S.sidebar}>
         <div style={S.brand}>◆ STUDIO</div>
@@ -328,7 +340,7 @@ export default function StudioAppPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
                     <input ref={fileRef} type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm" style={{ display: "none" }} onChange={(e) => setBeatFile(e.target.files?.[0] || null)} />
                     <button type="button" style={S.secondary} onClick={() => fileRef.current?.click()}>{beatFile ? "Change file" : "Choose beat file"}</button>
-                    <span style={{ fontSize: 13, color: C.textMuted }}>{beatFile ? beatFile.name : "WAV, MP3, M4A…"}</span>
+                    <span style={{ fontSize: 13, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{beatFile ? beatFile.name : "WAV, MP3, M4A…"}</span>
                   </div>
                 )}
                 {error && <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 13.5 }}>{error}</div>}
@@ -364,7 +376,7 @@ export default function StudioAppPage() {
             <section style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>
               <div style={S.eyebrow}>◆ PROFILE</div>
               <div style={{ ...S.avatar, width: 84, height: 84, fontSize: 28, margin: "12px auto" }}>{initials || "A"}</div>
-              <div style={{ fontFamily: "Fraunces, Georgia, serif", fontSize: 22 }}>{userName}</div>
+              <div style={{ fontFamily: "Fraunces, Georgia, serif", fontSize: 22, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{userName}</div>
               <p style={{ color: C.textMuted, marginTop: 8 }}>{projects.length} session{projects.length === 1 ? "" : "s"}</p>
               <button type="button" style={{ ...S.secondary, marginTop: 24 }} onClick={signOut}>Log out</button>
             </section>
@@ -417,9 +429,18 @@ const S: Record<string, React.CSSProperties> = {
     textDecoration: "none", color: "inherit", overflow: "hidden", minWidth: 0,
   },
   cover: { width: "100%", aspectRatio: "1", borderRadius: 14, border: `1px solid ${C.border}`, display: "grid", placeItems: "center" },
-  title: { fontFamily: "Fraunces, Georgia, serif", fontSize: 17, marginTop: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  meta: { fontSize: 13, color: C.textMuted, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  status: { marginTop: 10, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", color: C.brass, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  title: {
+    fontFamily: "Fraunces, Georgia, serif", fontSize: 17, marginTop: 12, color: C.text,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  meta: {
+    fontSize: 13, color: C.textMuted, marginTop: 4,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
+  status: {
+    marginTop: 10, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", color: C.brass,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
   list: { display: "flex", flexDirection: "column", gap: 2, width: "100%", minWidth: 0 },
   listRow: {
     display: "flex", alignItems: "center", gap: 14, padding: "12px 8px", borderRadius: 14,
