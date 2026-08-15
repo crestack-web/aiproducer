@@ -112,10 +112,14 @@ export function AppShell({
       <style>{`
         .studio-sidebar { display: flex; }
         .studio-bottom-nav { display: none; }
+        .studio-main-pad { padding-bottom: 24px; }
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          .studio-main-pad { padding-bottom: 96px !important; }
+          /* Nav is ~74px + safe-area; extra room so CTAs never sit under the bar */
+          .studio-main-pad {
+            padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)) !important;
+          }
         }
       `}</style>
 
@@ -287,6 +291,7 @@ const S: Record<string, React.CSSProperties> = {
     height: "100%",
     overflowY: "auto",
     background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)`,
+    WebkitOverflowScrolling: "touch",
   },
   bottomNav: {
     position: "fixed",
@@ -294,7 +299,7 @@ const S: Record<string, React.CSSProperties> = {
     right: 0,
     bottom: 0,
     height: 74,
-    paddingBottom: "env(safe-area-inset-bottom)",
+    paddingBottom: "env(safe-area-inset-bottom, 0px)",
     background: "rgba(11,10,15,0.94)",
     backdropFilter: "blur(16px)",
     borderTop: `1px solid ${C.border}`,
