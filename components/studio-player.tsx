@@ -15,6 +15,7 @@ const C = {
   textMuted: "#9B96A3",
   textFaint: "#5C5866",
   waveMuted: "rgba(255,255,255,0.14)",
+  danger: "#E8756A",
 };
 
 const COVER_GRADIENTS: [string, string][] = [
@@ -84,6 +85,16 @@ function MusicIcon({ size = 28 }: { size?: number }) {
   );
 }
 
+function MicIcon({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+      <rect x="9" y="2" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" strokeLinecap="round" />
+      <path d="M12 18v3M9 21h6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function Waveform({
   bars,
   progress = 0,
@@ -113,10 +124,11 @@ export function Waveform({
               minWidth: 2,
               borderRadius: 4,
               height: `${Math.max(8, h * height)}px`,
-              background: played ? color : muted,
-              boxShadow: played ? `0 0 8px ${color}55` : "none",
+              background: played || live ? color : muted,
+              boxShadow: played || live ? `0 0 8px ${color}55` : "none",
+              opacity: live ? 0.55 + h * 0.45 : 1,
               transition: live
-                ? "height 120ms ease"
+                ? "height 80ms linear, opacity 80ms linear"
                 : "background 180ms ease, box-shadow 180ms ease, height 120ms ease",
             }}
           />
@@ -131,11 +143,13 @@ export function CoverArt({
   size = 56,
   radius = 12,
   imageUrl,
+  children,
 }: {
   gradient: [string, string];
   size?: number;
   radius?: number;
   imageUrl?: string | null;
+  children?: React.ReactNode;
 }) {
   return (
     <div
@@ -153,6 +167,7 @@ export function CoverArt({
         justifyContent: "center",
         position: "relative",
         overflow: "hidden",
+        color: "rgba(255,255,255,0.7)",
       }}
     >
       <div
@@ -163,7 +178,7 @@ export function CoverArt({
           pointerEvents: "none",
         }}
       />
-      {!imageUrl && <MusicIcon size={size * 0.32} />}
+      {children ?? (!imageUrl && <MusicIcon size={size * 0.32} />)}
     </div>
   );
 }
@@ -399,6 +414,221 @@ export function StudioPlayer({
   );
 }
 
+/** Live mic waveform while recording — uses AnalyserNode when stream is available. */
+export function RecordingVisualizer({
+  stream,
+  seconds = 0,
+  label = "Recording",
+  seed = "recording",
+}: {
+  stream?: MediaStream | null;
+  seconds?: number;
+  label?: string;
+  seed?: string;
+}) {
+  const [bars, setBars] = useState(() => makeWave(seed, 42).map((h) => h * 0.4));
+  const gradient = useMemo(() => coverGradientFor(seed), [seed]);
+  const rafRef = useRef<number | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function setup() {
+      if (!stream) return;
+      try {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        ctxRef.current = ctx;
+        if (ctx.state === "suspended") await ctx.resume().catch(() => undefined);
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 128;
+        analyser.smoothingTimeConstant = 0.55;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          if (cancelled) return;
+          analyser.getByteFrequencyData(data);
+          const n = 42;
+          const next: number[] = [];
+          const step = Math.max(1, Math.floor(data.length / n));
+          for (let i = 0; i < n; i++) {
+            let sum = 0;
+            for (let j = 0; j < step; j++) sum += data[Math.min(data.length - 1, i * step + j)] || 0;
+            const v = sum / step / 255;
+            next.push(Math.max(0.08, Math.min(1, v * 1.35)));
+          }
+          setBars(next);
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      } catch {
+        /* fall through to synthetic animation */
+      }
+    }
+
+    setup();
+
+    // Synthetic fallback / boost when analyser is quiet
+    const synth = setInterval(() => {
+      if (analyserRef.current) return;
+      setBars((prev) =>
+        prev.map((_, i) => {
+          const pulse = 0.35 + 0.45 * Math.abs(Math.sin(Date.now() / 220 + i * 0.4));
+          return Math.max(0.1, Math.min(1, pulse));
+        })
+      );
+    }, 90);
+
+    return () => {
+      cancelled = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      clearInterval(synth);
+      analyserRef.current = null;
+      try {
+        ctxRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      ctxRef.current = null;
+    };
+  }, [stream]);
+
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        padding: "20px 16px 18px",
+        borderRadius: 20,
+        border: `1px solid rgba(232,117,106,0.35)`,
+        background: "radial-gradient(ellipse at 50% 0%, rgba(232,117,106,0.12), transparent 55%), rgba(255,255,255,0.04)",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ position: "relative" }}>
+          <CoverArt gradient={gradient} size={88} radius={20}>
+            <MicIcon size={32} />
+          </CoverArt>
+          <span
+            style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              width: 14,
+              height: 14,
+              borderRadius: 99,
+              background: C.danger,
+              boxShadow: `0 0 12px ${C.danger}`,
+              border: "2px solid #0B0A0F",
+            }}
+          />
+        </div>
+        <div
+          style={{
+            marginTop: 14,
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+            fontSize: 11,
+            letterSpacing: 1.2,
+            textTransform: "uppercase",
+            color: C.danger,
+            fontWeight: 600,
+          }}
+        >
+          ● {label}
+        </div>
+        <div
+          style={{
+            marginTop: 6,
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+            fontSize: 28,
+            color: C.signal,
+            fontWeight: 500,
+          }}
+        >
+          {fmtTime(seconds)}
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: C.textMuted, textAlign: "center" }}>
+          Singing over the beat — stop when you’re done
+        </p>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <Waveform bars={bars} progress={1} height={52} color={C.danger} live />
+      </div>
+    </div>
+  );
+}
+
+/** Animated player shell for loading / analyzing / producing states. */
+export function PlayerLoadingState({
+  title,
+  subtitle,
+  seed = "loading",
+}: {
+  title: string;
+  subtitle?: string;
+  seed?: string;
+}) {
+  const baseBars = useMemo(() => makeWave(seed, 40), [seed]);
+  const [bars, setBars] = useState(baseBars);
+  const gradient = useMemo(() => coverGradientFor(seed), [seed]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setBars(
+        baseBars.map((h, i) => {
+          const wobble = 0.18 * Math.sin(Date.now() / 200 + i * 0.5);
+          return Math.max(0.12, Math.min(1, h + wobble));
+        })
+      );
+    }, 110);
+    return () => clearInterval(id);
+  }, [baseBars]);
+
+  return (
+    <div style={{ width: "100%", maxWidth: 420, margin: "0 auto", padding: "28px 8px" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div
+          style={{
+            animation: "studioPulse 1.6s ease-in-out infinite",
+          }}
+        >
+          <CoverArt gradient={gradient} size={120} radius={22} />
+        </div>
+        <div
+          style={{
+            fontFamily: "Georgia, 'Fraunces', serif",
+            fontSize: 20,
+            color: C.text,
+            marginTop: 20,
+            textAlign: "center",
+          }}
+        >
+          {title}
+        </div>
+        {subtitle && (
+          <p style={{ margin: "8px 0 0", fontSize: 13.5, color: C.textMuted, textAlign: "center", lineHeight: 1.45 }}>
+            {subtitle}
+          </p>
+        )}
+      </div>
+      <div style={{ marginTop: 28 }}>
+        <Waveform bars={bars} progress={0.55} height={48} color={C.brass} live />
+      </div>
+      <style>{`
+        @keyframes studioPulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.04); opacity: 0.88; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export function CompactAudioPlayer({
   src,
   label = "Your take",
@@ -426,6 +656,7 @@ export function CompactAudioPlayer({
   const [duration, setDuration] = useState(0);
   const [liveBars, setLiveBars] = useState<number[] | null>(null);
   const baseBars = useMemo(() => makeWave(seed || label || "take", 40), [seed, label]);
+  const gradient = useMemo(() => coverGradientFor(seed || label || "take"), [seed, label]);
 
   const beatStartSec = Math.max(0, (beatStartMs ?? 0) / 1000);
   const beatEndSec =
@@ -471,7 +702,11 @@ export function CompactAudioPlayer({
       return;
     }
     if (Math.abs(beat.currentTime - target) > 0.12) {
-      try { beat.currentTime = target; } catch { /* ignore */ }
+      try {
+        beat.currentTime = target;
+      } catch {
+        /* ignore */
+      }
     }
     if (!vocal.paused && beat.paused && (beatEndSec == null || target < beatEndSec)) {
       beat.play().catch(() => undefined);
@@ -508,7 +743,11 @@ export function CompactAudioPlayer({
       const beat = beatRef.current;
       if (beat) {
         beat.pause();
-        try { beat.currentTime = beatStartSec; } catch { /* ignore */ }
+        try {
+          beat.currentTime = beatStartSec;
+        } catch {
+          /* ignore */
+        }
       }
     };
 
@@ -553,7 +792,11 @@ export function CompactAudioPlayer({
         vocal.volume = vocalVolume;
         if (beat && beatSrc) {
           beat.volume = beatVolume;
-          try { beat.currentTime = beatStartSec + (vocal.currentTime || 0); } catch { /* ignore */ }
+          try {
+            beat.currentTime = beatStartSec + (vocal.currentTime || 0);
+          } catch {
+            /* ignore */
+          }
           await Promise.all([beat.play().catch(() => undefined), vocal.play()]);
         } else {
           await vocal.play();
@@ -578,7 +821,11 @@ export function CompactAudioPlayer({
       setTime(t);
       const beat = beatRef.current;
       if (beat && beatSrc) {
-        try { beat.currentTime = beatStartSec + t; } catch { /* ignore */ }
+        try {
+          beat.currentTime = beatStartSec + t;
+        } catch {
+          /* ignore */
+        }
       }
     },
     [duration, beatSrc, beatStartSec]
@@ -593,73 +840,75 @@ export function CompactAudioPlayer({
     <div
       style={{
         marginTop: 14,
-        padding: "14px 14px 12px",
-        borderRadius: 16,
-        background: C.surface,
-        border: `1px solid ${C.border}`,
+        padding: "18px 16px 16px",
+        borderRadius: 18,
+        background: "radial-gradient(ellipse at 50% 0%, rgba(123,235,212,0.08), transparent 55%), rgba(255,255,255,0.04)",
+        border: `1px solid ${withBeat ? "rgba(123,235,212,0.28)" : C.border}`,
       }}
     >
       <audio ref={vocalRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
       <audio ref={beatRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
 
-      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 10, letterSpacing: 0.3 }}>
-        {label}
-        {withBeat && <span style={{ color: C.brass }}> · with beat</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+        <CoverArt gradient={gradient} size={52} radius={12} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</div>
+          <div style={{ fontSize: 12, color: withBeat ? C.signal : C.textFaint, marginTop: 2 }}>
+            {withBeat ? "Voice + beat (section)" : "Voice only"}
+          </div>
+        </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div
+        role="slider"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+        aria-label="Seek take"
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          seekRatio((e.clientX - rect.left) / rect.width);
+        }}
+        style={{ cursor: "pointer" }}
+      >
+        <Waveform bars={bars} progress={progress} height={44} color={C.signal} live={playing} />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginTop: 8,
+          fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+          fontSize: 11,
+          color: C.textFaint,
+        }}
+      >
+        <span>{fmtTime(time)}</span>
+        <span>{fmtTime(duration)}</span>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "center", marginTop: 14 }}>
         <button
           type="button"
           onClick={toggle}
           aria-label={playing ? "Pause take" : "Play take with beat"}
           style={{
-            width: 44,
-            height: 44,
+            width: 52,
+            height: 52,
             borderRadius: 999,
             border: "none",
-            flexShrink: 0,
             background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             color: "#1A1208",
-            boxShadow: "0 8px 20px -8px rgba(231,169,97,0.55)",
+            boxShadow: "0 10px 24px -8px rgba(231,169,97,0.55)",
             cursor: "pointer",
             padding: 0,
           }}
         >
-          {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
+          {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
         </button>
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            role="slider"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(progress * 100)}
-            aria-label="Seek take"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              seekRatio((e.clientX - rect.left) / rect.width);
-            }}
-            style={{ cursor: "pointer" }}
-          >
-            <Waveform bars={bars} progress={progress} height={36} color={C.signal} live={playing} />
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              marginTop: 6,
-              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-              fontSize: 10.5,
-              color: C.textFaint,
-            }}
-          >
-            <span>{fmtTime(time)}</span>
-            <span>{fmtTime(duration)}</span>
-          </div>
-        </div>
       </div>
     </div>
   );
