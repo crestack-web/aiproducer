@@ -2,6 +2,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { MockMixProvider } from "@/lib/providers/mock-mix";
 import { RoExMixProvider, mapMusicalStyle, stemToInstrumentGroup } from "@/lib/providers/roex";
 import type { ArrangementPlacement, AudioMixProvider, StemKind } from "@/lib/audio/types";
+import { resolveAudioUrl } from "@/lib/storage";
 
 type RecordingRow = { id: string; task_id: string; is_selected: boolean | null };
 
@@ -22,12 +23,16 @@ type TakeRow = {
 
 type StemRow = { audio_path: string; kind: string };
 
+/**
+ * Production default: use RoEx whenever ROEX_API_KEY is configured.
+ * Explicit AUDIO_PIPELINE_MODE=mock still forces mock (local free runs).
+ */
 export function getPipelineMode(): "mock" | "roex" {
   const m = (process.env.AUDIO_PIPELINE_MODE || "").toLowerCase();
+  if (m === "mock") return "mock";
   if (m === "roex") return "roex";
-  if (process.env.DEV_MODE === "true" || process.env.NODE_ENV === "development") return "mock";
-  if (!process.env.ROEX_API_KEY) return "mock";
-  return m === "mock" ? "mock" : "roex";
+  if (process.env.ROEX_API_KEY) return "roex";
+  return "mock";
 }
 
 export function getMixProvider(): AudioMixProvider {
@@ -41,6 +46,18 @@ function vocalStemKind(taskType: string): StemKind {
   if (t.includes("adlib") || t.includes("call")) return "ADLIBS";
   if (t.includes("background") || t.includes("hum") || t.includes("texture")) return "BACKGROUND";
   return "LEAD";
+}
+
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Resolve storage object paths to HTTPS URLs RoEx can fetch. */
+async function toReadableUrl(path: string | null | undefined): Promise<string | null> {
+  if (!path || path.startsWith("mock://")) return null;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  // 2h expiry so RoEx mix/master jobs can finish
+  return resolveAudioUrl(path, 7200);
 }
 
 export async function enqueueProduceSong(projectId: string, userId: string) {
@@ -212,22 +229,40 @@ export async function tickProduceJob(jobId: string) {
 
     const { data: project } = await supabase.from("projects").select("*").eq("id", projectId).single();
     const style = mapMusicalStyle(project?.genre);
+    // Production: preview unless ROEX_ALLOW_FULL=true (full/paid masters)
     const previewOnly = mode === "mock" || process.env.ROEX_ALLOW_FULL !== "true";
     const mixTracks = ((await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data ||
       []) as StemRow[];
 
+    // RoEx needs publicly fetchable HTTPS URLs, not storage object keys
+    const resolvedTracks: { path: string; kind: StemKind }[] = [];
+    for (const s of mixTracks) {
+      const kind = s.kind as StemKind;
+      if (mode === "roex") {
+        const url = await toReadableUrl(s.audio_path);
+        if (!url) {
+          console.warn("Skipping stem without readable URL", s.kind, s.audio_path);
+          continue;
+        }
+        resolvedTracks.push({ path: url, kind });
+      } else {
+        resolvedTracks.push({ path: s.audio_path, kind });
+      }
+    }
+
+    if (mode === "roex" && resolvedTracks.length === 0) {
+      throw new Error("No stems with readable URLs for RoEx mix. Check storage paths and signed URLs.");
+    }
+
     const mixStart = await provider.startMix(
-      mixTracks.map((s: StemRow) => {
-        const kind = s.kind as StemKind;
-        return {
-          path: s.audio_path,
-          kind,
-          instrumentGroup: stemToInstrumentGroup(kind),
-          presenceSetting: (kind === "LEAD" ? "LEAD" : "NORMAL") as "LEAD" | "NORMAL",
-          panPreference: "CENTRE" as const,
-          reverbPreference: (kind === "LEAD" ? "LOW" : "NONE") as "LOW" | "NONE",
-        };
-      }),
+      resolvedTracks.map((t) => ({
+        path: t.path,
+        kind: t.kind,
+        instrumentGroup: stemToInstrumentGroup(t.kind),
+        presenceSetting: (t.kind === "LEAD" ? "LEAD" : "NORMAL") as "LEAD" | "NORMAL",
+        panPreference: "CENTRE" as const,
+        reverbPreference: (t.kind === "LEAD" ? "LOW" : "NONE") as "LOW" | "NONE",
+      })),
       { musicalStyle: style, preview: previewOnly }
     );
 
@@ -236,7 +271,18 @@ export async function tickProduceJob(jobId: string) {
       .update({ provider_task_id: mixStart.provider_task_id, provider: provider.name })
       .eq("id", jobId);
 
-    const mixDone = await provider.retrieveMix(mixStart.provider_task_id);
+    // Poll retrieve until download URL appears (RoEx jobs are async)
+    let mixDone = await provider.retrieveMix(mixStart.provider_task_id);
+    if (mode === "roex") {
+      for (let i = 0; i < 12 && !mixDone.download_url; i++) {
+        await sleep(5000);
+        mixDone = await provider.retrieveMix(mixStart.provider_task_id);
+      }
+      if (!mixDone.download_url) {
+        throw new Error("RoEx mix did not return a download URL in time");
+      }
+    }
+
     const { data: versions } = await supabase
       .from("audio_versions")
       .select("version")
@@ -274,6 +320,7 @@ export async function tickProduceJob(jobId: string) {
       notes: analysis.notes,
     });
 
+    // Only hard-fail on explicit fail; needs_review continues (RoEx analysis often returns raw metrics)
     if (analysis.status === "fail") {
       await supabase
         .from("jobs")
@@ -294,7 +341,18 @@ export async function tickProduceJob(jobId: string) {
       desiredLoudness: "MEDIUM",
       preview: previewOnly,
     });
-    const masterDone = await provider.retrieveMaster(masterStart.provider_task_id);
+
+    let masterDone = await provider.retrieveMaster(masterStart.provider_task_id);
+    if (mode === "roex") {
+      for (let i = 0; i < 12 && !masterDone.download_url; i++) {
+        await sleep(5000);
+        masterDone = await provider.retrieveMaster(masterStart.provider_task_id);
+      }
+      if (!masterDone.download_url) {
+        throw new Error("RoEx master did not return a download URL in time");
+      }
+    }
+
     const masterPath = masterDone.download_url || masterDone.local_path || mixPath;
 
     const { data: masterVersions } = await supabase
@@ -328,7 +386,7 @@ export async function tickProduceJob(jobId: string) {
       stage: "final_qc",
       status: "pass",
       metrics: { mock: mode === "mock", path: masterPath },
-      notes: mode === "mock" ? "Mock QC pass" : "Basic path QC pass",
+      notes: mode === "mock" ? "Mock QC pass" : "RoEx master path QC pass",
     });
 
     await supabase.from("songs").insert({
@@ -349,6 +407,7 @@ export async function tickProduceJob(jobId: string) {
           mix_version_id: mixVersion?.id,
           master_version_id: masterVersion?.id,
           mode,
+          provider: provider.name,
         },
         completed_at: new Date().toISOString(),
       })
