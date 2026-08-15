@@ -16,22 +16,38 @@ export async function POST(_req: Request, ctx: Ctx) {
   try {
     const result = await enqueueProduceSong(projectId, user.id);
 
-    if (getPipelineMode() === "mock" && result.status === "queued") {
+    // Always advance the job in this request. There is no separate worker.
+    // Previously only mock mode was ticked, so real jobs stayed stuck in "queued".
+    if (result.status === "queued" || result.status === "processing") {
       try {
         await tickProduceJob(result.job_id);
       } catch (e) {
-        console.error("mock tick", e);
+        console.error("produce tick", e);
+        const msg = e instanceof Error ? e.message : "Produce pipeline failed";
+        return NextResponse.json(
+          {
+            job_id: result.job_id,
+            status: "failed",
+            error: msg,
+            mode: getPipelineMode(),
+          },
+          { status: 500 }
+        );
       }
     }
+
+    const service = createServiceClient();
+    const { data: job } = await service.from("jobs").select("*").eq("id", result.job_id).maybeSingle();
 
     return NextResponse.json(
       {
         job_id: result.job_id,
-        status: result.status,
+        status: job?.status || result.status,
         deduped: result.deduped,
         mode: getPipelineMode(),
+        error: job?.error || null,
       },
-      { status: result.deduped ? 200 : 202 }
+      { status: job?.status === "failed" ? 500 : result.deduped ? 200 : 202 }
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not start produce";
@@ -55,7 +71,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const service = createServiceClient();
-  const { data: job } = await service
+  let { data: job } = await service
     .from("jobs")
     .select("*")
     .eq("project_id", projectId)
@@ -63,6 +79,17 @@ export async function GET(_req: Request, ctx: Ctx) {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Advance stuck jobs when the client polls
+  if (job && (job.status === "queued" || job.status === "processing")) {
+    try {
+      await tickProduceJob(job.id);
+      const { data: refreshed } = await service.from("jobs").select("*").eq("id", job.id).maybeSingle();
+      if (refreshed) job = refreshed;
+    } catch (e) {
+      console.error("produce poll tick", e);
+    }
+  }
 
   const { data: master } = await service
     .from("audio_versions")
@@ -82,8 +109,10 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
   }
 
+  const { data: projNow } = await service.from("projects").select("status").eq("id", projectId).maybeSingle();
+
   return NextResponse.json({
-    project_status: project.status,
+    project_status: projNow?.status || project.status,
     job,
     master,
     master_url,
