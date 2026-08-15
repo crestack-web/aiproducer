@@ -26,7 +26,8 @@ type ProjectMeta = {
   tempo?: number | null;
 };
 
-type Screen = "beat" | "analyzing" | "plan" | "session" | "done";
+/** Strict product steps — never skip past recording into download. */
+type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
 
 const C = {
   bg: "#0B0A0F",
@@ -54,6 +55,23 @@ function sectionLabel(t: Task) {
   return (t.metadata?.section_label || t.title || humanTitle(t.type) || "SECTION").toUpperCase();
 }
 
+function isTaskOpen(t: Task) {
+  return t.status === "pending" || t.status === "in_progress";
+}
+
+function isTaskDone(t: Task) {
+  return t.status === "completed" || t.status === "skipped";
+}
+
+/** Required takes must be finished before produce. Optional can stay open. */
+function requiredOpen(tasks: Task[]) {
+  return tasks.filter((t) => t.required && isTaskOpen(t));
+}
+
+function anyOpen(tasks: Task[]) {
+  return tasks.filter((t) => isTaskOpen(t));
+}
+
 export default function ProjectDetailPage() {
   const id = useParams().id as string;
   const [project, setProject] = useState<ProjectMeta | null>(null);
@@ -77,12 +95,55 @@ export default function ProjectDetailPage() {
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const startedAtRef = useRef(0);
 
-  const pending = useMemo(
-    () => tasks.filter((t) => t.status === "pending" || t.status === "in_progress"),
-    [tasks]
+  const openTasks = useMemo(() => anyOpen(tasks), [tasks]);
+  const requiredPending = useMemo(() => requiredOpen(tasks), [tasks]);
+  // Prefer next required take; fall back to any open optional only after required are done
+  const current = requiredPending[0] || openTasks[0] || null;
+  const completedCount = tasks.filter((t) => isTaskDone(t)).length;
+  const requiredTotal = tasks.filter((t) => t.required).length;
+  const requiredDone = tasks.filter((t) => t.required && isTaskDone(t)).length;
+  const allRequiredDone = requiredTotal > 0 && requiredDone >= requiredTotal;
+
+  const resolveScreen = useCallback(
+    (proj: ProjectMeta | null, list: Task[], hasMaster: boolean) => {
+      const st = proj?.status || "";
+
+      // Only show download/master UI when we truly have a finished master
+      if (hasMaster || st === "complete") {
+        return "done" as Screen;
+      }
+
+      // Still mixing/mastering → assemble (not download)
+      if (st === "processing" || st === "mixing" || st === "mastering") {
+        return "assemble" as Screen;
+      }
+
+      const reqOpen = requiredOpen(list);
+      const open = anyOpen(list);
+      const hasTasks = list.length > 0;
+      const reqDone = hasTasks && requiredOpen(list).length === 0 && list.some((t) => t.required);
+
+      // Recordings finished (required) but no master yet → produce step
+      if (reqDone || (hasTasks && open.length === 0)) {
+        return "assemble" as Screen;
+      }
+
+      // Mid-session: at least one take in progress/completed, still open work
+      const inSession =
+        hasTasks &&
+        list.some((t) => isTaskDone(t) || t.status === "in_progress") &&
+        open.length > 0;
+
+      if (inSession || (hasTasks && open.length > 0 && list.some((t) => isTaskDone(t)))) {
+        return "session" as Screen;
+      }
+
+      if (st === "analyzing") return "analyzing";
+      if (hasTasks || st === "blueprint_ready") return "plan";
+      return "beat";
+    },
+    []
   );
-  const current = pending[0] || null;
-  const completedCount = tasks.filter((t) => t.status === "completed").length;
 
   const load = useCallback(async () => {
     try {
@@ -116,10 +177,9 @@ export default function ProjectDetailPage() {
         st === "blueprint_ready" ||
         st === "recording";
 
-      // Early stages never show a master download
-      if (early) {
-        setMasterUrl(null);
-      } else {
+      let hasMaster = false;
+      // Never treat early-stage projects as having a master download
+      if (!early && (st === "complete" || st === "mixing" || st === "mastering" || st === "processing")) {
         const dl = await fetch(`/api/projects/${id}/download?kind=master`);
         if (dl.ok) {
           const j = await dl.json();
@@ -131,46 +191,32 @@ export default function ProjectDetailPage() {
           ) {
             setMasterUrl(j.download_url);
             if (j.filename) setDownloadName(j.filename);
+            hasMaster = true;
           } else {
             setMasterUrl(null);
           }
         } else {
           setMasterUrl(null);
         }
-      }
-
-      // Strict flow: beat → analyze → plan → record → produce → complete
-      const allDone = list.length > 0 && list.every((t) => t.status === "completed");
-      const inSession =
-        list.length > 0 &&
-        list.some((t) => t.status === "completed" || t.status === "in_progress") &&
-        !allDone;
-
-      if (st === "complete" || st === "processing" || st === "mixing" || st === "mastering") {
-        setScreen("done");
-      } else if (allDone) {
-        setScreen("done");
-      } else if (inSession) {
-        setScreen("session");
-        setPhase("ready");
-      } else if (st === "analyzing") {
-        setScreen("analyzing");
-      } else if (list.length > 0 || st === "blueprint_ready") {
-        setScreen("plan");
       } else {
-        setScreen("beat");
+        setMasterUrl(null);
       }
+
+      const next = resolveScreen(proj, list, hasMaster);
+      setScreen(next);
+      if (next === "session") setPhase("ready");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, resolveScreen]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Poll only while beat is still generating
   useEffect(() => {
     const st = project?.status || "";
     if (st === "complete" || st === "failed") return;
@@ -241,6 +287,7 @@ export default function ProjectDetailPage() {
               method: "POST",
             });
           }
+          // Stay on review — do NOT advance the flow until user taps Keep take
         } catch (e) {
           setError(e instanceof Error ? e.message : "Save failed");
         } finally {
@@ -267,10 +314,25 @@ export default function ProjectDetailPage() {
 
   function keepAndContinue() {
     if (!current) return;
-    setTasks((prev) => prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t)));
-    setLocalBlobUrl(null);
-    if (pending.filter((t) => t.id !== current.id).length === 0) setScreen("done");
-    else setPhase("ready");
+
+    // Optimistic local update, then decide next step from the NEW list
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
+      const stillRequired = requiredOpen(next);
+      const stillAny = anyOpen(next);
+
+      setLocalBlobUrl(null);
+
+      if (stillRequired.length > 0 || stillAny.length > 0) {
+        // More takes left — stay in session
+        setScreen("session");
+        setPhase("ready");
+      } else {
+        // All takes done → assemble/produce (NOT download)
+        setScreen("assemble");
+      }
+      return next;
+    });
   }
 
   async function startProduce() {
@@ -280,8 +342,8 @@ export default function ProjectDetailPage() {
       const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
-      for (let i = 0; i < 15; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 1200));
         const st = await fetch(`/api/projects/${id}/produce`);
         if (st.ok) {
           const s = await st.json();
@@ -293,6 +355,7 @@ export default function ProjectDetailPage() {
               if (d.download_url) {
                 setMasterUrl(d.download_url);
                 if (d.filename) setDownloadName(d.filename);
+                setScreen("done");
               }
             }
             break;
@@ -308,6 +371,10 @@ export default function ProjectDetailPage() {
   }
 
   async function downloadSong() {
+    if (!masterUrl) {
+      setError("Master is not ready yet. Produce the song first.");
+      return;
+    }
     const res = await fetch(`/api/projects/${id}/download?kind=master`);
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !j.download_url) {
@@ -430,6 +497,9 @@ export default function ProjectDetailPage() {
               <div key={t.id} style={{ padding: 14, borderRadius: 14, background: C.surface, border: `1px solid ${C.border}` }}>
                 <div style={{ fontSize: 11, color: C.brass, fontWeight: 600 }}>
                   {String(i + 1).padStart(2, "0")} · {sectionLabel(t)}
+                  {!t.required && (
+                    <span style={{ marginLeft: 8, color: C.textFaint, fontWeight: 500 }}>optional</span>
+                  )}
                 </div>
                 <div style={{ fontFamily: "Georgia,serif", fontSize: 16, marginTop: 4 }}>
                   {t.title || humanTitle(t.type)}
@@ -466,6 +536,9 @@ export default function ProjectDetailPage() {
           <div style={{ textAlign: "center", marginTop: 12 }}>
             <div style={{ fontSize: 11, color: C.brass, fontFamily: "monospace" }}>
               {Math.min(completedCount + 1, tasks.length)} of {tasks.length}
+              {requiredTotal > 0 && (
+                <span style={{ color: C.textFaint }}> · {requiredDone}/{requiredTotal} required</span>
+              )}
             </div>
             <h1 style={{ ...title, fontSize: "1.5rem" }}>{sectionLabel(current)}</h1>
             <p style={{ color: C.brass, fontSize: 14 }}>{current.reason || humanTitle(current.type)}</p>
@@ -521,18 +594,63 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {/* Safety: session with no current task → push to assemble */}
+      {screen === "session" && !current && (
+        <div style={wrap}>
+          <h1 style={{ ...title, textAlign: "center", marginTop: 40 }}>Takes captured</h1>
+          <p style={{ textAlign: "center", color: C.textMuted, marginTop: 8 }}>
+            {completedCount} of {tasks.length} parts ready. Next: mix & master.
+          </p>
+          <button type="button" style={{ ...btn, marginTop: 24 }} onClick={() => setScreen("assemble")}>
+            Continue to produce
+          </button>
+        </div>
+      )}
+
+      {screen === "assemble" && (
+        <div style={wrap}>
+          <Link href="/app" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
+            ← Projects
+          </Link>
+          <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Your performances are in</h1>
+          <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
+            {completedCount} of {tasks.length} parts captured
+            {requiredTotal > 0 ? ` · ${requiredDone}/${requiredTotal} required` : ""}.
+            <br />
+            Next: assemble, mix & master with RoEx.
+          </p>
+          {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
+          <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
+            <button type="button" style={btn} disabled={producing || !allRequiredDone} onClick={startProduce}>
+              {producing ? "Producing…" : "Produce my song"}
+            </button>
+            {!allRequiredDone && (
+              <p style={{ textAlign: "center", color: C.textFaint, fontSize: 13 }}>
+                Finish required takes before producing.
+              </p>
+            )}
+            <button
+              type="button"
+              style={btn2}
+              onClick={() => {
+                setScreen("session");
+                setPhase("ready");
+              }}
+            >
+              Back to recording
+            </button>
+          </div>
+        </div>
+      )}
+
       {screen === "done" && (
         <div style={wrap}>
           <Link href="/app" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
             ← Projects
           </Link>
-          <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>
-            {masterUrl || project?.status === "complete" ? "Your song is ready" : "Your performances are in"}
-          </h1>
+          <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Your song is ready</h1>
           <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-            {masterUrl
-              ? "Play it back, then download your master."
-              : `${completedCount} of ${tasks.length} parts captured. Next: mix & master with RoEx.`}
+            Play it back, then download your master.
           </p>
           {masterUrl && (
             <div style={{ marginTop: 24 }}>
@@ -546,7 +664,7 @@ export default function ProjectDetailPage() {
                 {producing ? "Producing…" : "Produce my song"}
               </button>
             )}
-            <button type="button" style={masterUrl ? btn : btn2} disabled={producing} onClick={downloadSong}>
+            <button type="button" style={masterUrl ? btn : btn2} disabled={producing || !masterUrl} onClick={downloadSong}>
               Download song
             </button>
           </div>
