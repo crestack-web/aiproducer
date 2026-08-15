@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createSignedDownloadUrl, createSignedUploadUrl, recordingPath, getStorageBucket } from "@/lib/storage";
+import { createServiceClient } from "@/lib/supabase/server";
+import {
+  createSignedDownloadUrl,
+  createSignedUploadUrl,
+  recordingPath,
+  getStorageBucket,
+} from "@/lib/storage";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -28,7 +34,8 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const { data: recordings, error: rErr } = await supabase
+  const service = createServiceClient();
+  const { data: recordings, error: rErr } = await service
     .from("recordings")
     .select("*")
     .eq("task_id", taskId)
@@ -75,7 +82,10 @@ export async function POST(req: Request, ctx: Ctx) {
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const { count } = await supabase
+  // Service role for reliable writes (bypass RLS edge cases on insert/select flags)
+  const service = createServiceClient();
+
+  const { count } = await service
     .from("recordings")
     .select("*", { count: "exact", head: true })
     .eq("task_id", taskId);
@@ -99,64 +109,79 @@ export async function POST(req: Request, ctx: Ctx) {
           : "webm";
 
     const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
-    const { createServiceClient } = await import("@/lib/supabase/server");
-    const service = createServiceClient();
     const buf = Buffer.from(await file.arrayBuffer());
+    if (!buf.length) {
+      return NextResponse.json({ error: "Empty audio file" }, { status: 400 });
+    }
+
     const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
       contentType: file.type || "audio/webm",
       upsert: true,
     });
     if (upErr) {
       console.error("upload", upErr);
-      return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+      return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
     }
 
     const durationMs = Number(form.get("duration_ms") || 0) || null;
 
-    await supabase.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+    // Clear previous selection for this task, then insert selected take
+    await service.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
 
-    const { data: recording, error: insErr } = await supabase
-      .from("recordings")
-      .insert({
-        project_id: task.project_id,
-        task_id: taskId,
-        audio_path: path,
-        original_path: path,
-        duration_ms: durationMs,
-        take_number: takeNumber,
-        status: "uploaded",
-        is_selected: true,
-      })
-      .select()
-      .single();
+    const baseRow = {
+      project_id: task.project_id,
+      task_id: taskId,
+      audio_path: path,
+      duration_ms: durationMs,
+      take_number: takeNumber,
+      status: "uploaded" as const,
+    };
 
-    if (insErr) {
-      const { data: fallback, error: fbErr } = await supabase
+    let recording: Record<string, unknown> | null = null;
+    let insErr: { message?: string } | null = null;
+
+    // Prefer full schema (is_selected + original_path from audio pipeline migration)
+    {
+      const { data, error } = await service
         .from("recordings")
         .insert({
-          project_id: task.project_id,
-          task_id: taskId,
-          audio_path: path,
-          duration_ms: durationMs,
-          take_number: takeNumber,
-          status: "uploaded",
+          ...baseRow,
+          original_path: path,
+          processed_path: path,
+          is_selected: true,
         })
         .select()
         .single();
-      if (fbErr || !fallback) {
-        return NextResponse.json({ error: "Could not save recording" }, { status: 500 });
-      }
-      await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
-      let audio_url: string | null = null;
-      try {
-        audio_url = await createSignedDownloadUrl(path, 3600);
-      } catch {
-        /* ignore */
-      }
-      return NextResponse.json({ recording: { ...fallback, audio_url } }, { status: 201 });
+      if (!error && data) recording = data;
+      else insErr = error;
     }
 
-    await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+    if (!recording) {
+      const { data, error } = await service
+        .from("recordings")
+        .insert({ ...baseRow, is_selected: true })
+        .select()
+        .single();
+      if (!error && data) recording = data;
+      else insErr = error;
+    }
+
+    if (!recording) {
+      const { data, error } = await service.from("recordings").insert(baseRow).select().single();
+      if (!error && data) {
+        recording = data;
+        // Best-effort select flag
+        await service.from("recordings").update({ is_selected: true }).eq("id", data.id);
+      } else {
+        console.error("insert recording", insErr || error);
+        return NextResponse.json(
+          { error: `Could not save recording: ${(insErr || error)?.message || "unknown"}` },
+          { status: 500 }
+        );
+      }
+    }
+
+    await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
 
     let audio_url: string | null = null;
     try {
@@ -165,7 +190,15 @@ export async function POST(req: Request, ctx: Ctx) {
       /* ignore */
     }
 
-    return NextResponse.json({ recording: { ...recording, audio_url } }, { status: 201 });
+    return NextResponse.json(
+      {
+        recording: { ...recording, audio_url },
+        saved: true,
+        project_id: task.project_id,
+        task_id: taskId,
+      },
+      { status: 201 }
+    );
   }
 
   let duration_ms: number | undefined;
@@ -189,7 +222,7 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not create upload URL" }, { status: 500 });
   }
 
-  const { data: recording, error: insErr } = await supabase
+  const { data: recording, error: insErr } = await service
     .from("recordings")
     .insert({
       project_id: task.project_id,
@@ -198,12 +231,13 @@ export async function POST(req: Request, ctx: Ctx) {
       duration_ms: duration_ms ?? null,
       take_number: takeNumber,
       status: "uploaded",
+      is_selected: true,
       metadata: { pending_client_upload: true },
     })
     .select()
     .single();
 
-  if (insErr) {
+  if (insErr || !recording) {
     console.error("insert recording", insErr);
     return NextResponse.json({ error: "Could not save recording row" }, { status: 500 });
   }

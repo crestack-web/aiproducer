@@ -56,7 +56,6 @@ async function sleep(ms: number) {
 async function toReadableUrl(path: string | null | undefined): Promise<string | null> {
   if (!path || path.startsWith("mock://")) return null;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  // 2h expiry so RoEx mix/master jobs can finish
   return resolveAudioUrl(path, 7200);
 }
 
@@ -73,21 +72,81 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
 
   if (existing) return { job_id: existing.id, status: existing.status, deduped: true };
 
-  const { data: selected } = await supabase
+  // Load all recordings for this project (service role — full visibility)
+  let { data: selected, error: recErr } = await supabase
     .from("recordings")
-    .select("id, task_id, is_selected")
+    .select("id, task_id, is_selected, audio_path, project_id")
     .eq("project_id", projectId);
 
-  const rows = (selected || []) as RecordingRow[];
+  if (recErr) {
+    console.error("enqueueProduceSong recordings", recErr);
+  }
+
+  let rows = (selected || []) as RecordingRow[];
+
+  // Fallback: find recordings via completed tasks if project_id filter returned empty
+  // (handles any legacy rows missing project_id mismatch)
+  if (rows.length === 0) {
+    const { data: completedTasks } = await supabase
+      .from("recording_tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("status", "completed");
+
+    const taskIds = (completedTasks || []).map((t: { id: string }) => t.id);
+    if (taskIds.length > 0) {
+      const { data: viaTasks } = await supabase
+        .from("recordings")
+        .select("id, task_id, is_selected, audio_path, project_id")
+        .in("task_id", taskIds);
+      rows = (viaTasks || []) as RecordingRow[];
+
+      // Backfill project_id if missing
+      for (const r of rows) {
+        const any = r as RecordingRow & { project_id?: string };
+        if (!any.project_id) {
+          await supabase.from("recordings").update({ project_id: projectId }).eq("id", r.id);
+        }
+      }
+    }
+  }
+
   const hasSelected = rows.some((r: RecordingRow) => Boolean(r.is_selected));
   const hasAny = rows.length > 0;
-  if (!hasAny) throw new Error("No recordings found. Complete at least one take first.");
 
+  if (!hasAny) {
+    const { count: completedCount } = await supabase
+      .from("recording_tasks")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .eq("status", "completed");
+
+    if ((completedCount || 0) > 0) {
+      throw new Error(
+        "Takes were marked complete but no audio files were saved. Go back and re-record each required part, wait for “Saved”, then Keep take."
+      );
+    }
+    throw new Error("No recordings found. Complete at least one take first.");
+  }
+
+  // Ensure one selected take per task
   if (!hasSelected) {
     const byTask = new Map<string, string>();
     for (const r of rows) byTask.set(r.task_id, r.id);
     for (const recId of byTask.values()) {
       await supabase.from("recordings").update({ is_selected: true }).eq("id", recId);
+    }
+  } else {
+    // Still ensure every task with a recording has at least one selected
+    const byTask = new Map<string, RecordingRow[]>();
+    for (const r of rows) {
+      if (!byTask.has(r.task_id)) byTask.set(r.task_id, []);
+      byTask.get(r.task_id)!.push(r);
+    }
+    for (const [, list] of byTask) {
+      if (!list.some((r) => r.is_selected)) {
+        await supabase.from("recordings").update({ is_selected: true }).eq("id", list[0].id);
+      }
     }
   }
 
@@ -100,7 +159,7 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
       progress: 0,
       stage: "queued",
       idempotency_key: idempotencyKey,
-      input_data: { user_id: userId, mode: getPipelineMode() },
+      input_data: { user_id: userId, mode: getPipelineMode(), recording_count: rows.length },
       attempts: 0,
     })
     .select()
@@ -117,7 +176,7 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
   }
 
   await supabase.from("projects").update({ status: "processing" }).eq("id", projectId);
-  return { job_id: job.id, status: job.status, deduped: false };
+  return { job_id: job.id, status: job.status, deduped: false, recording_count: rows.length };
 }
 
 export async function tickProduceJob(jobId: string) {
@@ -143,13 +202,31 @@ export async function tickProduceJob(jobId: string) {
   try {
     await supabase.from("jobs").update({ progress: 15, stage: "prepare_vocals" }).eq("id", jobId);
 
-    const { data: takesRaw } = await supabase
+    let { data: takesRaw } = await supabase
       .from("recordings")
       .select("*, recording_tasks(id, type, start_ms, end_ms, title)")
       .eq("project_id", projectId)
       .eq("is_selected", true);
 
-    const takes = (takesRaw || []) as TakeRow[];
+    let takes = (takesRaw || []) as TakeRow[];
+
+    // Fallback: any recording for project if none selected
+    if (takes.length === 0) {
+      const { data: anyTakes } = await supabase
+        .from("recordings")
+        .select("*, recording_tasks(id, type, start_ms, end_ms, title)")
+        .eq("project_id", projectId);
+      takes = (anyTakes || []) as TakeRow[];
+      for (const t of takes) {
+        await supabase.from("recordings").update({ is_selected: true }).eq("id", t.id);
+      }
+    }
+
+    if (takes.length === 0) {
+      throw new Error(
+        "No saved vocal takes found for this project. Re-record required parts and wait for save before Keep."
+      );
+    }
 
     for (const take of takes) {
       const original = take.original_path || take.audio_path;
@@ -229,12 +306,10 @@ export async function tickProduceJob(jobId: string) {
 
     const { data: project } = await supabase.from("projects").select("*").eq("id", projectId).single();
     const style = mapMusicalStyle(project?.genre);
-    // Production: preview unless ROEX_ALLOW_FULL=true (full/paid masters)
     const previewOnly = mode === "mock" || process.env.ROEX_ALLOW_FULL !== "true";
     const mixTracks = ((await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data ||
       []) as StemRow[];
 
-    // RoEx needs publicly fetchable HTTPS URLs, not storage object keys
     const resolvedTracks: { path: string; kind: StemKind }[] = [];
     for (const s of mixTracks) {
       const kind = s.kind as StemKind;
@@ -271,7 +346,6 @@ export async function tickProduceJob(jobId: string) {
       .update({ provider_task_id: mixStart.provider_task_id, provider: provider.name })
       .eq("id", jobId);
 
-    // Poll retrieve until download URL appears (RoEx jobs are async)
     let mixDone = await provider.retrieveMix(mixStart.provider_task_id);
     if (mode === "roex") {
       for (let i = 0; i < 12 && !mixDone.download_url; i++) {
@@ -320,7 +394,6 @@ export async function tickProduceJob(jobId: string) {
       notes: analysis.notes,
     });
 
-    // Only hard-fail on explicit fail; needs_review continues (RoEx analysis often returns raw metrics)
     if (analysis.status === "fail") {
       await supabase
         .from("jobs")
