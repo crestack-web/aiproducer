@@ -3,13 +3,21 @@ import { requireUser } from "@/lib/auth";
 import { isDevMode } from "@/lib/env";
 import { generateDevBlueprint, type AnalysisSnapshot } from "@/lib/blueprint";
 import { planProduction, toDbTaskType } from "@/lib/production-planner";
+import {
+  enhanceBlueprintWithMistral,
+  isMistralConfigured,
+} from "@/lib/ai/mistral-producer";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
  * POST /api/projects/:id/analyze
+ *
  * 1) Song blueprint (sections)
  * 2) Production blueprint (ProductionTasks via ProductionPlanner)
+ * 3) Optional Mistral pass — warm, plain-language instruction rewrite
+ *
+ * Runs when DEV_MODE=true and/or MISTRAL_API_KEY is set.
  */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -58,18 +66,24 @@ export async function POST(_req: Request, ctx: Ctx) {
   await supabase.from("projects").update({ status: "analyzing" }).eq("id", projectId);
 
   try {
-    if (!isDevMode()) {
+    const canRun = isDevMode() || isMistralConfigured();
+    if (!canRun) {
       await supabase
         .from("jobs")
         .update({
           status: "queued",
           stage: "queued",
-          error: "Analysis provider not configured. Use DEV_MODE=true.",
+          error:
+            "Set DEV_MODE=true or MISTRAL_API_KEY so the AI producer can build a plan.",
         })
         .eq("id", analyzeJob!.id);
 
       return NextResponse.json(
-        { message: "Set DEV_MODE=true for free analyze + blueprint.", job_id: analyzeJob?.id },
+        {
+          message:
+            "Configure MISTRAL_API_KEY (preferred) or DEV_MODE=true for deterministic plans.",
+          job_id: analyzeJob?.id,
+        },
         { status: 202 }
       );
     }
@@ -78,7 +92,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       duration_ms: beat.duration_ms ?? 180_000,
       bpm: beat.bpm ? Number(beat.bpm) : project.tempo,
       key: beat.key ?? "A minor",
-      source: "dev_mock",
+      source: isMistralConfigured() ? "mistral_producer" : "dev_mock",
     };
 
     await supabase
@@ -143,9 +157,9 @@ export async function POST(_req: Request, ctx: Ctx) {
       .update({ progress: 70, stage: "production_plan" })
       .eq("id", bpJob!.id);
 
-    const production = planProduction({
-      genre: project.genre,
-      mood: project.mood,
+    const plannerInput = {
+      genre: project.genre as string | null,
+      mood: project.mood as string | null,
       sections: songSections.map((s) => ({
         type: s.type,
         label: s.label,
@@ -154,7 +168,17 @@ export async function POST(_req: Request, ctx: Ctx) {
         order_index: s.order_index,
         energy: s.energy,
       })),
-    });
+    };
+
+    let production = planProduction(plannerInput);
+
+    if (isMistralConfigured()) {
+      await supabase
+        .from("jobs")
+        .update({ progress: 85, stage: "mistral_producer" })
+        .eq("id", bpJob!.id);
+      production = await enhanceBlueprintWithMistral(production, plannerInput);
+    }
 
     const taskRows = production.tasks.map((t) => {
       const dbSec = sectionByOrder.get(t.section_order);
@@ -215,7 +239,13 @@ export async function POST(_req: Request, ctx: Ctx) {
       },
       sections: insertedSections,
       tasks: insertedTasks,
-      dev_mode: true,
+      ai: {
+        provider: isMistralConfigured() ? "mistral" : "deterministic",
+        model: isMistralConfigured()
+          ? process.env.MISTRAL_MODEL || "mistral-small-latest"
+          : null,
+      },
+      dev_mode: isDevMode(),
       jobs: { analyze: analyzeJob?.id, blueprint: bpJob?.id },
     });
   } catch (e) {
