@@ -2,7 +2,6 @@ import { createServiceClient } from "@/lib/supabase/server";
 
 const BUCKET = "studio";
 
-/** Path helpers — never store public URLs; only storage paths. */
 export function beatPath(userId: string, projectId: string, filename = "beat.wav") {
   return `users/${userId}/projects/${projectId}/beats/${filename}`;
 }
@@ -17,7 +16,13 @@ export function recordingPath(
   return `users/${userId}/projects/${projectId}/recordings/${taskId}/take-${takeNumber}.${ext}`;
 }
 
-/** Signed URL for download/playback (short-lived). */
+export function isStoragePath(path: string | null | undefined): boolean {
+  if (!path) return false;
+  if (path.startsWith("http://") || path.startsWith("https://")) return false;
+  if (path.startsWith("mock://")) return false;
+  return true;
+}
+
 export async function createSignedDownloadUrl(path: string, expiresIn = 3600) {
   const supabase = createServiceClient();
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresIn);
@@ -25,7 +30,24 @@ export async function createSignedDownloadUrl(path: string, expiresIn = 3600) {
   return data.signedUrl;
 }
 
-/** Signed URL for direct client upload (PUT). */
+export async function resolveAudioUrl(
+  path: string | null | undefined,
+  expiresIn = 3600
+): Promise<string | null> {
+  if (!path) return null;
+  if (path.startsWith("mock://")) return null;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  try {
+    return await createSignedDownloadUrl(path, expiresIn);
+  } catch {
+    return null;
+  }
+}
+
+export function songMasterPath(userId: string, projectId: string, version: number) {
+  return `users/${userId}/projects/${projectId}/masters/master_v${version}.wav`;
+}
+
 export async function createSignedUploadUrl(path: string) {
   const supabase = createServiceClient();
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
@@ -33,7 +55,6 @@ export async function createSignedUploadUrl(path: string) {
   return { signedUrl: data.signedUrl, token: data.token, path };
 }
 
-/** Upload a buffer from the server (e.g. DEV_MODE mock / processed audio). */
 export async function uploadBuffer(
   path: string,
   body: Buffer | ArrayBuffer | Blob,
