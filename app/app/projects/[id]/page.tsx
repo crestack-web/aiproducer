@@ -71,6 +71,10 @@ function anyOpen(tasks: Task[]) {
   return tasks.filter((t) => isTaskOpen(t));
 }
 
+function optionalOpen(tasks: Task[]) {
+  return tasks.filter((t) => !t.required && isTaskOpen(t));
+}
+
 export default function ProjectDetailPage() {
   const id = useParams().id as string;
   const [project, setProject] = useState<ProjectMeta | null>(null);
@@ -86,6 +90,7 @@ export default function ProjectDetailPage() {
   const [phase, setPhase] = useState<"ready" | "recording" | "review">("ready");
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -96,11 +101,31 @@ export default function ProjectDetailPage() {
 
   const openTasks = useMemo(() => anyOpen(tasks), [tasks]);
   const requiredPending = useMemo(() => requiredOpen(tasks), [tasks]);
-  const current = requiredPending[0] || openTasks[0] || null;
+  const optionalPending = useMemo(() => optionalOpen(tasks), [tasks]);
+  // Prefer required; only surface optional after required are done
+  const current = requiredPending[0] || optionalPending[0] || null;
   const completedCount = tasks.filter((t) => isTaskDone(t)).length;
   const requiredTotal = tasks.filter((t) => t.required).length;
   const requiredDone = tasks.filter((t) => t.required && isTaskDone(t)).length;
   const allRequiredDone = requiredTotal > 0 && requiredDone >= requiredTotal;
+
+  const advanceAfterTaskChange = useCallback((next: Task[]) => {
+    setLocalBlobUrl(null);
+    const stillRequired = requiredOpen(next);
+    if (stillRequired.length > 0) {
+      setScreen("session");
+      setPhase("ready");
+      return;
+    }
+    // Required done — optional can still be offered, but assemble is allowed
+    const stillOptional = optionalOpen(next);
+    if (stillOptional.length > 0) {
+      setScreen("session");
+      setPhase("ready");
+      return;
+    }
+    setScreen("assemble");
+  }, []);
 
   const resolveScreen = useCallback(
     (proj: ProjectMeta | null, list: Task[], hasMaster: boolean) => {
@@ -109,8 +134,11 @@ export default function ProjectDetailPage() {
       if (st === "processing" || st === "mixing" || st === "mastering") return "assemble" as Screen;
       const open = anyOpen(list);
       const hasTasks = list.length > 0;
-      const reqDone = hasTasks && requiredOpen(list).length === 0 && list.some((t) => t.required);
-      if (reqDone || (hasTasks && open.length === 0)) return "assemble" as Screen;
+      const reqOpen = requiredOpen(list);
+      const reqDone = hasTasks && reqOpen.length === 0 && list.some((t) => t.required);
+      // Only force assemble when required are done AND no open optionals the user is mid-session on
+      if (reqDone && open.length === 0) return "assemble" as Screen;
+      if (reqDone && open.length > 0) return "session" as Screen;
       const inSession =
         hasTasks &&
         list.some((t) => isTaskDone(t) || t.status === "in_progress") &&
@@ -312,17 +340,56 @@ export default function ProjectDetailPage() {
     if (!current) return;
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
-      const stillRequired = requiredOpen(next);
-      const stillAny = anyOpen(next);
-      setLocalBlobUrl(null);
-      if (stillRequired.length > 0 || stillAny.length > 0) {
-        setScreen("session");
-        setPhase("ready");
-      } else {
-        setScreen("assemble");
-      }
+      advanceAfterTaskChange(next);
       return next;
     });
+  }
+
+  async function skipCurrent() {
+    if (!current || current.required) return;
+    setError(null);
+    setSkipping(true);
+    try {
+      const res = await fetch(`/api/recording-tasks/${current.id}/skip`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Could not skip");
+      setTasks((prev) => {
+        const next = prev.map((t) => (t.id === current.id ? { ...t, status: "skipped" } : t));
+        advanceAfterTaskChange(next);
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Skip failed");
+    } finally {
+      setSkipping(false);
+    }
+  }
+
+  async function skipAllOptionalAndFinish() {
+    setError(null);
+    setSkipping(true);
+    try {
+      const openOpt = optionalOpen(tasks);
+      for (const t of openOpt) {
+        const res = await fetch(`/api/recording-tasks/${t.id}/skip`, { method: "POST" });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error || "Could not skip optional parts");
+        }
+      }
+      setTasks((prev) => {
+        const next = prev.map((t) =>
+          !t.required && isTaskOpen(t) ? { ...t, status: "skipped" } : t
+        );
+        setLocalBlobUrl(null);
+        setScreen("assemble");
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Skip failed");
+    } finally {
+      setSkipping(false);
+    }
   }
 
   async function startProduce() {
@@ -488,7 +555,7 @@ export default function ProjectDetailPage() {
           </button>
           <h1 style={title}>Here's how we'll make your song</h1>
           <p style={{ color: C.textMuted, fontSize: 14, margin: "8px 0 18px" }}>
-            Review the plan, then start recording section by section.
+            Required parts must be recorded. Optional layers can be skipped in the session.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {tasks.map((t, i) => (
@@ -496,7 +563,7 @@ export default function ProjectDetailPage() {
                 <div style={{ fontSize: 11, color: C.brass, fontWeight: 600 }}>
                   {String(i + 1).padStart(2, "0")} · {sectionLabel(t)}
                   {!t.required && (
-                    <span style={{ marginLeft: 8, color: C.textFaint, fontWeight: 500 }}>optional</span>
+                    <span style={{ marginLeft: 8, color: C.textFaint, fontWeight: 500 }}>optional · can skip</span>
                   )}
                 </div>
                 <div style={{ fontFamily: "Georgia,serif", fontSize: 16, marginTop: 4 }}>
@@ -539,7 +606,12 @@ export default function ProjectDetailPage() {
               )}
             </div>
             <h1 style={{ ...title, fontSize: "1.5rem" }}>{sectionLabel(current)}</h1>
-            <p style={{ color: C.brass, fontSize: 14 }}>{current.reason || humanTitle(current.type)}</p>
+            <p style={{ color: C.brass, fontSize: 14 }}>
+              {current.reason || humanTitle(current.type)}
+              {!current.required && (
+                <span style={{ color: C.textFaint }}> · optional</span>
+              )}
+            </p>
           </div>
           <div style={{ marginTop: 16, padding: 16, borderRadius: 14, background: C.surface, border: `1px solid ${C.border}`, textAlign: "center" }}>
             {current.instruction}
@@ -561,6 +633,31 @@ export default function ProjectDetailPage() {
               <button type="button" style={btn} onClick={startRecording}>
                 Record
               </button>
+              {!current.required && (
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8 }}
+                  disabled={skipping}
+                  onClick={skipCurrent}
+                >
+                  {skipping ? "Skipping…" : "Skip this part"}
+                </button>
+              )}
+              {!current.required && allRequiredDone && optionalPending.length > 1 && (
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8, color: C.textMuted }}
+                  disabled={skipping}
+                  onClick={skipAllOptionalAndFinish}
+                >
+                  Skip remaining optional · finish
+                </button>
+              )}
+              {!current.required && allRequiredDone && optionalPending.length === 1 && (
+                <p style={{ textAlign: "center", fontSize: 12, color: C.textFaint, marginTop: 10 }}>
+                  Required takes are done. Skip this optional layer to produce.
+                </p>
+              )}
             </>
           )}
           {phase === "recording" && (
@@ -598,6 +695,16 @@ export default function ProjectDetailPage() {
               >
                 Record again
               </button>
+              {!current.required && (
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8, color: C.textMuted }}
+                  disabled={uploading || skipping}
+                  onClick={skipCurrent}
+                >
+                  Discard & skip this part
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -607,7 +714,7 @@ export default function ProjectDetailPage() {
         <div style={wrap}>
           <h1 style={{ ...title, textAlign: "center", marginTop: 40 }}>Takes captured</h1>
           <p style={{ textAlign: "center", color: C.textMuted, marginTop: 8 }}>
-            {completedCount} of {tasks.length} parts ready. Next: mix & master.
+            {requiredDone}/{requiredTotal || completedCount} required parts ready. Next: mix & master.
           </p>
           <button type="button" style={{ ...btn, marginTop: 24 }} onClick={() => setScreen("assemble")}>
             Continue to produce
@@ -622,7 +729,7 @@ export default function ProjectDetailPage() {
           </Link>
           <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Your performances are in</h1>
           <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-            {completedCount} of {tasks.length} parts captured
+            {completedCount} of {tasks.length} parts handled
             {requiredTotal > 0 ? ` · ${requiredDone}/${requiredTotal} required` : ""}.
             <br />
             Next: assemble, mix & master.
@@ -636,6 +743,16 @@ export default function ProjectDetailPage() {
               <p style={{ textAlign: "center", color: C.textFaint, fontSize: 13 }}>
                 Finish required takes before producing.
               </p>
+            )}
+            {allRequiredDone && optionalPending.length > 0 && (
+              <button
+                type="button"
+                style={btn2}
+                disabled={skipping}
+                onClick={skipAllOptionalAndFinish}
+              >
+                {skipping ? "Skipping…" : `Skip ${optionalPending.length} optional · stay ready`}
+              </button>
             )}
             <button
               type="button"
