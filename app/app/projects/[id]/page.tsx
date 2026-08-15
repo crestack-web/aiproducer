@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { StudioPlayer, CompactAudioPlayer } from "@/components/studio-player";
 
 type Task = {
   id: string;
@@ -92,7 +93,6 @@ export default function ProjectDetailPage() {
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
-  /** When set, user is viewing/retaking this task even if already completed. */
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -114,7 +114,6 @@ export default function ProjectDetailPage() {
   const doneTasks = useMemo(() => tasks.filter((t) => isTaskDone(t)), [tasks]);
 
   function selectTask(taskId: string) {
-    // Don't interrupt an in-progress recording
     if (phase === "recording") return;
     setError(null);
     setLocalBlobUrl(null);
@@ -215,7 +214,6 @@ export default function ProjectDetailPage() {
       } else setMasterUrl(null);
       const next = resolveScreen(proj, list, hasMaster);
       setScreen((prev) => {
-        // Don't yank user off a manual retake focus
         if (prev === "session" && activeTaskId) return "session";
         return next;
       });
@@ -368,12 +366,10 @@ export default function ProjectDetailPage() {
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
       if (wasRetake) {
-        // Stay on session so user can pick another section or continue
         setActiveTaskId(null);
         setLocalBlobUrl(null);
         setPhase("ready");
         setScreen("session");
-        // If nothing left open after retake, still allow assemble via nextOpen logic
         if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) {
           setScreen("assemble");
         }
@@ -603,24 +599,29 @@ export default function ProjectDetailPage() {
           <Link href="/app" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
             ← Projects
           </Link>
-          <h1 style={title}>{project?.title || "Your beat"}</h1>
-          <p style={{ color: C.brass, fontSize: 12, marginTop: 6, fontFamily: "monospace" }}>
-            {[project?.genre, project?.tempo ? `${project.tempo} BPM` : null, project?.mood]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
+          <h1 style={{ ...title, fontSize: "1.15rem", color: C.textMuted, fontWeight: 400 }}>Your beat</h1>
           {beatUrl ? (
-            <div style={{ marginTop: 24 }}>
-              <audio controls src={beatUrl} style={{ width: "100%" }} />
-            </div>
+            <StudioPlayer
+              src={beatUrl}
+              title={project?.title || "Your beat"}
+              subtitle={[
+                project?.genre,
+                project?.tempo ? `${project.tempo} BPM` : null,
+                project?.mood,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Instrumental"}
+              seed={`${project?.title || "beat"}-${project?.genre || "studio"}`}
+              accent="brass"
+            />
           ) : (
-            <p style={{ color: C.textMuted, marginTop: 24 }}>
+            <p style={{ color: C.textMuted, marginTop: 24, textAlign: "center" }}>
               {project?.status === "generating_beat" ? "Composing your beat…" : "Preparing beat…"}
             </p>
           )}
           <p style={{ color: C.textMuted, fontSize: 14, marginTop: 20, textAlign: "center" }}>
             {beatUrl
-              ? "Beat ready. Next the AI builds a recording plan — you approve it before recording."
+              ? "Your beat is ready. Let's turn it into a song."
               : "Waiting for beat…"}
           </p>
           {error && (
@@ -786,7 +787,9 @@ export default function ProjectDetailPage() {
                       : "Saved ✓ — keep this take or record again"
                     : "How does it feel?"}
               </p>
-              {localBlobUrl && <audio controls src={localBlobUrl} style={{ width: "100%", marginTop: 12 }} />}
+              {localBlobUrl && (
+                <CompactAudioPlayer src={localBlobUrl} label="Your take" seed={`take-${current.id}`} />
+              )}
               <button
                 type="button"
                 style={{ ...btn, marginTop: 16, opacity: uploading || !savedRecordingId ? 0.5 : 1 }}
@@ -924,9 +927,13 @@ export default function ProjectDetailPage() {
             Play it back, then download your master.
           </p>
           {masterUrl && (
-            <div style={{ marginTop: 24 }}>
-              <audio controls src={masterUrl} style={{ width: "100%" }} />
-            </div>
+            <StudioPlayer
+              src={masterUrl}
+              title={project?.title || "Your song"}
+              subtitle={[project?.genre, project?.mood].filter(Boolean).join(" · ") || "Master"}
+              seed={`${project?.title || "song"}-master`}
+              accent="signal"
+            />
           )}
           {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
           <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
