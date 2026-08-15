@@ -5,6 +5,7 @@ import { isDevMode } from "@/lib/env";
 import { beatPath, uploadBuffer } from "@/lib/storage";
 import { mockWavBuffer } from "@/lib/dev-mock";
 import { generateInstrumentalBeat, hasElevenLabsKey } from "@/lib/providers/elevenlabs";
+import { generateBeatWithReplicate, hasReplicateToken } from "@/lib/providers/replicate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -15,6 +16,16 @@ const BodySchema = z.object({
   prompt: z.string().max(2000).optional(),
   length_ms: z.number().int().min(3000).max(180000).optional(),
 });
+
+type BeatResult = {
+  buffer: Buffer;
+  contentType: string;
+  extension: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  durationMs: number;
+};
 
 export async function POST(req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -43,10 +54,17 @@ export async function POST(req: Request, ctx: Ctx) {
   const tempo = parsed.data.tempo ?? project.tempo ?? 90;
   const prompt =
     parsed.data.prompt ?? project.prompt ?? `${mood} ${genre} instrumental, ${tempo} BPM`;
-  const lengthMs = parsed.data.length_ms ?? 45000;
+  const lengthMs = parsed.data.length_ms ?? 30000;
 
-  const forceMock = process.env.BEAT_PROVIDER === "mock";
-  const useEleven = hasElevenLabsKey() && !forceMock;
+  const preferred = (process.env.BEAT_PROVIDER || "").toLowerCase();
+  const canReplicate = hasReplicateToken() && preferred !== "elevenlabs" && preferred !== "mock";
+  const canEleven = hasElevenLabsKey() && preferred !== "replicate" && preferred !== "mock";
+  const providerOrder =
+    preferred === "elevenlabs"
+      ? (["elevenlabs", "replicate", "mock"] as const)
+      : preferred === "mock"
+        ? (["mock"] as const)
+        : (["replicate", "elevenlabs", "mock"] as const);
 
   const { data: job, error: jErr } = await supabase
     .from("jobs")
@@ -56,7 +74,7 @@ export async function POST(req: Request, ctx: Ctx) {
       status: "processing",
       progress: 10,
       stage: "generating",
-      input_data: { genre, mood, tempo, prompt, lengthMs, provider: useEleven ? "elevenlabs" : "mock" },
+      input_data: { genre, mood, tempo, prompt, lengthMs, provider_order: providerOrder },
       started_at: new Date().toISOString(),
       attempts: 1,
     })
@@ -69,107 +87,126 @@ export async function POST(req: Request, ctx: Ctx) {
     .update({ status: "generating_beat", genre, mood, tempo, prompt })
     .eq("id", projectId);
 
-  try {
-    if (useEleven) {
-      const result = await generateInstrumentalBeat({ genre, mood, tempo, prompt, lengthMs });
-      const path = beatPath(user.id, projectId, `beat-eleven.${result.extension}`);
-      await uploadBuffer(path, result.buffer, result.contentType);
-
-      const beatPayload: Record<string, unknown> = {
-        project_id: projectId,
-        audio_path: path,
-        duration_ms: result.durationMs,
-        tempo,
-        status: "ready",
-        metadata: {
-          genre,
-          mood,
-          prompt: result.prompt,
-          provider: result.provider,
-          model: result.model,
-          source: "elevenlabs",
-        },
-      };
-
-      let beatRow;
-      const { data: beat, error: bErr } = await supabase
-        .from("beats")
-        .insert({ ...beatPayload, source: "elevenlabs", original_filename: `eleven-${result.provider}.${result.extension}` })
-        .select()
-        .single();
-      if (bErr) {
-        const { data: fb, error: fbErr } = await supabase.from("beats").insert(beatPayload).select().single();
-        if (fbErr || !fb) throw fbErr || new Error("Could not save beat");
-        beatRow = fb;
-      } else {
-        beatRow = beat;
+  async function runProviders(): Promise<BeatResult> {
+    const errors: string[] = [];
+    for (const name of providerOrder) {
+      if (name === "replicate" && canReplicate) {
+        try {
+          const r = await generateBeatWithReplicate({
+            genre,
+            mood,
+            tempo,
+            prompt,
+            durationSec: Math.min(Math.round(lengthMs / 1000), 30),
+          });
+          return {
+            buffer: r.buffer,
+            contentType: r.contentType,
+            extension: r.extension,
+            provider: r.provider,
+            model: r.model,
+            prompt: r.prompt,
+            durationMs: r.durationMs,
+          };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn("[generate-beat] replicate failed:", msg);
+          errors.push(`replicate: ${msg}`);
+        }
       }
+      if (name === "elevenlabs" && canEleven) {
+        try {
+          const r = await generateInstrumentalBeat({ genre, mood, tempo, prompt, lengthMs });
+          return {
+            buffer: r.buffer,
+            contentType: r.contentType,
+            extension: r.extension,
+            provider: r.provider,
+            model: r.model,
+            prompt: r.prompt,
+            durationMs: r.durationMs,
+          };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn("[generate-beat] elevenlabs failed:", msg);
+          errors.push(`elevenlabs: ${msg}`);
+        }
+      }
+      if (name === "mock" && (isDevMode() || preferred === "mock")) {
+        return {
+          buffer: mockWavBuffer(3, 22050),
+          contentType: "audio/wav",
+          extension: "wav",
+          provider: "mock",
+          model: "dev_mock",
+          prompt,
+          durationMs: 3000,
+        };
+      }
+    }
+    throw new Error(
+      errors.length
+        ? `All beat providers failed. ${errors.join(" | ")}`
+        : "No beat provider configured. Set REPLICATE_API_TOKEN or ELEVENLABS_API_KEY, or DEV_MODE=true."
+    );
+  }
 
-      await supabase
-        .from("jobs")
-        .update({
-          status: "complete",
-          progress: 100,
-          stage: "complete",
-          provider: "elevenlabs",
-          output_data: { beat_id: beatRow.id, audio_path: path, provider: result.provider, model: result.model },
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
-      await supabase.from("projects").update({ status: "beat_ready" }).eq("id", projectId);
+  try {
+    const result = await runProviders();
+    const path = beatPath(user.id, projectId, `beat-${result.provider}.${result.extension}`);
+    await uploadBuffer(path, result.buffer, result.contentType);
 
-      return NextResponse.json({
-        job_id: job.id,
-        status: "complete",
-        beat: beatRow,
+    const beatPayload: Record<string, unknown> = {
+      project_id: projectId,
+      audio_path: path,
+      duration_ms: result.durationMs,
+      tempo,
+      status: "ready",
+      metadata: {
+        genre,
+        mood,
+        prompt: result.prompt,
         provider: result.provider,
         model: result.model,
-        duration_ms: result.durationMs,
-      });
-    }
+        source: result.provider,
+      },
+    };
 
-    if (isDevMode() || forceMock) {
-      const path = beatPath(user.id, projectId, "beat-dev.wav");
-      await uploadBuffer(path, mockWavBuffer(3, 22050), "audio/wav");
-      const { data: beat, error: bErr } = await supabase
-        .from("beats")
-        .insert({
-          project_id: projectId,
-          audio_path: path,
-          duration_ms: 3000,
-          tempo,
-          status: "ready",
-          metadata: { genre, mood, dev: true, source: "dev_mock" },
-        })
-        .select()
-        .single();
-      if (bErr) throw bErr;
-      await supabase
-        .from("jobs")
-        .update({
-          status: "complete",
-          progress: 100,
-          stage: "complete",
-          output_data: { beat_id: beat.id, audio_path: path },
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
-      await supabase.from("projects").update({ status: "beat_ready" }).eq("id", projectId);
-      return NextResponse.json({ job_id: job.id, status: "complete", beat, provider: "mock", dev_mode: true });
+    let beatRow;
+    const { data: beat, error: bErr } = await supabase
+      .from("beats")
+      .insert({ ...beatPayload, source: result.provider, original_filename: `beat-${result.provider}.${result.extension}` })
+      .select()
+      .single();
+    if (bErr) {
+      const { data: fb, error: fbErr } = await supabase.from("beats").insert(beatPayload).select().single();
+      if (fbErr || !fb) throw fbErr || new Error("Could not save beat");
+      beatRow = fb;
+    } else {
+      beatRow = beat;
     }
 
     await supabase
       .from("jobs")
       .update({
-        status: "failed",
-        error: "No beat provider configured. Set ELEVENLABS_API_KEY or DEV_MODE=true.",
+        status: "complete",
+        progress: 100,
+        stage: "complete",
+        provider: result.provider,
+        output_data: { beat_id: beatRow.id, audio_path: path, provider: result.provider, model: result.model },
         completed_at: new Date().toISOString(),
       })
       .eq("id", job.id);
-    return NextResponse.json(
-      { error: "No beat provider configured. Set ELEVENLABS_API_KEY or DEV_MODE=true." },
-      { status: 503 }
-    );
+    await supabase.from("projects").update({ status: "beat_ready" }).eq("id", projectId);
+
+    return NextResponse.json({
+      job_id: job.id,
+      status: "complete",
+      beat: beatRow,
+      provider: result.provider,
+      model: result.model,
+      duration_ms: result.durationMs,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Beat generation failed";
     console.error("generate-beat", e);
