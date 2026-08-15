@@ -180,7 +180,7 @@ export default function StudioAppPage() {
         @media (max-width: 860px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          .studio-main-inner { padding: 24px 16px 96px !important; }
+          .studio-main-inner { padding: 24px 16px 100px !important; }
           .studio-hero-art { display: none !important; }
           .studio-cta-row { flex-direction: column !important; }
         }
@@ -209,17 +209,17 @@ export default function StudioAppPage() {
           <div style={{ fontSize: 13.5, color: C.text, lineHeight: 1.4 }}>Your voice. Guided. Finished.</div>
           <button type="button" onClick={() => setTab("create")} style={S.sideCta}>New song</button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 14, paddingBottom: 28, borderTop: `1px solid rgba(255,255,255,0.06)` }}>
           <div style={S.avatar}>{initials || "A"}</div>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600 }}>{userName}</div>
-            <button type="button" onClick={signOut} style={{ background: "none", border: "none", color: C.textFaint, fontSize: 12, cursor: "pointer", padding: 0 }}>Log out</button>
+            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userName}</div>
+            <button type="button" onClick={signOut} style={{ background: "none", border: "none", color: C.textFaint, fontSize: 12, cursor: "pointer", padding: 0, marginTop: 2 }}>Log out</button>
           </div>
         </div>
       </aside>
 
       <main style={S.main}>
-        <div className="studio-main-inner" style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 32px 80px" }}>
+        <div className="studio-main-inner" style={{ width: "100%", maxWidth: 1200, margin: "0 auto", padding: "36px 40px 64px", boxSizing: "border-box" }}>
           {tab === "home" && (
             <>
               <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 40, marginBottom: 40 }}>
@@ -339,14 +339,14 @@ export default function StudioAppPage() {
 
 const S: Record<string, React.CSSProperties> = {
   shell: { height: "100vh", maxHeight: "100dvh", display: "flex", background: C.bgDeep, color: C.text, fontFamily: "Inter, system-ui, sans-serif", overflow: "hidden" },
-  sidebar: { width: 240, flexShrink: 0, height: "100%", display: "flex", flexDirection: "column", padding: "28px 18px 24px", borderRight: `1px solid ${C.border}`, background: `linear-gradient(180deg, ${C.bg}, ${C.bgDeep})` },
-  brand: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2.5, color: C.brass, marginBottom: 36, paddingLeft: 10 },
-  navItem: { padding: "11px 12px", borderRadius: 12, fontSize: 14.5, fontWeight: 500, color: C.textMuted, border: "1px solid transparent", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", width: "100%", display: "flex", alignItems: "center", gap: 10 },
+  sidebar: { width: 200, flexShrink: 0, height: "100%", display: "flex", flexDirection: "column", padding: "24px 12px 0", borderRight: `1px solid rgba(255,255,255,0.06)`, background: C.bgDeep },
+  brand: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 28, paddingLeft: 10, opacity: 0.9 },
+  navItem: { padding: "10px 12px", borderRadius: 10, fontSize: 14, fontWeight: 500, color: C.textMuted, border: "1px solid transparent", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", width: "100%", display: "flex", alignItems: "center", gap: 10 },
   navActive: { background: C.brassSoft, border: `1px solid ${C.brassLine}`, color: C.brass, fontWeight: 600 },
-  sideCard: { marginTop: "auto", padding: "14px 12px", borderRadius: 14, background: C.surface, border: `1px solid ${C.border}`, marginBottom: 14 },
-  sideCta: { marginTop: 12, width: "100%", padding: "10px 12px", borderRadius: 10, border: "none", background: `linear-gradient(180deg, #F0BC80, ${C.brass})`, color: "#1A1208", fontWeight: 600, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit" },
+  sideCard: { marginTop: "auto", padding: "12px", borderRadius: 12, background: "rgba(255,255,255,0.03)", border: `1px solid rgba(255,255,255,0.06)`, marginBottom: 12 },
+  sideCta: { marginTop: 10, width: "100%", padding: "9px 12px", borderRadius: 10, border: "none", background: `linear-gradient(180deg, #F0BC80, ${C.brass})`, color: "#1A1208", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
   avatar: { width: 36, height: 36, borderRadius: 999, background: `linear-gradient(145deg, ${C.brass}, #6B3F17)`, color: "#1A1208", display: "grid", placeItems: "center", fontFamily: "Fraunces, Georgia, serif", fontSize: 13, fontWeight: 600, flexShrink: 0 },
-  main: { flex: 1, minWidth: 0, height: "100%", overflowY: "auto", background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 40%)` },
+  main: { flex: 1, minWidth: 0, height: "100%", overflowY: "auto", background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)` },
   eyebrow: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2.5, color: C.brass, marginBottom: 16 },
   h1: { fontFamily: "Fraunces, Georgia, serif", fontSize: "clamp(2rem, 4vw, 3rem)", lineHeight: 1.05, fontWeight: 500, margin: 0, color: C.text },
   sub: { fontSize: 16, color: C.textMuted, marginTop: 16, lineHeight: 1.55, maxWidth: 420 },
