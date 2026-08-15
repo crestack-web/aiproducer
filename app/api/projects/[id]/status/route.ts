@@ -13,7 +13,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const { data: project, error: pErr } = await supabase
     .from("projects")
-    .select("id, status, title, updated_at")
+    .select("id, status, title, genre, mood, tempo, prompt, updated_at")
     .eq("id", id)
     .eq("user_id", user.id)
     .maybeSingle();
