@@ -401,21 +401,146 @@ export function StudioPlayer({
 }
 
 /**
- * Inline take / recording review player — no native controls.
- * Play button + animated waveform + times, fits session review UI.
+ * Take review player — vocal + optional beat bed in sync.
+ * Progress follows the vocal; beat is looped/clamped to the section window.
  */
 export function CompactAudioPlayer({
   src,
   label = "Your take",
   seed = "take",
+  beatSrc,
+  beatStartMs = 0,
+  beatEndMs,
+  beatVolume = 0.5,
+  vocalVolume = 1,
 }: {
   src: string | null | undefined;
   label?: string;
   seed?: string;
+  /** Instrumental to play under the take */
+  beatSrc?: string | null;
+  /** Section start on the full beat (ms) */
+  beatStartMs?: number;
+  /** Section end on the full beat (ms); optional */
+  beatEndMs?: number | null;
+  beatVolume?: number;
+  vocalVolume?: number;
 }) {
-  const { audioRef, playing, progress, time, duration, toggle, seekRatio } = useAudioEngine(src);
+  const vocalRef = useRef<HTMLAudioElement | null>(null);
+  const beatRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [liveBars, setLiveBars] = useState<number[] | null>(null);
   const baseBars = useMemo(() => makeWave(seed || label || "take", 40), [seed, label]);
+
+  const beatStartSec = Math.max(0, (beatStartMs ?? 0) / 1000);
+  const beatEndSec =
+    beatEndMs != null && beatEndMs > beatStartMs ? beatEndMs / 1000 : null;
+
+  // Load vocal
+  useEffect(() => {
+    const el = vocalRef.current;
+    if (!el) return;
+    if (src) {
+      el.src = src;
+      el.volume = vocalVolume;
+      el.load();
+    } else {
+      el.removeAttribute("src");
+      el.load();
+    }
+    setPlaying(false);
+    setProgress(0);
+    setTime(0);
+    setDuration(0);
+  }, [src, vocalVolume]);
+
+  // Load beat bed
+  useEffect(() => {
+    const el = beatRef.current;
+    if (!el) return;
+    if (beatSrc) {
+      el.src = beatSrc;
+      el.volume = beatVolume;
+      el.load();
+    } else {
+      el.removeAttribute("src");
+      el.load();
+    }
+  }, [beatSrc, beatVolume]);
+
+  // Sync beat position to vocal time within section
+  const syncBeatToVocal = useCallback(() => {
+    const vocal = vocalRef.current;
+    const beat = beatRef.current;
+    if (!vocal || !beat || !beatSrc) return;
+    const target = beatStartSec + vocal.currentTime;
+    if (beatEndSec != null && target >= beatEndSec) {
+      beat.pause();
+      return;
+    }
+    // Only seek if drift is noticeable (avoid stutter)
+    if (Math.abs(beat.currentTime - target) > 0.12) {
+      beat.currentTime = target;
+    }
+  }, [beatSrc, beatStartSec, beatEndSec]);
+
+  useEffect(() => {
+    const vocal = vocalRef.current;
+    if (!vocal) return;
+
+    const onTime = () => {
+      const d = vocal.duration;
+      const t = vocal.currentTime;
+      if (Number.isFinite(d) && d > 0) {
+        setDuration(d);
+        setTime(t);
+        setProgress(Math.min(1, t / d));
+      }
+      syncBeatToVocal();
+      // Stop beat if past section end
+      const beat = beatRef.current;
+      if (beat && beatSrc && beatEndSec != null) {
+        if (beat.currentTime >= beatEndSec) beat.pause();
+      }
+    };
+    const onMeta = () => {
+      if (Number.isFinite(vocal.duration)) setDuration(vocal.duration);
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => {
+      setPlaying(false);
+      beatRef.current?.pause();
+    };
+    const onEnded = () => {
+      setPlaying(false);
+      setProgress(0);
+      setTime(0);
+      vocal.currentTime = 0;
+      const beat = beatRef.current;
+      if (beat) {
+        beat.pause();
+        beat.currentTime = beatStartSec;
+      }
+    };
+
+    vocal.addEventListener("timeupdate", onTime);
+    vocal.addEventListener("loadedmetadata", onMeta);
+    vocal.addEventListener("durationchange", onMeta);
+    vocal.addEventListener("play", onPlay);
+    vocal.addEventListener("pause", onPause);
+    vocal.addEventListener("ended", onEnded);
+    return () => {
+      vocal.removeEventListener("timeupdate", onTime);
+      vocal.removeEventListener("loadedmetadata", onMeta);
+      vocal.removeEventListener("durationchange", onMeta);
+      vocal.removeEventListener("play", onPlay);
+      vocal.removeEventListener("pause", onPause);
+      vocal.removeEventListener("ended", onEnded);
+    };
+  }, [syncBeatToVocal, beatSrc, beatStartSec, beatEndSec]);
 
   useEffect(() => {
     if (!playing) {
@@ -433,9 +558,49 @@ export function CompactAudioPlayer({
     return () => clearInterval(id);
   }, [playing, baseBars]);
 
+  const toggle = useCallback(async () => {
+    const vocal = vocalRef.current;
+    if (!vocal || !src) return;
+    try {
+      if (vocal.paused) {
+        const beat = beatRef.current;
+        if (beat && beatSrc) {
+          beat.currentTime = beatStartSec + vocal.currentTime;
+          beat.volume = beatVolume;
+          await beat.play().catch(() => undefined);
+        }
+        vocal.volume = vocalVolume;
+        await vocal.play();
+      } else {
+        vocal.pause();
+        beatRef.current?.pause();
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [src, beatSrc, beatStartSec, beatVolume, vocalVolume]);
+
+  const seekRatio = useCallback(
+    (ratio: number) => {
+      const vocal = vocalRef.current;
+      if (!vocal || !duration) return;
+      const r = Math.max(0, Math.min(1, ratio));
+      const t = r * duration;
+      vocal.currentTime = t;
+      setProgress(r);
+      setTime(t);
+      const beat = beatRef.current;
+      if (beat && beatSrc) {
+        beat.currentTime = beatStartSec + t;
+      }
+    },
+    [duration, beatSrc, beatStartSec]
+  );
+
   if (!src) return null;
 
   const bars = liveBars || baseBars;
+  const withBeat = Boolean(beatSrc);
 
   return (
     <div
@@ -447,16 +612,19 @@ export function CompactAudioPlayer({
         border: `1px solid ${C.border}`,
       }}
     >
-      {/* Hidden engine — never show native controls */}
-      <audio ref={audioRef} preload="auto" playsInline controls={false} style={{ display: "none", width: 0, height: 0 }} />
+      <audio ref={vocalRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
+      <audio ref={beatRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
 
-      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 10, letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 10, letterSpacing: 0.3 }}>
+        {label}
+        {withBeat && <span style={{ color: C.brass }}> · with beat</span>}
+      </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button
           type="button"
           onClick={toggle}
-          aria-label={playing ? "Pause take" : "Play take"}
+          aria-label={playing ? "Pause take" : "Play take with beat"}
           style={{
             width: 44,
             height: 44,
