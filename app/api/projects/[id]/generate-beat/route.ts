@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/server";
 import {
   enqueueMusicGeneration,
   getMusicGenerationJob,
@@ -46,7 +47,16 @@ export async function POST(req: Request, ctx: Ctx) {
       ? 24
       : 8;
 
+  const service = createServiceClient();
+
   try {
+    // Mark project as generating so the UI can poll correctly
+    await service
+      .from("projects")
+      .update({ status: "generating_beat" })
+      .eq("id", projectId)
+      .eq("user_id", user.id);
+
     const enqueued = await enqueueMusicGeneration({
       projectId,
       userId: user.id,
@@ -61,13 +71,21 @@ export async function POST(req: Request, ctx: Ctx) {
         parsed.data.idempotencyKey || `beat:${user.id}:${projectId}:${kind}`,
     });
 
-    try {
-      await tickMusicGenerationJob(enqueued.jobId);
-    } catch {
-      // recorded on job
-    }
+    // Drive the job to completion (or failure) within this request.
+    // Mock is instant; provider mode may need a few polls.
+    let job = await getMusicGenerationJob(enqueued.jobId, user.id);
+    const terminal = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 
-    const job = await getMusicGenerationJob(enqueued.jobId, user.id);
+    for (let i = 0; i < 24 && !terminal.has(job.status); i++) {
+      try {
+        await tickMusicGenerationJob(enqueued.jobId);
+      } catch {
+        // recorded on job row
+      }
+      job = await getMusicGenerationJob(enqueued.jobId, user.id);
+      if (terminal.has(job.status)) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
 
     if (job.status === "FAILED") {
       return NextResponse.json(
@@ -81,21 +99,38 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
+    if (job.status !== "COMPLETED" || !job.result) {
+      // Still running — client should land on project page and poll
+      return NextResponse.json({
+        job_id: job.jobId,
+        status: "processing",
+        beat: null,
+        provider: job.provider,
+        music_job: job,
+        message: "Beat is still generating. Open the project to wait for it.",
+      });
+    }
+
     return NextResponse.json({
       job_id: job.jobId,
-      status: job.status === "COMPLETED" ? "complete" : job.status.toLowerCase(),
-      beat: job.result
-        ? {
-            id: job.result.assetId,
-            audio_path: job.result.audioPath,
-            duration_ms: job.result.durationMs,
-            status: "ready",
-          }
-        : null,
+      status: "complete",
+      beat: {
+        id: job.result.assetId,
+        audio_path: job.result.audioPath,
+        duration_ms: job.result.durationMs,
+        status: "ready",
+      },
       provider: job.provider,
       music_job: job,
     });
   } catch (e) {
+    await service
+      .from("projects")
+      .update({ status: "failed" })
+      .eq("id", projectId)
+      .eq("user_id", user.id)
+      .catch(() => undefined);
+
     if (e instanceof MusicGenerationError) {
       return NextResponse.json(
         { error: publicErrorMessage(e.errorType), errorType: e.errorType },
