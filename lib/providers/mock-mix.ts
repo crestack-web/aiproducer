@@ -7,6 +7,13 @@ import type {
 } from "@/lib/audio/types";
 import { randomUUID } from "crypto";
 
+/**
+ * In-memory path registry so retrieveMix/retrieveMaster can return the same
+ * storage path that startMix/startMaster received. Without this, produce wrote
+ * master rows with mock:// paths and download always 404'd.
+ */
+const taskPaths = new Map<string, string>();
+
 export class MockMixProvider implements AudioMixProvider {
   readonly name = "mock";
 
@@ -18,16 +25,30 @@ export class MockMixProvider implements AudioMixProvider {
     tracks: MixTrackInput[],
     opts: { musicalStyle: string; preview: boolean; webhookUrl?: string; sampleRate?: number }
   ): Promise<MixResult> {
+    const taskId = `mock-mix-${randomUUID()}`;
+    // Prefer a real storage path (instrumental or first vocal) so download works
+    const path =
+      tracks.find((t) => t.path && !t.path.startsWith("mock://"))?.path ||
+      tracks[0]?.path ||
+      `mock://mix/${taskId}`;
+    taskPaths.set(taskId, path);
     return {
-      provider_task_id: `mock-mix-${randomUUID()}`,
+      provider_task_id: taskId,
       preview: opts.preview,
-      local_path: tracks[0]?.path,
+      local_path: path,
+      download_url: undefined,
       metadata: { mock: true, track_count: tracks.length, musicalStyle: opts.musicalStyle },
     };
   }
 
   async retrieveMix(providerTaskId: string): Promise<MixResult> {
-    return { provider_task_id: providerTaskId, preview: true, metadata: { mock: true, status: "complete" } };
+    const path = taskPaths.get(providerTaskId);
+    return {
+      provider_task_id: providerTaskId,
+      preview: true,
+      local_path: path,
+      metadata: { mock: true, status: "complete" },
+    };
   }
 
   async analyzeMix(
@@ -42,7 +63,7 @@ export class MockMixProvider implements AudioMixProvider {
   }
 
   async startMaster(
-    _mixUrl: string,
+    mixUrl: string,
     opts: {
       musicalStyle: string;
       desiredLoudness: "LOW" | "MEDIUM" | "HIGH";
@@ -50,14 +71,24 @@ export class MockMixProvider implements AudioMixProvider {
       webhookUrl?: string;
     }
   ): Promise<MasterResult> {
+    const taskId = `mock-master-${randomUUID()}`;
+    const path = mixUrl && !mixUrl.startsWith("mock://") ? mixUrl : mixUrl || `mock://master/${taskId}`;
+    taskPaths.set(taskId, path);
     return {
-      provider_task_id: `mock-master-${randomUUID()}`,
+      provider_task_id: taskId,
       preview: opts.preview,
+      local_path: path,
       metadata: { mock: true, musicalStyle: opts.musicalStyle },
     };
   }
 
   async retrieveMaster(providerTaskId: string): Promise<MasterResult> {
-    return { provider_task_id: providerTaskId, preview: false, metadata: { mock: true, status: "complete" } };
+    const path = taskPaths.get(providerTaskId);
+    return {
+      provider_task_id: providerTaskId,
+      preview: false,
+      local_path: path,
+      metadata: { mock: true, status: "complete" },
+    };
   }
 }
