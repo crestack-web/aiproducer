@@ -11,7 +11,6 @@ const C = {
   surface: "rgba(255,255,255,0.045)",
   border: "rgba(255,255,255,0.09)",
   borderHi: "rgba(255,255,255,0.16)",
-  signal: "#7BEBD4",
   brass: "#E7A961",
   brassSoft: "rgba(231,169,97,0.15)",
   brassLine: "rgba(231,169,97,0.55)",
@@ -39,6 +38,8 @@ type Project = {
   mood: string | null;
   updated_at: string;
 };
+
+type Tab = "home" | "library" | "profile";
 
 function coverFor(seed: string) {
   let n = 0;
@@ -74,6 +75,7 @@ export default function StudioAppPage() {
   const [mood, setMood] = useState("Emotional");
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
+  const [tab, setTab] = useState<Tab>("home");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -88,7 +90,7 @@ export default function StudioAppPage() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("display_name, genre, role, experience_level")
+        .select("display_name, genre")
         .eq("id", user.id)
         .maybeSingle();
       setUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
@@ -102,33 +104,26 @@ export default function StudioAppPage() {
     })();
   }, [router]);
 
-  async function createProjectShell() {
-    const createRes = await fetch("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title:
-          beatMode === "upload" && beatFile
-            ? beatFile.name.replace(/\.[^.]+$/, "")
-            : `${mood} ${genre}`,
-        genre,
-        mood,
-        tempo: 90,
-      }),
-    });
-    if (!createRes.ok) {
-      const j = await createRes.json().catch(() => ({}));
-      throw new Error(j.error || "Could not create project");
-    }
-    const { project } = await createRes.json();
-    return project as { id: string };
-  }
-
   async function createAndGenerate() {
     setCreating(true);
     setError(null);
     try {
-      const project = await createProjectShell();
+      const createRes = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: beatMode === "upload" && beatFile ? beatFile.name.replace(/\.[^.]+$/, "") : `${mood} ${genre}`,
+          genre,
+          mood,
+          tempo: 90,
+        }),
+      });
+      if (!createRes.ok) {
+        const j = await createRes.json().catch(() => ({}));
+        throw new Error(j.error || "Could not create project");
+      }
+      const { project } = await createRes.json();
+
       if (beatMode === "upload") {
         if (!beatFile) throw new Error("Choose a beat file to upload");
         const form = new FormData();
@@ -152,6 +147,7 @@ export default function StudioAppPage() {
           throw new Error(j.error || "Beat generation failed");
         }
       }
+
       const analyzeRes = await fetch(`/api/projects/${project.id}/analyze`, { method: "POST" });
       if (!analyzeRes.ok) {
         const j = await analyzeRes.json().catch(() => ({}));
@@ -178,24 +174,70 @@ export default function StudioAppPage() {
     .slice(0, 2)
     .toUpperCase();
 
+  function renderProjects() {
+    if (loading) return <p style={S.muted}>Loading…</p>;
+    if (projects.length === 0) {
+      return (
+        <div style={S.empty}>
+          <p style={S.emptyTitle}>No songs yet</p>
+          <p style={S.muted}>Start a producer session from Home.</p>
+          {tab !== "home" && (
+            <button type="button" style={{ ...S.primaryBtn, marginTop: 16, maxWidth: 280 }} onClick={() => setTab("home")}>
+              Go to Home
+            </button>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div style={S.grid}>
+        {projects.map((p) => {
+          const g = coverFor(p.id + (p.title || ""));
+          return (
+            <Link key={p.id} href={`/app/projects/${p.id}`} style={S.projectCard}>
+              <div style={{ ...S.cover, background: `linear-gradient(145deg, ${g[0]}, ${g[1]})` }} />
+              <div style={S.projectTitle}>{p.title}</div>
+              <div style={S.projectMeta}>{[p.genre, p.mood].filter(Boolean).join(" · ") || "Untitled"}</div>
+              <div style={S.status}>{statusLabel(p.status)}</div>
+            </Link>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const navBtn = (key: Tab, label: string) => (
+    <button
+      type="button"
+      key={key}
+      onClick={() => setTab(key)}
+      style={{ ...S.navItem, ...(tab === key ? S.navActive : {}) }}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div style={S.shell}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+        .studio-bottom-nav { display: none; }
         @media (max-width: 860px) {
           .studio-sidebar { display: none !important; }
-          .studio-main-inner { padding: 24px 16px 64px !important; }
+          .studio-bottom-nav { display: flex !important; }
+          .studio-main-inner { padding: 24px 16px 96px !important; }
           .studio-hero-row { flex-direction: column !important; align-items: flex-start !important; }
           .studio-hero-art { display: none !important; }
           .studio-field-row { grid-template-columns: 1fr !important; }
         }
       `}</style>
+
       <aside className="studio-sidebar" style={S.sidebar}>
         <div style={S.brand}>◆ STUDIO</div>
         <nav style={S.nav}>
-          <div style={{ ...S.navItem, ...S.navActive }}>Home</div>
-          <div style={S.navItem}>Library</div>
-          <div style={S.navItem}>Profile</div>
+          {navBtn("home", "Home")}
+          {navBtn("library", "Library")}
+          {navBtn("profile", "Profile")}
         </nav>
         <div style={S.sideCard}>
           <div style={S.sideCardLabel}>AI Producer</div>
@@ -212,113 +254,130 @@ export default function StudioAppPage() {
 
       <main style={S.main}>
         <div className="studio-main-inner" style={S.mainInner}>
-          <div className="studio-hero-row" style={S.heroRow}>
-            <div style={{ flex: 1, maxWidth: 520 }}>
-              <div style={S.monoEyebrow}>◆ STUDIO</div>
-              <h1 style={S.h1}>Make music.<br />With your voice.</h1>
-              <p style={S.sub}>
-                Create a beat, then let your AI producer guide you section by section until you have a finished song.
-              </p>
-            </div>
-            <div className="studio-hero-art" style={S.heroArt}>
-              <div style={S.heroGlow} />
-            </div>
-          </div>
+          {tab === "home" && (
+            <>
+              <div className="studio-hero-row" style={S.heroRow}>
+                <div style={{ flex: 1, maxWidth: 520 }}>
+                  <div style={S.monoEyebrow}>◆ STUDIO</div>
+                  <h1 style={S.h1}>Make music.<br />With your voice.</h1>
+                  <p style={S.sub}>Create a beat, then let your AI producer guide you section by section until you have a finished song.</p>
+                </div>
+                <div className="studio-hero-art" style={S.heroArt}>
+                  <div style={S.heroGlow} />
+                </div>
+              </div>
 
-          <section style={S.card}>
-            <div style={S.cardTitle}>New song</div>
-            <div className="studio-field-row" style={S.fieldRow}>
-              <label style={S.label}>
-                Genre
-                <select style={S.select} value={genre} onChange={(e) => setGenre(e.target.value)}>
-                  {GENRES.map((g) => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </label>
-              <label style={S.label}>
-                Mood
-                <select style={S.select} value={mood} onChange={(e) => setMood(e.target.value)}>
-                  {MOODS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            <div style={S.chipRow}>
-              <button type="button" style={beatMode === "ai" ? S.chipOn : S.chip} onClick={() => setBeatMode("ai")}>AI beat</button>
-              <button type="button" style={beatMode === "upload" ? S.chipOn : S.chip} onClick={() => setBeatMode("upload")}>Upload my beat</button>
-            </div>
-
-            {beatMode === "upload" && (
-              <div style={S.uploadRow}>
-                <input ref={fileRef} type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm" style={{ display: "none" }} onChange={(e) => setBeatFile(e.target.files?.[0] || null)} />
-                <button type="button" style={S.secondaryBtn} onClick={() => fileRef.current?.click()}>
-                  {beatFile ? "Change file" : "Choose beat file"}
+              <section style={S.card}>
+                <div style={S.cardTitle}>New song</div>
+                <div className="studio-field-row" style={S.fieldRow}>
+                  <label style={S.label}>
+                    Genre
+                    <select style={S.select} value={genre} onChange={(e) => setGenre(e.target.value)}>
+                      {GENRES.map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={S.label}>
+                    Mood
+                    <select style={S.select} value={mood} onChange={(e) => setMood(e.target.value)}>
+                      {MOODS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div style={S.chipRow}>
+                  <button type="button" style={beatMode === "ai" ? S.chipOn : S.chip} onClick={() => setBeatMode("ai")}>AI beat</button>
+                  <button type="button" style={beatMode === "upload" ? S.chipOn : S.chip} onClick={() => setBeatMode("upload")}>Upload my beat</button>
+                </div>
+                {beatMode === "upload" && (
+                  <div style={S.uploadRow}>
+                    <input ref={fileRef} type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm" style={{ display: "none" }} onChange={(e) => setBeatFile(e.target.files?.[0] || null)} />
+                    <button type="button" style={S.secondaryBtn} onClick={() => fileRef.current?.click()}>
+                      {beatFile ? "Change file" : "Choose beat file"}
+                    </button>
+                    <span style={S.fileHint}>{beatFile ? beatFile.name : "WAV, MP3, M4A…"}</span>
+                  </div>
+                )}
+                {error && <div style={S.error}>{error}</div>}
+                <button
+                  type="button"
+                  style={{ ...S.primaryBtn, opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1 }}
+                  disabled={creating || (beatMode === "upload" && !beatFile)}
+                  onClick={createAndGenerate}
+                >
+                  {creating ? "Creating…" : beatMode === "upload" ? "Start with my beat" : "Start producer session"}
                 </button>
-                <span style={S.fileHint}>{beatFile ? beatFile.name : "WAV, MP3, M4A… (max 40MB)"}</span>
-              </div>
-            )}
+              </section>
 
-            {error && <div style={S.error}>{error}</div>}
+              <section style={{ marginTop: 36 }}>
+                <div style={S.sectionLabel}>Your sessions</div>
+                <div style={{ marginTop: 14 }}>{renderProjects()}</div>
+              </section>
+            </>
+          )}
 
-            <button
-              type="button"
-              style={{ ...S.primaryBtn, opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1 }}
-              disabled={creating || (beatMode === "upload" && !beatFile)}
-              onClick={createAndGenerate}
-            >
-              {creating
-                ? beatMode === "upload"
-                  ? "Uploading beat & building plan…"
-                  : "Creating beat & plan…"
-                : beatMode === "upload"
-                  ? "Start with my beat"
-                  : "Start producer session"}
-            </button>
-            <p style={S.hint}>One credit is used when the finished mix is ready. Headphones recommended for recording.</p>
-          </section>
+          {tab === "library" && (
+            <section>
+              <div style={S.monoEyebrow}>◆ LIBRARY</div>
+              <h1 style={{ ...S.h1, fontSize: "clamp(1.75rem, 3.5vw, 2.4rem)" }}>Your songs</h1>
+              <p style={{ ...S.sub, marginBottom: 24 }}>Everything you've started or finished.</p>
+              {renderProjects()}
+            </section>
+          )}
 
-          <section style={{ marginTop: 36 }}>
-            <div style={S.sectionHead}>
-              <span style={S.sectionLabel}>Your sessions</span>
-            </div>
-            {loading ? (
-              <p style={S.muted}>Loading…</p>
-            ) : projects.length === 0 ? (
-              <div style={S.empty}>
-                <p style={S.emptyTitle}>No songs yet</p>
-                <p style={S.muted}>Start a producer session above — your tracks will show up here.</p>
+          {tab === "profile" && (
+            <section>
+              <div style={S.monoEyebrow}>◆ PROFILE</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 12, marginBottom: 28 }}>
+                <div style={{ ...S.avatar, width: 84, height: 84, fontSize: 28 }}>{initials || "A"}</div>
+                <div style={{ fontFamily: "Fraunces, Georgia, serif", fontSize: 22, marginTop: 14 }}>{userName}</div>
+                <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>
+                  {projects.length} session{projects.length === 1 ? "" : "s"}
+                </div>
               </div>
-            ) : (
-              <div style={S.grid}>
-                {projects.map((p) => {
-                  const g = coverFor(p.id + (p.title || ""));
-                  return (
-                    <Link key={p.id} href={`/app/projects/${p.id}`} style={S.projectCard}>
-                      <div style={{ ...S.cover, background: `linear-gradient(145deg, ${g[0]}, ${g[1]})` }} />
-                      <div style={S.projectTitle}>{p.title}</div>
-                      <div style={S.projectMeta}>{[p.genre, p.mood].filter(Boolean).join(" · ") || "Untitled"}</div>
-                      <div style={S.status}>{statusLabel(p.status)}</div>
-                    </Link>
-                  );
-                })}
+              <div style={S.card}>
+                <div style={S.cardTitle}>Account</div>
+                <p style={{ fontSize: 14, color: C.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+                  Preferences come from onboarding. Start new songs from Home.
+                </p>
+                <button type="button" style={S.secondaryBtn} onClick={() => setTab("home")}>Back to Home</button>
+                <button type="button" style={{ ...S.secondaryBtn, marginTop: 10, width: "100%", color: C.textMuted }} onClick={signOut}>
+                  Log out
+                </button>
               </div>
-            )}
-          </section>
+            </section>
+          )}
         </div>
       </main>
+
+      <nav className="studio-bottom-nav" style={S.bottomNav} aria-label="Main">
+        {(["home", "library", "profile"] as Tab[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            style={{ ...S.bottomItem, ...(tab === key ? S.bottomItemActive : {}) }}
+            aria-current={tab === key ? "page" : undefined}
+          >
+            <span style={S.bottomIcon} aria-hidden>
+              {key === "home" ? "⌂" : key === "library" ? "≡" : "◯"}
+            </span>
+            {key === "home" ? "Home" : key === "library" ? "Library" : "Profile"}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
 
 const S: Record<string, React.CSSProperties> = {
-  shell: { minHeight: "100vh", display: "flex", background: C.bgDeep, color: C.text, fontFamily: "Inter, system-ui, sans-serif" },
+  shell: { minHeight: "100vh", display: "flex", background: C.bgDeep, color: C.text, fontFamily: "Inter, system-ui, sans-serif", position: "relative" },
   sidebar: { width: 240, flexShrink: 0, display: "flex", flexDirection: "column", padding: "28px 18px 24px", borderRight: `1px solid ${C.border}`, background: `linear-gradient(180deg, ${C.bg}, ${C.bgDeep})` },
   brand: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: 2.5, color: C.brass, marginBottom: 36, paddingLeft: 10 },
   nav: { display: "flex", flexDirection: "column", gap: 4, flex: 1 },
-  navItem: { padding: "11px 12px", borderRadius: 12, fontSize: 14.5, fontWeight: 500, color: C.textMuted, border: "1px solid transparent" },
+  navItem: { padding: "11px 12px", borderRadius: 12, fontSize: 14.5, fontWeight: 500, color: C.textMuted, border: "1px solid transparent", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", width: "100%" },
   navActive: { background: C.brassSoft, border: `1px solid ${C.brassLine}`, color: C.brass, fontWeight: 600 },
   sideCard: { marginTop: "auto", padding: "14px 12px", borderRadius: 14, background: C.surface, border: `1px solid ${C.border}`, marginBottom: 14 },
   sideCardLabel: { fontSize: 12, color: C.textFaint, marginBottom: 6 },
@@ -347,9 +406,7 @@ const S: Record<string, React.CSSProperties> = {
   secondaryBtn: { padding: "10px 14px", borderRadius: 999, border: `1px solid ${C.borderHi}`, background: C.surface, color: C.text, cursor: "pointer", fontSize: 13.5 },
   fileHint: { fontSize: 13, color: C.textMuted },
   primaryBtn: { width: "100%", padding: "15px 20px", borderRadius: 16, border: "none", background: `linear-gradient(180deg, #F0BC80, ${C.brass})`, color: "#1A1208", fontWeight: 600, fontSize: 15.5, cursor: "pointer", boxShadow: "0 8px 24px -8px rgba(231,169,97,0.55)" },
-  hint: { marginTop: 12, fontSize: 12.5, color: C.textFaint, lineHeight: 1.45 },
   error: { marginBottom: 12, padding: 12, borderRadius: 12, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 13.5 },
-  sectionHead: { marginBottom: 14 },
   sectionLabel: { fontSize: 12.5, fontWeight: 600, letterSpacing: 1.2, textTransform: "uppercase", color: C.textFaint },
   muted: { color: C.textMuted, fontSize: 14 },
   empty: { padding: "36px 20px", textAlign: "center", borderRadius: 18, border: `1px solid ${C.border}`, background: C.surface },
@@ -360,4 +417,18 @@ const S: Record<string, React.CSSProperties> = {
   projectTitle: { fontFamily: "Fraunces, Georgia, serif", fontSize: 17, marginTop: 12, color: C.text },
   projectMeta: { fontSize: 13, color: C.textMuted, marginTop: 4 },
   status: { marginTop: 10, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", color: C.brass },
+  bottomNav: {
+    position: "fixed", left: 0, right: 0, bottom: 0, height: 74,
+    paddingBottom: "env(safe-area-inset-bottom)",
+    background: "rgba(11,10,15,0.94)", backdropFilter: "blur(16px)",
+    borderTop: `1px solid ${C.border}`, zIndex: 50,
+    alignItems: "stretch", justifyContent: "space-around",
+  },
+  bottomItem: {
+    flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    gap: 4, color: C.textFaint, fontSize: 10.5, fontWeight: 500, fontFamily: "inherit",
+    background: "transparent", border: "none", cursor: "pointer", paddingBottom: 8,
+  },
+  bottomItemActive: { color: C.brass, fontWeight: 600 },
+  bottomIcon: { fontSize: 18, lineHeight: 1 },
 };
