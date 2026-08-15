@@ -21,6 +21,7 @@ export default function WelcomePage() {
           </Link>
           <nav className="nav desktop-nav">
             <a href="#how">How it works</a>
+            <a href="#value">Why Studio</a>
             <a href="#pricing">Pricing</a>
             <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
@@ -126,6 +127,53 @@ export default function WelcomePage() {
           </div>
         </section>
 
+        <section className="section" id="value">
+          <div className="section-head">
+            <h2>The gap most artists feel</h2>
+            <p>
+              A real studio can sound incredible — but sessions are expensive, time is limited,
+              and a lot of the money goes to hours that don’t end up on the record.
+              Studio closes that gap: guided production + pro mix & master without booking a room.
+            </p>
+          </div>
+          <div className="cost-compare">
+            <div className="cost-card">
+              <div className="cost-label">Traditional studio</div>
+              <h3>One song, in a room</h3>
+              <p>Typical independent session for a single — before mixing is even finished.</p>
+              <div className="cost-total">$400–$1,200<span>+</span></div>
+              <div className="cost-sub">Common range for one focused session + basic mix</div>
+              <ul className="cost-list">
+                <li>Studio time (2–4 hrs) <em>$150–$400+</em></li>
+                <li>Engineer / producer <em>$100–$400</em></li>
+                <li>Mix pass <em>$100–$300</em></li>
+                <li>Mastering <em>$50–$150</em></li>
+                <li className="dim">Travel, retakes, unused hours <em>often lost</em></li>
+              </ul>
+            </div>
+            <div className="cost-card studio-app">
+              <div className="cost-label">Studio app</div>
+              <h3>One finished song</h3>
+              <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
+              <div className="cost-total">From $0–$4<span> / song</span></div>
+              <div className="cost-sub">Session: $4.99/song · Creator: ~$3.60/song · Pro: ~$3.20/song</div>
+              <ul className="cost-list">
+                <li>AI beat + structure plan <em>included</em></li>
+                <li>Guided recording (unlimited takes*) <em>included</em></li>
+                <li>Pro mix & master (RoEx) <em>included</em></li>
+                <li>WAV / MP3 export <em>included</em></li>
+                <li>Record from home, any time <em>$0 room fee</em></li>
+              </ul>
+            </div>
+          </div>
+          <div className="gap-callout">
+            <strong>Where the value leaks in a studio:</strong> you’re paying for the clock, not only the take that ships.
+            Bad days, short sessions, and vague direction mean money spent without a radio-ready file.
+            Studio flips that — you pay for a <strong>finished song path</strong>, with a producer plan and mastering baked in,
+            so more of every dollar ends up in the track you release.
+          </div>
+        </section>
+
         <section className="section" id="pricing">
           <div className="section-head">
             <h2>Simple pricing</h2>
@@ -227,6 +275,22 @@ const css = `
   .compare-card ul{list-style:none;margin:0;padding:0}
   .compare-card li{font-size:14px;padding:8px 0;border-top:1px solid var(--border);color:var(--muted)}
   .compare-card.yes li{color:var(--text)}
+  .cost-compare{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px;margin:0 auto}
+  .cost-card{padding:28px 24px;border-radius:22px;border:1px solid var(--border);background:var(--surface)}
+  .cost-card.studio-app{border-color:rgba(123,235,212,.35);background:radial-gradient(ellipse at 50% 0%,rgba(123,235,212,.1),transparent 55%),rgba(255,255,255,.04)}
+  .cost-label{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;color:var(--muted)}
+  .cost-card.studio-app .cost-label{color:var(--signal)}
+  .cost-card h3{font-family:Fraunces,serif;font-weight:500;font-size:1.45rem;margin:0 0 8px}
+  .cost-card>p{font-size:14px;color:var(--muted);line-height:1.5;margin:0 0 18px}
+  .cost-total{font-family:Fraunces,serif;font-size:2.1rem;font-weight:500;margin-bottom:4px}
+  .cost-total span{font-family:Inter,sans-serif;font-size:14px;font-weight:500;color:var(--muted)}
+  .cost-sub{font-size:13px;color:var(--faint);margin-bottom:16px}
+  .cost-list{list-style:none;margin:0;padding:0}
+  .cost-list li{font-size:14px;padding:9px 0;border-top:1px solid var(--border);color:var(--text);line-height:1.4;display:flex;justify-content:space-between;gap:12px}
+  .cost-list li em{font-style:normal;color:var(--muted);font-size:13px;text-align:right;white-space:nowrap}
+  .cost-list li.dim{color:var(--muted)}
+  .gap-callout{max-width:900px;margin:20px auto 0;padding:18px 20px;border-radius:16px;border:1px solid rgba(231,169,97,.28);background:rgba(231,169,97,.15);font-size:14.5px;line-height:1.55;color:var(--text)}
+  .gap-callout strong{color:var(--brass);font-weight:600}
   .pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
   .price-card{padding:24px 20px;border-radius:20px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;gap:10px}
   .price-card.featured{border-color:rgba(231,169,97,.45);background:radial-gradient(ellipse at 50% 0%,rgba(231,169,97,.12),transparent 55%),rgba(255,255,255,.05)}
@@ -238,7 +302,7 @@ const css = `
   .bottom-cta h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.45rem,3.5vw,2rem);margin:0 0 10px}
   .bottom-cta p{color:var(--muted);margin:0 0 20px}
   footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;color:var(--faint);font-size:13px}
-  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:400px;margin:0 auto}.compare{grid-template-columns:1fr}}
+  @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:400px;margin:0 auto}.compare,.cost-compare{grid-template-columns:1fr}}
   @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.showcase-body{grid-template-columns:1fr}.panel-producer{border-left:none;border-top:1px solid var(--border)}footer{flex-direction:column;align-items:flex-start}}
   @media (max-width:400px){.wrap{padding-left:14px;padding-right:14px}}
 `;
