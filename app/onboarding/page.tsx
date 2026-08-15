@@ -18,6 +18,15 @@ const LEVELS = [
   { value: "pro", label: "I know my way around", desc: "I want speed and a clear producer plan" },
 ];
 
+function errMsg(e: unknown): string {
+  if (!e) return "Could not save profile";
+  if (typeof e === "string") return e;
+  if (e instanceof Error && e.message) return e.message;
+  const o = e as { message?: string; details?: string; hint?: string };
+  if (o.message) return [o.message, o.details, o.hint].filter(Boolean).join(" — ");
+  return "Could not save profile";
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -36,26 +45,46 @@ export default function OnboardingPage() {
     return false;
   }, [step, name, role, genre, level]);
 
+  async function saveProfile(
+    supabase: ReturnType<typeof createClient>,
+    userId: string,
+    patch: Record<string, unknown>
+  ) {
+    const { data: updated, error: updateErr } = await supabase
+      .from("profiles")
+      .update(patch)
+      .eq("id", userId)
+      .select("id");
+    if (updateErr) throw updateErr;
+    if (!updated || updated.length === 0) {
+      const { error: insertErr } = await supabase.from("profiles").insert({ id: userId, ...patch });
+      if (insertErr) throw insertErr;
+    }
+  }
+
   async function finish() {
     setLoading(true);
     setError(null);
     try {
       const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push("/auth?mode=login"); return; }
-      const { error: upErr } = await supabase.from("profiles").upsert({
-        id: user.id,
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        router.push("/auth?mode=login");
+        return;
+      }
+      await saveProfile(supabase, user.id, {
         display_name: name.trim(),
         role,
         genre,
         experience_level: level,
         onboarding_completed_at: new Date().toISOString(),
       });
-      if (upErr) throw upErr;
       router.push("/app");
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save profile");
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -63,16 +92,20 @@ export default function OnboardingPage() {
 
   async function skip() {
     setLoading(true);
+    setError(null);
     try {
       const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
-        await supabase.from("profiles").upsert({
-          id: user.id,
+        await saveProfile(supabase, user.id, {
           onboarding_completed_at: new Date().toISOString(),
         });
       }
       router.push("/app");
+    } catch (e) {
+      setError(errMsg(e));
     } finally {
       setLoading(false);
     }
