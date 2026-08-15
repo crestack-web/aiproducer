@@ -232,7 +232,15 @@ export default function StudioPage() {
 
   return (
     <AppShell active="studio" userName={userName} onSignOut={signOut}>
-      <div style={{ width: "100%", maxWidth: 920, margin: "0 auto", padding: "28px 20px 48px", boxSizing: "border-box" }}>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 920,
+          margin: "0 auto",
+          padding: "28px 20px 32px",
+          boxSizing: "border-box",
+        }}
+      >
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 10 }}>
           ◆ STUDIO
         </div>
