@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createSignedDownloadUrl, createSignedUploadUrl, recordingPath } from "@/lib/storage";
+import { createSignedDownloadUrl, createSignedUploadUrl, recordingPath, getStorageBucket } from "@/lib/storage";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -102,7 +102,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const { createServiceClient } = await import("@/lib/supabase/server");
     const service = createServiceClient();
     const buf = Buffer.from(await file.arrayBuffer());
-    const { error: upErr } = await service.storage.from("studio").upload(path, buf, {
+    const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
       contentType: file.type || "audio/webm",
       upsert: true,
     });
