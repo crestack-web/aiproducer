@@ -2,7 +2,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { StudioPlayer, CompactAudioPlayer } from "@/components/studio-player";
+import {
+  StudioPlayer,
+  CompactAudioPlayer,
+  RecordingVisualizer,
+  PlayerLoadingState,
+} from "@/components/studio-player";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -76,6 +81,7 @@ export default function ProjectDetailPage() {
   const [skipping, setSkipping] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -98,17 +104,6 @@ export default function ProjectDetailPage() {
 
   const requiredLeft = requiredOpen(tasks);
   const optionalLeft = optionalOpen(tasks);
-
-  function TaskPicker({ highlightId }: { highlightId?: string | null }) {
-    return (
-      <SessionSteps
-        tasks={tasks}
-        highlightId={highlightId}
-        locked={phase === "recording" || phase === "review"}
-        onSelect={selectTask}
-      />
-    );
-  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -198,6 +193,7 @@ export default function ProjectDetailPage() {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       streamRef.current = stream;
+      setMicStream(stream);
       chunksRef.current = [];
       let mime = "audio/webm";
       for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
@@ -214,6 +210,8 @@ export default function ProjectDetailPage() {
       rec.onstop = async () => {
         if (timerRef.current) clearInterval(timerRef.current);
         streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        setMicStream(null);
         beatAudioRef.current?.pause();
         const blob = new Blob(chunksRef.current, { type: mime.split(";")[0] });
         setLocalBlobUrl(URL.createObjectURL(blob));
@@ -255,6 +253,7 @@ export default function ProjectDetailPage() {
       rec.start(250);
       setPhase("recording");
     } catch (e) {
+      setMicStream(null);
       setError(e instanceof Error ? e.message : "Microphone error");
     }
   }
@@ -375,7 +374,11 @@ export default function ProjectDetailPage() {
     return (
       <AppShell active="studio">
         <div style={wrap}>
-          <p style={{ color: C.textMuted, textAlign: "center", marginTop: 80 }}>Loading project…</p>
+          <PlayerLoadingState
+            title="Loading session"
+            subtitle="Pulling your beat, plan, and takes…"
+            seed={`load-${id}`}
+          />
         </div>
       </AppShell>
     );
@@ -414,7 +417,11 @@ export default function ProjectDetailPage() {
 
         {screen === "analyzing" && (
           <div style={wrap}>
-            <p style={{ textAlign: "center", color: C.textMuted, marginTop: 80 }}>Your AI Producer is analyzing the beat…</p>
+            <PlayerLoadingState
+              title="Producer is listening"
+              subtitle="Mapping intro, verse, chorus, and what you should record next."
+              seed={`analyze-${id}`}
+            />
           </div>
         )}
 
@@ -453,6 +460,7 @@ export default function ProjectDetailPage() {
               type="button"
               style={{ background: "none", border: "none", color: C.textMuted, marginBottom: 12, cursor: "pointer" }}
               onClick={() => setScreen("plan")}
+              disabled={phase === "recording"}
             >
               ← Plan
             </button>
@@ -501,10 +509,18 @@ export default function ProjectDetailPage() {
             )}
 
             {phase === "recording" && (
-              <div style={{ marginTop: 24, textAlign: "center" }}>
-                <div style={{ fontSize: 32, fontFamily: "monospace", color: C.signal }}>{recordSeconds}s</div>
-                <p style={{ color: C.textMuted, marginTop: 8 }}>Recording… beat is playing under you</p>
-                <button type="button" style={{ ...btn, marginTop: 18, background: C.danger, color: "#fff" }} onClick={stopRecording}>
+              <div style={{ marginTop: 8 }}>
+                <RecordingVisualizer
+                  stream={micStream}
+                  seconds={recordSeconds}
+                  label="Recording"
+                  seed={`rec-${current.id}`}
+                />
+                <button
+                  type="button"
+                  style={{ ...btn, marginTop: 16, background: C.danger, color: "#fff" }}
+                  onClick={stopRecording}
+                >
                   Stop
                 </button>
               </div>
@@ -512,19 +528,19 @@ export default function ProjectDetailPage() {
 
             {phase === "review" && (
               <div style={{ marginTop: 16 }}>
-                <p style={{ textAlign: "center", color: C.textMuted }}>
+                <p style={{ textAlign: "center", color: C.textMuted, marginBottom: 4 }}>
                   {uploading
                     ? "Saving take…"
                     : savedRecordingId
                       ? isRetake
                         ? "Saved ✓ — keep new take?"
-                        : "Saved ✓ — keep this take or record again"
+                        : "Saved ✓ — hear your voice on the beat"
                       : "How does it feel?"}
                 </p>
                 {localBlobUrl && (
                   <CompactAudioPlayer
                     src={localBlobUrl}
-                    label="Your take"
+                    label={uploading ? "Your take (saving…)" : "Your take"}
                     seed={`take-${current.id}`}
                     beatSrc={beatUrl}
                     beatStartMs={current.start_ms ?? 0}
@@ -532,6 +548,9 @@ export default function ProjectDetailPage() {
                     beatVolume={0.55}
                     vocalVolume={1}
                   />
+                )}
+                {!localBlobUrl && uploading && (
+                  <PlayerLoadingState title="Saving take" subtitle="Uploading your performance…" seed={`save-${current.id}`} />
                 )}
                 <button
                   type="button"
@@ -578,17 +597,27 @@ export default function ProjectDetailPage() {
 
         {screen === "assemble" && (
           <div style={wrap}>
-            <h1 style={{ ...title, textAlign: "center" }}>Ready to produce</h1>
-            <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-              We will mix your vocals with the beat.
-            </p>
-            {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
-            <button type="button" style={{ ...btn, marginTop: 20 }} disabled={producing} onClick={startProduce}>
-              {producing ? "Producing…" : "Produce my song"}
-            </button>
-            <button type="button" style={{ ...btn2, marginTop: 10 }} onClick={() => setScreen("session")}>
-              Back to recording
-            </button>
+            {producing ? (
+              <PlayerLoadingState
+                title="Producing your song"
+                subtitle="Mixing vocals with the beat, then mastering for release."
+                seed={`produce-${id}`}
+              />
+            ) : (
+              <>
+                <h1 style={{ ...title, textAlign: "center" }}>Ready to produce</h1>
+                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
+                  We will mix your vocals with the beat.
+                </p>
+                {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
+                <button type="button" style={{ ...btn, marginTop: 20 }} disabled={producing} onClick={startProduce}>
+                  Produce my song
+                </button>
+                <button type="button" style={{ ...btn2, marginTop: 10 }} onClick={() => setScreen("session")}>
+                  Back to recording
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -597,30 +626,40 @@ export default function ProjectDetailPage() {
             <Link href="/app/studio" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
               ← Studio
             </Link>
-            <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Your song is ready</h1>
-            <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-              Play it back, then download your master.
-            </p>
-            {masterUrl && (
-              <StudioPlayer
-                src={masterUrl}
-                title={project?.title || "Your song"}
-                subtitle={[project?.genre, project?.mood].filter(Boolean).join(" · ") || "Master"}
-                seed={`${project?.title || "song"}-master`}
-                accent="signal"
+            {producing ? (
+              <PlayerLoadingState
+                title="Finishing master"
+                subtitle="Almost there — locking in loudness and clarity."
+                seed={`master-${id}`}
               />
+            ) : (
+              <>
+                <h1 style={{ ...title, textAlign: "center", marginTop: 24 }}>Your song is ready</h1>
+                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
+                  Play it back, then download your master.
+                </p>
+                {masterUrl && (
+                  <StudioPlayer
+                    src={masterUrl}
+                    title={project?.title || "Your song"}
+                    subtitle={[project?.genre, project?.mood].filter(Boolean).join(" · ") || "Master"}
+                    seed={`${project?.title || "song"}-master`}
+                    accent="signal"
+                  />
+                )}
+                {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
+                <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
+                  {!masterUrl && (
+                    <button type="button" style={btn} disabled={producing} onClick={startProduce}>
+                      Produce my song
+                    </button>
+                  )}
+                  <button type="button" style={masterUrl ? btn : btn2} disabled={producing || !masterUrl} onClick={downloadSong}>
+                    Download song
+                  </button>
+                </div>
+              </>
             )}
-            {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
-            <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
-              {!masterUrl && (
-                <button type="button" style={btn} disabled={producing} onClick={startProduce}>
-                  {producing ? "Producing…" : "Produce my song"}
-                </button>
-              )}
-              <button type="button" style={masterUrl ? btn : btn2} disabled={producing || !masterUrl} onClick={downloadSong}>
-                Download song
-              </button>
-            </div>
           </div>
         )}
       </div>
