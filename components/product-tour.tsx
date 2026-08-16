@@ -111,7 +111,6 @@ export function ProductTour({ open, onClose }: Props) {
     router.push(step.href);
   }, [open, step?.id, step?.href, router]);
 
-  // Highlight nav via data attribute
   useEffect(() => {
     if (!open) {
       document.querySelectorAll("[data-tour-active]").forEach((el) => {
@@ -155,6 +154,7 @@ export function ProductTour({ open, onClose }: Props) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="studio-tour-title"
+      className="studio-tour-overlay"
       style={{
         position: "fixed",
         inset: 0,
@@ -179,6 +179,13 @@ export function ProductTour({ open, onClose }: Props) {
           position: relative;
           z-index: 201;
         }
+        /* Clear fixed bottom nav (~74px) + home indicator on mobile */
+        @media (max-width: 899px) {
+          .studio-tour-overlay {
+            padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
+            align-items: flex-end !important;
+          }
+        }
       `}</style>
       <div
         style={{
@@ -191,6 +198,9 @@ export function ProductTour({ open, onClose }: Props) {
           padding: "20px 18px 16px",
           color: C.text,
           fontFamily: "system-ui, sans-serif",
+          maxHeight: "min(70vh, 520px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -320,7 +330,6 @@ export function useProductTour(enabled = true) {
     if (!enabled) return;
     if (typeof window === "undefined") return;
     if (!isTourCompleted()) {
-      // slight delay so shell mounts with nav targets
       const t = setTimeout(() => setOpen(true), 600);
       return () => clearTimeout(t);
     }
