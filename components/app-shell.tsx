@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ProductTour, useProductTour } from "@/components/product-tour";
 
 function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
@@ -82,6 +83,16 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const { colors: C, mode } = useTheme();
+  const tour = useProductTour(true);
+
+  // Allow any page to open the tour: tour.start() via custom event or ?tour=1
+  useEffect(() => {
+    function onStart() {
+      tour.start();
+    }
+    window.addEventListener("studio-tour-start", onStart);
+    return () => window.removeEventListener("studio-tour-start", onStart);
+  }, [tour.start]);
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
   const initials = (userName || "A")
@@ -444,6 +455,7 @@ export function AppShell({
         </header>
 
         {children}
+      <ProductTour open={tour.open} onClose={tour.close} />
       </main>
 
       <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
