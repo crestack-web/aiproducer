@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createSignedDownloadUrl } from "@/lib/storage";
+import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -69,15 +70,19 @@ export async function GET(_req: Request, ctx: Ctx) {
     id: string;
     task_id: string;
     audio_path: string | null;
+    original_path?: string | null;
     duration_ms: number | null;
     take_number: number | null;
     is_selected: boolean | null;
+    timeline_start_ms?: number | null;
+    timeline_end_ms?: number | null;
+    recording_offset_ms?: number | null;
   }> = [];
 
   if (taskIds.length > 0) {
     const { data: recs } = await supabase
       .from("recordings")
-      .select("id, task_id, audio_path, duration_ms, take_number, is_selected")
+      .select("id, task_id, audio_path, original_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms")
       .eq("project_id", projectId)
       .in("task_id", taskIds)
       .order("take_number", { ascending: false });
@@ -99,30 +104,58 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   const layers = [];
+  const layerErrors: string[] = [];
   for (const task of tasks) {
     const rec = byTask.get(task.id);
-    if (!rec?.audio_path) continue;
+    if (!rec) continue;
+    const path = rec.audio_path || rec.original_path || null;
+    if (!path) {
+      layerErrors.push(`missing audio path for task ${task.id}`);
+      continue;
+    }
 
     let audio_url: string | null = null;
     try {
-      audio_url = await createSignedDownloadUrl(rec.audio_path, 3600);
-    } catch {
+      audio_url = await createSignedDownloadUrl(path, 3600);
+    } catch (e) {
+      layerErrors.push(
+        `signed url failed for ${task.title || task.type || task.id}: ${
+          e instanceof Error ? e.message : "error"
+        }`
+      );
       continue;
     }
     if (!audio_url) continue;
+
+    // Same placement convention as review/produce (section + recording offset)
+    const start_ms = resolvePlacementStartMs({
+      sectionStartMs: task.start_ms,
+      recordingOffsetMs: rec.recording_offset_ms,
+      timelineStartMs: rec.timeline_start_ms,
+    });
+    const end_ms =
+      typeof rec.timeline_end_ms === "number"
+        ? rec.timeline_end_ms
+        : task.end_ms != null
+          ? task.end_ms
+          : start_ms + (rec.duration_ms || 0);
 
     layers.push({
       task_id: task.id,
       type: task.type,
       title: task.title,
       section_label: (task.metadata as { section_label?: string } | null)?.section_label ?? null,
-      start_ms: task.start_ms ?? 0,
-      end_ms: task.end_ms ?? null,
+      start_ms,
+      end_ms,
       take_number: rec.take_number,
       duration_ms: rec.duration_ms,
       audio_url,
       is_selected: Boolean(rec.is_selected),
     });
+  }
+
+  if (layerErrors.length) {
+    console.warn("session-preview layer issues", { projectId, layerErrors });
   }
 
   return NextResponse.json({
