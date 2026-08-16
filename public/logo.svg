@@ -1,26 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" fill="#000"/>
-  <g transform="translate(256 256)">
-    <rect x="-156" y="-156" width="312" height="312" rx="4" fill="#C17F1A" transform="rotate(45)"/>
-    <ellipse cx="24" cy="-44" rx="50" ry="60" fill="#0a0a0a" transform="rotate(-38)"/>
-    <g transform="rotate(-38) translate(24 -44)" stroke="#C17F1A" stroke-width="8" stroke-linecap="round">
-      <line x1="-30" y1="-24" x2="30" y2="-24"/>
-      <line x1="-36" y1="0" x2="36" y2="0"/>
-      <line x1="-30" y1="24" x2="30" y2="24"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Studio">
+  <!-- Full-bleed black field -->
+  <rect width="512" height="512" fill="#000000"/>
+
+  <!-- Gold diamond (exact brand mark shape) -->
+  <path fill="#C17A12" d="M256 48 L464 256 L256 464 L48 256 Z"/>
+
+  <!--
+    Icon group centered on diamond.
+    Mic is rotated ~-40deg: head upper-right, handle lower-left.
+  -->
+  <g transform="translate(256 256) rotate(-40)">
+    <!-- Microphone head (grille capsule) -->
+    <ellipse cx="0" cy="-58" rx="58" ry="70" fill="#0A0A0A"/>
+    <!-- Grille stripes (diamond gold showing through) -->
+    <g fill="none" stroke="#C17A12" stroke-width="14" stroke-linecap="round">
+      <line x1="-48" y1="-78" x2="48" y2="-78"/>
+      <line x1="-52" y1="-58" x2="52" y2="-58"/>
+      <line x1="-48" y1="-38" x2="48" y2="-38"/>
     </g>
-    <rect x="-15" y="10" width="30" height="112" rx="15" fill="#0a0a0a" transform="rotate(-38)"/>
-    <circle cx="-55" cy="95" r="10" fill="#0a0a0a"/>
-    <g fill="#0a0a0a">
-      <ellipse cx="-100" cy="-10" rx="14" ry="10" transform="rotate(-25 -100 -10)"/>
-      <rect x="-106" y="-46" width="6" height="40" rx="2"/>
-      <ellipse cx="-72" cy="-24" rx="14" ry="10" transform="rotate(-25 -72 -24)"/>
-      <rect x="-78" y="-60" width="6" height="40" rx="2"/>
-      <path d="M-103 -46 L-75 -60" stroke="#0a0a0a" stroke-width="5.5" fill="none"/>
-      <ellipse cx="72" cy="58" rx="14" ry="10" transform="rotate(-25 72 58)"/>
-      <rect x="66" y="22" width="6" height="40" rx="2"/>
-      <ellipse cx="100" cy="44" rx="14" ry="10" transform="rotate(-25 100 44)"/>
-      <rect x="94" y="8" width="6" height="40" rx="2"/>
-      <path d="M69 22 L97 8" stroke="#0a0a0a" stroke-width="5.5" fill="none"/>
-    </g>
+    <!-- Head edge clip so stripes sit inside capsule -->
+    <ellipse cx="0" cy="-58" rx="58" ry="70" fill="none" stroke="#0A0A0A" stroke-width="0"/>
+
+    <!-- Handle shaft -->
+    <path fill="#0A0A0A" d="
+      M -22 -8
+      C -24 20, -20 70, -16 108
+      C -14 122, -8 130, 0 132
+      C 8 130, 14 122, 16 108
+      C 20 70, 24 20, 22 -8
+      C 18 -2, -18 -2, -22 -8
+      Z"/>
+    <!-- Soft junction where head meets handle -->
+    <ellipse cx="0" cy="-6" rx="28" ry="18" fill="#0A0A0A"/>
+    <!-- Tip at bottom of handle -->
+    <circle cx="0" cy="138" r="12" fill="#0A0A0A"/>
+  </g>
+
+  <!-- Left beamed eighth notes -->
+  <g fill="#0A0A0A" transform="translate(148 200)">
+    <!-- note heads -->
+    <ellipse cx="0" cy="28" rx="16" ry="12" transform="rotate(-18)"/>
+    <ellipse cx="38" cy="14" rx="16" ry="12" transform="rotate(-18)"/>
+    <!-- stems -->
+    <rect x="10" y="-34" width="7" height="58" rx="1.5"/>
+    <rect x="48" y="-48" width="7" height="58" rx="1.5"/>
+    <!-- beam -->
+    <path d="M10 -34 L55 -50 L55 -40 L10 -24 Z"/>
+  </g>
+
+  <!-- Right beamed eighth notes -->
+  <g fill="#0A0A0A" transform="translate(318 292)">
+    <ellipse cx="0" cy="28" rx="16" ry="12" transform="rotate(-18)"/>
+    <ellipse cx="38" cy="14" rx="16" ry="12" transform="rotate(-18)"/>
+    <rect x="10" y="-34" width="7" height="58" rx="1.5"/>
+    <rect x="48" y="-48" width="7" height="58" rx="1.5"/>
+    <path d="M10 -34 L55 -50 L55 -40 L10 -24 Z"/>
   </g>
 </svg>

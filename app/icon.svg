@@ -1,24 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" fill="#000"/>
-  <g transform="translate(16 16)">
-    <rect x="-9.5" y="-9.5" width="19" height="19" rx="0.5" fill="#C17F1A" transform="rotate(45)"/>
-    <ellipse cx="1.5" cy="-2.5" rx="3.2" ry="3.8" fill="#0a0a0a" transform="rotate(-38)"/>
-    <g transform="rotate(-38) translate(1.5 -2.5)" stroke="#C17F1A" stroke-width="0.7" stroke-linecap="round">
-      <line x1="-2" y1="-1.5" x2="2" y2="-1.5"/>
-      <line x1="-2.3" y1="0" x2="2.3" y2="0"/>
-      <line x1="-2" y1="1.5" x2="2" y2="1.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Studio">
+  <rect width="32" height="32" fill="#000000"/>
+  <path fill="#C17A12" d="M16 3 L29 16 L16 29 L3 16 Z"/>
+  <g transform="translate(16 16) rotate(-40)">
+    <ellipse cx="0" cy="-3.6" rx="3.6" ry="4.4" fill="#0A0A0A"/>
+    <g fill="none" stroke="#C17A12" stroke-width="0.9" stroke-linecap="round">
+      <line x1="-3" y1="-4.9" x2="3" y2="-4.9"/>
+      <line x1="-3.2" y1="-3.6" x2="3.2" y2="-3.6"/>
+      <line x1="-3" y1="-2.3" x2="3" y2="-2.3"/>
     </g>
-    <rect x="-1" y="0.5" width="2" height="7" rx="1" fill="#0a0a0a" transform="rotate(-38)"/>
-    <circle cx="-3.5" cy="6" r="0.7" fill="#0a0a0a"/>
-    <g fill="#0a0a0a">
-      <ellipse cx="-6.2" cy="-0.5" rx="0.9" ry="0.65" transform="rotate(-25)"/>
-      <rect x="-6.6" y="-2.8" width="0.4" height="2.5" rx="0.1"/>
-      <ellipse cx="-4.5" cy="-1.4" rx="0.9" ry="0.65" transform="rotate(-25)"/>
-      <rect x="-4.9" y="-3.7" width="0.4" height="2.5" rx="0.1"/>
-      <ellipse cx="4.5" cy="3.6" rx="0.9" ry="0.65" transform="rotate(-25)"/>
-      <rect x="4.1" y="1.3" width="0.4" height="2.5" rx="0.1"/>
-      <ellipse cx="6.2" cy="2.7" rx="0.9" ry="0.65" transform="rotate(-25)"/>
-      <rect x="5.8" y="0.4" width="0.4" height="2.5" rx="0.1"/>
-    </g>
+    <path fill="#0A0A0A" d="M-1.4 -0.5 C-1.5 1.2 -1.25 4.4 -1 6.75 C-0.9 7.6 -0.5 8.1 0 8.2 C0.5 8.1 0.9 7.6 1 6.75 C1.25 4.4 1.5 1.2 1.4 -0.5 Z"/>
+    <ellipse cx="0" cy="-0.4" rx="1.75" ry="1.1" fill="#0A0A0A"/>
+    <circle cx="0" cy="8.6" r="0.75" fill="#0A0A0A"/>
+  </g>
+  <g fill="#0A0A0A" transform="translate(9.2 12.5) scale(0.55)">
+    <ellipse cx="0" cy="3.5" rx="2" ry="1.5" transform="rotate(-18)"/>
+    <ellipse cx="4.75" cy="1.75" rx="2" ry="1.5" transform="rotate(-18)"/>
+    <rect x="1.25" y="-4.25" width="0.9" height="7.25" rx="0.2"/>
+    <rect x="6" y="-6" width="0.9" height="7.25" rx="0.2"/>
+    <path d="M1.25 -4.25 L6.9 -6.25 L6.9 -5 L1.25 -3 Z"/>
+  </g>
+  <g fill="#0A0A0A" transform="translate(19.8 18.2) scale(0.55)">
+    <ellipse cx="0" cy="3.5" rx="2" ry="1.5" transform="rotate(-18)"/>
+    <ellipse cx="4.75" cy="1.75" rx="2" ry="1.5" transform="rotate(-18)"/>
+    <rect x="1.25" y="-4.25" width="0.9" height="7.25" rx="0.2"/>
+    <rect x="6" y="-6" width="0.9" height="7.25" rx="0.2"/>
+    <path d="M1.25 -4.25 L6.9 -6.25 L6.9 -5 L1.25 -3 Z"/>
   </g>
 </svg>
