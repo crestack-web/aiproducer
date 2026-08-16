@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { STUDIO_LOGO_URL } from "@/lib/brand";
 
 type Mode = "login" | "signup";
 
@@ -85,7 +86,7 @@ html,body{margin:0;width:100%;max-width:100%;overflow-x:hidden;background:#05050
 .auth-main{display:flex;align-items:flex-start;justify-content:center;padding:24px 16px 40px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(40px,env(safe-area-inset-bottom));width:100%;max-width:100%;min-width:0;box-sizing:border-box}
 .auth-card{width:100%;max-width:360px;min-width:0;box-sizing:border-box}
 .auth-logo{display:inline-flex;align-items:center;gap:8px;font-weight:600;text-decoration:none;color:inherit;margin-bottom:24px;font-size:15px}
-.auth-logo-mark{color:#7BEBD4}
+.auth-logo img{display:block;flex-shrink:0;border-radius:6px;object-fit:cover}
 .auth-back{color:#9B96A3;font-size:13px;text-decoration:none;display:inline-block;margin-bottom:16px}
 .auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);margin-bottom:18px;width:100%;box-sizing:border-box}
 .auth-tab{padding:10px 8px;border-radius:10px;border:none;background:transparent;color:#9B96A3;font-weight:600;font-size:14px;cursor:pointer;font-family:inherit}
@@ -119,7 +120,7 @@ html,body{margin:0;width:100%;max-width:100%;overflow-x:hidden;background:#05050
       <div className="auth-shell">
         <aside className="auth-brand">
           <Link href="/" className="auth-logo">
-            <span className="auth-logo-mark">◆</span> Studio
+            <img src={STUDIO_LOGO_URL} alt="" width={22} height={22} /> Studio
           </Link>
           <div className="auth-brand-copy">
             <h1>
@@ -140,7 +141,7 @@ html,body{margin:0;width:100%;max-width:100%;overflow-x:hidden;background:#05050
         <main className="auth-main">
           <div className="auth-card">
             <Link href="/" className="auth-logo mobile-only">
-              <span className="auth-logo-mark">◆</span> Studio
+              <img src={STUDIO_LOGO_URL} alt="" width={22} height={22} /> Studio
             </Link>
             <Link href="/" className="auth-back">
               ← Back
