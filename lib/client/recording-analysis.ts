@@ -2,6 +2,7 @@
 
 import { analyzeAudioBlob } from "@/lib/audio/analysis";
 import type { AudioAnalysis } from "@/lib/audio/analysis-types";
+import { audioBlobToWav } from "@/lib/client/export-wav";
 
 export type AnalysisTaskRef = {
   id: string;
@@ -12,7 +13,10 @@ export type AnalysisTaskRef = {
   metadata?: { section_label?: string; section_id?: string } | null;
 };
 
-/** Analyze blob and append analysis + duration to FormData. Never throws. */
+/**
+ * Analyze blob, convert to WAV for produce alignment, append to FormData.
+ * Never throws — analysis failure is non-fatal; WAV conversion failure is soft.
+ */
 export async function attachAnalysisToForm(
   form: FormData,
   blob: Blob,
@@ -28,6 +32,14 @@ export async function attachAnalysisToForm(
     (task.metadata && typeof task.metadata.section_id === "string"
       ? task.metadata.section_id
       : null);
+
+  try {
+    const wav = await audioBlobToWav(blob);
+    form.set("file", wav, "take.wav");
+  } catch {
+    /* keep original file field if already set by caller */
+  }
+
   try {
     const analysis = await analyzeAudioBlob(blob, {
       projectId,
