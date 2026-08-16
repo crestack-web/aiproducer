@@ -233,28 +233,26 @@ export function RecordingVisualizer({
   seconds,
   label = "Recording",
   seed = "rec",
+  maxSeconds,
 }: {
   stream: MediaStream | null;
   seconds: number;
   label?: string;
   seed?: string;
+  maxSeconds?: number | null;
 }) {
   const C = usePlayerColors();
   const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0.15));
   const rafRef = useRef<number | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (!stream) return;
     let cancelled = false;
     const ctx = new AudioContext();
-    ctxRef.current = ctx;
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 256;
     source.connect(analyser);
-    analyserRef.current = analyser;
     const data = new Uint8Array(analyser.frequencyBinCount);
 
     const tick = () => {
@@ -286,6 +284,10 @@ export function RecordingVisualizer({
 
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
+  const maxLabel =
+    maxSeconds != null && maxSeconds > 0
+      ? ` / ${String(Math.floor(maxSeconds / 60)).padStart(2, "0")}:${String(Math.floor(maxSeconds % 60)).padStart(2, "0")}`
+      : "";
 
   return (
     <div
@@ -304,6 +306,7 @@ export function RecordingVisualizer({
         </span>
         <span style={{ fontFamily: "Georgia, serif", fontSize: 18, color: C.text }}>
           {mm}:{ss}
+          {maxLabel ? <span style={{ color: C.textMuted, fontSize: 14 }}>{maxLabel}</span> : null}
         </span>
       </div>
       <Waveform bars={levels} progress={1} activeColor={C.danger} mutedColor={C.waveMuted} height={52} />
@@ -353,7 +356,9 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.55,
+  /** Keep beat quieter so the artist voice sits on top */
+  beatVolume = 0.22,
+  /** Full vocal level for review */
   vocalVolume = 1,
 }: {
   src: string;
@@ -386,6 +391,12 @@ export function CompactAudioPlayer({
     };
   }, []);
 
+  // Keep volumes in sync if props change while mounted
+  useEffect(() => {
+    if (vocalRef.current) vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
+    if (beatRef.current) beatRef.current.volume = Math.min(1, Math.max(0, beatVolume));
+  }, [vocalVolume, beatVolume]);
+
   async function ensureReady(el: HTMLAudioElement) {
     if (el.readyState >= 2) return;
     await new Promise<void>((resolve) => {
@@ -409,7 +420,8 @@ export function CompactAudioPlayer({
       return;
     }
     await ensureReady(vocal);
-    vocal.volume = vocalVolume;
+    // Voice first — full level
+    vocal.volume = Math.min(1, Math.max(0, vocalVolume));
     const beat = beatRef.current;
     if (beat && beatSrc) {
       await ensureReady(beat);
@@ -418,7 +430,8 @@ export function CompactAudioPlayer({
       } catch {
         /* ignore */
       }
-      beat.volume = beatVolume;
+      // Quiet bed under the take
+      beat.volume = Math.min(1, Math.max(0, beatVolume));
       await beat.play().catch(() => undefined);
     }
     await vocal.play().catch(() => undefined);
@@ -429,7 +442,7 @@ export function CompactAudioPlayer({
         return;
       }
       setProgress(vocal.currentTime / vocal.duration);
-      if (beat && beatEndMs && beat.currentTime * 1000 >= beatEndMs) {
+      if (beat && beatEndMs != null && beat.currentTime * 1000 >= beatEndMs) {
         beat.pause();
       }
       if (!vocal.paused) rafRef.current = requestAnimationFrame(tick);
@@ -465,7 +478,10 @@ export function CompactAudioPlayer({
       {beatSrc && <audio ref={beatRef} src={beatSrc} preload="auto" />}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>{label || "Take"}</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+            {label || "Take"}
+            <span style={{ marginLeft: 8, opacity: 0.7 }}>voice up · beat low</span>
+          </div>
           <Waveform bars={bars} progress={progress} height={28} />
         </div>
         <button

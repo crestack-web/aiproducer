@@ -80,6 +80,107 @@ async function loadTaskContext(service: ReturnType<typeof createServiceClient>, 
   };
 }
 
+/** Strip columns that are missing from the live schema (migration not applied yet). */
+async function insertRecordingWithFallback(
+  service: ReturnType<typeof createServiceClient>,
+  row: Record<string, unknown>
+): Promise<{ recording: Record<string, unknown> | null; error: { message?: string } | null }> {
+  const attempts: Record<string, unknown>[] = [
+    { ...row, original_path: row.audio_path, processed_path: row.audio_path, is_selected: true },
+    { ...row, is_selected: true },
+    { ...row },
+  ];
+
+  // Progressive strip of section-aware / pipeline columns if schema cache lacks them
+  const optionalKeys = [
+    "alignment_status",
+    "timeline_start_ms",
+    "timeline_end_ms",
+    "original_audio_path",
+    "role",
+    "original_path",
+    "processed_path",
+    "is_selected",
+  ];
+
+  let lastError: { message?: string } | null = null;
+
+  for (const attempt of attempts) {
+    const { data, error } = await service.from("recordings").insert(attempt).select().single();
+    if (!error && data) {
+      if (!(attempt as { is_selected?: boolean }).is_selected && data.id) {
+        await service.from("recordings").update({ is_selected: true }).eq("id", data.id).catch(() => undefined);
+      }
+      return { recording: data, error: null };
+    }
+    lastError = error;
+    const msg = (error?.message || "").toLowerCase();
+    if (!/column|schema cache|could not find/i.test(msg)) {
+      continue;
+    }
+  }
+
+  // Explicit strip loop for any remaining missing columns
+  let working: Record<string, unknown> = {
+    project_id: row.project_id,
+    task_id: row.task_id,
+    audio_path: row.audio_path,
+    duration_ms: row.duration_ms,
+    take_number: row.take_number,
+    status: row.status,
+    metadata: row.metadata,
+  };
+
+  for (const key of optionalKeys) {
+    if (key in row) working[key] = row[key];
+  }
+  working.is_selected = true;
+
+  for (let i = 0; i < optionalKeys.length + 2; i++) {
+    const { data, error } = await service.from("recordings").insert(working).select().single();
+    if (!error && data) return { recording: data, error: null };
+    lastError = error;
+    const msg = error?.message || "";
+    const match = msg.match(/'([^']+)' column/i) || msg.match(/column "([^"]+)"/i);
+    if (match?.[1] && match[1] in working) {
+      const copy = { ...working };
+      delete copy[match[1]];
+      // Also stash missing field into metadata so data is not lost
+      const meta =
+        copy.metadata && typeof copy.metadata === "object"
+          ? { ...(copy.metadata as object) }
+          : {};
+      (meta as Record<string, unknown>)[`_missing_col_${match[1]}`] = row[match[1]];
+      copy.metadata = meta;
+      working = copy;
+      continue;
+    }
+    // Strip next optional key
+    for (const k of optionalKeys) {
+      if (k in working) {
+        const copy = { ...working };
+        delete copy[k];
+        working = copy;
+        break;
+      }
+    }
+  }
+
+  // Absolute minimum
+  const minimal = {
+    project_id: row.project_id,
+    task_id: row.task_id,
+    audio_path: row.audio_path,
+    duration_ms: row.duration_ms ?? null,
+    take_number: row.take_number,
+    status: row.status || "uploaded",
+    metadata: row.metadata || {},
+  };
+  const { data, error } = await service.from("recordings").insert(minimal).select().single();
+  if (!error && data) return { recording: data, error: null };
+  return { recording: null, error: error || lastError };
+}
+
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: taskId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -225,20 +326,25 @@ export async function POST(req: Request, ctx: Ctx) {
       expected_duration_ms: ctxData.expected_ms,
       actual_duration_ms: durationMs,
       alignment,
+      alignment_status: alignment.status,
       role: ctxData.role,
       analysis,
       analyzer_version: analysis.analyzerVersion,
     };
 
-    await service.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+    try {
+      await service.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+    } catch {
+      /* is_selected column may be missing */
+    }
 
-    const baseRow = {
+    const baseRow: Record<string, unknown> = {
       project_id: task.project_id,
       task_id: taskId,
       audio_path: path,
       duration_ms: durationMs,
       take_number: takeNumber,
-      status: "uploaded" as const,
+      status: "uploaded",
       timeline_start_ms: ctxData.timeline_start_ms,
       timeline_end_ms: ctxData.timeline_end_ms,
       original_audio_path: path,
@@ -247,46 +353,16 @@ export async function POST(req: Request, ctx: Ctx) {
       metadata: sectionMeta,
     };
 
-    let recording: Record<string, unknown> | null = null;
-    let insErr: { message?: string } | null = null;
-
-    {
-      const { data, error } = await service
-        .from("recordings")
-        .insert({
-          ...baseRow,
-          original_path: path,
-          processed_path: path,
-          is_selected: true,
-        })
-        .select()
-        .single();
-      if (!error && data) recording = data;
-      else insErr = error;
-    }
+    const { recording, error: insErr } = await insertRecordingWithFallback(service, baseRow);
 
     if (!recording) {
-      const { data, error } = await service
-        .from("recordings")
-        .insert({ ...baseRow, is_selected: true })
-        .select()
-        .single();
-      if (!error && data) recording = data;
-      else insErr = error;
-    }
-
-    if (!recording) {
-      const { data, error } = await service.from("recordings").insert(baseRow).select().single();
-      if (!error && data) {
-        recording = data;
-        await service.from("recordings").update({ is_selected: true }).eq("id", data.id);
-      } else {
-        console.error("insert recording", insErr || error);
-        return NextResponse.json(
-          { error: `Could not save recording: ${(insErr || error)?.message || "unknown"}` },
-          { status: 500 }
-        );
-      }
+      console.error("insert recording", insErr);
+      return NextResponse.json(
+        {
+          error: `Could not save recording: ${insErr?.message || "unknown"}. Apply migration 20260816100000_section_aware_recordings if alignment_status is missing.`,
+        },
+        { status: 500 }
+      );
     }
 
     await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
@@ -343,41 +419,45 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not create upload URL" }, { status: 500 });
   }
 
-  const { data: recording, error: insErr } = await service
-    .from("recordings")
-    .insert({
-      project_id: task.project_id,
-      task_id: taskId,
-      audio_path: path,
-      duration_ms: duration_ms ?? null,
-      take_number: takeNumber,
-      status: "uploaded",
-      is_selected: true,
+  const signedRow: Record<string, unknown> = {
+    project_id: task.project_id,
+    task_id: taskId,
+    audio_path: path,
+    duration_ms: duration_ms ?? null,
+    take_number: takeNumber,
+    status: "uploaded",
+    is_selected: true,
+    timeline_start_ms: ctxData.timeline_start_ms,
+    timeline_end_ms: ctxData.timeline_end_ms,
+    original_audio_path: path,
+    alignment_status: alignment.status,
+    role: ctxData.role,
+    metadata: {
+      pending_client_upload: true,
+      section_id: ctxData.section?.id || task.section_id || null,
+      section_label: ctxData.section_label,
+      start_bar: ctxData.start_bar,
+      end_bar: ctxData.end_bar,
       timeline_start_ms: ctxData.timeline_start_ms,
       timeline_end_ms: ctxData.timeline_end_ms,
-      original_audio_path: path,
-      alignment_status: alignment.status,
       role: ctxData.role,
-      metadata: {
-        pending_client_upload: true,
-        section_id: ctxData.section?.id || task.section_id || null,
-        section_label: ctxData.section_label,
-        start_bar: ctxData.start_bar,
-        end_bar: ctxData.end_bar,
-        timeline_start_ms: ctxData.timeline_start_ms,
-        timeline_end_ms: ctxData.timeline_end_ms,
-        role: ctxData.role,
-        alignment,
-        analysis,
-        analyzer_version: analysis.analyzerVersion,
-      },
-    })
-    .select()
-    .single();
+      alignment,
+      alignment_status: alignment.status,
+      analysis,
+      analyzer_version: analysis.analyzerVersion,
+    },
+  };
 
-  if (insErr || !recording) {
+  const { recording, error: insErr } = await insertRecordingWithFallback(service, signedRow);
+
+  if (!recording) {
     console.error("insert recording", insErr);
-    return NextResponse.json({ error: "Could not save recording row" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: `Could not save recording row: ${insErr?.message || "unknown"}`,
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json(
