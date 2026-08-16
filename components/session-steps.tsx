@@ -54,6 +54,7 @@ export function SessionSteps({
   onSelect: (taskId: string) => void;
 }) {
   const { colors: C, mode } = useTheme();
+  const isLight = mode === "light";
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
@@ -104,6 +105,13 @@ export function SessionSteps({
   const optLeft = optionalOpen(tasks);
   const totalDone = tasks.filter(isTaskDone).length;
 
+  const trackBg = isLight ? "rgba(55,40,22,0.10)" : "rgba(255,255,255,0.06)";
+  const edgeFade = isLight
+    ? "rgba(250,246,240,0.98)"
+    : "rgba(11,10,15,0.92)";
+  const chevronBg = isLight ? "#FFFFFF" : "rgba(18,16,24,0.88)";
+  const chevronBorder = isLight ? "rgba(55,40,22,0.14)" : C.border;
+
   return (
     <div style={{ marginTop: compact ? 8 : 14, marginBottom: 8 }}>
       <div
@@ -116,18 +124,18 @@ export function SessionSteps({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontSize: 12, color: C.textMuted }}>
-          <span style={{ color: C.brass, fontWeight: 600 }}>
+        <div style={{ fontSize: 12, color: C.textMuted, fontWeight: 500 }}>
+          <span style={{ color: C.brass, fontWeight: 700 }}>
             {requiredDoneCount}/{requiredTasks.length || 0}
           </span>{" "}
           required done
           {reqLeft.length > 0 ? (
             <span style={{ color: C.textFaint }}> · {reqLeft.length} left</span>
           ) : (
-            <span style={{ color: C.signal }}> · required complete</span>
+            <span style={{ color: C.signal, fontWeight: 600 }}> · required complete</span>
           )}
         </div>
-        <div style={{ fontSize: 11, color: C.textFaint, letterSpacing: 0.3 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, letterSpacing: 0.3, fontWeight: 500 }}>
           {totalDone}/{tasks.length} parts
         </div>
       </div>
@@ -136,9 +144,9 @@ export function SessionSteps({
         style={{
           height: 3,
           borderRadius: 999,
-          background: mode === "light" ? "rgba(55,40,22,0.08)" : "rgba(255,255,255,0.06)",
+          background: trackBg,
           overflow: "hidden",
-          marginBottom: 10,
+          marginBottom: 12,
         }}
       >
         <div
@@ -163,10 +171,7 @@ export function SessionSteps({
             bottom: 14,
             width: 28,
             zIndex: 2,
-            background:
-              mode === "light"
-                ? "linear-gradient(90deg, rgba(250,246,240,0.95), transparent)"
-                : "linear-gradient(90deg, rgba(11,10,15,0.92), transparent)",
+            background: `linear-gradient(90deg, ${edgeFade}, transparent)`,
             opacity: canLeft ? 1 : 0,
             transition: "opacity 0.2s ease",
           }}
@@ -181,10 +186,7 @@ export function SessionSteps({
             bottom: 14,
             width: 28,
             zIndex: 2,
-            background:
-              mode === "light"
-                ? "linear-gradient(270deg, rgba(250,246,240,0.95), transparent)"
-                : "linear-gradient(270deg, rgba(11,10,15,0.92), transparent)",
+            background: `linear-gradient(270deg, ${edgeFade}, transparent)`,
             opacity: canRight ? 1 : 0,
             transition: "opacity 0.2s ease",
           }}
@@ -201,19 +203,21 @@ export function SessionSteps({
               top: "42%",
               transform: "translateY(-50%)",
               zIndex: 3,
-              width: 28,
-              height: 28,
+              width: 30,
+              height: 30,
               borderRadius: 999,
-              border: `1px solid ${C.border}`,
-              background: mode === "light" ? "rgba(255,255,255,0.95)" : "rgba(18,16,24,0.88)",
+              border: `1px solid ${chevronBorder}`,
+              background: chevronBg,
               color: C.text,
               cursor: "pointer",
               display: "grid",
               placeItems: "center",
-              fontSize: 14,
+              fontSize: 16,
               lineHeight: 1,
-              backdropFilter: "blur(8px)",
-              boxShadow: mode === "light" ? C.cardShadow : "0 4px 16px rgba(0,0,0,0.35)",
+              fontWeight: 600,
+              boxShadow: isLight
+                ? "0 2px 8px rgba(40,28,12,0.10)"
+                : "0 4px 16px rgba(0,0,0,0.35)",
             }}
           >
             ‹
@@ -230,19 +234,21 @@ export function SessionSteps({
               top: "42%",
               transform: "translateY(-50%)",
               zIndex: 3,
-              width: 28,
-              height: 28,
+              width: 30,
+              height: 30,
               borderRadius: 999,
-              border: `1px solid ${C.border}`,
-              background: mode === "light" ? "rgba(255,255,255,0.95)" : "rgba(18,16,24,0.88)",
+              border: `1px solid ${chevronBorder}`,
+              background: chevronBg,
               color: C.text,
               cursor: "pointer",
               display: "grid",
               placeItems: "center",
-              fontSize: 14,
+              fontSize: 16,
               lineHeight: 1,
-              backdropFilter: "blur(8px)",
-              boxShadow: mode === "light" ? C.cardShadow : "0 4px 16px rgba(0,0,0,0.35)",
+              fontWeight: 600,
+              boxShadow: isLight
+                ? "0 2px 8px rgba(40,28,12,0.10)"
+                : "0 4px 16px rgba(0,0,0,0.35)",
             }}
           >
             ›
@@ -255,13 +261,13 @@ export function SessionSteps({
           style={{
             display: "flex",
             flexDirection: "row",
-            gap: 10,
+            gap: isLight ? 12 : 10,
             overflowX: "auto",
             overflowY: "hidden",
             WebkitOverflowScrolling: "touch",
             scrollSnapType: "x mandatory",
             scrollBehavior: "smooth",
-            paddingBottom: 10,
+            paddingBottom: 12,
             marginInline: -2,
             paddingInline: 6,
             scrollbarWidth: "none",
@@ -271,6 +277,43 @@ export function SessionSteps({
           {tasks.map((t, i) => {
             const done = isTaskDone(t);
             const active = t.id === highlightId;
+
+            // Light cards: solid white + clear border so they read on ivory bg
+            const cardBg = active
+              ? isLight
+                ? "linear-gradient(165deg, #FFF8EE 0%, #FFFFFF 55%)"
+                : `linear-gradient(160deg, ${C.brassSoft}, rgba(255,255,255,0.04))`
+              : isLight
+                ? "#FFFFFF"
+                : C.surface;
+
+            const cardBorder = active
+              ? `1.5px solid ${C.brass}`
+              : isLight
+                ? "1px solid rgba(55,40,22,0.14)"
+                : `1px solid ${C.border}`;
+
+            const cardShadow = active
+              ? isLight
+                ? "0 0 0 1px rgba(168,107,31,0.18), 0 6px 18px rgba(40,28,12,0.10)"
+                : "0 0 0 1px rgba(231,169,97,0.25), 0 8px 24px rgba(0,0,0,0.25)"
+              : isLight
+                ? "0 1px 2px rgba(40,28,12,0.05), 0 4px 12px rgba(40,28,12,0.06)"
+                : "0 1px 0 rgba(255,255,255,0.03)";
+
+            const statusColor = done
+              ? C.signal
+              : active
+                ? C.brass
+                : t.required
+                  ? isLight
+                    ? "#8B5A12"
+                    : C.brass
+                  : C.textMuted;
+
+            const titleColor = isLight ? "#1C1916" : C.text;
+            const subColor = isLight ? "#5E574F" : C.textMuted;
+
             return (
               <button
                 key={t.id}
@@ -282,29 +325,22 @@ export function SessionSteps({
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "flex-start",
-                  gap: 4,
+                  gap: 5,
                   flex: "0 0 auto",
-                  minWidth: compact ? 112 : 132,
-                  maxWidth: 168,
-                  padding: "11px 13px",
+                  minWidth: compact ? 120 : 140,
+                  maxWidth: 176,
+                  padding: "12px 14px",
                   borderRadius: 16,
-                  border: active ? `1px solid ${C.brass}` : `1px solid ${C.border}`,
-                  background: active
-                    ? `linear-gradient(160deg, ${C.brassSoft}, ${mode === "light" ? "#fff" : "rgba(255,255,255,0.04)"})`
-                    : C.surface,
-                  color: C.text,
+                  border: cardBorder,
+                  background: cardBg,
+                  color: titleColor,
                   textAlign: "left",
                   cursor: locked ? "default" : "pointer",
                   fontFamily: "inherit",
-                  opacity: done && !active ? 0.72 : 1,
+                  // Keep done cards readable in light mode (no heavy washout)
+                  opacity: done && !active ? (isLight ? 0.88 : 0.72) : 1,
                   scrollSnapAlign: "center",
-                  boxShadow: active
-                    ? mode === "light"
-                      ? "0 0 0 1px rgba(168,107,31,0.28), 0 8px 20px rgba(40,28,12,0.08)"
-                      : "0 0 0 1px rgba(231,169,97,0.25), 0 8px 24px rgba(0,0,0,0.25)"
-                    : mode === "light"
-                      ? C.cardShadow
-                      : "0 1px 0 rgba(255,255,255,0.03)",
+                  boxShadow: cardShadow,
                   transition: "border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease",
                   transform: active ? "translateY(-1px)" : "none",
                 }}
@@ -312,25 +348,37 @@ export function SessionSteps({
                 <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
                   <span
                     style={{
-                      width: 20,
-                      height: 20,
+                      width: 22,
+                      height: 22,
                       borderRadius: 999,
                       flexShrink: 0,
                       display: "grid",
                       placeItems: "center",
-                      fontSize: 10,
+                      fontSize: 11,
                       fontWeight: 700,
                       background: done
-                        ? mode === "light"
-                          ? "rgba(10,138,118,0.12)"
+                        ? isLight
+                          ? "rgba(10,138,118,0.14)"
                           : "rgba(61,214,140,0.18)"
                         : active
-                          ? C.brassSoft
-                          : mode === "light"
-                            ? "rgba(55,40,22,0.06)"
+                          ? isLight
+                            ? "rgba(168,107,31,0.16)"
+                            : C.brassSoft
+                          : isLight
+                            ? "rgba(55,40,22,0.08)"
                             : "rgba(255,255,255,0.06)",
-                      color: done ? C.signal : active ? C.brass : C.textFaint,
-                      border: `1px solid ${done ? "rgba(10,138,118,0.3)" : active ? C.brass : C.border}`,
+                      color: done ? C.signal : active ? C.brass : isLight ? "#5E574F" : C.textFaint,
+                      border: `1px solid ${
+                        done
+                          ? isLight
+                            ? "rgba(10,138,118,0.35)"
+                            : "rgba(10,138,118,0.3)"
+                          : active
+                            ? C.brass
+                            : isLight
+                              ? "rgba(55,40,22,0.14)"
+                              : C.border
+                      }`,
                     }}
                   >
                     {done ? "✓" : i + 1}
@@ -338,10 +386,10 @@ export function SessionSteps({
                   <span
                     style={{
                       fontSize: 10,
-                      fontWeight: 600,
-                      letterSpacing: 0.3,
+                      fontWeight: 700,
+                      letterSpacing: 0.4,
                       textTransform: "uppercase",
-                      color: done ? C.signal : active ? C.brass : t.required ? C.brass : C.textFaint,
+                      color: statusColor,
                       marginLeft: "auto",
                     }}
                   >
@@ -358,13 +406,15 @@ export function SessionSteps({
                 </span>
                 <span
                   style={{
-                    fontSize: 12,
-                    fontWeight: active ? 600 : 500,
-                    lineHeight: 1.25,
+                    fontSize: 13,
+                    fontWeight: active || isLight ? 650 : 500,
+                    fontWeight: active ? 700 : 600,
+                    lineHeight: 1.3,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
                     width: "100%",
+                    color: titleColor,
                   }}
                 >
                   {sectionLabel(t)}
@@ -372,8 +422,9 @@ export function SessionSteps({
                 {!compact && (
                   <span
                     style={{
-                      fontSize: 11,
-                      color: C.textMuted,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      color: subColor,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -392,7 +443,7 @@ export function SessionSteps({
           style={{
             height: 3,
             borderRadius: 999,
-            background: mode === "light" ? "rgba(55,40,22,0.08)" : "rgba(255,255,255,0.06)",
+            background: trackBg,
             overflow: "hidden",
             marginTop: 2,
             position: "relative",
@@ -408,7 +459,7 @@ export function SessionSteps({
               borderRadius: 999,
               background: `linear-gradient(90deg, ${C.brass}, ${C.signal})`,
               transition: "left 0.12s ease-out",
-              boxShadow: mode === "light" ? "none" : "0 0 8px rgba(231,169,97,0.35)",
+              boxShadow: isLight ? "none" : "0 0 8px rgba(231,169,97,0.35)",
             }}
           />
         </div>
@@ -421,7 +472,9 @@ export function SessionSteps({
       {!compact && reqLeft.length > 0 && (
         <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: C.textMuted }}>
           Still needed:{" "}
-          <span style={{ color: C.text }}>{reqLeft.map((t) => sectionLabel(t)).join(" · ")}</span>
+          <span style={{ color: C.text, fontWeight: 600 }}>
+            {reqLeft.map((t) => sectionLabel(t)).join(" · ")}
+          </span>
         </p>
       )}
       {!compact && reqLeft.length === 0 && optLeft.length > 0 && (
@@ -430,7 +483,7 @@ export function SessionSteps({
         </p>
       )}
       {!compact && reqLeft.length === 0 && optLeft.length === 0 && tasks.length > 0 && (
-        <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: C.signal }}>
+        <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: C.signal, fontWeight: 600 }}>
           All parts complete — continue to produce when ready.
         </p>
       )}
