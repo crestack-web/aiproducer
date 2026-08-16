@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getStorageBucket } from "@/lib/storage";
 
 type Ctx = { params: Promise<{ id: string; sampleId: string }> };
 
@@ -26,7 +27,9 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   if (!sample) return NextResponse.json({ error: "Sample not found" }, { status: 404 });
 
   const service = createServiceClient();
-  if (sample.audio_path) await service.storage.from("studio").remove([sample.audio_path]);
+  if (sample.audio_path) {
+    await service.storage.from(getStorageBucket()).remove([sample.audio_path]);
+  }
   await supabase.from("samples").delete().eq("id", sampleId);
   return NextResponse.json({ ok: true });
 }
