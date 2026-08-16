@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
+import { ProductTour, useProductTour } from "@/components/product-tour";
 import { useTheme } from "@/lib/theme";
 
 type Project = {
@@ -27,12 +28,17 @@ function AppInner() {
   const [tab, setTab] = useState<Tab>("home");
   const [libraryTab, setLibraryTab] = useState<"songs" | "beats" | "recordings">("songs");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const tour = useProductTour(true);
 
   useEffect(() => {
     const t = searchParams.get("tab");
     if (t === "library" || t === "profile" || t === "home") setTab(t);
     if (t === "create" || t === "studio") router.replace("/app/studio");
-  }, [searchParams, router]);
+    if (searchParams.get("tour") === "1") {
+      tour.start();
+      router.replace(t ? `/app?tab=${t}` : "/app");
+    }
+  }, [searchParams, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     (async () => {
@@ -216,6 +222,7 @@ function AppInner() {
 
   return (
     <AppShell active={activeNav} userName={userName} onSignOut={signOut}>
+      <ProductTour open={tour.open} onClose={tour.close} />
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}>
         {tab === "home" && (
           <>
@@ -239,6 +246,9 @@ function AppInner() {
                 }}
               >
                 Explore my songs
+              </button>
+              <button type="button" style={secondary} onClick={() => tour.start()}>
+                How it works
               </button>
             </div>
             <div
@@ -378,7 +388,10 @@ function AppInner() {
             <p style={{ color: C.textMuted, marginTop: 8 }}>
               {projects.length} session{projects.length === 1 ? "" : "s"}
             </p>
-            <button type="button" style={{ ...secondary, marginTop: 24 }} onClick={signOut}>
+            <button type="button" style={{ ...secondary, marginTop: 24, width: "100%" }} onClick={() => tour.start()}>
+              How Studio works (tour)
+            </button>
+            <button type="button" style={{ ...secondary, marginTop: 12, width: "100%" }} onClick={signOut}>
               Log out
             </button>
           </div>
