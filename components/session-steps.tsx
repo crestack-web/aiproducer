@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export type SessionTask = {
   id: string;
@@ -64,14 +64,47 @@ export function SessionSteps({
   onSelect: (taskId: string) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
+
+  const updateScrollChrome = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft < max - 4);
+    setScrollProgress(max > 0 ? el.scrollLeft / max : 0);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    updateScrollChrome();
+    el.addEventListener("scroll", updateScrollChrome, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateScrollChrome) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", updateScrollChrome);
+      ro?.disconnect();
+    };
+  }, [tasks.length, updateScrollChrome]);
 
   useEffect(() => {
     if (!highlightId || !scrollerRef.current) return;
     const el = scrollerRef.current.querySelector(`[data-task-id="${highlightId}"]`) as HTMLElement | null;
     if (el) {
       el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      requestAnimationFrame(updateScrollChrome);
     }
-  }, [highlightId]);
+  }, [highlightId, updateScrollChrome]);
+
+  function slideBy(dir: -1 | 1) {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const amount = Math.max(140, Math.floor(el.clientWidth * 0.72)) * dir;
+    el.scrollBy({ left: amount, behavior: "smooth" });
+  }
 
   if (!tasks.length) return null;
   const requiredTasks = tasks.filter((t) => t.required);
@@ -128,117 +161,263 @@ export function SessionSteps({
         />
       </div>
 
-      {/* Horizontal scrollable section chips */}
-      <div
-        ref={scrollerRef}
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          gap: 8,
-          overflowX: "auto",
-          overflowY: "hidden",
-          WebkitOverflowScrolling: "touch",
-          scrollSnapType: "x proximity",
-          paddingBottom: 6,
-          marginInline: -4,
-          paddingInline: 4,
-        }}
-      >
-        {tasks.map((t, i) => {
-          const done = isTaskDone(t);
-          const active = t.id === highlightId;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              data-task-id={t.id}
-              disabled={locked}
-              onClick={() => onSelect(t.id)}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-start",
-                gap: 4,
-                flex: "0 0 auto",
-                minWidth: compact ? 108 : 128,
-                maxWidth: 160,
-                padding: "10px 12px",
-                borderRadius: 14,
-                border: active ? `1px solid ${C.brass}` : `1px solid ${C.border}`,
-                background: active ? C.brassSoft : C.surface,
-                color: C.text,
-                textAlign: "left",
-                cursor: locked ? "default" : "pointer",
-                fontFamily: "inherit",
-                opacity: done && !active ? 0.7 : 1,
-                scrollSnapAlign: "start",
-              }}
-            >
-              <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
-                <span
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 999,
-                    flexShrink: 0,
-                    display: "grid",
-                    placeItems: "center",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    background: done
-                      ? "rgba(61,214,140,0.18)"
-                      : active
-                        ? C.brassSoft
-                        : "rgba(255,255,255,0.06)",
-                    color: done ? C.signal : active ? C.brass : C.textFaint,
-                    border: `1px solid ${done ? "rgba(61,214,140,0.35)" : active ? C.brass : C.border}`,
-                  }}
-                >
-                  {done ? "✓" : i + 1}
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    letterSpacing: 0.3,
-                    textTransform: "uppercase",
-                    color: done ? C.signal : active ? C.brass : t.required ? C.brass : C.textFaint,
-                    marginLeft: "auto",
-                  }}
-                >
-                  {done
-                    ? t.status === "skipped"
-                      ? "Skip"
-                      : "Done"
-                    : active
-                      ? "Now"
-                      : t.required
-                        ? "Req"
-                        : "Opt"}
-                </span>
-              </span>
-              <span
+      {/* Modern section slider */}
+      <div style={{ position: "relative" }}>
+        {/* Edge fades */}
+        <div
+          aria-hidden
+          style={{
+            pointerEvents: "none",
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 14,
+            width: 28,
+            zIndex: 2,
+            background: "linear-gradient(90deg, rgba(11,10,15,0.92), transparent)",
+            opacity: canLeft ? 1 : 0,
+            transition: "opacity 0.2s ease",
+          }}
+        />
+        <div
+          aria-hidden
+          style={{
+            pointerEvents: "none",
+            position: "absolute",
+            right: 0,
+            top: 0,
+            bottom: 14,
+            width: 28,
+            zIndex: 2,
+            background: "linear-gradient(270deg, rgba(11,10,15,0.92), transparent)",
+            opacity: canRight ? 1 : 0,
+            transition: "opacity 0.2s ease",
+          }}
+        />
+
+        {/* Desktop chevrons */}
+        {canLeft && (
+          <button
+            type="button"
+            aria-label="Previous sections"
+            onClick={() => slideBy(-1)}
+            style={{
+              position: "absolute",
+              left: 4,
+              top: "42%",
+              transform: "translateY(-50%)",
+              zIndex: 3,
+              width: 28,
+              height: 28,
+              borderRadius: 999,
+              border: `1px solid ${C.border}`,
+              background: "rgba(18,16,24,0.88)",
+              color: C.text,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 14,
+              lineHeight: 1,
+              backdropFilter: "blur(8px)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+            }}
+          >
+            ‹
+          </button>
+        )}
+        {canRight && (
+          <button
+            type="button"
+            aria-label="Next sections"
+            onClick={() => slideBy(1)}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "42%",
+              transform: "translateY(-50%)",
+              zIndex: 3,
+              width: 28,
+              height: 28,
+              borderRadius: 999,
+              border: `1px solid ${C.border}`,
+              background: "rgba(18,16,24,0.88)",
+              color: C.text,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 14,
+              lineHeight: 1,
+              backdropFilter: "blur(8px)",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+            }}
+          >
+            ›
+          </button>
+        )}
+
+        <div
+          ref={scrollerRef}
+          className="session-steps-slider"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 10,
+            overflowX: "auto",
+            overflowY: "hidden",
+            WebkitOverflowScrolling: "touch",
+            scrollSnapType: "x mandatory",
+            scrollBehavior: "smooth",
+            paddingBottom: 10,
+            marginInline: -2,
+            paddingInline: 6,
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+          }}
+        >
+          {tasks.map((t, i) => {
+            const done = isTaskDone(t);
+            const active = t.id === highlightId;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                data-task-id={t.id}
+                disabled={locked}
+                onClick={() => onSelect(t.id)}
                 style={{
-                  fontSize: 12,
-                  fontWeight: active ? 600 : 500,
-                  lineHeight: 1.25,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  width: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 4,
+                  flex: "0 0 auto",
+                  minWidth: compact ? 112 : 132,
+                  maxWidth: 168,
+                  padding: "11px 13px",
+                  borderRadius: 16,
+                  border: active
+                    ? `1px solid ${C.brass}`
+                    : `1px solid ${C.border}`,
+                  background: active
+                    ? `linear-gradient(160deg, ${C.brassSoft}, rgba(255,255,255,0.04))`
+                    : C.surface,
+                  color: C.text,
+                  textAlign: "left",
+                  cursor: locked ? "default" : "pointer",
+                  fontFamily: "inherit",
+                  opacity: done && !active ? 0.72 : 1,
+                  scrollSnapAlign: "center",
+                  boxShadow: active
+                    ? "0 0 0 1px rgba(231,169,97,0.25), 0 8px 24px rgba(0,0,0,0.25)"
+                    : "0 1px 0 rgba(255,255,255,0.03)",
+                  transition: "border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease",
+                  transform: active ? "translateY(-1px)" : "none",
                 }}
               >
-                {sectionLabel(t)}
-              </span>
-              {!compact && (
-                <span style={{ fontSize: 11, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
-                  {humanTitle(t.type)}
+                <span style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+                  <span
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 999,
+                      flexShrink: 0,
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      background: done
+                        ? "rgba(61,214,140,0.18)"
+                        : active
+                          ? C.brassSoft
+                          : "rgba(255,255,255,0.06)",
+                      color: done ? C.signal : active ? C.brass : C.textFaint,
+                      border: `1px solid ${done ? "rgba(61,214,140,0.35)" : active ? C.brass : C.border}`,
+                    }}
+                  >
+                    {done ? "✓" : i + 1}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: 0.3,
+                      textTransform: "uppercase",
+                      color: done ? C.signal : active ? C.brass : t.required ? C.brass : C.textFaint,
+                      marginLeft: "auto",
+                    }}
+                  >
+                    {done
+                      ? t.status === "skipped"
+                        ? "Skip"
+                        : "Done"
+                      : active
+                        ? "Now"
+                        : t.required
+                          ? "Req"
+                          : "Opt"}
+                  </span>
                 </span>
-              )}
-            </button>
-          );
-        })}
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: active ? 600 : 500,
+                    lineHeight: 1.25,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    width: "100%",
+                  }}
+                >
+                  {sectionLabel(t)}
+                </span>
+                {!compact && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: C.textMuted,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      width: "100%",
+                    }}
+                  >
+                    {humanTitle(t.type)}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Scroll position pill */}
+        <div
+          style={{
+            height: 3,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.06)",
+            overflow: "hidden",
+            marginTop: 2,
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              width: "28%",
+              left: `${scrollProgress * 72}%`,
+              borderRadius: 999,
+              background: `linear-gradient(90deg, ${C.brass}, ${C.signal})`,
+              transition: "left 0.12s ease-out",
+              boxShadow: "0 0 8px rgba(231,169,97,0.35)",
+            }}
+          />
+        </div>
       </div>
+
+      <style>{`
+        .session-steps-slider::-webkit-scrollbar { display: none; }
+      `}</style>
 
       {!compact && reqLeft.length > 0 && (
         <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5, color: C.textMuted }}>
