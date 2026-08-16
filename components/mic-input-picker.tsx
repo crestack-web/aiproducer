@@ -90,9 +90,9 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
       // Permission unlocks device labels on most mobile browsers
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
         },
       });
       stream.getTracks().forEach((t) => t.stop());

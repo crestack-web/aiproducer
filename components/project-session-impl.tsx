@@ -12,9 +12,13 @@ import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-prev
 import {
   MicInputPicker,
   SpeakerOutputPicker,
-  openMicStream,
   routePlaybackToPreferredOutput,
 } from "@/components/mic-input-picker";
+import {
+  openRecordingStream,
+  createVocalRecorder,
+  describeInputQualityWarning,
+} from "@/lib/audio/recording-engine";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -434,19 +438,9 @@ export default function ProjectDetailPage() {
   function beginMediaCapture(stream: MediaStream, task: Task) {
     chunksRef.current = [];
     autoStoppedRef.current = false;
-    let mime = "audio/webm";
-    for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
-      if (MediaRecorder.isTypeSupported(t)) {
-        mime = t;
-        break;
-      }
-    }
+    // Vocal-only MediaRecorder — stream must be mic path, never beat mix
+    const { recorder: rec, mimeType: mime } = createVocalRecorder(stream);
     mimeRef.current = mime;
-    // Higher bitrate — default Opus can sound muddy on mobile
-    const rec = new MediaRecorder(stream, {
-      mimeType: mime,
-      audioBitsPerSecond: 192000,
-    });
     mediaRecorderRef.current = rec;
     rec.ondataavailable = (e) => {
       if (e.data?.size) chunksRef.current.push(e.data);
@@ -522,7 +516,7 @@ export default function ProjectDetailPage() {
     if (beatAudioRef.current && beatUrl) {
       void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      beatAudioRef.current.volume = 0.18;
+      beatAudioRef.current.volume = 0.14;
       beatAudioRef.current.play().catch(() => undefined);
     }
     rec.start(250);
@@ -535,29 +529,38 @@ export default function ProjectDetailPage() {
     setProducerTip(null);
     setSavedRecordingId(null);
     try {
-      // Mic stream is independent of speaker sink — setSinkId only routes the beat player.
-      const { stream, fellBack, usedLabel } = await openMicStream(selectedMicIdRef.current);
-      if (fellBack) {
-        setSelectedMicId("");
+      // CAPTURE: phone mic only (RecordingEngine). MONITOR: beat via setSinkId — separate graphs.
+      const opened = await openRecordingStream({
+        preferredInputId: selectedMicIdRef.current,
+        outputPreference: selectedSpeakerIdRef.current || "__headphones__",
+      });
+      if (opened.fellBack) {
+        setSelectedMicId(opened.info.inputDeviceId || "");
         setError(
-          usedLabel
-            ? `Selected mic unavailable — using “${usedLabel}”`
+          opened.info.inputLabel
+            ? `Using microphone: “${opened.info.inputLabel}”`
             : "Selected microphone unavailable — using default mic"
         );
       }
-      streamRef.current = stream;
-      setMicStream(stream);
-      // Speaker picker only affects beat HTMLAudioElement, never the MediaRecorder track.
-      await routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
+      const qualityWarn = describeInputQualityWarning(opened.info);
+      if (qualityWarn) setError(qualityWarn);
+      streamRef.current = opened.recordStream;
+      setMicStream(opened.stream);
+      // Playback route only — does not change MediaRecorder input
+      await routePlaybackToPreferredOutput(
+        beatAudioRef.current,
+        selectedSpeakerIdRef.current || undefined
+      );
       setCountdown(3);
       setPhase("countdown");
       void markRecordingStatus();
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
         // Lower monitor level — reduces bleed if OS still routes to the phone speaker
-        beatAudioRef.current.volume = 0.18;
+        beatAudioRef.current.volume = 0.14;
         beatAudioRef.current.play().catch(() => undefined);
       }
+      const captureStream = opened.recordStream;
       let n = 3;
       if (countdownRef.current) clearInterval(countdownRef.current);
       countdownRef.current = setInterval(() => {
@@ -566,7 +569,7 @@ export default function ProjectDetailPage() {
           if (countdownRef.current) clearInterval(countdownRef.current);
           countdownRef.current = null;
           setCountdown(0);
-          beginMediaCapture(stream, current);
+          beginMediaCapture(captureStream, current);
         } else setCountdown(n);
       }, 1000);
     } catch (e) {
@@ -1009,7 +1012,7 @@ export default function ProjectDetailPage() {
                       beatStartMs={current.start_ms ?? 0}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.05}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.03}
                     />
                     <button
                       type="button"
