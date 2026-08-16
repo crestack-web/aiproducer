@@ -7,8 +7,76 @@ import {
   recordingPath,
   getStorageBucket,
 } from "@/lib/storage";
+import { assessDurationAlignment } from "@/lib/audio/timing";
+import { vocalStemKind } from "@/lib/audio/produce-job";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+async function loadTaskContext(service: ReturnType<typeof createServiceClient>, taskId: string) {
+  const { data: task } = await service
+    .from("recording_tasks")
+    .select("id, project_id, status, type, start_ms, end_ms, section_id, metadata, instruction")
+    .eq("id", taskId)
+    .maybeSingle();
+  if (!task) return null;
+
+  let section: {
+    id: string;
+    type: string;
+    label: string | null;
+    start_ms: number;
+    end_ms: number;
+    start_bar: number | null;
+    end_bar: number | null;
+  } | null = null;
+
+  if (task.section_id) {
+    const { data: sec } = await service
+      .from("song_sections")
+      .select("id, type, label, start_ms, end_ms, start_bar, end_bar")
+      .eq("id", task.section_id)
+      .maybeSingle();
+    section = sec;
+  }
+
+  const meta = (task.metadata && typeof task.metadata === "object" ? task.metadata : {}) as Record<
+    string,
+    unknown
+  >;
+
+  const timeline_start_ms =
+    typeof task.start_ms === "number"
+      ? task.start_ms
+      : typeof section?.start_ms === "number"
+        ? section.start_ms
+        : 0;
+  const timeline_end_ms =
+    typeof task.end_ms === "number"
+      ? task.end_ms
+      : typeof section?.end_ms === "number"
+        ? section.end_ms
+        : null;
+
+  const expected_ms =
+    timeline_end_ms != null && timeline_end_ms > timeline_start_ms
+      ? timeline_end_ms - timeline_start_ms
+      : null;
+
+  const role = vocalStemKind(task.type || "LEAD");
+
+  return {
+    task,
+    section,
+    meta,
+    timeline_start_ms,
+    timeline_end_ms,
+    expected_ms,
+    role,
+    section_label: (meta.section_label as string) || section?.label || section?.type || null,
+    start_bar: (meta.start_bar as number) || section?.start_bar || null,
+    end_bar: (meta.end_bar as number) || section?.end_bar || null,
+  };
+}
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: taskId } = await ctx.params;
@@ -65,13 +133,11 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: task } = await supabase
-    .from("recording_tasks")
-    .select("id, project_id, status")
-    .eq("id", taskId)
-    .maybeSingle();
+  const service = createServiceClient();
+  const ctxData = await loadTaskContext(service, taskId);
+  if (!ctxData) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (!task) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { task } = ctxData;
 
   const { data: project } = await supabase
     .from("projects")
@@ -81,9 +147,6 @@ export async function POST(req: Request, ctx: Ctx) {
     .maybeSingle();
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Service role for reliable writes (bypass RLS edge cases on insert/select flags)
-  const service = createServiceClient();
 
   const { count } = await service
     .from("recordings")
@@ -100,6 +163,7 @@ export async function POST(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "Missing file field" }, { status: 400 });
     }
 
+    const source = String(form.get("source") || "record"); // record | upload
     const ext = (file.type || "").includes("wav")
       ? "wav"
       : (file.type || "").includes("mpeg") || (file.type || "").includes("mp3")
@@ -124,8 +188,23 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     const durationMs = Number(form.get("duration_ms") || 0) || null;
+    const alignment = assessDurationAlignment(durationMs, ctxData.expected_ms);
 
-    // Clear previous selection for this task, then insert selected take
+    const sectionMeta = {
+      source,
+      section_id: ctxData.section?.id || task.section_id || null,
+      section_type: ctxData.section?.type || ctxData.meta.section_type || null,
+      section_label: ctxData.section_label,
+      start_bar: ctxData.start_bar,
+      end_bar: ctxData.end_bar,
+      timeline_start_ms: ctxData.timeline_start_ms,
+      timeline_end_ms: ctxData.timeline_end_ms,
+      expected_duration_ms: ctxData.expected_ms,
+      actual_duration_ms: durationMs,
+      alignment,
+      role: ctxData.role,
+    };
+
     await service.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
 
     const baseRow = {
@@ -135,12 +214,17 @@ export async function POST(req: Request, ctx: Ctx) {
       duration_ms: durationMs,
       take_number: takeNumber,
       status: "uploaded" as const,
+      timeline_start_ms: ctxData.timeline_start_ms,
+      timeline_end_ms: ctxData.timeline_end_ms,
+      original_audio_path: path,
+      alignment_status: alignment.status,
+      role: ctxData.role,
+      metadata: sectionMeta,
     };
 
     let recording: Record<string, unknown> | null = null;
     let insErr: { message?: string } | null = null;
 
-    // Prefer full schema (is_selected + original_path from audio pipeline migration)
     {
       const { data, error } = await service
         .from("recordings")
@@ -170,7 +254,6 @@ export async function POST(req: Request, ctx: Ctx) {
       const { data, error } = await service.from("recordings").insert(baseRow).select().single();
       if (!error && data) {
         recording = data;
-        // Best-effort select flag
         await service.from("recordings").update({ is_selected: true }).eq("id", data.id);
       } else {
         console.error("insert recording", insErr || error);
@@ -196,6 +279,8 @@ export async function POST(req: Request, ctx: Ctx) {
         saved: true,
         project_id: task.project_id,
         task_id: taskId,
+        placement: sectionMeta,
+        alignment,
       },
       { status: 201 }
     );
@@ -211,6 +296,7 @@ export async function POST(req: Request, ctx: Ctx) {
     /* empty body ok */
   }
 
+  const alignment = assessDurationAlignment(duration_ms ?? null, ctxData.expected_ms);
   const ext = content_type.includes("wav") ? "wav" : content_type.includes("mp3") ? "mp3" : "webm";
   const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
 
@@ -232,7 +318,22 @@ export async function POST(req: Request, ctx: Ctx) {
       take_number: takeNumber,
       status: "uploaded",
       is_selected: true,
-      metadata: { pending_client_upload: true },
+      timeline_start_ms: ctxData.timeline_start_ms,
+      timeline_end_ms: ctxData.timeline_end_ms,
+      original_audio_path: path,
+      alignment_status: alignment.status,
+      role: ctxData.role,
+      metadata: {
+        pending_client_upload: true,
+        section_id: ctxData.section?.id || task.section_id || null,
+        section_label: ctxData.section_label,
+        start_bar: ctxData.start_bar,
+        end_bar: ctxData.end_bar,
+        timeline_start_ms: ctxData.timeline_start_ms,
+        timeline_end_ms: ctxData.timeline_end_ms,
+        role: ctxData.role,
+        alignment,
+      },
     })
     .select()
     .single();
@@ -251,6 +352,12 @@ export async function POST(req: Request, ctx: Ctx) {
         method: "PUT",
         headers: { "Content-Type": content_type },
       },
+      placement: {
+        timeline_start_ms: ctxData.timeline_start_ms,
+        timeline_end_ms: ctxData.timeline_end_ms,
+        role: ctxData.role,
+      },
+      alignment,
     },
     { status: 201 }
   );
