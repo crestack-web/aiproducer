@@ -17,6 +17,7 @@ import {
   requiredOpen,
   optionalOpen,
 } from "@/components/session-steps";
+import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 
 type Task = {
   id: string;
@@ -271,7 +272,6 @@ export default function ProjectDetailPage() {
       setCountdown(3);
       setPhase("countdown");
 
-      // Optional: soft section preview under countdown
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
         beatAudioRef.current.volume = 0.35;
@@ -486,6 +486,7 @@ export default function ProjectDetailPage() {
               Record each required part. Optional parts can be skipped. Tap a step to jump or retake.
             </p>
             <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
+            <ProjectSamplesPanel projectId={id} />
             <button
               type="button"
               style={{ ...btn, marginTop: 20 }}
@@ -701,6 +702,7 @@ export default function ProjectDetailPage() {
                 <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
                   We will mix your vocals with the beat.
                 </p>
+                <ProjectSamplesPanel projectId={id} />
                 {error && <p style={{ color: C.danger, marginTop: 12 }}>{error}</p>}
                 <button type="button" style={{ ...btn, marginTop: 20 }} disabled={producing} onClick={startProduce}>
                   Produce my song
