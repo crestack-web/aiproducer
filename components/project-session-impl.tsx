@@ -9,6 +9,7 @@ import {
   PlayerLoadingState,
 } from "@/components/studio-player";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
+import { MicInputPicker, openMicStream } from "@/components/mic-input-picker";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -99,6 +100,7 @@ export default function ProjectDetailPage() {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const [selectedMicId, setSelectedMicId] = useState("");
   const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
@@ -118,11 +120,16 @@ export default function ProjectDetailPage() {
   const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const produceStartedAtRef = useRef(0);
   const produceActiveRef = useRef(false);
+  const selectedMicIdRef = useRef("");
 
   const current =
     tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
   const isRetake = current ? isTaskDone(current) : false;
   const sectionMs = current ? sectionDurationMs(current) : null;
+
+  useEffect(() => {
+    selectedMicIdRef.current = selectedMicId;
+  }, [selectedMicId]);
 
   function clearProducePoll() {
     if (producePollRef.current) {
@@ -320,7 +327,6 @@ export default function ProjectDetailPage() {
     load();
   }, [load]);
 
-  // Load full-song preview whenever artist is on assemble (before Produce)
   useEffect(() => {
     if (screen === "assemble" && !producing) {
       void loadSongPreview();
@@ -489,9 +495,11 @@ export default function ProjectDetailPage() {
     setProducerTip(null);
     setSavedRecordingId(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      const { stream, fellBack } = await openMicStream(selectedMicIdRef.current);
+      if (fellBack) {
+        setSelectedMicId("");
+        setError("Selected microphone unavailable — using default mic");
+      }
       streamRef.current = stream;
       setMicStream(stream);
       setCountdown(3);
@@ -516,7 +524,14 @@ export default function ProjectDetailPage() {
     } catch (e) {
       setMicStream(null);
       setPhase("ready");
-      setError(e instanceof Error ? e.message : "Microphone error");
+      const name = e instanceof DOMException ? e.name : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setError("Microphone permission denied. Enable mic access to record.");
+      } else if (name === "NotFoundError") {
+        setError("No microphone found.");
+      } else {
+        setError(e instanceof Error ? e.message : "Microphone error");
+      }
     }
   }
 
@@ -754,7 +769,12 @@ export default function ProjectDetailPage() {
 
             {phase === "ready" && (
               <div style={{ marginTop: 20 }}>
-                <button type="button" style={btn} onClick={startRecording}>
+                <MicInputPicker
+                  selectedDeviceId={selectedMicId}
+                  onSelect={setSelectedMicId}
+                  disabled={false}
+                />
+                <button type="button" style={{ ...btn, marginTop: 14 }} onClick={startRecording}>
                   {isRetake ? "Retake" : "Record"}
                 </button>
                 <input
