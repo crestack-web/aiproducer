@@ -56,6 +56,13 @@ const NAV: { key: AppNavKey; label: string; href: string; Icon: typeof IconHome 
   { key: "profile", label: "Profile", href: "/app?tab=profile", Icon: IconProfile },
 ];
 
+const SECTION_TITLE: Record<AppNavKey, string> = {
+  home: "Home",
+  studio: "Studio",
+  library: "Library",
+  profile: "Profile",
+};
+
 function resolveActive(pathname: string | null, search: string, forced?: AppNavKey): AppNavKey {
   if (forced) return forced;
   if (pathname?.startsWith("/app/studio") || pathname?.startsWith("/app/projects")) return "studio";
@@ -84,6 +91,7 @@ export function AppShell({
   const { colors: C, mode } = useTheme();
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
+  const sectionTitle = SECTION_TITLE[current] || "Studio";
   const initials = (userName || "A")
     .split(/\s+/)
     .map((w) => w[0])
@@ -214,18 +222,23 @@ export function AppShell({
     WebkitOverflowScrolling: "touch",
   };
 
-  const mobileHeader: CSSProperties = {
+  /** Mobile top app bar — visible only ≤899px */
+  const mobileAppBar: CSSProperties = {
     position: "sticky",
     top: 0,
-    zIndex: 40,
+    zIndex: 45,
     display: "none",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "10px 16px",
-    paddingTop: "calc(10px + env(safe-area-inset-top, 0px))",
+    gap: 10,
+    minHeight: 52,
+    padding: "8px 14px",
+    paddingTop: "calc(8px + env(safe-area-inset-top, 0px))",
     borderBottom: `1px solid ${C.border}`,
-    background: C.navGlass,
-    backdropFilter: "blur(16px)",
+    background: mode === "light" ? C.surfaceRaised || C.surface : C.navGlass,
+    backdropFilter: "blur(18px)",
+    WebkitBackdropFilter: "blur(18px)",
+    boxSizing: "border-box",
   };
 
   const bottomNav: CSSProperties = {
@@ -267,7 +280,7 @@ export function AppShell({
       <style>{`
         .studio-sidebar { display: flex; }
         .studio-bottom-nav { display: none; }
-        .studio-mobile-header { display: none; }
+        .studio-mobile-appbar { display: none; }
         .studio-main-pad {
           padding-bottom: 32px;
           box-sizing: border-box;
@@ -282,7 +295,11 @@ export function AppShell({
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          .studio-mobile-header { display: flex !important; }
+          .studio-mobile-appbar {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+          }
           .studio-main-pad {
             padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
           }
@@ -365,28 +382,92 @@ export function AppShell({
       </aside>
 
       <main style={main} className="studio-main-pad">
-        <div className="studio-mobile-header" style={mobileHeader}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* Mobile app bar — ≤899px only */}
+        <header
+          className="studio-mobile-appbar"
+          style={mobileAppBar}
+          role="banner"
+          aria-label="App bar"
+        >
+          <button
+            type="button"
+            onClick={() => router.push("/app")}
+            aria-label="Go to Home"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 0,
+              flex: 1,
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
+            }}
+          >
             <img
               src={STUDIO_LOGO_URL}
               alt=""
-              width={22}
-              height={22}
-              style={{ borderRadius: 6, objectFit: "cover" }}
-            />
-            <span
+              width={28}
+              height={28}
               style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 11,
-                letterSpacing: 2,
-                color: C.brass,
+                borderRadius: 8,
+                objectFit: "cover",
+                flexShrink: 0,
+                boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+              }}
+            />
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 10,
+                  letterSpacing: 1.6,
+                  color: C.brass,
+                  lineHeight: 1.2,
+                }}
+              >
+                STUDIO
+              </div>
+              <div
+                style={{
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: C.text,
+                  lineHeight: 1.25,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {sectionTitle}
+              </div>
+            </div>
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <ThemeToggle compact />
+            <button
+              type="button"
+              onClick={() => go("profile", "/app?tab=profile")}
+              aria-label="Profile"
+              style={{
+                ...avatar,
+                width: 32,
+                height: 32,
+                fontSize: 12,
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
               }}
             >
-              STUDIO
-            </span>
+              {initials || "A"}
+            </button>
           </div>
-          <ThemeToggle compact />
-        </div>
+        </header>
+
         {children}
       </main>
 
