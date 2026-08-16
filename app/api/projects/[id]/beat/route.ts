@@ -132,15 +132,15 @@ export async function POST(req: Request, ctx: Ctx) {
       }
 
       // Prefer client-measured analysis; fall back to server WAV parse if needed
-      let durationMs = Number(body.duration_ms) || null;
+      let durationMs: number | null = Number(body.duration_ms) || null;
       let bpm =
         Number(body.bpm || body.tempo || project.tempo || 90) || 90;
-      let confidence = Number(body.bpm_confidence);
+      let confidence: number | null = Number(body.bpm_confidence);
       if (!Number.isFinite(confidence)) confidence = null;
       let beatTimes: number[] | null = Array.isArray(body.beat_times_ms)
         ? body.beat_times_ms.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n))
         : null;
-      let analysisSource = body.analysis_source ? String(body.analysis_source) : null;
+      let analysisSource: string | null = body.analysis_source ? String(body.analysis_source) : null;
 
       if ((!durationMs || !body.bpm) && path.toLowerCase().endsWith(".wav")) {
         try {
@@ -243,7 +243,7 @@ export async function POST(req: Request, ctx: Ctx) {
     );
   }
 
-  let durationMs = Number(form.get("duration_ms") || 0) || null;
+  let durationMs: number | null = Number(form.get("duration_ms") || 0) || null;
   let bpm = Number(form.get("tempo") || form.get("bpm") || project.tempo || 90) || 90;
   let confidence: number | null = Number(form.get("bpm_confidence"));
   if (!Number.isFinite(confidence as number)) confidence = null;
