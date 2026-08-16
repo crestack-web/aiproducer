@@ -54,6 +54,12 @@ function humanTitle(type: string) {
   return "Lead vocal";
 }
 
+function sectionDurationMs(task: Task): number | null {
+  if (task.start_ms == null || task.end_ms == null) return null;
+  const d = Number(task.end_ms) - Number(task.start_ms);
+  return d > 500 ? d : null;
+}
+
 function screenForStatus(status: string, hasTasks: boolean): Screen | null {
   const s = (status || "").toLowerCase();
   if (s === "complete" || s === "produced" || s === "done") return "done";
@@ -90,6 +96,7 @@ export default function ProjectDetailPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sectionStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -97,12 +104,12 @@ export default function ProjectDetailPage() {
   const mimeRef = useRef("audio/webm");
   const resumedRef = useRef(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const autoStoppedRef = useRef(false);
 
   const current =
     tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
   const isRetake = current ? isTaskDone(current) : false;
-  const requiredLeft = requiredOpen(tasks);
-  const optionalLeft = optionalOpen(tasks);
+  const sectionMs = current ? sectionDurationMs(current) : null;
 
   async function markRecordingStatus() {
     try {
@@ -191,6 +198,7 @@ export default function ProjectDetailPage() {
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
+      if (sectionStopRef.current) clearTimeout(sectionStopRef.current);
     };
   }, []);
 
@@ -241,8 +249,16 @@ export default function ProjectDetailPage() {
     await markRecordingStatus();
   }
 
+  function clearRecordTimers() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
+    if (sectionStopRef.current) clearTimeout(sectionStopRef.current);
+    sectionStopRef.current = null;
+  }
+
   function beginMediaCapture(stream: MediaStream, task: Task) {
     chunksRef.current = [];
+    autoStoppedRef.current = false;
     let mime = "audio/webm";
     for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
       if (MediaRecorder.isTypeSupported(t)) {
@@ -257,7 +273,7 @@ export default function ProjectDetailPage() {
       if (e.data?.size) chunksRef.current.push(e.data);
     };
     rec.onstop = async () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      clearRecordTimers();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       setMicStream(null);
@@ -272,7 +288,6 @@ export default function ProjectDetailPage() {
         form.append("file", blob, "take.webm");
         form.append("source", "record");
         form.append("duration_ms", String(Date.now() - startedAtRef.current));
-        // Automatic analysis — artist does not trigger this
         await attachAnalysisToForm(form, blob, task, id);
         const res = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
           method: "POST",
@@ -296,15 +311,40 @@ export default function ProjectDetailPage() {
       }
     };
 
+    const limitMs = sectionDurationMs(task);
+
     startedAtRef.current = Date.now();
     setRecordSeconds(0);
-    timerRef.current = setInterval(
-      () => setRecordSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000)),
-      250
-    );
+    timerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startedAtRef.current;
+      setRecordSeconds(Math.floor(elapsed / 1000));
+      // Safety: also stop from the tick if section length is known
+      if (limitMs != null && elapsed >= limitMs && !autoStoppedRef.current) {
+        autoStoppedRef.current = true;
+        clearRecordTimers();
+        beatAudioRef.current?.pause();
+        if (mediaRecorderRef.current?.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }
+    }, 100);
+
+    // Primary auto-stop at exact section end
+    if (limitMs != null) {
+      sectionStopRef.current = setTimeout(() => {
+        if (autoStoppedRef.current) return;
+        autoStoppedRef.current = true;
+        clearRecordTimers();
+        beatAudioRef.current?.pause();
+        if (mediaRecorderRef.current?.state === "recording") {
+          mediaRecorderRef.current.stop();
+        }
+      }, limitMs);
+    }
+
     if (beatAudioRef.current && beatUrl) {
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      beatAudioRef.current.volume = 0.55;
+      beatAudioRef.current.volume = 0.4;
       beatAudioRef.current.play().catch(() => undefined);
     }
     rec.start(250);
@@ -327,7 +367,7 @@ export default function ProjectDetailPage() {
       void markRecordingStatus();
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
-        beatAudioRef.current.volume = 0.35;
+        beatAudioRef.current.volume = 0.3;
         beatAudioRef.current.play().catch(() => undefined);
       }
       let n = 3;
@@ -360,6 +400,9 @@ export default function ProjectDetailPage() {
   }
 
   function stopRecording() {
+    autoStoppedRef.current = true;
+    clearRecordTimers();
+    beatAudioRef.current?.pause();
     mediaRecorderRef.current?.stop();
   }
 
@@ -558,6 +601,7 @@ export default function ProjectDetailPage() {
               {(current.start_ms != null || current.end_ms != null) && (
                 <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
                   Section window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
+                  {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
                 </p>
               )}
             </div>
@@ -600,7 +644,13 @@ export default function ProjectDetailPage() {
 
             {phase === "recording" && (
               <div style={{ marginTop: 8 }}>
-                <RecordingVisualizer stream={micStream} seconds={recordSeconds} label="Recording" seed={`rec-${current.id}`} />
+                <RecordingVisualizer
+                  stream={micStream}
+                  seconds={recordSeconds}
+                  maxSeconds={sectionMs != null ? sectionMs / 1000 : null}
+                  label="Recording"
+                  seed={`rec-${current.id}`}
+                />
                 <button type="button" style={{ ...btn, marginTop: 16, background: C.danger, color: "#fff" }} onClick={stopRecording}>
                   Stop
                 </button>
@@ -620,6 +670,8 @@ export default function ProjectDetailPage() {
                     beatSrc={beatUrl}
                     beatStartMs={current.start_ms ?? 0}
                     beatEndMs={current.end_ms}
+                    vocalVolume={1}
+                    beatVolume={0.2}
                   />
                 )}
                 {producerTip && (
