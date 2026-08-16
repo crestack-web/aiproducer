@@ -6,18 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
-
-const C = {
-  bg: "#0B0A0F",
-  surface: "rgba(255,255,255,0.045)",
-  border: "rgba(255,255,255,0.09)",
-  brass: "#E7A961",
-  brassSoft: "rgba(231,169,97,0.15)",
-  brassLine: "rgba(231,169,97,0.55)",
-  text: "#F4F1EC",
-  textMuted: "#9B96A3",
-  textFaint: "#5C5866",
-};
+import { useTheme } from "@/lib/theme";
 
 const GENRES = ["R&B", "Afrobeats", "Hip-Hop", "Pop", "Amapiano", "Gospel", "Highlife"];
 const MOODS = ["Emotional", "Confident", "Dark", "Romantic", "Energetic", "Chill"];
@@ -63,6 +52,7 @@ function statusLabel(s: string) {
 
 export default function StudioPage() {
   const router = useRouter();
+  const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,7 +117,6 @@ export default function StudioPage() {
 
   async function uploadCustomBeat(projectId: string, file: File) {
     const measured = await measureBeatFile(file);
-    // Prefer measured BPM when confidence is reasonable
     const effectiveBpm =
       measured.bpm_confidence != null && measured.bpm_confidence >= 0.12
         ? Math.round(measured.bpm)
@@ -303,7 +292,7 @@ export default function StudioPage() {
               minHeight: 110,
               borderRadius: 14,
               border: `1px solid ${C.border}`,
-              background: "rgba(0,0,0,0.25)",
+              background: C.bgDeep,
               color: C.text,
               padding: 14,
               fontSize: 14.5,
@@ -368,7 +357,7 @@ export default function StudioPage() {
                   padding: "10px 16px",
                   borderRadius: 12,
                   border: `1px solid ${C.border}`,
-                  background: "rgba(255,255,255,0.04)",
+                  background: C.surface,
                   color: C.text,
                   fontWeight: 500,
                   fontSize: 13.5,
