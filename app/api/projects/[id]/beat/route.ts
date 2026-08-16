@@ -7,6 +7,7 @@ import {
   getStorageBucket,
 } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
+import { analyzeWavArrayBuffer } from "@/lib/audio/beat-detect";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -129,6 +130,40 @@ export async function POST(req: Request, ctx: Ctx) {
       if (!path.startsWith(`users/${user.id}/projects/${projectId}/`)) {
         return NextResponse.json({ error: "Invalid path" }, { status: 400 });
       }
+
+      // Prefer client-measured analysis; fall back to server WAV parse if needed
+      let durationMs = Number(body.duration_ms) || null;
+      let bpm =
+        Number(body.bpm || body.tempo || project.tempo || 90) || 90;
+      let confidence = Number(body.bpm_confidence);
+      if (!Number.isFinite(confidence)) confidence = null;
+      let beatTimes: number[] | null = Array.isArray(body.beat_times_ms)
+        ? body.beat_times_ms.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n))
+        : null;
+      let analysisSource = body.analysis_source ? String(body.analysis_source) : null;
+
+      if ((!durationMs || !body.bpm) && path.toLowerCase().endsWith(".wav")) {
+        try {
+          const service = createServiceClient();
+          const { data: fileData } = await service.storage.from(getStorageBucket()).download(path);
+          if (fileData) {
+            const ab = await fileData.arrayBuffer();
+            const wav = analyzeWavArrayBuffer(ab);
+            if (wav) {
+              if (!durationMs) durationMs = wav.duration_ms;
+              if (!body.bpm) {
+                bpm = wav.bpm;
+                confidence = wav.confidence;
+                beatTimes = wav.beat_times_ms;
+                analysisSource = "server_wav";
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("server wav analysis skipped", e);
+        }
+      }
+
       return registerBeat({
         userId: user.id,
         projectId,
@@ -136,10 +171,13 @@ export async function POST(req: Request, ctx: Ctx) {
         filename: String(body.filename || "custom-beat"),
         contentType: String(body.contentType || "audio/wav"),
         size: Number(body.size) || null,
-        bpm: Number(body.tempo || body.bpm || project.tempo || 90) || 90,
+        bpm,
         genre: String(body.genre || project.genre || "R&B"),
         mood: String(body.mood || project.mood || "Emotional"),
-        durationMs: Number(body.duration_ms) || null,
+        durationMs,
+        bpmConfidence: confidence,
+        beatTimesMs: beatTimes,
+        analysisSource,
       });
     }
 
@@ -205,6 +243,33 @@ export async function POST(req: Request, ctx: Ctx) {
     );
   }
 
+  let durationMs = Number(form.get("duration_ms") || 0) || null;
+  let bpm = Number(form.get("tempo") || form.get("bpm") || project.tempo || 90) || 90;
+  let confidence: number | null = Number(form.get("bpm_confidence"));
+  if (!Number.isFinite(confidence as number)) confidence = null;
+  let beatTimes: number[] | null = null;
+  let analysisSource: string | null = form.get("analysis_source")
+    ? String(form.get("analysis_source"))
+    : null;
+
+  // Server-side WAV analysis when client didn't measure
+  if (ext === "wav") {
+    try {
+      const wav = analyzeWavArrayBuffer(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+      if (wav) {
+        if (!durationMs) durationMs = wav.duration_ms;
+        if (!form.get("bpm") && !form.get("measured_bpm")) {
+          bpm = wav.bpm;
+          confidence = wav.confidence;
+          beatTimes = wav.beat_times_ms;
+          analysisSource = analysisSource || "server_wav";
+        }
+      }
+    } catch (e) {
+      console.warn("multipart wav analysis", e);
+    }
+  }
+
   return registerBeat({
     userId: user.id,
     projectId,
@@ -212,10 +277,13 @@ export async function POST(req: Request, ctx: Ctx) {
     filename,
     contentType: file.type || `audio/${ext}`,
     size: file.size,
-    bpm: Number(form.get("tempo") || form.get("bpm") || project.tempo || 90) || 90,
+    bpm,
     genre: String(form.get("genre") || project.genre || "R&B"),
     mood: String(form.get("mood") || project.mood || "Emotional"),
-    durationMs: Number(form.get("duration_ms") || 0) || null,
+    durationMs,
+    bpmConfidence: confidence,
+    beatTimesMs: beatTimes,
+    analysisSource,
   });
 }
 
@@ -230,15 +298,22 @@ async function registerBeat(input: {
   genre: string;
   mood: string;
   durationMs: number | null;
+  bpmConfidence?: number | null;
+  beatTimesMs?: number[] | null;
+  analysisSource?: string | null;
 }) {
   const service = createServiceClient();
+
+  const bpm = Math.max(40, Math.min(240, Math.round(Number(input.bpm) || 90)));
+  const durationMs =
+    input.durationMs && input.durationMs > 500 ? Math.round(input.durationMs) : null;
 
   const beatRow: Record<string, unknown> = {
     project_id: input.projectId,
     audio_path: input.path,
     status: "ready",
-    bpm: input.bpm,
-    duration_ms: input.durationMs,
+    bpm,
+    duration_ms: durationMs,
     source: "upload",
     original_filename: input.filename,
     metadata: {
@@ -246,6 +321,11 @@ async function registerBeat(input: {
       original_filename: input.filename,
       content_type: input.contentType,
       size: input.size,
+      analysis: {
+        method: input.analysisSource || (durationMs ? "client_or_server" : null),
+        bpm_confidence: input.bpmConfidence ?? null,
+        beat_times_ms: (input.beatTimesMs || []).slice(0, 400),
+      },
     },
   };
 
@@ -261,8 +341,8 @@ async function registerBeat(input: {
       project_id: input.projectId,
       audio_path: input.path,
       status: "ready" as const,
-      bpm: input.bpm,
-      duration_ms: input.durationMs,
+      bpm,
+      duration_ms: durationMs,
       metadata: beatRow.metadata,
     };
     const { data: fallback, error: fbErr } = await service
@@ -290,7 +370,7 @@ async function registerBeat(input: {
       status: "beat_ready",
       genre: input.genre,
       mood: input.mood,
-      tempo: input.bpm,
+      tempo: bpm,
     })
     .eq("id", input.projectId)
     .eq("user_id", input.userId);
@@ -310,6 +390,13 @@ async function registerBeat(input: {
     {
       beat,
       audio_url,
+      analysis: {
+        bpm,
+        duration_ms: durationMs,
+        confidence: input.bpmConfidence ?? null,
+        beat_count: input.beatTimesMs?.length ?? 0,
+        source: input.analysisSource,
+      },
       message: "Custom beat uploaded. Run analyze to build the producer plan.",
     },
     { status: 201 }
