@@ -23,6 +23,11 @@ import {
   type TakeRow,
   type StemRow,
 } from "@/lib/audio/produce-job";
+import {
+  prepareRoexTrack,
+  validateTracksForRoex,
+  userFacingProduceError,
+} from "@/lib/audio/roex-assets";
 
 export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number }) {
   const maxWorkMs = opts?.maxWorkMs ?? 25_000;
@@ -328,15 +333,24 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
         const { data: project } = await supabase.from("projects").select("*").eq("id", projectId).single();
         const style = mapMusicalStyle(project?.genre);
 
+        if (mode === "roex") {
+          await validateTracksForRoex(mixTracks);
+        }
+
         const resolvedTracks: { path: string; kind: StemKind }[] = [];
         for (const s of mixTracks) {
           const kind = s.kind as StemKind;
           if (mode === "roex") {
-            const url = await toReadableUrl(s.audio_path);
-            if (!url) {
-              throw new Error(`No readable URL for stem ${kind} (${s.audio_path}) — refusing RoEx`);
-            }
-            resolvedTracks.push({ path: url, kind });
+            // Never send Supabase signed URLs (query tokens break RoEx extension detection).
+            // Download server-side and upload via RoEx /upload → clean readable_url.
+            const prepared = await prepareRoexTrack({
+              provider,
+              storagePath: s.audio_path,
+              kind,
+              jobId,
+              projectId,
+            });
+            resolvedTracks.push({ path: prepared.providerUrl, kind });
           } else {
             resolvedTracks.push({ path: s.audio_path, kind });
           }
@@ -353,6 +367,8 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           track_count: resolvedTracks.length,
           mode,
           preview: true,
+          // Do not log full URLs (may contain tokens on non-roex paths)
+          track_kinds: resolvedTracks.map((t) => t.kind),
         });
 
         const mixStart = await provider.startMix(
@@ -754,14 +770,34 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
 
     return { pending: true, stage, job_id: jobId };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Produce pipeline failed";
+    const raw = e instanceof Error ? e.message : "Produce pipeline failed";
+    const msg = userFacingProduceError(raw);
     console.error("tickProduceJob", jobId, e);
-    logProduce({ event: "failed", jobId, projectId, stage, error: msg });
+    // Developer detail retained; user-facing message stored on job.error
+    logProduce({
+      event: "failed",
+      jobId,
+      projectId,
+      stage,
+      error: msg,
+      provider_error: raw.slice(0, 500),
+    });
     await supabase
       .from("jobs")
-      .update({ status: "failed", error: msg, completed_at: new Date().toISOString() })
+      .update({
+        status: "failed",
+        error: msg,
+        output_data: {
+          ...out,
+          provider_error: raw.slice(0, 1000),
+          failed_stage: stage,
+        },
+        completed_at: new Date().toISOString(),
+      })
       .eq("id", jobId);
-    await supabase.from("projects").update({ status: "failed" }).eq("id", projectId);
+    // CRITICAL: never destroy the recording session.
+    // Project stays in a recoverable studio state; recordings/tasks/beats untouched.
+    await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
     throw e;
   }
 }

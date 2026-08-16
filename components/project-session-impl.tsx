@@ -70,10 +70,12 @@ function screenForStatus(status: string, hasTasks: boolean): Screen | null {
   const s = (status || "").toLowerCase();
   if (s === "complete" || s === "produced" || s === "done") return "done";
   if (s === "processing" || s === "mixing" || s === "mastering") return "assemble";
+  // Production failure must NOT wipe the session — return to assemble/preview with takes intact
+  if (s === "failed") return hasTasks ? "assemble" : "beat";
   if (s === "recording" || s === "in_progress") return hasTasks ? "session" : "plan";
   if (s === "blueprint_ready" || s === "ready" || s === "planned") return hasTasks ? "plan" : "beat";
   if (s === "analyzing") return "analyzing";
-  if (s === "beat_ready" || s === "draft" || s === "generating_beat" || s === "failed") return "beat";
+  if (s === "beat_ready" || s === "draft" || s === "generating_beat") return "beat";
   return null;
 }
 
@@ -894,7 +896,44 @@ export default function ProjectDetailPage() {
                 <p style={{ color: C.textMuted, textAlign: "center", fontSize: 14, marginTop: 6 }}>
                   Play the full timeline — beat plus every recorded section — then produce when it feels right.
                 </p>
-                {error && <p style={{ color: C.danger, textAlign: "center" }}>{error}</p>}
+                {error && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: 14,
+                      borderRadius: 12,
+                      border: `1px solid ${C.danger}`,
+                      background: C.surface,
+                      textAlign: "center",
+                    }}
+                  >
+                    <p style={{ color: C.danger, margin: 0, fontWeight: 600 }}>
+                      Production couldn&apos;t be completed.
+                    </p>
+                    <p style={{ color: C.textMuted, margin: "8px 0 0", fontSize: 14 }}>
+                      Your recordings are safe.
+                    </p>
+                    <p style={{ color: C.textMuted, margin: "6px 0 0", fontSize: 13 }}>{error}</p>
+                    <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "center" }}>
+                      <button type="button" style={{ ...btn, width: "auto", minWidth: 120 }} onClick={startProduce}>
+                        Try Again
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn2, width: "auto", minWidth: 140 }}
+                        onClick={() => {
+                          setError(null);
+                          setScreen("session");
+                          const open =
+                            requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
+                          if (open) setActiveTaskId(open.id);
+                        }}
+                      >
+                        Back to Recording
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {previewLoading ? (
                   <PlayerLoadingState title="Loading preview" subtitle="Gathering beat and takes…" seed={`prev-${id}`} />

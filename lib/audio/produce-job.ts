@@ -62,8 +62,44 @@ export async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+function redactSecrets(value: unknown): unknown {
+  if (typeof value === "string") {
+    // Strip signed URL query tokens and common secret-looking substrings
+    if (value.includes("token=") || value.includes("X-API-Key") || value.includes("service_role")) {
+      try {
+        const u = new URL(value);
+        return `${u.origin}${u.pathname}`;
+      } catch {
+        return "[redacted]";
+      }
+    }
+    if (/eyJ[a-zA-Z0-9_-]{20,}/.test(value)) return "[redacted-jwt]";
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const lk = k.toLowerCase();
+      if (
+        lk.includes("key") ||
+        lk.includes("token") ||
+        lk.includes("authorization") ||
+        lk.includes("secret") ||
+        lk.includes("password")
+      ) {
+        out[k] = "[redacted]";
+      } else {
+        out[k] = redactSecrets(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 export function logProduce(fields: Record<string, unknown>) {
-  console.info("[produce]", JSON.stringify(fields));
+  console.info("[produce]", JSON.stringify(redactSecrets(fields)));
 }
 
 export async function toReadableUrl(path: string | null | undefined): Promise<string | null> {
@@ -105,13 +141,19 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     throw new Error("Project not found or not owned by user");
   }
 
-  const idempotencyKey = `produce:${projectId}`;
+  // Active jobs: same idempotency key. Failed jobs are kept for history;
+  // a new attempt uses produce:{projectId}:attempt-N so retries are allowed
+  // without deleting previous attempts or creating duplicate in-flight RoEx tasks.
+  const baseKey = `produce:${projectId}`;
 
   const { data: existing } = await supabase
     .from("jobs")
-    .select("id, status")
-    .eq("idempotency_key", idempotencyKey)
-    .in("status", ["queued", "processing", "complete"])
+    .select("id, status, provider_task_id, stage, output_data, attempts")
+    .eq("project_id", projectId)
+    .eq("type", "PRODUCE_SONG")
+    .in("status", ["queued", "processing"])
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (existing) {
@@ -120,9 +162,40 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
       jobId: existing.id,
       projectId,
       status: existing.status,
+      stage: existing.stage,
     });
     return { job_id: existing.id, status: existing.status, deduped: true };
   }
+
+  const { data: completed } = await supabase
+    .from("jobs")
+    .select("id, status")
+    .eq("project_id", projectId)
+    .eq("type", "PRODUCE_SONG")
+    .eq("status", "complete")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (completed) {
+    logProduce({
+      event: "enqueue_deduped_complete",
+      jobId: completed.id,
+      projectId,
+      status: completed.status,
+    });
+    return { job_id: completed.id, status: completed.status, deduped: true };
+  }
+
+  // Count prior attempts for history / unique key (failed ones remain in DB)
+  const { count: priorCount } = await supabase
+    .from("jobs")
+    .select("*", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .eq("type", "PRODUCE_SONG");
+
+  const attempt = (priorCount || 0) + 1;
+  const idempotencyKey = attempt === 1 ? baseKey : `${baseKey}:attempt-${attempt}`;
 
   let { data: selected, error: recErr } = await supabase
     .from("recordings")
@@ -206,8 +279,9 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
         mode,
         recording_count: rows.length,
         roex_env: getRoexEnv(),
+        attempt,
       },
-      output_data: { user_id: userId, mode },
+      output_data: { user_id: userId, mode, attempt },
       attempts: 0,
     })
     .select()
