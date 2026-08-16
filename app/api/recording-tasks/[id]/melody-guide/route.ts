@@ -3,7 +3,6 @@ import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import {
   createSignedDownloadUrl,
-  getStorageBucket,
   isStoragePath,
   uploadBuffer,
 } from "@/lib/storage";
@@ -14,6 +13,8 @@ import {
 } from "@/lib/providers/elevenlabs-tts";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+type TaskRow = Record<string, unknown>;
 
 /**
  * POST /api/recording-tasks/:id/melody-guide
@@ -33,7 +34,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     .maybeSingle();
 
   // Fallback if join shape differs
-  let row = task as Record<string, unknown> | null;
+  let row: TaskRow | null = (task as TaskRow | null) ?? null;
   if (tErr || !row) {
     const { data: simple } = await supabase
       .from("recording_tasks")
@@ -43,16 +44,20 @@ export async function POST(_req: Request, ctx: Ctx) {
     if (!simple) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
-    const { data: project } = await supabase
+    const { data: projectRow } = await supabase
       .from("projects")
       .select("id, user_id, genre, mood, title")
       .eq("id", simple.project_id)
       .eq("user_id", user.id)
       .maybeSingle();
-    if (!project) {
+    if (!projectRow) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    row = { ...simple, projects: project, song_sections: null };
+    row = { ...simple, projects: projectRow, song_sections: null };
+  }
+
+  if (!row) {
+    return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
   const project = (row.projects || {}) as {
@@ -75,6 +80,10 @@ export async function POST(_req: Request, ctx: Ctx) {
       .maybeSingle();
     if (!p) return NextResponse.json({ error: "Not found" }, { status: 404 });
     Object.assign(project, p);
+  }
+
+  if (!project.id) {
+    project.id = String(row.project_id || "");
   }
 
   const meta = (row.metadata || {}) as {
