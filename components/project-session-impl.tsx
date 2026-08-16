@@ -9,7 +9,12 @@ import {
   PlayerLoadingState,
 } from "@/components/studio-player";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
-import { MicInputPicker, openMicStream, routePlaybackToPreferredOutput } from "@/components/mic-input-picker";
+import {
+  MicInputPicker,
+  SpeakerOutputPicker,
+  openMicStream,
+  routePlaybackToPreferredOutput,
+} from "@/components/mic-input-picker";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -104,6 +109,7 @@ export default function ProjectDetailPage() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selectedMicId, setSelectedMicId] = useState("");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("");
   const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
@@ -124,6 +130,7 @@ export default function ProjectDetailPage() {
   const produceStartedAtRef = useRef(0);
   const produceActiveRef = useRef(false);
   const selectedMicIdRef = useRef("");
+  const selectedSpeakerIdRef = useRef("");
 
   const current =
     tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
@@ -133,6 +140,15 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     selectedMicIdRef.current = selectedMicId;
   }, [selectedMicId]);
+
+  useEffect(() => {
+    selectedSpeakerIdRef.current = selectedSpeakerId;
+  }, [selectedSpeakerId]);
+
+  // Apply speaker choice whenever it changes (and when beat element is ready)
+  useEffect(() => {
+    void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerId || undefined);
+  }, [selectedSpeakerId, beatUrl]);
 
   function clearProducePoll() {
     if (producePollRef.current) {
@@ -499,7 +515,7 @@ export default function ProjectDetailPage() {
     }
 
     if (beatAudioRef.current && beatUrl) {
-      void routePlaybackToPreferredOutput(beatAudioRef.current);
+      void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
       beatAudioRef.current.volume = 0.28;
       beatAudioRef.current.play().catch(() => undefined);
@@ -522,7 +538,7 @@ export default function ProjectDetailPage() {
       streamRef.current = stream;
       setMicStream(stream);
       // Keep beat on headphones when the browser allows choosing output (not coupled to mic).
-      await routePlaybackToPreferredOutput(beatAudioRef.current);
+      await routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       setCountdown(3);
       setPhase("countdown");
       void markRecordingStatus();
@@ -899,6 +915,11 @@ export default function ProjectDetailPage() {
                 <MicInputPicker
                   selectedDeviceId={selectedMicId}
                   onSelect={setSelectedMicId}
+                  disabled={false}
+                />
+                <SpeakerOutputPicker
+                  selectedDeviceId={selectedSpeakerId}
+                  onSelect={setSelectedSpeakerId}
                   disabled={false}
                 />
                 <button type="button" style={{ ...btn, marginTop: 14 }} onClick={startRecording}>
