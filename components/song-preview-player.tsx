@@ -93,6 +93,17 @@ export function SongPreviewPlayer({
     else vocalRefs.current.delete(id);
   }
 
+  // When layers/URLs change, drop stale refs so play uses the new elements
+  useEffect(() => {
+    const keep = new Set(layers.map((l) => l.task_id));
+    vocalRefs.current.forEach((_el, id) => {
+      if (!keep.has(id)) vocalRefs.current.delete(id);
+    });
+    pauseAll();
+    setProgress(0);
+    setClockMs(0);
+  }, [layers, beatUrl, pauseAll]);
+
   async function ensureReady(el: HTMLAudioElement, label = "audio") {
     if (el.readyState >= 2) return;
     await new Promise<void>((resolve, reject) => {
@@ -141,7 +152,6 @@ export function SongPreviewPlayer({
     }
 
     try {
-      // Preload with timeouts so a bad vocal URL cannot freeze the whole player
       if (beat) {
         await ensureReady(beat, "beat");
         beat.volume = 0.55;
@@ -183,7 +193,6 @@ export function SongPreviewPlayer({
         }
       }
 
-      // Start any layers that begin at 0
       for (const layer of layers) {
         if ((layer.start_ms || 0) > 80) continue;
         const el = vocalRefs.current.get(layer.task_id);
@@ -204,7 +213,6 @@ export function SongPreviewPlayer({
       const clockOriginMs = beat ? beat.currentTime * 1000 : 0;
 
       const tick = () => {
-        // Prefer beat clock; without beat, advance from wall clock so vocals still schedule
         let now: number;
         if (beat && !beat.paused) {
           now = beat.currentTime * 1000;
@@ -219,7 +227,6 @@ export function SongPreviewPlayer({
         setClockMs(now);
         setProgress(Math.min(1, now / durationMs));
 
-        // Schedule vocal starts relative to beat clock
         for (const layer of layers) {
           const el = vocalRefs.current.get(layer.task_id);
           if (!el) continue;
@@ -231,7 +238,6 @@ export function SongPreviewPlayer({
 
           if (now >= start && now < end - 40) {
             if (el.paused) {
-              // Seek vocal to offset within take if we joined late
               const offsetSec = Math.max(0, (now - start) / 1000);
               try {
                 if (Math.abs(el.currentTime - offsetSec) > 0.35) {
@@ -281,7 +287,7 @@ export function SongPreviewPlayer({
 
   const layerSummary =
     layers.length === 0
-      ? "Beat only — record sections to hear vocals"
+      ? "Beat only — no vocal takes loaded for preview"
       : `${layers.length} vocal take${layers.length === 1 ? "" : "s"} on the timeline`;
 
   return (
@@ -295,13 +301,23 @@ export function SongPreviewPlayer({
         boxShadow: C.cardShadow,
       }}
     >
-      {beatUrl && <audio ref={beatRef} src={beatUrl} preload="auto" />}
+      {beatUrl && (
+        <audio
+          ref={beatRef}
+          src={beatUrl}
+          preload="auto"
+          playsInline
+          crossOrigin="anonymous"
+        />
+      )}
       {layers.map((l) => (
         <audio
-          key={l.task_id}
+          key={`${l.task_id}-${l.audio_url}`}
           ref={(el) => registerVocal(l.task_id, el)}
           src={l.audio_url}
           preload="auto"
+          playsInline
+          crossOrigin="anonymous"
         />
       ))}
 
