@@ -8,6 +8,8 @@ export type AnalysisTaskRef = {
   type: string;
   start_ms?: number | null;
   end_ms?: number | null;
+  section_id?: string | null;
+  metadata?: { section_label?: string; section_id?: string } | null;
 };
 
 /** Analyze blob and append analysis + duration to FormData. Never throws. */
@@ -21,10 +23,15 @@ export async function attachAnalysisToForm(
     typeof task.end_ms === "number" && typeof task.start_ms === "number"
       ? task.end_ms - task.start_ms
       : null;
+  const sectionId =
+    task.section_id ||
+    (task.metadata && typeof task.metadata.section_id === "string"
+      ? task.metadata.section_id
+      : null);
   try {
     const analysis = await analyzeAudioBlob(blob, {
       projectId,
-      sectionId: null,
+      sectionId,
       role: task.type,
       timelineStartMs: task.start_ms ?? null,
       timelineEndMs: task.end_ms ?? null,
