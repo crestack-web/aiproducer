@@ -70,12 +70,10 @@ function screenForStatus(status: string, hasTasks: boolean): Screen | null {
   const s = (status || "").toLowerCase();
   if (s === "complete" || s === "produced" || s === "done") return "done";
   if (s === "processing" || s === "mixing" || s === "mastering") return "assemble";
-  // Production failure must NOT wipe the session — return to assemble/preview with takes intact
-  if (s === "failed") return hasTasks ? "assemble" : "beat";
   if (s === "recording" || s === "in_progress") return hasTasks ? "session" : "plan";
   if (s === "blueprint_ready" || s === "ready" || s === "planned") return hasTasks ? "plan" : "beat";
   if (s === "analyzing") return "analyzing";
-  if (s === "beat_ready" || s === "draft" || s === "generating_beat") return "beat";
+  if (s === "beat_ready" || s === "draft" || s === "generating_beat" || s === "failed") return "beat";
   return null;
 }
 
@@ -624,7 +622,9 @@ export default function ProjectDetailPage() {
     if (!current || current.required) return;
     setSkipping(true);
     try {
-      await fetch(`/api/recording-tasks/${current.id}/skip`, { method: "POST" });
+      const res = await fetch(`/api/recording-tasks/${current.id}/skip`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Skip failed");
       setTasks((prev) => {
         const next = prev.map((t) => (t.id === current.id ? { ...t, status: "skipped" } : t));
         clearFocusAndAdvance(next);
@@ -632,6 +632,42 @@ export default function ProjectDetailPage() {
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Skip failed");
+    } finally {
+      setSkipping(false);
+    }
+  }
+
+  async function skipAllOptional() {
+    const openOptional = optionalOpen(tasks);
+    if (openOptional.length === 0) return;
+    if (phase === "recording" || phase === "countdown") return;
+    setSkipping(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/skip-optional`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Could not skip optional parts");
+      setTasks((prev) => {
+        const next = prev.map((t) =>
+          !t.required && (t.status === "pending" || t.status === "in_progress")
+            ? { ...t, status: "skipped" }
+            : t
+        );
+        setActiveTaskId(null);
+        setLocalBlobUrl(null);
+        setSavedRecordingId(null);
+        setPhase("ready");
+        if (requiredOpen(next).length === 0) {
+          setScreen("assemble");
+        } else {
+          setScreen("session");
+          const nextReq = requiredOpen(next)[0];
+          if (nextReq) setActiveTaskId(nextReq.id);
+        }
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Skip all failed");
     } finally {
       setSkipping(false);
     }
@@ -747,6 +783,18 @@ export default function ProjectDetailPage() {
             <button type="button" style={{ ...btn, marginTop: 20 }} onClick={enterSession}>
               Start recording
             </button>
+            {optionalOpen(tasks).length > 0 && requiredOpen(tasks).length === 0 && (
+              <button
+                type="button"
+                style={{ ...btn2, marginTop: 10 }}
+                disabled={skipping}
+                onClick={() => void skipAllOptional()}
+              >
+                {skipping
+                  ? "Skipping…"
+                  : `Skip all optional (${optionalOpen(tasks).length}) and continue`}
+              </button>
+            )}
           </div>
         )}
 
@@ -794,7 +842,21 @@ export default function ProjectDetailPage() {
                 </button>
                 {!current.required && (
                   <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
-                    Skip
+                    {skipping ? "Skipping…" : "Skip this part"}
+                  </button>
+                )}
+                {optionalOpen(tasks).length > 0 && (
+                  <button
+                    type="button"
+                    style={{ ...btn2, marginTop: 10 }}
+                    disabled={skipping || phase === "recording" || phase === "countdown"}
+                    onClick={() => void skipAllOptional()}
+                  >
+                    {skipping
+                      ? "Skipping…"
+                      : optionalOpen(tasks).length === 1
+                        ? "Skip optional part"
+                        : `Skip all optional (${optionalOpen(tasks).length})`}
                   </button>
                 )}
               </div>
@@ -867,11 +929,27 @@ export default function ProjectDetailPage() {
 
         {screen === "session" && !current && (
           <div style={wrap}>
-            <h1 style={titleStyle}>All parts done</h1>
+            <h1 style={titleStyle}>
+              {optionalOpen(tasks).length > 0 ? "Optional parts left" : "All parts done"}
+            </h1>
             <p style={{ color: C.textMuted, textAlign: "center" }}>
-              Hear your full arrangement (beat + every section) before producing.
+              {optionalOpen(tasks).length > 0
+                ? "You can record optional parts or skip them all and continue to preview."
+                : "Hear your full arrangement (beat + every section) before producing."}
             </p>
-            <button type="button" style={{ ...btn, marginTop: 20 }} onClick={() => setScreen("assemble")}>
+            {optionalOpen(tasks).length > 0 && (
+              <button
+                type="button"
+                style={{ ...btn2, marginTop: 16 }}
+                disabled={skipping}
+                onClick={() => void skipAllOptional()}
+              >
+                {skipping
+                  ? "Skipping…"
+                  : `Skip all optional (${optionalOpen(tasks).length})`}
+              </button>
+            )}
+            <button type="button" style={{ ...btn, marginTop: 12 }} onClick={() => setScreen("assemble")}>
               Preview full song
             </button>
           </div>
@@ -896,44 +974,7 @@ export default function ProjectDetailPage() {
                 <p style={{ color: C.textMuted, textAlign: "center", fontSize: 14, marginTop: 6 }}>
                   Play the full timeline — beat plus every recorded section — then produce when it feels right.
                 </p>
-                {error && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: 14,
-                      borderRadius: 12,
-                      border: `1px solid ${C.danger}`,
-                      background: C.surface,
-                      textAlign: "center",
-                    }}
-                  >
-                    <p style={{ color: C.danger, margin: 0, fontWeight: 600 }}>
-                      Production couldn&apos;t be completed.
-                    </p>
-                    <p style={{ color: C.textMuted, margin: "8px 0 0", fontSize: 14 }}>
-                      Your recordings are safe.
-                    </p>
-                    <p style={{ color: C.textMuted, margin: "6px 0 0", fontSize: 13 }}>{error}</p>
-                    <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "center" }}>
-                      <button type="button" style={{ ...btn, width: "auto", minWidth: 120 }} onClick={startProduce}>
-                        Try Again
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn2, width: "auto", minWidth: 140 }}
-                        onClick={() => {
-                          setError(null);
-                          setScreen("session");
-                          const open =
-                            requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
-                          if (open) setActiveTaskId(open.id);
-                        }}
-                      >
-                        Back to Recording
-                      </button>
-                    </div>
-                  </div>
-                )}
+                {error && <p style={{ color: C.danger, textAlign: "center" }}>{error}</p>}
 
                 {previewLoading ? (
                   <PlayerLoadingState title="Loading preview" subtitle="Gathering beat and takes…" seed={`prev-${id}`} />
