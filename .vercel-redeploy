@@ -1,3 +1,3 @@
-redeploy-trigger: 2026-08-16T00:45Z
-commit-to-deploy: latest-main
-reason: force deploy recording visualizer, bottom padding, countdown
+redeploy-trigger: 2026-08-16T11:15Z
+commit: 582b1ad
+reason: skip broken re-export commit 7b5feae; session page has auto analysis
