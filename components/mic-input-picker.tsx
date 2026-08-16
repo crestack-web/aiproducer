@@ -128,7 +128,7 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
       const constraints: MediaStreamConstraints = {
         audio: selectedDeviceId
           ? {
-              deviceId: { exact: selectedDeviceId },
+              deviceId: { ideal: selectedDeviceId },
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
@@ -353,8 +353,9 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
       )}
 
       <p style={{ margin: "10px 0 0", fontSize: 11.5, color: C.textMuted, lineHeight: 1.4 }}>
-        Tip: phone mic + wired headphones often beats Bluetooth headsets (which can lower quality or
-        add latency). Choose what works best for you.
+        Best setup: keep EarPods / headphones plugged in for the beat, and pick the phone mic only if
+        you want the built-in mic. We keep echo cancellation on so the beat is less likely to bleed
+        into your take. Bluetooth can add latency.
       </p>
 
       {error && (
@@ -364,17 +365,76 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
   );
 }
 
-/** Build getUserMedia audio constraints for the selected device. */
+/**
+ * Build getUserMedia audio constraints for the selected device.
+ *
+ * Mobile note: prefer `ideal` (not `exact`) for deviceId so the OS can keep
+ * the current media playback route (e.g. EarPods) while using the phone mic.
+ * Forcing `exact` often switches the whole session to the built-in speaker,
+ * so the beat plays out loud and bleeds into the take.
+ */
 export function micAudioConstraints(deviceId: string): MediaTrackConstraints {
   const base: MediaTrackConstraints = {
+    // Echo cancel is critical when any monitor leaks into the mic
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
+    // Avoid "communication" channel where possible (keeps media on headphones)
+    channelCount: 1,
   };
   if (deviceId) {
-    return { ...base, deviceId: { exact: deviceId } };
+    return { ...base, deviceId: { ideal: deviceId } };
   }
   return base;
+}
+
+const HEADPHONE_RE = /head|ear.?pod|airpod|headset|lightning|usb|bluetooth|wired/i;
+const BUILTIN_MIC_RE = /iphone|ipad|android|phone|built.?in|internal|default/i;
+
+/** True when a label looks like wired/BT headphones or headset. */
+export function looksLikeHeadphones(label: string): boolean {
+  return HEADPHONE_RE.test(label || "");
+}
+
+/** True when a label looks like the device built-in mic. */
+export function looksLikeBuiltInMic(label: string): boolean {
+  return BUILTIN_MIC_RE.test(label || "");
+}
+
+/**
+ * Route an HTMLMediaElement to a headphone-like output when the browser supports
+ * setSinkId (Chromium/Android). No-op on iOS Safari (unsupported).
+ * Does not change the microphone — only where the beat/monitor plays.
+ */
+export async function routePlaybackToPreferredOutput(
+  el: HTMLMediaElement | null | undefined
+): Promise<{ routed: boolean; sinkId?: string; label?: string }> {
+  if (!el) return { routed: false };
+  const setSinkId = (
+    el as HTMLMediaElement & {
+      setSinkId?: (id: string) => Promise<void>;
+    }
+  ).setSinkId;
+  if (typeof setSinkId !== "function") return { routed: false };
+  if (!navigator.mediaDevices?.enumerateDevices) return { routed: false };
+
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const outputs = all.filter((d) => d.kind === "audiooutput");
+    if (outputs.length === 0) return { routed: false };
+
+    const preferred =
+      outputs.find((d) => looksLikeHeadphones(d.label)) ||
+      outputs.find((d) => d.deviceId === "default") ||
+      outputs.find((d) => /default|speaker|external/i.test(d.label)) ||
+      outputs[0];
+
+    if (!preferred?.deviceId) return { routed: false };
+    await setSinkId.call(el, preferred.deviceId);
+    return { routed: true, sinkId: preferred.deviceId, label: preferred.label };
+  } catch {
+    return { routed: false };
+  }
 }
 
 /**

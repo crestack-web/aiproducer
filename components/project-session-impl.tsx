@@ -9,7 +9,7 @@ import {
   PlayerLoadingState,
 } from "@/components/studio-player";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
-import { MicInputPicker, openMicStream } from "@/components/mic-input-picker";
+import { MicInputPicker, openMicStream, routePlaybackToPreferredOutput } from "@/components/mic-input-picker";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -499,8 +499,9 @@ export default function ProjectDetailPage() {
     }
 
     if (beatAudioRef.current && beatUrl) {
+      void routePlaybackToPreferredOutput(beatAudioRef.current);
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      beatAudioRef.current.volume = 0.4;
+      beatAudioRef.current.volume = 0.28;
       beatAudioRef.current.play().catch(() => undefined);
     }
     rec.start(250);
@@ -520,12 +521,15 @@ export default function ProjectDetailPage() {
       }
       streamRef.current = stream;
       setMicStream(stream);
+      // Keep beat on headphones when the browser allows choosing output (not coupled to mic).
+      await routePlaybackToPreferredOutput(beatAudioRef.current);
       setCountdown(3);
       setPhase("countdown");
       void markRecordingStatus();
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
-        beatAudioRef.current.volume = 0.3;
+        // Lower monitor level — reduces bleed if OS still routes to the phone speaker
+        beatAudioRef.current.volume = 0.28;
         beatAudioRef.current.play().catch(() => undefined);
       }
       let n = 3;
