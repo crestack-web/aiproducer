@@ -44,9 +44,11 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
   }
 
-  const { data: tasks, error: tErr } = await supabase
+  const { data: tasksRaw, error: tErr } = await supabase
     .from("recording_tasks")
-    .select("id, type, title, instruction, status, start_ms, end_ms, required, metadata")
+    .select(
+      "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan"
+    )
     .eq("project_id", projectId)
     .order("start_ms", { ascending: true });
 
@@ -55,7 +57,14 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not load tasks" }, { status: 500 });
   }
 
-  const taskIds = (tasks ?? []).map((t) => t.id);
+  // Active plan only — same membership rule as Produce (task identity, not timestamps)
+  const tasks = (tasksRaw ?? []).filter((t) => {
+    if (t.active === false) return false;
+    if (t.selected_in_plan === false) return false;
+    if (t.status === "skipped") return false;
+    return true;
+  });
+  const taskIds = tasks.map((t) => t.id);
   let recordings: Array<{
     id: string;
     task_id: string;
@@ -90,7 +99,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   const layers = [];
-  for (const task of tasks ?? []) {
+  for (const task of tasks) {
     const rec = byTask.get(task.id);
     if (!rec?.audio_path) continue;
 
