@@ -95,6 +95,30 @@ function MicIcon({ size = 28 }: { size?: number }) {
   );
 }
 
+function waitAudioReady(el: HTMLAudioElement, timeoutMs = 4000): Promise<void> {
+  if (el.readyState >= 2) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      el.removeEventListener("canplay",
+ finish);
+      el.removeEventListener("loadeddata", finish);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    el.addEventListener("canplay", finish);
+    el.addEventListener("loadeddata", finish);
+    try {
+      el.load();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 export function Waveform({
   bars,
   progress = 0,
@@ -138,7 +162,6 @@ export function Waveform({
   );
 }
 
-/** Stable live bars for recording — uses scaleY, fixed widths, no layout thrash. */
 function LiveBars({
   levels,
   height = 48,
@@ -469,7 +492,6 @@ export function StudioPlayer({
   );
 }
 
-/** Live mic waveform while recording — stable scaleY animation. */
 export function RecordingVisualizer({
   stream,
   seconds = 0,
@@ -517,7 +539,6 @@ export function RecordingVisualizer({
         const tick = (t: number) => {
           if (cancelled) return;
           analyser.getByteTimeDomainData(timeData);
-          // RMS energy 0..1
           let sum = 0;
           for (let i = 0; i < timeData.length; i++) {
             const v = (timeData[i] - 128) / 128;
@@ -527,7 +548,6 @@ export function RecordingVisualizer({
           const energy = Math.min(1, rms * 3.2);
           smoothRef.current = smoothRef.current * 0.72 + energy * 0.28;
 
-          // Throttle React updates ~18fps
           if (t - lastUiRef.current > 55) {
             lastUiRef.current = t;
             const e = smoothRef.current;
@@ -549,7 +569,6 @@ export function RecordingVisualizer({
 
     setup();
 
-    // Synthetic fallback when analyser unavailable
     const synth = setInterval(() => {
       if (usingAnalyser || analyserRef.current) return;
       const t = Date.now();
@@ -641,7 +660,6 @@ export function RecordingVisualizer({
   );
 }
 
-/** Animated player shell for loading / analyzing / producing states. */
 export function PlayerLoadingState({
   title,
   subtitle,
@@ -703,6 +721,7 @@ export function PlayerLoadingState({
   );
 }
 
+/** Review player: vocal take + section beat in sync. */
 export function CompactAudioPlayer({
   src,
   label = "Your take",
@@ -710,7 +729,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.55,
+  beatVolume = 0.72,
   vocalVolume = 1,
 }: {
   src: string | null | undefined;
@@ -724,17 +743,56 @@ export function CompactAudioPlayer({
 }) {
   const vocalRef = useRef<HTMLAudioElement | null>(null);
   const beatRef = useRef<HTMLAudioElement | null>(null);
+  const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [liveBars, setLiveBars] = useState<number[] | null>(null);
+  const [beatReady, setBeatReady] = useState(false);
   const baseBars = useMemo(() => makeWave(seed || label || "take", 40), [seed, label]);
   const gradient = useMemo(() => coverGradientFor(seed || label || "take"), [seed, label]);
 
-  const beatStartSec = Math.max(0, (beatStartMs ?? 0) / 1000);
+  const beatStartSec = Math.max(0, (Number(beatStartMs) || 0) / 1000);
   const beatEndSec =
-    beatEndMs != null && beatEndMs > (beatStartMs ?? 0) ? beatEndMs / 1000 : null;
+    beatEndMs != null && Number(beatEndMs) > (Number(beatStartMs) || 0)
+      ? Number(beatEndMs) / 1000
+      : null;
+
+  const stopSyncLoop = useCallback(() => {
+    if (syncTimerRef.current) {
+      clearInterval(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+  }, []);
+
+  const alignBeat = useCallback(() => {
+    const vocal = vocalRef.current;
+    const beat = beatRef.current;
+    if (!vocal || !beat || !beatSrc) return;
+    const target = beatStartSec + (vocal.currentTime || 0);
+    if (beatEndSec != null && target >= beatEndSec) {
+      if (!beat.paused) beat.pause();
+      return;
+    }
+    try {
+      if (!Number.isFinite(target)) return;
+      if (Math.abs((beat.currentTime || 0) - target) > 0.18) {
+        beat.currentTime = Math.max(0, target);
+      }
+    } catch {
+      /* ignore seek errors */
+    }
+    if (!vocal.paused && beat.paused) {
+      beat.volume = beatVolume;
+      beat.play().catch(() => undefined);
+    }
+  }, [beatSrc, beatStartSec, beatEndSec, beatVolume]);
+
+  const startSyncLoop = useCallback(() => {
+    stopSyncLoop();
+    syncTimerRef.current = setInterval(alignBeat, 200);
+  }, [alignBeat, stopSyncLoop]);
 
   useEffect(() => {
     const el = vocalRef.current;
@@ -751,41 +809,34 @@ export function CompactAudioPlayer({
     setProgress(0);
     setTime(0);
     setDuration(0);
-  }, [src, vocalVolume]);
+    stopSyncLoop();
+  }, [src, vocalVolume, stopSyncLoop]);
 
   useEffect(() => {
     const el = beatRef.current;
     if (!el) return;
+    setBeatReady(false);
     if (beatSrc) {
-      el.src = beatSrc;
-      el.volume = beatVolume;
-      el.load();
-    } else {
-      el.removeAttribute("src");
-      el.load();
-    }
-  }, [beatSrc, beatVolume]);
-
-  const syncBeatToVocal = useCallback(() => {
-    const vocal = vocalRef.current;
-    const beat = beatRef.current;
-    if (!vocal || !beat || !beatSrc) return;
-    const target = beatStartSec + vocal.currentTime;
-    if (beatEndSec != null && target >= beatEndSec) {
-      beat.pause();
-      return;
-    }
-    if (Math.abs(beat.currentTime - target) > 0.12) {
       try {
-        beat.currentTime = target;
+        el.crossOrigin = "anonymous";
       } catch {
         /* ignore */
       }
+      el.preload = "auto";
+      el.src = beatSrc;
+      el.volume = beatVolume;
+      el.load();
+      const onReady = () => setBeatReady(true);
+      el.addEventListener("canplay", onReady);
+      el.addEventListener("loadeddata", onReady);
+      return () => {
+        el.removeEventListener("canplay", onReady);
+        el.removeEventListener("loadeddata", onReady);
+      };
     }
-    if (!vocal.paused && beat.paused && (beatEndSec == null || target < beatEndSec)) {
-      beat.play().catch(() => undefined);
-    }
-  }, [beatSrc, beatStartSec, beatEndSec]);
+    el.removeAttribute("src");
+    el.load();
+  }, [beatSrc, beatVolume]);
 
   useEffect(() => {
     const vocal = vocalRef.current;
@@ -799,18 +850,23 @@ export function CompactAudioPlayer({
         setTime(t);
         setProgress(Math.min(1, t / d));
       }
-      syncBeatToVocal();
     };
     const onMeta = () => {
       if (Number.isFinite(vocal.duration)) setDuration(vocal.duration);
     };
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      startSyncLoop();
+      alignBeat();
+    };
     const onPause = () => {
       setPlaying(false);
+      stopSyncLoop();
       beatRef.current?.pause();
     };
     const onEnded = () => {
       setPlaying(false);
+      stopSyncLoop();
       setProgress(0);
       setTime(0);
       vocal.currentTime = 0;
@@ -838,8 +894,9 @@ export function CompactAudioPlayer({
       vocal.removeEventListener("play", onPlay);
       vocal.removeEventListener("pause", onPause);
       vocal.removeEventListener("ended", onEnded);
+      stopSyncLoop();
     };
-  }, [syncBeatToVocal, beatStartSec]);
+  }, [alignBeat, startSyncLoop, stopSyncLoop, beatStartSec]);
 
   useEffect(() => {
     if (!playing) {
@@ -859,30 +916,60 @@ export function CompactAudioPlayer({
 
   const toggle = useCallback(async () => {
     const vocal = vocalRef.current;
+    const beat = beatRef.current;
     if (!vocal || !src) return;
+
     try {
-      if (vocal.paused) {
-        const beat = beatRef.current;
-        vocal.volume = vocalVolume;
-        if (beat && beatSrc) {
-          beat.volume = beatVolume;
+      if (!vocal.paused) {
+        vocal.pause();
+        beat?.pause();
+        stopSyncLoop();
+        return;
+      }
+
+      vocal.volume = vocalVolume;
+
+      if (beat && beatSrc) {
+        await waitAudioReady(beat, 5000);
+        beat.volume = beatVolume;
+        const target = beatStartSec + (vocal.currentTime || 0);
+        try {
+          beat.currentTime = Math.max(0, Number.isFinite(target) ? target : beatStartSec);
+        } catch {
           try {
-            beat.currentTime = beatStartSec + (vocal.currentTime || 0);
+            beat.currentTime = beatStartSec;
           } catch {
             /* ignore */
           }
-          await Promise.all([beat.play().catch(() => undefined), vocal.play()]);
-        } else {
-          await vocal.play();
         }
+        // Start beat first so mobile browsers keep both under the same gesture
+        await beat.play().catch(() => undefined);
+        await vocal.play();
+        startSyncLoop();
+        // Second attempt if beat stalled
+        setTimeout(() => {
+          if (!vocal.paused && beat.paused) {
+            beat.volume = beatVolume;
+            beat.play().catch(() => undefined);
+          }
+          alignBeat();
+        }, 120);
       } else {
-        vocal.pause();
-        beatRef.current?.pause();
+        await vocal.play();
       }
     } catch {
       /* ignore */
     }
-  }, [src, beatSrc, beatStartSec, beatVolume, vocalVolume]);
+  }, [
+    src,
+    beatSrc,
+    beatStartSec,
+    beatVolume,
+    vocalVolume,
+    alignBeat,
+    startSyncLoop,
+    stopSyncLoop,
+  ]);
 
   const seekRatio = useCallback(
     (ratio: number) => {
@@ -899,6 +986,9 @@ export function CompactAudioPlayer({
           beat.currentTime = beatStartSec + t;
         } catch {
           /* ignore */
+        }
+        if (!vocal.paused) {
+          beat.play().catch(() => undefined);
         }
       }
     },
@@ -922,14 +1012,25 @@ export function CompactAudioPlayer({
       }}
     >
       <audio ref={vocalRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
-      <audio ref={beatRef} preload="auto" playsInline controls={false} style={{ display: "none" }} />
+      <audio
+        ref={beatRef}
+        preload="auto"
+        playsInline
+        controls={false}
+        crossOrigin="anonymous"
+        style={{ display: "none" }}
+      />
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
         <CoverArt gradient={gradient} size={52} radius={12} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</div>
           <div style={{ fontSize: 12, color: withBeat ? C.signal : C.textFaint, marginTop: 2 }}>
-            {withBeat ? "Voice + beat (section)" : "Voice only"}
+            {withBeat
+              ? beatReady
+                ? "Voice + section beat"
+                : "Loading section beat…"
+              : "Voice only"}
           </div>
         </div>
       </div>
