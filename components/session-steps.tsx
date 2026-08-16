@@ -106,9 +106,7 @@ export function SessionSteps({
   const totalDone = tasks.filter(isTaskDone).length;
 
   const trackBg = isLight ? "rgba(55,40,22,0.10)" : "rgba(255,255,255,0.06)";
-  const edgeFade = isLight
-    ? "rgba(250,246,240,0.98)"
-    : "rgba(11,10,15,0.92)";
+  const edgeFade = isLight ? "rgba(250,246,240,0.98)" : "rgba(11,10,15,0.92)";
   const chevronBg = isLight ? "#FFFFFF" : "rgba(18,16,24,0.88)";
   const chevronBorder = isLight ? "rgba(55,40,22,0.14)" : C.border;
 
@@ -278,7 +276,6 @@ export function SessionSteps({
             const done = isTaskDone(t);
             const active = t.id === highlightId;
 
-            // Light cards: solid white + clear border so they read on ivory bg
             const cardBg = active
               ? isLight
                 ? "linear-gradient(165deg, #FFF8EE 0%, #FFFFFF 55%)"
@@ -337,7 +334,6 @@ export function SessionSteps({
                   textAlign: "left",
                   cursor: locked ? "default" : "pointer",
                   fontFamily: "inherit",
-                  // Keep done cards readable in light mode (no heavy washout)
                   opacity: done && !active ? (isLight ? 0.88 : 0.72) : 1,
                   scrollSnapAlign: "center",
                   boxShadow: cardShadow,
@@ -407,7 +403,6 @@ export function SessionSteps({
                 <span
                   style={{
                     fontSize: 13,
-                    fontWeight: active || isLight ? 650 : 500,
                     fontWeight: active ? 700 : 600,
                     lineHeight: 1.3,
                     overflow: "hidden",
