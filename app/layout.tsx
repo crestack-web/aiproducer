@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
+import { ThemeProvider } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Studio — AI Music Producer",
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
@@ -24,8 +25,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <link rel="icon" href={STUDIO_LOGO_URL} type="image/png" />
         <link rel="apple-touch-icon" href={STUDIO_LOGO_URL} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('studio-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;if(t==='light'){document.documentElement.style.background='#EDE8E1'}else{document.documentElement.style.background='#050508'}}catch(e){}})();`,
+          }}
+        />
       </head>
-      <body style={{ margin: 0, background: "#050508", color: "#F4F1EC" }}>{children}</body>
+      <body style={{ margin: 0, minHeight: "100vh" }}>
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }
