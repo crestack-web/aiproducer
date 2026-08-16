@@ -9,13 +9,10 @@ import { decodeWav, encodeWavMono, isWavBuffer, type PcmAudio } from "@/lib/audi
 export type AlignmentStatus = "ALIGNED" | "SHORT" | "LONG" | "OUT_OF_BOUNDS";
 
 export type RenderTimelineAlignedStemInput = {
-  /** Source audio bytes (WAV preferred). */
   sourceBuffer: Buffer;
   timelineStartMs: number;
-  /** Optional section end; used only for alignment status, not forced trim. */
   timelineEndMs?: number | null;
   songDurationMs: number;
-  /** Target sample rate for output (default: source rate). */
   targetSampleRate?: number;
 };
 
@@ -30,11 +27,6 @@ export type RenderTimelineAlignedStemResult = {
   timelineAligned: true;
 };
 
-/**
- * Place mono samples at startSample within a full-length buffer of totalSamples.
- * Vocal is never stretched. Overflow past song end is clipped at song boundary only
- * (status LONG / OUT_OF_BOUNDS); samples beyond song end are dropped from output.
- */
 export function placeVocalOnTimeline(
   vocal: Float32Array,
   startSample: number,
@@ -71,9 +63,6 @@ export function assessPlacementAlignment(opts: {
   return "ALIGNED";
 }
 
-/**
- * Core renderer: decode source → pad to song length → encode WAV.
- */
 export function renderTimelineAlignedStem(
   input: RenderTimelineAlignedStemInput
 ): RenderTimelineAlignedStemResult {
@@ -90,7 +79,6 @@ export function renderTimelineAlignedStem(
   const sampleRate = input.targetSampleRate || pcm.sampleRate || 44100;
   let samples = pcm.samples;
 
-  // Resample only if rates differ (simple linear — rare path).
   if (pcm.sampleRate && pcm.sampleRate !== sampleRate && samples.length > 0) {
     const ratio = sampleRate / pcm.sampleRate;
     const next = new Float32Array(Math.max(1, Math.round(samples.length * ratio)));
@@ -135,50 +123,47 @@ export function renderTimelineAlignedStem(
 
 /** Deterministic self-test for placement math (no I/O). Throws on failure. */
 export function runTimelineStemSelfTest(): void {
-  const sr = 1000; // 1 sample = 1 ms for easy math
+  const sr = 1000;
   const songMs = 120_000;
   const total = Math.round((songMs / 1000) * sr);
-  const vocal = new Float32Array(10_000); // 10s
+  const vocal = new Float32Array(10_000);
   for (let i = 0; i < vocal.length; i++) vocal[i] = 0.5;
 
-  // start = 30s
-  const startSample = 30_000;
-  const out = placeVocalOnTimeline(vocal, startSample, total);
+  const out = placeVocalOnTimeline(vocal, 30_000, total);
   if (out.length !== total) throw new Error("self-test: length");
   if (out[29_999] !== 0) throw new Error("self-test: pre-silence");
   if (out[30_000] !== 0.5) throw new Error("self-test: vocal start");
   if (out[39_999] !== 0.5) throw new Error("self-test: vocal end");
   if (out[40_000] !== 0) throw new Error("self-test: post-silence");
 
-  // start = 0
   const out0 = placeVocalOnTimeline(vocal, 0, total);
   if (out0[0] !== 0.5 || out0[10_000] !== 0) throw new Error("self-test: start0");
 
-  // middle + short
-  if (assessPlacementAlignment({
-    timelineStartMs: 30_000,
-    timelineEndMs: 50_000,
-    songDurationMs: songMs,
-    actualVocalMs: 10_000,
-  }) !== "SHORT") {
+  if (
+    assessPlacementAlignment({
+      timelineStartMs: 30_000,
+      timelineEndMs: 50_000,
+      songDurationMs: songMs,
+      actualVocalMs: 10_000,
+    }) !== "SHORT"
+  ) {
     throw new Error("self-test: SHORT");
   }
 
-  // slightly longer than section — LONG, not truncated in place
-  if (assessPlacementAlignment({
-    timelineStartMs: 30_000,
-    timelineEndMs: 40_000,
-    songDurationMs: songMs,
-    actualVocalMs: 12_000,
-  }) !== "LONG") {
+  if (
+    assessPlacementAlignment({
+      timelineStartMs: 30_000,
+      timelineEndMs: 40_000,
+      songDurationMs: songMs,
+      actualVocalMs: 12_000,
+    }) !== "LONG"
+  ) {
     throw new Error("self-test: LONG");
   }
 
-  // full encode path
-  const { encodeWavMono: enc } = require("@/lib/audio/wav") as typeof import("@/lib/audio/wav");
   const tiny = new Float32Array(sr * 2);
   tiny[0] = 0.25;
-  const buf = enc(tiny, sr);
+  const buf = encodeWavMono(tiny, sr);
   const rendered = renderTimelineAlignedStem({
     sourceBuffer: buf,
     timelineStartMs: 5_000,
@@ -187,5 +172,8 @@ export function runTimelineStemSelfTest(): void {
   });
   if (!rendered.timelineAligned || rendered.durationMs !== 20_000) {
     throw new Error("self-test: render");
+  }
+  if (rendered.alignmentStatus !== "ALIGNED") {
+    throw new Error("self-test: alignment status");
   }
 }
