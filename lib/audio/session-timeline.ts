@@ -20,8 +20,12 @@
  *
  * Review (beat + vocal):
  *   vocal plays from file time 0
- *   beat seeks to (sectionStartMs - recordingOffsetMs)
- *   so musical alignment matches produce.
+ *   beat seeks to placementStartMs (= sectionStartMs + recordingOffsetMs)
+ *   so musical alignment matches produce exactly.
+ *
+ * Proof: vocal file t=0 was captured when the musical clock was at
+ *   sectionStart + offset. Produce places sample 0 there. Review must start
+ *   the beat at the same song time so vocal@0 lines up with beat@placement.
  */
 
 export const DEFAULT_COUNT_IN_MS = 3000;
@@ -158,9 +162,31 @@ export function placementStartMs(
   return Math.max(0, Math.round(tl.sectionStartMs + tl.recordingOffsetMs));
 }
 
-/** Review beat seek so vocal file t=0 aligns with music. */
+/**
+ * Review beat seek so vocal file t=0 aligns with music.
+ * MUST equal placementStartMs — same song position as produce.
+ */
 export function reviewBeatStartMs(sectionStartMs: number, recordingOffsetMs: number): number {
-  return Math.max(0, Math.round(sectionStartMs - recordingOffsetMs));
+  return placementStartMs({ sectionStartMs, recordingOffsetMs });
+}
+
+/** Resolve placement from stored recording fields (shared by preview/produce/review). */
+export function resolvePlacementStartMs(input: {
+  sectionStartMs?: number | null;
+  recordingOffsetMs?: number | null;
+  timelineStartMs?: number | null;
+  placementStartMs?: number | null;
+}): number {
+  if (typeof input.placementStartMs === "number" && Number.isFinite(input.placementStartMs)) {
+    return Math.max(0, Math.round(input.placementStartMs));
+  }
+  if (typeof input.timelineStartMs === "number" && Number.isFinite(input.timelineStartMs)) {
+    // New recordings store timeline_start_ms as placement (section + offset).
+    return Math.max(0, Math.round(input.timelineStartMs));
+  }
+  const section = typeof input.sectionStartMs === "number" ? input.sectionStartMs : 0;
+  const offset = typeof input.recordingOffsetMs === "number" ? input.recordingOffsetMs : 0;
+  return Math.max(0, Math.round(section + offset));
 }
 
 export function reviewVocalDelayMs(recordingOffsetMs: number): number {
