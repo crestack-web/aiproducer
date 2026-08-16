@@ -9,7 +9,8 @@ import {
   productionMasterPath,
   productionMixPath,
 } from "@/lib/storage";
-import { getRoexEnv } from "@/lib/env";
+import { getRoexEnv, isRoexFullAllowed } from "@/lib/env";
+import { buildAndStoreTimelineAlignedStem } from "@/lib/audio/render-aligned-stem";
 import {
   getPipelineMode,
   getMixProvider,
@@ -145,20 +146,42 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
         .limit(1)
         .maybeSingle();
 
+      if (!beat?.audio_path) {
+        throw new Error("Instrumental/beat is missing. Add a beat before Produce.");
+      }
+
+      const songDurationMs = Math.max(
+        typeof beat.duration_ms === "number" && beat.duration_ms > 0 ? beat.duration_ms : 0,
+        ...placements.map((p) => p.end_ms || 0),
+        30_000
+      );
+
+      if (mode === "roex") {
+        if (isRoexFullAllowed()) {
+          logProduce({
+            event: "roex_full_flag_ignored_for_preview",
+            jobId,
+            projectId,
+            note: "Pipeline always uses preview endpoints; ROEX_ALLOW_FULL does not enable paid APIs here",
+          });
+        }
+        if (!userId) {
+          throw new Error("Missing user_id on produce job — cannot store aligned stems");
+        }
+      }
+
       await supabase.from("audio_stems").delete().eq("project_id", projectId);
 
       const stemRows: Record<string, unknown>[] = [];
-      if (beat?.audio_path) {
-        stemRows.push({
-          project_id: projectId,
-          kind: "INSTRUMENTAL",
-          audio_path: beat.audio_path,
-          duration_ms: beat.duration_ms,
-          order_index: 0,
-          source_recording_ids: [],
-          metadata: { role: "instrumental" },
-        });
-      }
+      stemRows.push({
+        project_id: projectId,
+        kind: "INSTRUMENTAL",
+        audio_path: beat.audio_path,
+        duration_ms: beat.duration_ms || songDurationMs,
+        order_index: 0,
+        source_recording_ids: [],
+        metadata: { role: "instrumental", song_duration_ms: songDurationMs },
+      });
 
       const byKind = new Map<StemKind, ArrangementPlacement[]>();
       for (const p of placements) {
@@ -170,26 +193,104 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       for (const [kind, list] of byKind) {
         const first = list[0];
         const rec = takes.find((t) => t.id === first.recording_id);
+        const sourcePath = rec?.processed_path || rec?.audio_path;
+        if (!sourcePath || !isStoragePath(sourcePath)) {
+          throw new Error(`Vocal take ${first.recording_id} has no storage path for alignment`);
+        }
+        if (typeof first.start_ms !== "number" || first.start_ms < 0) {
+          throw new Error(`Invalid timeline start for recording ${first.recording_id}`);
+        }
+
+        if (mode === "mock") {
+          stemRows.push({
+            project_id: projectId,
+            kind,
+            audio_path: sourcePath,
+            duration_ms: songDurationMs,
+            order_index: order++,
+            source_recording_ids: list.map((l) => l.recording_id),
+            metadata: {
+              placements: list,
+              mock_render: true,
+              timeline_aligned: true,
+              full_song_pad: "mock",
+              song_duration_ms: songDurationMs,
+              timeline_start_ms: first.start_ms,
+              timeline_end_ms: first.end_ms,
+            },
+          });
+          continue;
+        }
+
+        const aligned = await buildAndStoreTimelineAlignedStem({
+          userId,
+          projectId,
+          jobId,
+          recordingId: first.recording_id,
+          sourcePath,
+          timelineStartMs: first.start_ms,
+          timelineEndMs: first.end_ms,
+          songDurationMs,
+        });
+
+        if (!aligned.timelineAligned) {
+          throw new Error(`Could not timeline-align vocal ${first.recording_id}`);
+        }
+
         stemRows.push({
           project_id: projectId,
           kind,
-          audio_path: rec?.processed_path || rec?.audio_path || "mock://empty",
-          duration_ms: rec?.duration_ms,
+          audio_path: aligned.storagePath,
+          duration_ms: aligned.durationMs,
           order_index: order++,
           source_recording_ids: list.map((l) => l.recording_id),
           metadata: {
             placements: list,
-            mock_render: mode === "mock",
+            mock_render: false,
             timeline_aligned: true,
-            // Full-song silence pad is metadata-first; ffmpeg pad can be added later.
-            full_song_pad: "metadata_only",
+            full_song_pad: "pcm_wav",
+            alignment_status: aligned.alignmentStatus,
+            song_duration_ms: songDurationMs,
+            actual_vocal_ms: aligned.actualVocalMs,
+            timeline_start_ms: aligned.timelineStartMs,
+            source_path: sourcePath,
           },
         });
+
+        logProduce({
+          event: "stem_aligned",
+          jobId,
+          projectId,
+          recording_id: first.recording_id,
+          path: aligned.storagePath,
+          alignment_status: aligned.alignmentStatus,
+          duration_ms: aligned.durationMs,
+        });
+      }
+
+      const vocalStems = stemRows.filter((s) => s.kind !== "INSTRUMENTAL");
+      for (const s of vocalStems) {
+        const meta = (s.metadata || {}) as Record<string, unknown>;
+        if (meta.timeline_aligned !== true) {
+          throw new Error(
+            `Vocal stem ${String(s.kind)} is not timeline-aligned — refusing RoEx mix`
+          );
+        }
+        if (mode === "roex" && meta.full_song_pad === "metadata_only") {
+          throw new Error("Refusing RoEx mix: vocal stem pad is metadata-only");
+        }
+      }
+      if (vocalStems.length === 0) {
+        throw new Error("No vocal stems after alignment — refusing mix");
       }
 
       if (stemRows.length) await supabase.from("audio_stems").insert(stemRows);
       stage = "mix_submit";
-      await patchJob(supabase, jobId, { progress: 60, stage });
+      await patchJob(supabase, jobId, {
+        progress: 60,
+        stage,
+        output_data: { ...out, song_duration_ms: songDurationMs },
+      });
     }
 
     if (stage === "mix_submit" || stage === "mix") {
@@ -207,10 +308,25 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           progress: 65,
         });
       } else {
+        const mixTracks = ((await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data ||
+          []) as (StemRow & { metadata?: Record<string, unknown> })[];
+
+        const hasInstrumental = mixTracks.some((s) => s.kind === "INSTRUMENTAL");
+        if (!hasInstrumental) throw new Error("Pre-RoEx validation failed: instrumental missing");
+
+        for (const s of mixTracks) {
+          if (s.kind === "INSTRUMENTAL") continue;
+          const meta = (s.metadata || {}) as Record<string, unknown>;
+          if (meta.timeline_aligned !== true) {
+            throw new Error(`Pre-RoEx validation failed: ${s.kind} not timeline-aligned`);
+          }
+          if (mode === "roex" && !isStoragePath(s.audio_path)) {
+            throw new Error(`Pre-RoEx validation failed: ${s.kind} path is not in app storage`);
+          }
+        }
+
         const { data: project } = await supabase.from("projects").select("*").eq("id", projectId).single();
         const style = mapMusicalStyle(project?.genre);
-        const mixTracks = ((await supabase.from("audio_stems").select("*").eq("project_id", projectId)).data ||
-          []) as StemRow[];
 
         const resolvedTracks: { path: string; kind: StemKind }[] = [];
         for (const s of mixTracks) {
@@ -218,8 +334,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           if (mode === "roex") {
             const url = await toReadableUrl(s.audio_path);
             if (!url) {
-              console.warn("Skipping stem without readable URL", s.kind, s.audio_path);
-              continue;
+              throw new Error(`No readable URL for stem ${kind} (${s.audio_path}) — refusing RoEx`);
             }
             resolvedTracks.push({ path: url, kind });
           } else {
@@ -227,8 +342,8 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           }
         }
 
-        if (mode === "roex" && resolvedTracks.length === 0) {
-          throw new Error("No stems with readable URLs for RoEx mix. Check storage paths and signed URLs.");
+        if (mode === "roex" && resolvedTracks.length < 2) {
+          throw new Error("RoEx requires instrumental + at least one aligned vocal stem");
         }
 
         logProduce({
@@ -237,6 +352,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           projectId,
           track_count: resolvedTracks.length,
           mode,
+          preview: true,
         });
 
         const mixStart = await provider.startMix(
@@ -432,6 +548,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           jobId,
           projectId,
           mix_source: isStoragePath(out.mix_storage_path as string) ? "storage" : "provider_url",
+          preview: true,
         });
 
         const masterStart = await provider.startMaster(mixUrlForMaster!, {
