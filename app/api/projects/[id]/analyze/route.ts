@@ -10,6 +10,15 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
+const SESSION_READY_STATUSES = new Set([
+  "blueprint_ready",
+  "recording",
+  "processing",
+  "mixing",
+  "mastering",
+  "complete",
+]);
+
 /**
  * POST /api/projects/:id/analyze
  *
@@ -17,7 +26,8 @@ type Ctx = { params: Promise<{ id: string }> };
  * 2) Production blueprint (ProductionTasks via ProductionPlanner)
  * 3) Optional Mistral pass — warm, plain-language instruction rewrite
  *
- * Runs when DEV_MODE=true and/or MISTRAL_API_KEY is set.
+ * If a blueprint already exists (tasks saved + status past analyze), return it
+ * so reopening a project never regenerates the plan.
  */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -35,6 +45,46 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   if (pErr || !project) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // —— Resume path: keep existing saved blueprint ——
+  const { data: existingTasks } = await supabase
+    .from("recording_tasks")
+    .select("*")
+    .eq("project_id", projectId)
+    .order("start_ms", { ascending: true });
+
+  if (
+    existingTasks &&
+    existingTasks.length > 0 &&
+    SESSION_READY_STATUSES.has(project.status)
+  ) {
+    const { data: sections } = await supabase
+      .from("song_sections")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("order_index", { ascending: true });
+
+    // Ensure status stays session-ready (never drop back to analyzing)
+    if (project.status === "analyzing") {
+      await supabase
+        .from("projects")
+        .update({ status: "blueprint_ready" })
+        .eq("id", projectId);
+    }
+
+    return NextResponse.json({
+      reused: true,
+      analysis: null,
+      song_blueprint: { sections: sections ?? [] },
+      production_blueprint: { tasks: existingTasks },
+      sections: sections ?? [],
+      tasks: existingTasks,
+      project_status:
+        project.status === "analyzing" ? "blueprint_ready" : project.status,
+      ai: { provider: "cached", model: null },
+      dev_mode: isDevMode(),
+    });
   }
 
   const { data: beat } = await supabase
@@ -227,9 +277,11 @@ export async function POST(_req: Request, ctx: Ctx) {
       })
       .eq("id", bpJob!.id);
 
+    // Persist plan: project is session-ready with a saved blueprint
     await supabase.from("projects").update({ status: "blueprint_ready" }).eq("id", projectId);
 
     return NextResponse.json({
+      reused: false,
       analysis,
       song_blueprint: { sections: insertedSections },
       production_blueprint: {
@@ -239,6 +291,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       },
       sections: insertedSections,
       tasks: insertedTasks,
+      project_status: "blueprint_ready",
       ai: {
         provider: isMistralConfigured() ? "mistral" : "deterministic",
         model: isMistralConfigured()
