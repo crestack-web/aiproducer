@@ -101,6 +101,7 @@ export default function ProjectDetailPage() {
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
+  const [reviewVoiceOnly, setReviewVoiceOnly] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
@@ -990,16 +991,37 @@ export default function ProjectDetailPage() {
                   {uploading ? "Saving & analyzing take…" : savedRecordingId ? "Saved ✓" : "Review"}
                 </p>
                 {localBlobUrl && (
-                  <CompactAudioPlayer
-                    src={localBlobUrl}
-                    label="Your take"
-                    seed={`take-${current.id}`}
-                    beatSrc={beatUrl}
-                    beatStartMs={current.start_ms ?? 0}
-                    beatEndMs={current.end_ms}
-                    vocalVolume={1}
-                    beatVolume={0.2}
-                  />
+                  <>
+                    <CompactAudioPlayer
+                      src={localBlobUrl}
+                      label="Your take"
+                      seed={`take-${current.id}`}
+                      beatSrc={beatUrl}
+                      beatStartMs={current.start_ms ?? 0}
+                      beatEndMs={current.end_ms}
+                      vocalVolume={1}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.12}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setReviewVoiceOnly((v) => !v)}
+                      style={{
+                        display: "block",
+                        margin: "10px auto 0",
+                        padding: "8px 14px",
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: reviewVoiceOnly ? C.brassSoft : "transparent",
+                        color: reviewVoiceOnly ? C.brass : C.textMuted,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {reviewVoiceOnly ? "Voice only · on" : "Voice only"}
+                    </button>
+                  </>
                 )}
                 {producerTip && (
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
@@ -1051,6 +1073,7 @@ export default function ProjectDetailPage() {
                     setLocalBlobUrl(null);
                     setSavedRecordingId(null);
                     setProducerTip(null);
+                    setReviewVoiceOnly(false);
                     setPhase("ready");
                   }}
                 >
