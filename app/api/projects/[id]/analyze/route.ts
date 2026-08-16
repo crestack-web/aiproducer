@@ -22,7 +22,7 @@ const SESSION_READY_STATUSES = new Set([
 /**
  * POST /api/projects/:id/analyze
  *
- * 1) Song blueprint (sections)
+ * 1) Song blueprint (sections) — timed from measured duration when available
  * 2) Production blueprint (ProductionTasks via ProductionPlanner)
  * 3) Optional Mistral pass — warm, plain-language instruction rewrite
  *
@@ -65,7 +65,6 @@ export async function POST(_req: Request, ctx: Ctx) {
       .eq("project_id", projectId)
       .order("order_index", { ascending: true });
 
-    // Ensure status stays session-ready (never drop back to analyzing)
     if (project.status === "analyzing") {
       await supabase
         .from("projects")
@@ -138,11 +137,28 @@ export async function POST(_req: Request, ctx: Ctx) {
       );
     }
 
+    const meta = (beat.metadata || {}) as {
+      analysis?: { bpm_confidence?: number | null; method?: string | null };
+    };
+    const measuredDuration =
+      beat.duration_ms && Number(beat.duration_ms) > 5000
+        ? Number(beat.duration_ms)
+        : null;
+    const measuredBpm = beat.bpm ? Number(beat.bpm) : null;
+    const hasAudioMeasure =
+      Boolean(measuredDuration) ||
+      (measuredBpm != null && (meta.analysis?.bpm_confidence ?? 0) > 0.15) ||
+      beat.source === "upload";
+
     const analysis: AnalysisSnapshot = {
-      duration_ms: beat.duration_ms ?? 180_000,
-      bpm: beat.bpm ? Number(beat.bpm) : project.tempo,
+      duration_ms: measuredDuration ?? 180_000,
+      bpm: measuredBpm ?? (project.tempo ? Number(project.tempo) : 90),
       key: beat.key ?? "A minor",
-      source: isMistralConfigured() ? "mistral_producer" : "dev_mock",
+      source: hasAudioMeasure
+        ? "audio_analysis"
+        : isMistralConfigured()
+          ? "mistral_producer"
+          : "dev_mock",
     };
 
     await supabase
@@ -151,7 +167,11 @@ export async function POST(_req: Request, ctx: Ctx) {
         status: "complete",
         progress: 100,
         stage: "complete",
-        output_data: analysis,
+        output_data: {
+          ...analysis,
+          bpm_confidence: meta.analysis?.bpm_confidence ?? null,
+          analysis_method: meta.analysis?.method ?? null,
+        },
         completed_at: new Date().toISOString(),
       })
       .eq("id", analyzeJob!.id);
@@ -188,7 +208,11 @@ export async function POST(_req: Request, ctx: Ctx) {
       end_ms: s.end_ms,
       order_index: s.order_index,
       energy: s.energy,
-      metadata: { role: s.role },
+      metadata: {
+        role: s.role,
+        timed_from: analysis.source,
+        bpm: analysis.bpm,
+      },
     }));
 
     const { data: insertedSections, error: sErr } = await supabase
@@ -261,6 +285,15 @@ export async function POST(_req: Request, ctx: Ctx) {
 
     if (tErr) throw tErr;
 
+    // Keep project tempo in sync with measured BPM
+    await supabase
+      .from("projects")
+      .update({
+        status: "blueprint_ready",
+        tempo: analysis.bpm ? Math.round(Number(analysis.bpm)) : project.tempo,
+      })
+      .eq("id", projectId);
+
     await supabase
       .from("jobs")
       .update({
@@ -272,13 +305,11 @@ export async function POST(_req: Request, ctx: Ctx) {
           task_count: insertedTasks?.length ?? 0,
           energy_curve: production.energy_curve,
           planner_notes: production.notes,
+          analysis,
         },
         completed_at: new Date().toISOString(),
       })
       .eq("id", bpJob!.id);
-
-    // Persist plan: project is session-ready with a saved blueprint
-    await supabase.from("projects").update({ status: "blueprint_ready" }).eq("id", projectId);
 
     return NextResponse.json({
       reused: false,
