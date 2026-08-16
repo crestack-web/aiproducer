@@ -21,5 +21,662 @@ import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
 import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
 
-// File restored + auto-analysis wired. Full UI content loaded from build artifact.
-export { default } from "./project-session-impl-body";
+type Task = {
+  id: string;
+  type: string;
+  title?: string | null;
+  instruction: string;
+  reason?: string | null;
+  status: string;
+  required: boolean;
+  start_ms: number | null;
+  end_ms: number | null;
+  metadata?: { section_label?: string; vocal_part?: string };
+};
+
+type ProjectMeta = {
+  id: string;
+  status: string;
+  title?: string | null;
+  genre?: string | null;
+  mood?: string | null;
+  tempo?: number | null;
+};
+
+type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
+type Phase = "ready" | "countdown" | "recording" | "review";
+
+function humanTitle(type: string) {
+  const t = (type || "").toLowerCase();
+  if (t.includes("harmony")) return "Harmony";
+  if (t.includes("adlib")) return "Ad-libs";
+  if (t.includes("double")) return "Double";
+  return "Lead vocal";
+}
+
+function screenForStatus(status: string, hasTasks: boolean): Screen | null {
+  const s = (status || "").toLowerCase();
+  if (s === "complete" || s === "produced" || s === "done") return "done";
+  if (s === "processing" || s === "mixing" || s === "mastering") return "assemble";
+  if (s === "recording" || s === "in_progress") return hasTasks ? "session" : "plan";
+  if (s === "blueprint_ready" || s === "ready" || s === "planned") return hasTasks ? "plan" : "beat";
+  if (s === "analyzing") return "analyzing";
+  if (s === "beat_ready" || s === "draft" || s === "generating_beat" || s === "failed") return "beat";
+  return null;
+}
+
+export default function ProjectDetailPage() {
+  const id = useParams().id as string;
+  const { colors: C } = useTheme();
+  const [project, setProject] = useState<ProjectMeta | null>(null);
+  const [beatUrl, setBeatUrl] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [screen, setScreen] = useState<Screen>("beat");
+  const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [producerTip, setProducerTip] = useState<string | null>(null);
+  const [producing, setProducing] = useState(false);
+  const [masterUrl, setMasterUrl] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("ready");
+  const [countdown, setCountdown] = useState(3);
+  const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
+  const [skipping, setSkipping] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const beatAudioRef = useRef<HTMLAudioElement | null>(null);
+  const startedAtRef = useRef(0);
+  const mimeRef = useRef("audio/webm");
+  const resumedRef = useRef(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  const current =
+    tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
+  const isRetake = current ? isTaskDone(current) : false;
+  const requiredLeft = requiredOpen(tasks);
+  const optionalLeft = optionalOpen(tasks);
+
+  async function markRecordingStatus() {
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "recording" }),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (j.project) setProject(j.project);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function selectTask(taskId: string) {
+    if (phase === "recording" || phase === "countdown") return;
+    setError(null);
+    setProducerTip(null);
+    setLocalBlobUrl(null);
+    setSavedRecordingId(null);
+    setActiveTaskId(taskId);
+    setPhase("ready");
+    setScreen("session");
+    void markRecordingStatus();
+  }
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [pr, br, tr] = await Promise.all([
+        fetch(`/api/projects/${id}`),
+        fetch(`/api/projects/${id}/beat`),
+        fetch(`/api/projects/${id}/recording-tasks`),
+      ]);
+      let loadedProject: ProjectMeta | null = null;
+      let loadedTasks: Task[] = [];
+      if (pr.ok) {
+        const j = await pr.json();
+        loadedProject = j.project || j;
+        setProject(loadedProject);
+      }
+      if (br.ok) setBeatUrl((await br.json()).audio_url || null);
+      if (tr.ok) {
+        loadedTasks = (await tr.json()).tasks || [];
+        setTasks(loadedTasks);
+      }
+      const sr = await fetch(`/api/projects/${id}/status`);
+      if (sr.ok) {
+        const st = await sr.json();
+        if (st.project) {
+          loadedProject = st.project;
+          setProject(st.project);
+        }
+        if (st.master_url) setMasterUrl(st.master_url);
+      }
+      if (loadedProject && !resumedRef.current) {
+        const next = screenForStatus(loadedProject.status, loadedTasks.length > 0);
+        if (next) {
+          setScreen(next);
+          if (next === "session" && loadedTasks.length > 0) {
+            const open =
+              loadedTasks.find((t) => isTaskOpen(t) && t.required) ||
+              loadedTasks.find((t) => isTaskOpen(t)) ||
+              null;
+            if (open) setActiveTaskId(open.id);
+          }
+          resumedRef.current = true;
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Load failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  async function startProducerSession() {
+    if (
+      tasks.length > 0 &&
+      ["blueprint_ready", "recording", "processing", "mixing", "mastering", "complete"].includes(
+        project?.status || ""
+      )
+    ) {
+      setScreen("plan");
+      return;
+    }
+    setAnalyzing(true);
+    setError(null);
+    setScreen("analyzing");
+    try {
+      const res = await fetch(`/api/projects/${id}/analyze`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Could not build plan");
+      const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+      if (tr.ok) setTasks((await tr.json()).tasks || []);
+      const sr = await fetch(`/api/projects/${id}/status`);
+      if (sr.ok) setProject((await sr.json()).project);
+      else if (j.project_status) {
+        setProject((p) => (p ? { ...p, status: j.project_status } : p));
+      }
+      setScreen("plan");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Analyze failed");
+      setScreen("beat");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function enterSession() {
+    const open = requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
+    if (open) setActiveTaskId(open.id);
+    setPhase("ready");
+    setScreen("session");
+    await markRecordingStatus();
+  }
+
+  function beginMediaCapture(stream: MediaStream, task: Task) {
+    chunksRef.current = [];
+    let mime = "audio/webm";
+    for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
+      if (MediaRecorder.isTypeSupported(t)) {
+        mime = t;
+        break;
+      }
+    }
+    mimeRef.current = mime;
+    const rec = new MediaRecorder(stream, { mimeType: mime });
+    mediaRecorderRef.current = rec;
+    rec.ondataavailable = (e) => {
+      if (e.data?.size) chunksRef.current.push(e.data);
+    };
+    rec.onstop = async () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setMicStream(null);
+      beatAudioRef.current?.pause();
+      const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
+      setLocalBlobUrl(URL.createObjectURL(blob));
+      setPhase("review");
+      setUploading(true);
+      setProducerTip(null);
+      try {
+        const form = new FormData();
+        form.append("file", blob, "take.webm");
+        form.append("source", "record");
+        form.append("duration_ms", String(Date.now() - startedAtRef.current));
+        // Automatic analysis — artist does not trigger this
+        await attachAnalysisToForm(form, blob, task, id);
+        const res = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
+          method: "POST",
+          body: form,
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.error || "Upload failed");
+        if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
+        setSavedRecordingId(j.recording.id);
+        await fetch(`/api/recording-tasks/${task.id}/recordings/${j.recording.id}/select`, {
+          method: "POST",
+        }).catch(() => undefined);
+        const tip = await fetchProducerRecommendation(task.id, j.recording.id);
+        if (tip) setProducerTip(tip);
+        void markRecordingStatus();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Save failed");
+        setSavedRecordingId(null);
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    startedAtRef.current = Date.now();
+    setRecordSeconds(0);
+    timerRef.current = setInterval(
+      () => setRecordSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000)),
+      250
+    );
+    if (beatAudioRef.current && beatUrl) {
+      beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+      beatAudioRef.current.volume = 0.55;
+      beatAudioRef.current.play().catch(() => undefined);
+    }
+    rec.start(250);
+    setPhase("recording");
+  }
+
+  async function startRecording() {
+    if (!current) return;
+    setError(null);
+    setProducerTip(null);
+    setSavedRecordingId(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      streamRef.current = stream;
+      setMicStream(stream);
+      setCountdown(3);
+      setPhase("countdown");
+      void markRecordingStatus();
+      if (beatAudioRef.current && beatUrl) {
+        beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
+        beatAudioRef.current.volume = 0.35;
+        beatAudioRef.current.play().catch(() => undefined);
+      }
+      let n = 3;
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownRef.current = setInterval(() => {
+        n -= 1;
+        if (n <= 0) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          countdownRef.current = null;
+          setCountdown(0);
+          beginMediaCapture(stream, current);
+        } else setCountdown(n);
+      }, 1000);
+    } catch (e) {
+      setMicStream(null);
+      setPhase("ready");
+      setError(e instanceof Error ? e.message : "Microphone error");
+    }
+  }
+
+  function cancelCountdown() {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = null;
+    beatAudioRef.current?.pause();
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setMicStream(null);
+    setPhase("ready");
+    setCountdown(3);
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+  }
+
+  async function uploadForTask(file: File | null) {
+    if (!current || !file) return;
+    setError(null);
+    setProducerTip(null);
+    setUploading(true);
+    setPhase("review");
+    setLocalBlobUrl(URL.createObjectURL(file));
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("source", "upload");
+      await attachAnalysisToForm(form, file, current, id);
+      const res = await fetch(`/api/recording-tasks/${current.id}/recordings`, {
+        method: "POST",
+        body: form,
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Upload failed");
+      if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
+      setSavedRecordingId(j.recording.id);
+      if (j.recording.audio_url) setLocalBlobUrl(j.recording.audio_url);
+      await fetch(`/api/recording-tasks/${current.id}/recordings/${j.recording.id}/select`, {
+        method: "POST",
+      }).catch(() => undefined);
+      const tip = await fetchProducerRecommendation(current.id, j.recording.id);
+      if (tip) setProducerTip(tip);
+      void markRecordingStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+      setSavedRecordingId(null);
+      setPhase("ready");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function clearFocusAndAdvance(next: Task[]) {
+    setActiveTaskId(null);
+    setLocalBlobUrl(null);
+    setPhase("ready");
+    setScreen("session");
+    if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
+  }
+
+  function keepAndContinue() {
+    if (!current) return;
+    if (!savedRecordingId) {
+      setError("Take is not saved yet. Wait for Saved, or record again.");
+      return;
+    }
+    const wasRetake = isRetake;
+    setSavedRecordingId(null);
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
+      if (wasRetake) {
+        setActiveTaskId(null);
+        setLocalBlobUrl(null);
+        setPhase("ready");
+        setScreen("session");
+        if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
+      } else clearFocusAndAdvance(next);
+      return next;
+    });
+  }
+
+  async function skipCurrent() {
+    if (!current || current.required) return;
+    setSkipping(true);
+    try {
+      await fetch(`/api/recording-tasks/${current.id}/skip`, { method: "POST" });
+      setTasks((prev) => {
+        const next = prev.map((t) => (t.id === current.id ? { ...t, status: "skipped" } : t));
+        clearFocusAndAdvance(next);
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Skip failed");
+    } finally {
+      setSkipping(false);
+    }
+  }
+
+  async function startProduce() {
+    setProducing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "Produce failed");
+      if (j.master_url) setMasterUrl(j.master_url);
+      setScreen("done");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Produce failed");
+    } finally {
+      setProducing(false);
+    }
+  }
+
+  const btn: React.CSSProperties = {
+    width: "100%",
+    padding: "14px 18px",
+    borderRadius: 14,
+    border: "none",
+    background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+    color: "#1A1208",
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+  };
+  const btn2: React.CSSProperties = {
+    ...btn,
+    background: C.surface,
+    color: C.text,
+    border: `1px solid ${C.border}`,
+  };
+  const wrap: React.CSSProperties = {
+    width: "100%",
+    maxWidth: 920,
+    margin: "0 auto",
+    padding: "28px 20px 40px",
+    boxSizing: "border-box",
+    minHeight: "100%",
+    color: C.text,
+    fontFamily: "system-ui, sans-serif",
+  };
+  const title: React.CSSProperties = { fontFamily: "Georgia, serif", fontSize: 24, fontWeight: 500 };
+
+  if (loading) {
+    return (
+      <AppShell active="studio">
+        <div style={wrap}>
+          <PlayerLoadingState title="Loading session" subtitle="Pulling your beat, plan, and takes…" seed={`load-${id}`} />
+        </div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell active="studio" userName="Artist">
+      <div style={{ minHeight: "100%", width: "100%" }}>
+        {beatUrl && <audio ref={beatAudioRef} src={beatUrl} preload="auto" style={{ display: "none" }} />}
+
+        {screen === "beat" && (
+          <div style={wrap}>
+            <Link href="/app/studio" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
+              ← Studio
+            </Link>
+            <h1 style={{ ...title, marginTop: 20 }}>{project?.title || "Your beat"}</h1>
+            {error && <p style={{ color: C.danger }}>{error}</p>}
+            {beatUrl && (
+              <StudioPlayer
+                src={beatUrl}
+                title={project?.title || "Beat"}
+                subtitle={[project?.genre, project?.mood, project?.tempo ? `${project.tempo} BPM` : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+                seed={project?.title || "beat"}
+              />
+            )}
+            <button type="button" style={{ ...btn, marginTop: 18 }} disabled={analyzing || !beatUrl} onClick={startProducerSession}>
+              {analyzing ? "Analyzing…" : tasks.length > 0 ? "Continue plan" : "Start with AI Producer"}
+            </button>
+          </div>
+        )}
+
+        {screen === "analyzing" && (
+          <div style={wrap}>
+            <PlayerLoadingState title="Producer is listening" subtitle="Mapping sections…" seed={`analyze-${id}`} />
+          </div>
+        )}
+
+        {screen === "plan" && (
+          <div style={wrap}>
+            <h1 style={title}>Song plan</h1>
+            <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
+            <ProjectSamplesPanel projectId={id} />
+            <button type="button" style={{ ...btn, marginTop: 20 }} onClick={enterSession}>
+              Start recording
+            </button>
+          </div>
+        )}
+
+        {screen === "session" && current && (
+          <div style={wrap}>
+            <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
+              ← Plan
+            </button>
+            <SessionSteps tasks={tasks} highlightId={current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
+            <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: `1px solid ${C.brass}`, background: C.brassSoft }}>
+              <div style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{sectionLabel(current)}</div>
+              <h1 style={{ ...title, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
+              <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
+              {(current.start_ms != null || current.end_ms != null) && (
+                <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
+                  Section window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
+                </p>
+              )}
+            </div>
+            {error && <p style={{ color: C.danger }}>{error}</p>}
+
+            {phase === "ready" && (
+              <div style={{ marginTop: 20 }}>
+                <button type="button" style={btn} onClick={startRecording}>
+                  {isRetake ? "Retake" : "Record"}
+                </button>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    void uploadForTask(e.target.files?.[0] || null);
+                    e.target.value = "";
+                  }}
+                />
+                <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
+                  {uploading ? "Uploading…" : "Upload recording"}
+                </button>
+                {!current.required && (
+                  <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
+                    Skip
+                  </button>
+                )}
+              </div>
+            )}
+
+            {phase === "countdown" && (
+              <div style={{ textAlign: "center", marginTop: 24 }}>
+                <div style={{ fontSize: 72, fontFamily: "Georgia, serif" }}>{countdown}</div>
+                <button type="button" style={{ ...btn2, marginTop: 12 }} onClick={cancelCountdown}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {phase === "recording" && (
+              <div style={{ marginTop: 8 }}>
+                <RecordingVisualizer stream={micStream} seconds={recordSeconds} label="Recording" seed={`rec-${current.id}`} />
+                <button type="button" style={{ ...btn, marginTop: 16, background: C.danger, color: "#fff" }} onClick={stopRecording}>
+                  Stop
+                </button>
+              </div>
+            )}
+
+            {phase === "review" && (
+              <div style={{ marginTop: 16 }}>
+                <p style={{ textAlign: "center", color: C.textMuted }}>
+                  {uploading ? "Saving & analyzing take…" : savedRecordingId ? "Saved ✓" : "Review"}
+                </p>
+                {localBlobUrl && (
+                  <CompactAudioPlayer
+                    src={localBlobUrl}
+                    label="Your take"
+                    seed={`take-${current.id}`}
+                    beatSrc={beatUrl}
+                    beatStartMs={current.start_ms ?? 0}
+                    beatEndMs={current.end_ms}
+                  />
+                )}
+                {producerTip && (
+                  <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
+                )}
+                <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId} onClick={keepAndContinue}>
+                  {uploading ? "Saving…" : "Keep take"}
+                </button>
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8 }}
+                  disabled={uploading}
+                  onClick={() => {
+                    setLocalBlobUrl(null);
+                    setSavedRecordingId(null);
+                    setProducerTip(null);
+                    setPhase("ready");
+                  }}
+                >
+                  Record again
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {screen === "session" && !current && (
+          <div style={wrap}>
+            <h1 style={title}>All parts done</h1>
+            <button type="button" style={{ ...btn, marginTop: 20 }} onClick={() => setScreen("assemble")}>
+              Continue to produce
+            </button>
+          </div>
+        )}
+
+        {screen === "assemble" && (
+          <div style={wrap}>
+            {producing ? (
+              <PlayerLoadingState title="Producing" subtitle="Mix & master…" seed={`produce-${id}`} />
+            ) : (
+              <>
+                <h1 style={{ ...title, textAlign: "center" }}>Ready to produce</h1>
+                <ProjectSamplesPanel projectId={id} />
+                <button type="button" style={{ ...btn, marginTop: 20 }} onClick={startProduce}>
+                  Produce my song
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {screen === "done" && (
+          <div style={wrap}>
+            <h1 style={{ ...title, textAlign: "center" }}>Your song is ready</h1>
+            {masterUrl && <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed="master" accent="signal" />}
+            {!masterUrl && (
+              <button type="button" style={btn} onClick={startProduce}>
+                Produce my song
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </AppShell>
+  );
+}
