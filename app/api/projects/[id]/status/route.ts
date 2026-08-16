@@ -28,7 +28,6 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const service = createServiceClient();
 
-  // Advance produce jobs on poll (async pipeline)
   const { data: produceJob } = await service
     .from("jobs")
     .select("id, status, stage, type")
@@ -76,11 +75,30 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const { data: projNow } = await service.from("projects").select("status").eq("id", id).maybeSingle();
 
+  const { count: recordingCount } = await service
+    .from("recordings")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", id);
+
+  const { data: planTasks } = await service
+    .from("recording_tasks")
+    .select("id, active, selected_in_plan, status")
+    .eq("project_id", id);
+
+  const sessionTaskCount = (planTasks || []).filter((row) => {
+    if (row.active === false) return false;
+    if (row.selected_in_plan === false) return false;
+    if (row.status === "skipped") return false;
+    return true;
+  }).length;
+
   return NextResponse.json({
     project: { ...project, status: projNow?.status || project.status },
     jobs: jobs ?? [],
     master,
     master_url,
+    recording_count: recordingCount ?? 0,
+    session_task_count: sessionTaskCount,
     mode: getPipelineMode(),
     roex_env: getRoexEnv(),
   });
