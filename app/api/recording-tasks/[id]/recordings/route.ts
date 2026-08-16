@@ -8,6 +8,8 @@ import {
   getStorageBucket,
 } from "@/lib/storage";
 import { assessDurationAlignment } from "@/lib/audio/timing";
+import { analyzeMetadataOnly } from "@/lib/audio/analysis";
+import type { AudioAnalysis } from "@/lib/audio/analysis-types";
 import { vocalStemKind } from "@/lib/audio/produce-job";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -163,7 +165,7 @@ export async function POST(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "Missing file field" }, { status: 400 });
     }
 
-    const source = String(form.get("source") || "record"); // record | upload
+    const source = String(form.get("source") || "record");
     const ext = (file.type || "").includes("wav")
       ? "wav"
       : (file.type || "").includes("mpeg") || (file.type || "").includes("mp3")
@@ -190,6 +192,27 @@ export async function POST(req: Request, ctx: Ctx) {
     const durationMs = Number(form.get("duration_ms") || 0) || null;
     const alignment = assessDurationAlignment(durationMs, ctxData.expected_ms);
 
+    let clientAnalysis: AudioAnalysis | null = null;
+    const analysisRaw = form.get("analysis");
+    if (typeof analysisRaw === "string" && analysisRaw.trim()) {
+      try {
+        clientAnalysis = JSON.parse(analysisRaw) as AudioAnalysis;
+      } catch {
+        clientAnalysis = null;
+      }
+    }
+    const analysis: AudioAnalysis =
+      clientAnalysis ||
+      analyzeMetadataOnly({
+        durationMs,
+        expectedDurationMs: ctxData.expected_ms,
+        timelineStartMs: ctxData.timeline_start_ms,
+        timelineEndMs: ctxData.timeline_end_ms,
+        projectId: task.project_id,
+        sectionId: (ctxData.section?.id || task.section_id || null) as string | null,
+        role: ctxData.role,
+      });
+
     const sectionMeta = {
       source,
       section_id: ctxData.section?.id || task.section_id || null,
@@ -203,6 +226,8 @@ export async function POST(req: Request, ctx: Ctx) {
       actual_duration_ms: durationMs,
       alignment,
       role: ctxData.role,
+      analysis,
+      analyzer_version: analysis.analyzerVersion,
     };
 
     await service.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
@@ -281,6 +306,7 @@ export async function POST(req: Request, ctx: Ctx) {
         task_id: taskId,
         placement: sectionMeta,
         alignment,
+        analysis,
       },
       { status: 201 }
     );
@@ -297,6 +323,15 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const alignment = assessDurationAlignment(duration_ms ?? null, ctxData.expected_ms);
+  const analysis = analyzeMetadataOnly({
+    durationMs: duration_ms ?? null,
+    expectedDurationMs: ctxData.expected_ms,
+    timelineStartMs: ctxData.timeline_start_ms,
+    timelineEndMs: ctxData.timeline_end_ms,
+    projectId: task.project_id,
+    sectionId: (ctxData.section?.id || task.section_id || null) as string | null,
+    role: ctxData.role,
+  });
   const ext = content_type.includes("wav") ? "wav" : content_type.includes("mp3") ? "mp3" : "webm";
   const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
 
@@ -333,6 +368,8 @@ export async function POST(req: Request, ctx: Ctx) {
         timeline_end_ms: ctxData.timeline_end_ms,
         role: ctxData.role,
         alignment,
+        analysis,
+        analyzer_version: analysis.analyzerVersion,
       },
     })
     .select()
@@ -358,6 +395,7 @@ export async function POST(req: Request, ctx: Ctx) {
         role: ctxData.role,
       },
       alignment,
+      analysis,
     },
     { status: 201 }
   );
