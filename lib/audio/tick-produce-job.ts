@@ -1,1 +1,1 @@
-export { tickProduceJob } from "@/lib/audio/pipeline-impl";
+export { tickProduceJob } from "@/lib/audio/pipeline";
