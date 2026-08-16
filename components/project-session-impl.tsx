@@ -209,14 +209,20 @@ export default function ProjectDetailPage() {
     setScreen("analyzing");
     try {
       const res = await fetch(`/api/projects/${id}/analyze`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error || "Could not build plan");
+      const j = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const msg =
+          (typeof j.error === "string" && j.error) ||
+          (typeof j.message === "string" && j.message) ||
+          `Analyze failed (${res.status})`;
+        throw new Error(msg);
+      }
       const tr = await fetch(`/api/projects/${id}/recording-tasks`);
       if (tr.ok) setTasks((await tr.json()).tasks || []);
       const sr = await fetch(`/api/projects/${id}/status`);
       if (sr.ok) setProject((await sr.json()).project);
       else if (j.project_status) {
-        setProject((p) => (p ? { ...p, status: j.project_status } : p));
+        setProject((p) => (p ? { ...p, status: String(j.project_status) } : p));
       }
       setScreen("plan");
     } catch (e) {

@@ -267,7 +267,7 @@ export function AppShell({
       <style>{`
         .studio-sidebar { display: flex; }
         .studio-bottom-nav { display: none; }
-        .studio-mobile-header { display: none !important; }
+        .studio-mobile-header { display: none; }
         .studio-main-pad {
           padding-bottom: 32px;
           box-sizing: border-box;
@@ -282,6 +282,7 @@ export function AppShell({
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
+          .studio-mobile-header { display: flex !important; }
           .studio-main-pad {
             padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
           }

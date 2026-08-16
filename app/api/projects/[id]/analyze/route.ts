@@ -20,6 +20,19 @@ const SESSION_READY_STATUSES = new Set([
   "complete",
 ]);
 
+function errMessage(e: unknown, fallback = "Analyze failed"): string {
+  if (e instanceof Error && e.message) return e.message;
+  if (e && typeof e === "object") {
+    const o = e as { message?: string; error?: string; details?: string; hint?: string; code?: string };
+    const parts = [o.message, o.error, o.details, o.hint, o.code].filter(
+      (x): x is string => typeof x === "string" && x.length > 0
+    );
+    if (parts.length) return parts.join(" — ");
+  }
+  if (typeof e === "string" && e) return e;
+  return fallback;
+}
+
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -88,7 +101,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Generate a beat first" }, { status: 400 });
   }
 
-  const { data: analyzeJob } = await supabase
+  const { data: analyzeJob, error: jobInsErr } = await supabase
     .from("jobs")
     .insert({
       project_id: projectId,
@@ -101,6 +114,16 @@ export async function POST(_req: Request, ctx: Ctx) {
     })
     .select()
     .single();
+
+  if (jobInsErr || !analyzeJob) {
+    console.error("analyze job insert", jobInsErr);
+    return NextResponse.json(
+      {
+        error: `Could not start analyze job: ${errMessage(jobInsErr, "database error")}`,
+      },
+      { status: 500 }
+    );
+  }
 
   await supabase.from("projects").update({ status: "analyzing" }).eq("id", projectId);
 
@@ -115,15 +138,19 @@ export async function POST(_req: Request, ctx: Ctx) {
           error:
             "Set DEV_MODE=true or MISTRAL_API_KEY so the AI producer can build a plan.",
         })
-        .eq("id", analyzeJob!.id);
+        .eq("id", analyzeJob.id);
+
+      await supabase.from("projects").update({ status: "beat_ready" }).eq("id", projectId);
 
       return NextResponse.json(
         {
+          error:
+            "Configure MISTRAL_API_KEY (preferred) or DEV_MODE=true for deterministic plans.",
           message:
             "Configure MISTRAL_API_KEY (preferred) or DEV_MODE=true for deterministic plans.",
-          job_id: analyzeJob?.id,
+          job_id: analyzeJob.id,
         },
-        { status: 202 }
+        { status: 503 }
       );
     }
 
@@ -164,9 +191,9 @@ export async function POST(_req: Request, ctx: Ctx) {
         },
         completed_at: new Date().toISOString(),
       })
-      .eq("id", analyzeJob!.id);
+      .eq("id", analyzeJob.id);
 
-    const { data: bpJob } = await supabase
+    const { data: bpJob, error: bpJobErr } = await supabase
       .from("jobs")
       .insert({
         project_id: projectId,
@@ -179,6 +206,10 @@ export async function POST(_req: Request, ctx: Ctx) {
       })
       .select()
       .single();
+
+    if (bpJobErr || !bpJob) {
+      throw new Error(`Could not start blueprint job: ${errMessage(bpJobErr)}`);
+    }
 
     const songSections = generateDevBlueprint({
       genre: project.genre,
@@ -196,45 +227,70 @@ export async function POST(_req: Request, ctx: Ctx) {
         (beat as { time_signature?: string }).time_signature ||
         "4/4"
     );
-    const sectionRows = songSections.map((s) => {
-      let start_bar: number | null = null;
-      let end_bar: number | null = null;
-      if (bpmForBars && bpmForBars > 0) {
-        try {
-          const bars = timeRangeToBarRange(s.start_ms, s.end_ms, bpmForBars, ts);
-          start_bar = bars.start_bar;
-          end_bar = bars.end_bar;
-        } catch {
-          /* BPM invalid */
+
+    const buildSectionRows = (includeBars: boolean) =>
+      songSections.map((s) => {
+        let start_bar: number | null = null;
+        let end_bar: number | null = null;
+        if (includeBars && bpmForBars && bpmForBars > 0) {
+          try {
+            const bars = timeRangeToBarRange(s.start_ms, s.end_ms, bpmForBars, ts);
+            start_bar = bars.start_bar;
+            end_bar = bars.end_bar;
+          } catch {
+            /* BPM invalid */
+          }
         }
+        const row: Record<string, unknown> = {
+          project_id: projectId,
+          type: s.type,
+          label: s.label,
+          start_ms: s.start_ms,
+          end_ms: s.end_ms,
+          order_index: s.order_index,
+          energy: s.energy,
+          metadata: {
+            role: s.role,
+            timed_from: analysis.source,
+            bpm: analysis.bpm,
+            start_bar,
+            end_bar,
+          },
+        };
+        if (includeBars) {
+          row.start_bar = start_bar;
+          row.end_bar = end_bar;
+        }
+        return row;
+      });
+
+    let insertedSections;
+    {
+      const withBars = buildSectionRows(true);
+      const { data, error: sErr } = await supabase
+        .from("song_sections")
+        .insert(withBars)
+        .select();
+
+      if (sErr) {
+        // Schema may be missing start_bar/end_bar if migration not applied yet
+        const msg = errMessage(sErr);
+        if (/start_bar|end_bar|column/i.test(msg)) {
+          console.warn("song_sections insert with bars failed, retrying without", msg);
+          const withoutBars = buildSectionRows(false);
+          const retry = await supabase.from("song_sections").insert(withoutBars).select();
+          if (retry.error || !retry.data) {
+            throw retry.error || new Error("Failed to insert sections");
+          }
+          insertedSections = retry.data;
+        } else {
+          throw sErr;
+        }
+      } else if (!data) {
+        throw new Error("Failed to insert sections");
+      } else {
+        insertedSections = data;
       }
-      return {
-        project_id: projectId,
-        type: s.type,
-        label: s.label,
-        start_ms: s.start_ms,
-        end_ms: s.end_ms,
-        order_index: s.order_index,
-        energy: s.energy,
-        start_bar,
-        end_bar,
-        metadata: {
-          role: s.role,
-          timed_from: analysis.source,
-          bpm: analysis.bpm,
-          start_bar,
-          end_bar,
-        },
-      };
-    });
-
-    const { data: insertedSections, error: sErr } = await supabase
-      .from("song_sections")
-      .insert(sectionRows)
-      .select();
-
-    if (sErr || !insertedSections) {
-      throw sErr || new Error("Failed to insert sections");
     }
 
     const sectionByOrder = new Map(insertedSections.map((s) => [s.order_index, s]));
@@ -242,7 +298,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     await supabase
       .from("jobs")
       .update({ progress: 70, stage: "production_plan" })
-      .eq("id", bpJob!.id);
+      .eq("id", bpJob.id);
 
     const plannerInput = {
       genre: project.genre as string | null,
@@ -263,7 +319,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       await supabase
         .from("jobs")
         .update({ progress: 85, stage: "mistral_producer" })
-        .eq("id", bpJob!.id);
+        .eq("id", bpJob.id);
       production = await enhanceBlueprintWithMistral(production, plannerInput);
     }
 
@@ -297,12 +353,29 @@ export async function POST(_req: Request, ctx: Ctx) {
       };
     });
 
-    const { data: insertedTasks, error: tErr } = await supabase
-      .from("recording_tasks")
-      .insert(taskRows)
-      .select();
+    let insertedTasks;
+    {
+      const { data, error: tErr } = await supabase
+        .from("recording_tasks")
+        .insert(taskRows)
+        .select();
 
-    if (tErr) throw tErr;
+      if (tErr) {
+        const msg = errMessage(tErr);
+        // Fallback if title/reason columns missing
+        if (/title|reason|column/i.test(msg)) {
+          console.warn("recording_tasks insert with title/reason failed, retrying minimal", msg);
+          const minimal = taskRows.map(({ title: _t, reason: _r, ...rest }) => rest);
+          const retry = await supabase.from("recording_tasks").insert(minimal).select();
+          if (retry.error) throw retry.error;
+          insertedTasks = retry.data;
+        } else {
+          throw tErr;
+        }
+      } else {
+        insertedTasks = data;
+      }
+    }
 
     await supabase
       .from("projects")
@@ -327,7 +400,7 @@ export async function POST(_req: Request, ctx: Ctx) {
         },
         completed_at: new Date().toISOString(),
       })
-      .eq("id", bpJob!.id);
+      .eq("id", bpJob.id);
 
     return NextResponse.json({
       reused: false,
@@ -348,17 +421,15 @@ export async function POST(_req: Request, ctx: Ctx) {
           : null,
       },
       dev_mode: isDevMode(),
-      jobs: { analyze: analyzeJob?.id, blueprint: bpJob?.id },
+      jobs: { analyze: analyzeJob.id, blueprint: bpJob.id },
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Analyze failed";
+    const msg = errMessage(e, "Analyze failed");
     console.error("analyze", e);
-    if (analyzeJob) {
-      await supabase
-        .from("jobs")
-        .update({ status: "failed", error: msg, completed_at: new Date().toISOString() })
-        .eq("id", analyzeJob.id);
-    }
+    await supabase
+      .from("jobs")
+      .update({ status: "failed", error: msg, completed_at: new Date().toISOString() })
+      .eq("id", analyzeJob.id);
     await supabase.from("projects").update({ status: "failed" }).eq("id", projectId);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
