@@ -1,18 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const C = {
-  surface: "rgba(255,255,255,0.045)",
-  border: "rgba(255,255,255,0.09)",
-  brass: "#E7A961",
-  brassSoft: "rgba(231,169,97,0.15)",
-  signal: "#7BEBD4",
-  text: "#F4F1EC",
-  textMuted: "#9B96A3",
-  textFaint: "#5C5866",
-  danger: "#E8756A",
-};
+import { useTheme } from "@/lib/theme";
 
 type Sample = {
   id: string;
@@ -32,6 +21,7 @@ const KINDS: { value: string; label: string }[] = [
 ];
 
 export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
+  const { colors: C } = useTheme();
   const [samples, setSamples] = useState<Sample[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -78,15 +68,14 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
     }
   }
 
-  async function remove(sampleId: string) {
-    setError(null);
+  async function remove(id: string) {
     try {
-      const res = await fetch(`/api/projects/${projectId}/samples/${sampleId}`, { method: "DELETE" });
+      const res = await fetch(`/api/projects/${projectId}/samples?sample_id=${id}`, { method: "DELETE" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || "Delete failed");
       }
-      setSamples((prev) => prev.filter((s) => s.id !== sampleId));
+      setSamples((prev) => prev.filter((s) => s.id !== id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     }
@@ -95,30 +84,29 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
   return (
     <div
       style={{
-        marginTop: 20,
-        padding: "16px 14px",
+        marginTop: 18,
+        padding: 14,
         borderRadius: 16,
         border: `1px solid ${C.border}`,
         background: C.surface,
+        boxShadow: C.cardShadow,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Samples & loops</div>
-          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-            Optional audio to layer later (loops, one-shots, reference)
-          </div>
-        </div>
+      <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.6, color: C.brass, marginBottom: 6 }}>
+        SAMPLES & LOOPS
       </div>
+      <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
+        Drop loops or reference audio into this song. They stay with the project for production.
+      </p>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         {KINDS.map((k) => (
           <button
             key={k.value}
             type="button"
             onClick={() => setKind(k.value)}
             style={{
-              padding: "6px 10px",
+              padding: "6px 12px",
               borderRadius: 999,
               border: kind === k.value ? `1px solid ${C.brass}` : `1px solid ${C.border}`,
               background: kind === k.value ? C.brassSoft : "transparent",
@@ -141,37 +129,32 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
         style={{ display: "none" }}
         onChange={(e) => onFile(e.target.files?.[0] || null)}
       />
-
       <button
         type="button"
         disabled={uploading}
         onClick={() => fileRef.current?.click()}
         style={{
           width: "100%",
-          marginTop: 12,
           padding: "11px 14px",
           borderRadius: 12,
           border: `1px solid ${C.border}`,
-          background: "rgba(255,255,255,0.04)",
+          background: C.inputFill,
           color: C.text,
           fontWeight: 500,
           fontSize: 13.5,
           cursor: uploading ? "wait" : "pointer",
           fontFamily: "inherit",
-          opacity: uploading ? 0.6 : 1,
         }}
       >
-        {uploading ? "Uploading…" : "Add sample / loop"}
+        {uploading ? "Uploading…" : "Add sample or loop"}
       </button>
 
-      {error && (
-        <p style={{ margin: "10px 0 0", fontSize: 13, color: C.danger }}>{error}</p>
-      )}
+      {error && <p style={{ color: C.danger, fontSize: 13, marginTop: 10 }}>{error}</p>}
 
       <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-        {loading && <p style={{ margin: 0, fontSize: 13, color: C.textMuted }}>Loading samples…</p>}
+        {loading && <p style={{ color: C.textMuted, fontSize: 13, margin: 0 }}>Loading samples…</p>}
         {!loading && samples.length === 0 && (
-          <p style={{ margin: 0, fontSize: 13, color: C.textFaint }}>No samples yet.</p>
+          <p style={{ color: C.textFaint, fontSize: 13, margin: 0 }}>No samples yet.</p>
         )}
         {samples.map((s) => (
           <div
@@ -183,7 +166,7 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
               padding: "10px 12px",
               borderRadius: 12,
               border: `1px solid ${C.border}`,
-              background: "rgba(0,0,0,0.2)",
+              background: C.inputFill,
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -203,20 +186,17 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
                 {s.kind.replace(/_/g, " ")}
                 {s.duration_ms ? ` · ${Math.round(s.duration_ms / 1000)}s` : ""}
               </div>
-              {s.audio_url && (
-                <audio src={s.audio_url} controls preload="none" style={{ width: "100%", height: 32, marginTop: 6 }} />
-              )}
             </div>
+            {s.audio_url && (
+              <audio controls src={s.audio_url} style={{ height: 28, maxWidth: 140 }} preload="none" />
+            )}
             <button
               type="button"
               onClick={() => remove(s.id)}
               style={{
-                flexShrink: 0,
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: `1px solid ${C.border}`,
-                background: "transparent",
-                color: C.textMuted,
+                background: "none",
+                border: "none",
+                color: C.textFaint,
                 fontSize: 12,
                 cursor: "pointer",
                 fontFamily: "inherit",
