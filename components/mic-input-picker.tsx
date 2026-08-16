@@ -125,31 +125,15 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
     setError(null);
     setBusy(true);
     try {
-      const constraints: MediaStreamConstraints = {
-        audio: selectedDeviceId
-          ? {
-              deviceId: { ideal: selectedDeviceId },
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            }
-          : {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-      };
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: micAudioConstraints(selectedDeviceId),
+        });
       } catch {
         // Device may have disappeared — fall back to default
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          audio: micAudioConstraints(""),
         });
         onSelect("");
         setError("Selected mic unavailable — testing default microphone");
@@ -368,22 +352,25 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
 /**
  * Build getUserMedia audio constraints for the selected device.
  *
- * Mobile note: prefer `ideal` (not `exact`) for deviceId so the OS can keep
- * the current media playback route (e.g. EarPods) while using the phone mic.
- * Forcing `exact` often switches the whole session to the built-in speaker,
- * so the beat plays out loud and bleeds into the take.
+ * Speaker output is independent (HTMLMediaElement.setSinkId on the beat element).
+ * Mic constraints never set audiooutput — they only affect capture.
+ *
+ * For singing we keep echoCancellation (reduces beat bleed) but turn off
+ * noiseSuppression + autoGainControl, which often make mobile takes sound
+ * thin, pumped, or "underwater".
+ *
+ * When the artist picks a specific mic, use `exact` so we do not silently
+ * fall through to a weak headset mic while EarPods are connected.
  */
 export function micAudioConstraints(deviceId: string): MediaTrackConstraints {
   const base: MediaTrackConstraints = {
-    // Echo cancel is critical when any monitor leaks into the mic
     echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-    // Avoid "communication" channel where possible (keeps media on headphones)
+    noiseSuppression: false,
+    autoGainControl: false,
     channelCount: 1,
   };
   if (deviceId) {
-    return { ...base, deviceId: { ideal: deviceId } };
+    return { ...base, deviceId: { exact: deviceId } };
   }
   return base;
 }
@@ -633,20 +620,44 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
  */
 export async function openMicStream(
   preferredDeviceId: string
-): Promise<{ stream: MediaStream; usedDeviceId: string; fellBack: boolean }> {
+): Promise<{
+  stream: MediaStream;
+  usedDeviceId: string;
+  usedLabel: string;
+  fellBack: boolean;
+}> {
+  const fromTrack = (stream: MediaStream, fellBack: boolean) => {
+    const track = stream.getAudioTracks()[0];
+    const settingsId = track?.getSettings?.().deviceId || preferredDeviceId || "";
+    const usedLabel = (track?.label || "").trim();
+    return { stream, usedDeviceId: settingsId, usedLabel, fellBack };
+  };
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: micAudioConstraints(preferredDeviceId),
     });
-    const track = stream.getAudioTracks()[0];
-    const settingsId = track?.getSettings?.().deviceId || preferredDeviceId || "";
-    return { stream, usedDeviceId: settingsId, fellBack: false };
+    return fromTrack(stream, false);
   } catch (e) {
+    // exact device may fail if unplugged — try ideal, then browser default
     if (preferredDeviceId) {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: micAudioConstraints(""),
-      });
-      return { stream, usedDeviceId: "", fellBack: true };
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 1,
+            deviceId: { ideal: preferredDeviceId },
+          },
+        });
+        return fromTrack(stream, true);
+      } catch {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: micAudioConstraints(""),
+        });
+        return fromTrack(stream, true);
+      }
     }
     throw e;
   }

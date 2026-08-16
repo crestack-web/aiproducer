@@ -442,7 +442,11 @@ export default function ProjectDetailPage() {
       }
     }
     mimeRef.current = mime;
-    const rec = new MediaRecorder(stream, { mimeType: mime });
+    // Higher bitrate — default Opus can sound muddy on mobile
+    const rec = new MediaRecorder(stream, {
+      mimeType: mime,
+      audioBitsPerSecond: 192000,
+    });
     mediaRecorderRef.current = rec;
     rec.ondataavailable = (e) => {
       if (e.data?.size) chunksRef.current.push(e.data);
@@ -531,14 +535,19 @@ export default function ProjectDetailPage() {
     setProducerTip(null);
     setSavedRecordingId(null);
     try {
-      const { stream, fellBack } = await openMicStream(selectedMicIdRef.current);
+      // Mic stream is independent of speaker sink — setSinkId only routes the beat player.
+      const { stream, fellBack, usedLabel } = await openMicStream(selectedMicIdRef.current);
       if (fellBack) {
         setSelectedMicId("");
-        setError("Selected microphone unavailable — using default mic");
+        setError(
+          usedLabel
+            ? `Selected mic unavailable — using “${usedLabel}”`
+            : "Selected microphone unavailable — using default mic"
+        );
       }
       streamRef.current = stream;
       setMicStream(stream);
-      // Keep beat on headphones when the browser allows choosing output (not coupled to mic).
+      // Speaker picker only affects beat HTMLAudioElement, never the MediaRecorder track.
       await routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       setCountdown(3);
       setPhase("countdown");
