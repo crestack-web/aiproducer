@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -23,6 +24,9 @@ export default function WelcomePage() {
             <a href="#how">How it works</a>
             <a href="#value">Why Studio</a>
             <a href="#pricing">Pricing</a>
+            <span className="theme-slot" aria-label="Theme">
+              <ThemeToggle compact />
+            </span>
             <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>
@@ -251,7 +255,13 @@ export default function WelcomePage() {
 
 const css = `
   :root{--bg:#050508;--surface:rgba(255,255,255,.045);--border:rgba(255,255,255,.09);--border-hi:rgba(255,255,255,.16);--text:#F4F1EC;--muted:#9B96A3;--faint:#5C5866;--signal:#7BEBD4;--brass:#E7A961}
+  html[data-theme="light"]{--bg:#F0E9DF;--surface:#FFFFFF;--border:rgba(55,40,22,.10);--border-hi:rgba(55,40,22,.16);--text:#1C1916;--muted:#5E574F;--faint:#8C847A;--signal:#0A8A76;--brass:#A86B1F}
   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}
+  .theme-slot{display:inline-flex;align-items:center;margin:0 4px}
+  html[data-theme="light"] .ambient{opacity:.35;filter:saturate(.7)}
+  html[data-theme="light"] .showcase,html[data-theme="light"] .panel,html[data-theme="light"] .price-card,html[data-theme="light"] .compare-card,html[data-theme="light"] .bottom-cta{background:#fff;box-shadow:0 8px 28px rgba(40,28,12,.06)}
+  html[data-theme="light"] .primary{color:#1A1208!important}
+  html[data-theme="light"] h1 em{background:linear-gradient(120deg,var(--signal),#3aa89a 40%,var(--brass));-webkit-background-clip:text;background-clip:text}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
   .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 24px 80px;width:100%}
   .header{display:flex;align-items:center;justify-content:space-between;padding:22px 0;gap:12px}

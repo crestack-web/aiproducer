@@ -3,15 +3,36 @@
 import { useTheme } from "@/lib/theme";
 
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  const { mode, toggle, colors } = useTheme();
+  const { mode, preference, toggle, colors } = useTheme();
   const isLight = mode === "light";
+  const isSystem = preference === "system";
+
+  const aria =
+    preference === "system"
+      ? "Theme: system (follows device). Click for dark mode"
+      : preference === "light"
+        ? "Theme: light. Click for system"
+        : "Theme: dark. Click for light mode";
+
+  // Thumb position: dark left, system center, light right (based on preference)
+  const thumbLeft =
+    preference === "light"
+      ? compact
+        ? 20
+        : 24
+      : preference === "system"
+        ? compact
+          ? 11
+          : 13
+        : 3;
 
   return (
     <button
       type="button"
       role="switch"
       aria-checked={isLight}
-      aria-label={isLight ? "Switch to dark mode" : "Switch to light mode"}
+      aria-label={aria}
+      title={aria}
       onClick={toggle}
       style={{
         position: "relative",
@@ -19,9 +40,13 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
         height: compact ? 26 : 30,
         borderRadius: 999,
         border: `1px solid ${colors.borderHi}`,
-        background: isLight
-          ? "linear-gradient(135deg, #F5E6D0, #E8D4B8)"
-          : "linear-gradient(135deg, #1A1822, #0F0E14)",
+        background: isSystem
+          ? isLight
+            ? "linear-gradient(90deg, #1A1822 0%, #F5E6D0 100%)"
+            : "linear-gradient(90deg, #1A1822 0%, #3A3540 50%, #1A1822 100%)"
+          : isLight
+            ? "linear-gradient(135deg, #F5E6D0, #E8D4B8)"
+            : "linear-gradient(135deg, #1A1822, #0F0E14)",
         cursor: "pointer",
         padding: 0,
         flexShrink: 0,
@@ -40,7 +65,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
           top: "50%",
           transform: "translateY(-50%)",
           fontSize: compact ? 10 : 11,
-          opacity: isLight ? 0.35 : 0.9,
+          opacity: preference === "dark" ? 0.9 : 0.35,
           transition: "opacity 0.2s ease",
           lineHeight: 1,
         }}
@@ -55,7 +80,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
           top: "50%",
           transform: "translateY(-50%)",
           fontSize: compact ? 10 : 11,
-          opacity: isLight ? 0.9 : 0.35,
+          opacity: preference === "light" ? 0.9 : 0.35,
           transition: "opacity 0.2s ease",
           lineHeight: 1,
         }}
@@ -68,22 +93,28 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
         style={{
           position: "absolute",
           top: compact ? 3 : 3,
-          left: isLight ? (compact ? 20 : 24) : 3,
+          left: thumbLeft,
           width: compact ? 20 : 24,
           height: compact ? 20 : 24,
           borderRadius: 999,
-          background: isLight
-            ? "linear-gradient(180deg, #FFFCF7, #F0E6D6)"
-            : "linear-gradient(180deg, #F0BC80, #E7A961)",
+          background: isSystem
+            ? "linear-gradient(180deg, #E8E4F0, #C8C4D4)"
+            : isLight
+              ? "linear-gradient(180deg, #FFFCF7, #F0E6D6)"
+              : "linear-gradient(180deg, #F0BC80, #E7A961)",
           boxShadow: isLight
             ? "0 2px 6px rgba(26,18,8,0.18)"
             : "0 2px 8px rgba(231,169,97,0.45)",
-          transition: "left 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: "left 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s ease",
           display: "grid",
           placeItems: "center",
-          fontSize: compact ? 9 : 10,
+          fontSize: compact ? 8 : 9,
+          color: isSystem ? "#3A3540" : undefined,
+          fontWeight: 700,
         }}
-      />
+      >
+        {isSystem ? "A" : null}
+      </span>
     </button>
   );
 }

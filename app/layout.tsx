@@ -27,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href={STUDIO_LOGO_URL} />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('studio-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;if(t==='light'){document.documentElement.style.background='#EDE8E1'}else{document.documentElement.style.background='#050508'}}catch(e){}})();`,
+            __html: `(function(){try{var p=localStorage.getItem('studio-theme');var t=p;if(p==='system'||(p!=='light'&&p!=='dark')){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;if(t==='light'){document.documentElement.style.background='#EDE8E1'}else{document.documentElement.style.background='#050508'}}catch(e){}})();`,
           }}
         />
       </head>

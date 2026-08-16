@@ -9,7 +9,11 @@ import React, {
   useState,
 } from "react";
 
+/** Resolved appearance applied to the UI */
 export type ThemeMode = "dark" | "light";
+
+/** Stored user preference (includes follow-system) */
+export type ThemePreference = "dark" | "light" | "system";
 
 export type ThemeColors = {
   bg: string;
@@ -28,9 +32,7 @@ export type ThemeColors = {
   danger: string;
   navGlass: string;
   shadow: string;
-  /** Soft card elevation (light mode uses real shadows; dark uses glow) */
   cardShadow: string;
-  /** Subtle inset / input fill */
   inputFill: string;
 };
 
@@ -82,15 +84,34 @@ export const LIGHT: ThemeColors = {
 };
 
 type ThemeContextValue = {
+  /** Resolved light/dark currently shown */
   mode: ThemeMode;
+  /** User preference including system */
+  preference: ThemePreference;
   colors: ThemeColors;
+  /** Cycles dark → light → system → dark */
   toggle: () => void;
   setMode: (m: ThemeMode) => void;
+  setPreference: (p: ThemePreference) => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = "studio-theme";
+
+function systemMode(): ThemeMode {
+  if (typeof window === "undefined") return "dark";
+  try {
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+export function resolveThemeMode(preference: ThemePreference): ThemeMode {
+  if (preference === "system") return systemMode();
+  return preference;
+}
 
 function applyDomTheme(mode: ThemeMode) {
   if (typeof document === "undefined") return;
@@ -102,36 +123,69 @@ function applyDomTheme(mode: ThemeMode) {
   document.body.style.color = c.text;
 }
 
+function readStoredPreference(): ThemePreference {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === "light" || saved === "dark" || saved === "system") return saved;
+  } catch {
+    /* ignore */
+  }
+  return "system";
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [preference, setPreferenceState] = useState<ThemePreference>("system");
   const [mode, setModeState] = useState<ThemeMode>("dark");
 
   useEffect(() => {
-    let initial: ThemeMode = "dark";
+    const pref = readStoredPreference();
+    const resolved = resolveThemeMode(pref);
+    setPreferenceState(pref);
+    setModeState(resolved);
+    applyDomTheme(resolved);
+  }, []);
+
+  // Follow OS when preference is system
+  useEffect(() => {
+    if (preference !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => {
+      const resolved = systemMode();
+      setModeState(resolved);
+      applyDomTheme(resolved);
+    };
+    mq.addEventListener?.("change", onChange);
+    // Safari < 14
+    mq.addListener?.(onChange);
+    return () => {
+      mq.removeEventListener?.("change", onChange);
+      mq.removeListener?.(onChange);
+    };
+  }, [preference]);
+
+  const setPreference = useCallback((p: ThemePreference) => {
+    setPreferenceState(p);
+    const resolved = resolveThemeMode(p);
+    setModeState(resolved);
+    applyDomTheme(resolved);
     try {
-      const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-      if (saved === "light" || saved === "dark") initial = saved;
-      else if (window.matchMedia("(prefers-color-scheme: light)").matches) initial = "light";
+      localStorage.setItem(STORAGE_KEY, p);
     } catch {
       /* ignore */
     }
-    setModeState(initial);
-    applyDomTheme(initial);
   }, []);
 
   const setMode = useCallback((m: ThemeMode) => {
-    setModeState(m);
-    applyDomTheme(m);
-    try {
-      localStorage.setItem(STORAGE_KEY, m);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    setPreference(m);
+  }, [setPreference]);
 
   const toggle = useCallback(() => {
-    setModeState((prev) => {
-      const next: ThemeMode = prev === "dark" ? "light" : "dark";
-      applyDomTheme(next);
+    setPreferenceState((prev) => {
+      const next: ThemePreference =
+        prev === "dark" ? "light" : prev === "light" ? "system" : "dark";
+      const resolved = resolveThemeMode(next);
+      setModeState(resolved);
+      applyDomTheme(resolved);
       try {
         localStorage.setItem(STORAGE_KEY, next);
       } catch {
@@ -144,11 +198,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       mode,
+      preference,
       colors: mode === "light" ? LIGHT : DARK,
       toggle,
       setMode,
+      setPreference,
     }),
-    [mode, toggle, setMode]
+    [mode, preference, toggle, setMode, setPreference]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
@@ -159,9 +215,11 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) {
     return {
       mode: "dark",
+      preference: "dark",
       colors: DARK,
       toggle: () => undefined,
       setMode: () => undefined,
+      setPreference: () => undefined,
     };
   }
   return ctx;
