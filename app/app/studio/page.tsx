@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
+import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 
 const C = {
   bg: "#0B0A0F",
@@ -102,7 +103,36 @@ export default function StudioPage() {
     })();
   }, [router]);
 
+  async function measureBeatFile(file: File) {
+    try {
+      const a = await analyzeAudioFile(file);
+      return {
+        duration_ms: a.duration_ms,
+        bpm: a.bpm,
+        bpm_confidence: a.confidence,
+        beat_times_ms: a.beat_times_ms.slice(0, 400),
+        analysis_source: "client_energy_acf" as const,
+      };
+    } catch (e) {
+      console.warn("beat analysis failed, using form tempo", e);
+      return {
+        duration_ms: null as number | null,
+        bpm: tempo,
+        bpm_confidence: null as number | null,
+        beat_times_ms: [] as number[],
+        analysis_source: null as string | null,
+      };
+    }
+  }
+
   async function uploadCustomBeat(projectId: string, file: File) {
+    const measured = await measureBeatFile(file);
+    // Prefer measured BPM when confidence is reasonable
+    const effectiveBpm =
+      measured.bpm_confidence != null && measured.bpm_confidence >= 0.12
+        ? Math.round(measured.bpm)
+        : tempo;
+
     const signRes = await fetch(`/api/projects/${projectId}/beat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -115,7 +145,12 @@ export default function StudioPage() {
         form.append("file", file);
         form.append("genre", genre);
         form.append("mood", mood);
-        form.append("tempo", String(tempo));
+        form.append("tempo", String(effectiveBpm));
+        form.append("bpm", String(effectiveBpm));
+        if (measured.duration_ms) form.append("duration_ms", String(measured.duration_ms));
+        if (measured.bpm_confidence != null) form.append("bpm_confidence", String(measured.bpm_confidence));
+        if (measured.analysis_source) form.append("analysis_source", measured.analysis_source);
+        form.append("measured_bpm", measured.bpm != null ? String(measured.bpm) : "");
         const beatRes = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: form });
         if (!beatRes.ok) {
           const err = await beatRes.json().catch(() => ({}));
@@ -143,7 +178,12 @@ export default function StudioPage() {
         size: file.size,
         genre,
         mood,
-        tempo,
+        tempo: effectiveBpm,
+        bpm: effectiveBpm,
+        duration_ms: measured.duration_ms,
+        bpm_confidence: measured.bpm_confidence,
+        beat_times_ms: measured.beat_times_ms,
+        analysis_source: measured.analysis_source,
       }),
     });
     if (!completeRes.ok) {
@@ -368,7 +408,13 @@ export default function StudioPage() {
             disabled={creating || (beatMode === "upload" && !beatFile)}
             onClick={createAndGenerate}
           >
-            {creating ? "Creating beat…" : beatMode === "upload" ? "Start with my beat" : "Create beat"}
+            {creating
+              ? beatMode === "upload"
+                ? "Analyzing beat…"
+                : "Creating beat…"
+              : beatMode === "upload"
+                ? "Start with my beat"
+                : "Create beat"}
           </button>
         </div>
 
