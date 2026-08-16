@@ -93,15 +93,37 @@ export function SongPreviewPlayer({
     else vocalRefs.current.delete(id);
   }
 
-  async function ensureReady(el: HTMLAudioElement) {
+  async function ensureReady(el: HTMLAudioElement, label = "audio") {
     if (el.readyState >= 2) return;
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        el.removeEventListener("canplay", done);
-        resolve();
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (err?: string) => {
+        if (settled) return;
+        settled = true;
+        el.removeEventListener("canplay", onReady);
+        el.removeEventListener("canplaythrough", onReady);
+        el.removeEventListener("error", onErr);
+        clearTimeout(timer);
+        if (err) reject(new Error(err));
+        else resolve();
       };
-      el.addEventListener("canplay", done);
-      el.load();
+      const onReady = () => finish();
+      const onErr = () =>
+        finish(
+          `Could not load ${label}. The take may still be uploading, or this browser cannot play the file format.`
+        );
+      const timer = setTimeout(
+        () => finish(`Timed out loading ${label}. Tap Refresh preview and try again.`),
+        12_000
+      );
+      el.addEventListener("canplay", onReady);
+      el.addEventListener("canplaythrough", onReady);
+      el.addEventListener("error", onErr);
+      try {
+        el.load();
+      } catch {
+        finish(`Could not load ${label}`);
+      }
     });
   }
 
@@ -119,44 +141,80 @@ export function SongPreviewPlayer({
     }
 
     try {
-      // Preload
+      // Preload with timeouts so a bad vocal URL cannot freeze the whole player
       if (beat) {
-        await ensureReady(beat);
+        await ensureReady(beat, "beat");
         beat.volume = 0.55;
         beat.currentTime = 0;
       }
+      const failedVocals: string[] = [];
       for (const layer of layers) {
         const el = vocalRefs.current.get(layer.task_id);
-        if (!el) continue;
-        await ensureReady(el);
-        el.volume = 1;
-        el.currentTime = 0;
-        el.pause();
+        if (!el) {
+          failedVocals.push(layer.section_label || layer.title || layer.type || "vocal");
+          continue;
+        }
+        try {
+          await ensureReady(el, layer.section_label || layer.title || "vocal");
+          el.volume = 1;
+          el.currentTime = 0;
+          el.pause();
+        } catch (ve) {
+          failedVocals.push(layer.section_label || layer.title || layer.type || "vocal");
+          console.warn("[song-preview] vocal load failed", layer.task_id, ve);
+        }
+      }
+      if (failedVocals.length && !beat) {
+        throw new Error(
+          `Could not load vocals (${failedVocals.join(", ")}). Try Refresh preview.`
+        );
       }
 
       startedRef.current = true;
-      if (beat) await beat.play();
+      if (beat) {
+        try {
+          await beat.play();
+        } catch (pe) {
+          throw new Error(
+            pe instanceof Error
+              ? pe.message
+              : "Beat playback was blocked. Tap play again."
+          );
+        }
+      }
 
       // Start any layers that begin at 0
       for (const layer of layers) {
         if ((layer.start_ms || 0) > 80) continue;
         const el = vocalRefs.current.get(layer.task_id);
-        if (el) void el.play().catch(() => undefined);
+        if (el) {
+          void el.play().catch((e) => {
+            console.warn("[song-preview] early vocal play failed", layer.task_id, e);
+          });
+        }
+      }
+      if (failedVocals.length) {
+        setError(
+          `Some takes could not play (${failedVocals.join(", ")}). Beat still plays — try Refresh preview.`
+        );
       }
 
       setPlaying(true);
+      const wallStart = performance.now();
+      const clockOriginMs = beat ? beat.currentTime * 1000 : 0;
 
       const tick = () => {
-        const tMs = beat
-          ? beat.currentTime * 1000
-          : clockMs; // fallback if no beat element time
-
-        const now =
-          beat && !beat.paused
-            ? beat.currentTime * 1000
-            : beat?.ended
-              ? durationMs
-              : tMs;
+        // Prefer beat clock; without beat, advance from wall clock so vocals still schedule
+        let now: number;
+        if (beat && !beat.paused) {
+          now = beat.currentTime * 1000;
+        } else if (beat?.ended) {
+          now = durationMs;
+        } else if (beat && beat.paused && beat.currentTime > 0) {
+          now = beat.currentTime * 1000;
+        } else {
+          now = clockOriginMs + (performance.now() - wallStart);
+        }
 
         setClockMs(now);
         setProgress(Math.min(1, now / durationMs));
