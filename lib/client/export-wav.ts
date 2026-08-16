@@ -55,6 +55,7 @@ function encodePcm16MonoWav(samples: Float32Array, sampleRate: number): Blob {
 
 function toMono(chans: Float32Array[]): Float32Array {
   if (chans.length <= 1) return chans[0] || new Float32Array(0);
+  // Prefer first channel — avoid averaging which can phase-cancel.
   return chans[0];
 }
 
@@ -89,7 +90,10 @@ async function offlineResample(
   const frames = Math.max(1, Math.ceil(duration * dstRate));
   const offline = new Offline(1, frames, dstRate);
   const buffer = offline.createBuffer(1, samples.length, srcRate);
-  buffer.copyToChannel(samples, 0);
+  // copyToChannel requires Float32Array backed by ArrayBuffer (not SharedArrayBuffer)
+  const channel = new Float32Array(samples.length);
+  channel.set(samples);
+  buffer.copyToChannel(channel, 0);
   const src = offline.createBufferSource();
   src.buffer = buffer;
   src.connect(offline.destination);
