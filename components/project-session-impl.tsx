@@ -8,6 +8,7 @@ import {
   RecordingVisualizer,
   PlayerLoadingState,
 } from "@/components/studio-player";
+import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -48,7 +49,7 @@ type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
 type Phase = "ready" | "countdown" | "recording" | "review";
 
 const PRODUCE_POLL_MS = 4000;
-const PRODUCE_MAX_MS = 15 * 60 * 1000; // 15 minutes
+const PRODUCE_MAX_MS = 15 * 60 * 1000;
 
 function humanTitle(type: string) {
   const t = (type || "").toLowerCase();
@@ -98,6 +99,10 @@ export default function ProjectDetailPage() {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
+  const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
+  const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -126,6 +131,24 @@ export default function ProjectDetailPage() {
     }
     produceActiveRef.current = false;
   }
+
+  const loadSongPreview = useCallback(async () => {
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/session-preview`);
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      setPreviewBeatUrl(j.beat_url || beatUrl || null);
+      setPreviewBeatDurationMs(
+        typeof j.beat_duration_ms === "number" ? j.beat_duration_ms : null
+      );
+      setPreviewLayers(Array.isArray(j.layers) ? j.layers : []);
+    } catch {
+      /* non-fatal */
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [id, beatUrl]);
 
   async function markRecordingStatus() {
     try {
@@ -179,7 +202,6 @@ export default function ProjectDetailPage() {
         return "failed";
       }
 
-      // Complete only when job is complete AND we have a CryoMix storage signed URL
       if (
         (jobStatus === "complete" || projectStatus === "complete") &&
         st.master_url &&
@@ -297,6 +319,13 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load full-song preview whenever artist is on assemble (before Produce)
+  useEffect(() => {
+    if (screen === "assemble" && !producing) {
+      void loadSongPreview();
+    }
+  }, [screen, producing, loadSongPreview]);
 
   useEffect(() => {
     return () => {
@@ -601,7 +630,6 @@ export default function ProjectDetailPage() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
 
-      // 202 = job started — NOT done. Poll until complete + CryoMix master path.
       if (j.master_url && res.status === 200 && j.status === "complete") {
         setMasterUrl(j.master_url);
         setProducing(false);
@@ -644,7 +672,11 @@ export default function ProjectDetailPage() {
     color: C.text,
     fontFamily: "system-ui, sans-serif",
   };
-  const title: React.CSSProperties = { fontFamily: "Georgia, serif", fontSize: 24, fontWeight: 500 };
+  const titleStyle: React.CSSProperties = {
+    fontFamily: "Georgia, serif",
+    fontSize: 24,
+    fontWeight: 500,
+  };
 
   if (loading) {
     return (
@@ -666,7 +698,7 @@ export default function ProjectDetailPage() {
             <Link href="/app/studio" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
               ← Studio
             </Link>
-            <h1 style={{ ...title, marginTop: 20 }}>{project?.title || "Your beat"}</h1>
+            <h1 style={{ ...titleStyle, marginTop: 20 }}>{project?.title || "Your beat"}</h1>
             {error && <p style={{ color: C.danger }}>{error}</p>}
             {beatUrl && (
               <StudioPlayer
@@ -692,7 +724,7 @@ export default function ProjectDetailPage() {
 
         {screen === "plan" && (
           <div style={wrap}>
-            <h1 style={title}>Song plan</h1>
+            <h1 style={titleStyle}>Song plan</h1>
             <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
             <ProjectSamplesPanel projectId={id} />
             <button type="button" style={{ ...btn, marginTop: 20 }} onClick={enterSession}>
@@ -709,7 +741,7 @@ export default function ProjectDetailPage() {
             <SessionSteps tasks={tasks} highlightId={current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
             <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: `1px solid ${C.brass}`, background: C.brassSoft }}>
               <div style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{sectionLabel(current)}</div>
-              <h1 style={{ ...title, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
+              <h1 style={{ ...titleStyle, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
               <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
               {(current.start_ms != null || current.end_ms != null) && (
                 <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
@@ -813,9 +845,12 @@ export default function ProjectDetailPage() {
 
         {screen === "session" && !current && (
           <div style={wrap}>
-            <h1 style={title}>All parts done</h1>
+            <h1 style={titleStyle}>All parts done</h1>
+            <p style={{ color: C.textMuted, textAlign: "center" }}>
+              Hear your full arrangement (beat + every section) before producing.
+            </p>
             <button type="button" style={{ ...btn, marginTop: 20 }} onClick={() => setScreen("assemble")}>
-              Continue to produce
+              Preview full song
             </button>
           </div>
         )}
@@ -826,7 +861,7 @@ export default function ProjectDetailPage() {
               <>
                 <PlayerLoadingState
                   title="Producing"
-                  subtitle={produceStage ? `Stage: ${produceStage}` : "Mix & master (preview)…"}
+                  subtitle={produceStage ? `Stage: ${produceStage}` : "RoEx preview mix & master…"}
                   seed={`produce-${id}`}
                 />
                 <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12 }}>
@@ -835,8 +870,33 @@ export default function ProjectDetailPage() {
               </>
             ) : (
               <>
-                <h1 style={{ ...title, textAlign: "center" }}>Ready to produce</h1>
+                <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song so far</h1>
+                <p style={{ color: C.textMuted, textAlign: "center", fontSize: 14, marginTop: 6 }}>
+                  Play the full timeline — beat plus every recorded section — then produce when it feels right.
+                </p>
                 {error && <p style={{ color: C.danger, textAlign: "center" }}>{error}</p>}
+
+                {previewLoading ? (
+                  <PlayerLoadingState title="Loading preview" subtitle="Gathering beat and takes…" seed={`prev-${id}`} />
+                ) : (
+                  <SongPreviewPlayer
+                    beatUrl={previewBeatUrl || beatUrl}
+                    beatDurationMs={previewBeatDurationMs}
+                    layers={previewLayers}
+                    title={project?.title || "Full song preview"}
+                    seed={project?.title || id}
+                  />
+                )}
+
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 12 }}
+                  onClick={() => void loadSongPreview()}
+                  disabled={previewLoading}
+                >
+                  Refresh preview
+                </button>
+
                 <ProjectSamplesPanel projectId={id} />
                 <button type="button" style={{ ...btn, marginTop: 20 }} onClick={startProduce}>
                   Produce my song
@@ -848,8 +908,10 @@ export default function ProjectDetailPage() {
 
         {screen === "done" && (
           <div style={wrap}>
-            <h1 style={{ ...title, textAlign: "center" }}>Your song is ready</h1>
-            {masterUrl && <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed="master" accent="signal" />}
+            <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song is ready</h1>
+            {masterUrl && (
+              <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed="master" accent="signal" />
+            )}
             {!masterUrl && (
               <>
                 <p style={{ textAlign: "center", color: C.textMuted }}>Master not ready yet.</p>
