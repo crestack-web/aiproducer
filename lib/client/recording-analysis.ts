@@ -2,7 +2,7 @@
 
 import { analyzeAudioBlob } from "@/lib/audio/analysis";
 import type { AudioAnalysis } from "@/lib/audio/analysis-types";
-import { audioBlobToWav } from "@/lib/client/export-wav";
+import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 
 export type AnalysisTaskRef = {
   id: string;
@@ -13,16 +13,26 @@ export type AnalysisTaskRef = {
   metadata?: { section_label?: string; section_id?: string } | null;
 };
 
+export type AttachAnalysisResult = {
+  analysis: AudioAnalysis | null;
+  wavBlob: Blob | null;
+  conversionMethod: string | null;
+  conversionSampleRate: number | null;
+  sourceSampleRate: number | null;
+  sourceChannels: number | null;
+};
+
 /**
  * Analyze blob, convert to WAV for produce alignment, append to FormData.
- * Never throws — analysis failure is non-fatal; WAV conversion failure is soft.
+ * Preserves original MediaRecorder blob as original_file.
+ * Never throws — analysis / WAV failure is soft.
  */
 export async function attachAnalysisToForm(
   form: FormData,
   blob: Blob,
   task: AnalysisTaskRef,
   projectId: string
-): Promise<AudioAnalysis | null> {
+): Promise<AttachAnalysisResult> {
   const expected =
     typeof task.end_ms === "number" && typeof task.start_ms === "number"
       ? task.end_ms - task.start_ms
@@ -33,9 +43,39 @@ export async function attachAnalysisToForm(
       ? task.metadata.section_id
       : null);
 
+  const result: AttachAnalysisResult = {
+    analysis: null,
+    wavBlob: null,
+    conversionMethod: null,
+    conversionSampleRate: null,
+    sourceSampleRate: null,
+    sourceChannels: null,
+  };
+
+  if (!form.has("original_file")) {
+    const origName =
+      (blob.type || "").includes("mp4")
+        ? "take.mp4"
+        : (blob.type || "").includes("webm")
+          ? "take.webm"
+          : "take.bin";
+    form.set("original_file", blob, origName);
+  }
+  form.set("original_mime", blob.type || "application/octet-stream");
+  form.set("original_bytes", String(blob.size));
+
   try {
-    const wav = await audioBlobToWav(blob);
-    form.set("file", wav, "take.wav");
+    const wav = await audioBlobToWavDetailed(blob);
+    result.wavBlob = wav.blob;
+    result.conversionMethod = wav.method;
+    result.conversionSampleRate = wav.sampleRate;
+    result.sourceSampleRate = wav.sourceSampleRate;
+    result.sourceChannels = wav.sourceChannels;
+    form.set("file", wav.blob, "take.wav");
+    form.set("conversion_method", wav.method);
+    form.set("conversion_sample_rate", String(wav.sampleRate));
+    form.set("source_sample_rate", String(wav.sourceSampleRate));
+    form.set("source_channels", String(wav.sourceChannels));
   } catch {
     /* keep original file field if already set by caller */
   }
@@ -53,9 +93,16 @@ export async function attachAnalysisToForm(
     if (analysis.durationMs != null) {
       form.set("duration_ms", String(analysis.durationMs));
     }
-    return analysis;
+    if (analysis.loudness?.peak != null) {
+      form.set("peak", String(analysis.loudness.peak));
+    }
+    if (analysis.loudness?.rms != null) {
+      form.set("rms", String(analysis.loudness.rms));
+    }
+    result.analysis = analysis;
+    return result;
   } catch {
-    return null;
+    return result;
   }
 }
 
