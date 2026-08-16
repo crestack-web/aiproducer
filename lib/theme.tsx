@@ -28,8 +28,13 @@ export type ThemeColors = {
   danger: string;
   navGlass: string;
   shadow: string;
+  /** Soft card elevation (light mode uses real shadows; dark uses glow) */
+  cardShadow: string;
+  /** Subtle inset / input fill */
+  inputFill: string;
 };
 
+/** Dark mode — keep the original Studio night look intact. */
 export const DARK: ThemeColors = {
   bg: "#0B0A0F",
   bgDeep: "#050508",
@@ -47,25 +52,33 @@ export const DARK: ThemeColors = {
   danger: "#E8756A",
   navGlass: "rgba(11,10,15,0.94)",
   shadow: "rgba(0,0,0,0.35)",
+  cardShadow: "0 1px 0 rgba(255,255,255,0.04)",
+  inputFill: "rgba(0,0,0,0.28)",
 };
 
+/**
+ * Light mode — warm paper / daytime studio.
+ * Distinct from dark: solid ivory surfaces, soft shadows, deeper brass.
+ */
 export const LIGHT: ThemeColors = {
-  bg: "#F6F3EE",
-  bgDeep: "#EDE8E1",
-  surface: "rgba(255,255,255,0.72)",
+  bg: "#FAF6F0",
+  bgDeep: "#F0E9DF",
+  surface: "#FFFFFF",
   surfaceRaised: "#FFFFFF",
-  border: "rgba(26,18,8,0.08)",
-  borderHi: "rgba(26,18,8,0.14)",
-  brass: "#C4842E",
-  brassSoft: "rgba(196,132,46,0.12)",
-  brassLine: "rgba(196,132,46,0.45)",
-  signal: "#0D9B84",
-  text: "#1A1714",
-  textMuted: "#6B6560",
-  textFaint: "#9A948C",
-  danger: "#D14B3F",
-  navGlass: "rgba(246,243,238,0.92)",
-  shadow: "rgba(26,18,8,0.08)",
+  border: "rgba(55, 40, 22, 0.10)",
+  borderHi: "rgba(55, 40, 22, 0.16)",
+  brass: "#A86B1F",
+  brassSoft: "rgba(168, 107, 31, 0.11)",
+  brassLine: "rgba(168, 107, 31, 0.42)",
+  signal: "#0A8A76",
+  text: "#1C1916",
+  textMuted: "#5E574F",
+  textFaint: "#8C847A",
+  danger: "#C53D32",
+  navGlass: "rgba(250, 246, 240, 0.88)",
+  shadow: "rgba(40, 28, 12, 0.10)",
+  cardShadow: "0 1px 2px rgba(40, 28, 12, 0.04), 0 8px 24px rgba(40, 28, 12, 0.06)",
+  inputFill: "#F5EFE6",
 };
 
 type ThemeContextValue = {
