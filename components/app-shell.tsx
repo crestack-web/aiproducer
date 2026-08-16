@@ -2,20 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
-
-const C = {
-  bg: "#0B0A0F",
-  bgDeep: "#050508",
-  brass: "#E7A961",
-  brassSoft: "rgba(231,169,97,0.15)",
-  brassLine: "rgba(231,169,97,0.55)",
-  text: "#F4F1EC",
-  textMuted: "#9B96A3",
-  textFaint: "#5C5866",
-  border: "rgba(255,255,255,0.09)",
-};
+import { useTheme } from "@/lib/theme";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
@@ -91,6 +81,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { colors: C, mode } = useTheme();
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
   const initials = (userName || "A")
@@ -108,146 +99,46 @@ export function AppShell({
     else router.push(href);
   }
 
-  return (
-    <div style={S.shell}>
-      <style>{`
-        .studio-sidebar { display: flex; }
-        .studio-bottom-nav { display: none; }
-        .studio-main-pad {
-          padding-bottom: 32px;
-          box-sizing: border-box;
-        }
-        .studio-main-pad::after {
-          content: "";
-          display: block;
-          width: 100%;
-          height: 0;
-          pointer-events: none;
-        }
-        @media (max-width: 899px) {
-          .studio-sidebar { display: none !important; }
-          .studio-bottom-nav { display: flex !important; }
-          .studio-main-pad {
-            padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
-          }
-          .studio-main-pad::after {
-            height: 24px;
-          }
-        }
-      `}</style>
-
-      <aside className="studio-sidebar" style={S.sidebar}>
-        <div style={S.brand}>
-          <img
-            src={STUDIO_LOGO_URL}
-            alt="Studio"
-            width={22}
-            height={22}
-            style={{ borderRadius: 6, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }}
-          />
-          STUDIO
-        </div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }} aria-label="Main">
-          {NAV.map(({ key, label, href, Icon }) => {
-            const isActive = current === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => go(key, href)}
-                style={{ ...S.navItem, ...(isActive ? S.navActive : {}) }}
-                aria-current={isActive ? "page" : undefined}
-              >
-                <Icon size={18} color={isActive ? C.brass : C.textMuted} />
-                {label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div style={S.sideCard}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={S.avatar}>{initials}</div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {userName || "Artist"}
-              </div>
-              <button
-                type="button"
-                onClick={onSignOut}
-                style={{ background: "none", border: "none", color: C.textFaint, fontSize: 11.5, padding: 0, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-          <Link href="/app/studio" style={{ ...S.sideCta, display: "block", textAlign: "center", textDecoration: "none" }}>
-            New session
-          </Link>
-        </div>
-      </aside>
-
-      <main style={S.main} className="studio-main-pad">
-        {children}
-      </main>
-
-      <nav className="studio-bottom-nav" style={S.bottomNav} aria-label="Main">
-        {NAV.map(({ key, label, href, Icon }) => {
-          const isActive = current === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => go(key, href)}
-              style={{
-                ...S.bottomItem,
-                color: isActive ? C.brass : C.textFaint,
-                fontWeight: isActive ? 600 : 500,
-              }}
-              aria-current={isActive ? "page" : undefined}
-            >
-              <Icon size={22} color={isActive ? C.brass : C.textFaint} />
-              {label}
-            </button>
-          );
-        })}
-      </nav>
-    </div>
-  );
-}
-
-const S: Record<string, React.CSSProperties> = {
-  shell: {
-    height: "100vh",
-    maxHeight: "100dvh",
+  const shell: CSSProperties = {
     display: "flex",
+    minHeight: "100vh",
+    height: "100dvh",
     background: C.bgDeep,
     color: C.text,
     fontFamily: "Inter, system-ui, sans-serif",
-    overflow: "hidden",
-  },
-  sidebar: {
-    width: 200,
+  };
+
+  const sidebar: CSSProperties = {
+    width: 232,
     flexShrink: 0,
-    height: "100%",
     display: "flex",
     flexDirection: "column",
-    padding: "24px 12px 0",
-    borderRight: "1px solid rgba(255,255,255,0.06)",
-    background: C.bgDeep,
-  },
-  brand: {
+    padding: "20px 14px 16px",
+    borderRight: `1px solid ${C.border}`,
+    background: mode === "light" ? C.surfaceRaised : C.bgDeep,
+  };
+
+  const brandRow: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 28,
+    paddingLeft: 6,
+    paddingRight: 2,
+  };
+
+  const brand: CSSProperties = {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: 11,
     letterSpacing: 2,
     color: C.brass,
-    marginBottom: 28,
-    paddingLeft: 10,
-    opacity: 0.9,
+    opacity: 0.95,
     display: "flex",
     alignItems: "center",
-  },
-  navItem: {
+  };
+
+  const navItem: CSSProperties = {
     padding: "10px 12px",
     borderRadius: 10,
     fontSize: 14,
@@ -262,22 +153,25 @@ const S: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 10,
-  },
-  navActive: {
+  };
+
+  const navActive: CSSProperties = {
     background: C.brassSoft,
     border: `1px solid ${C.brassLine}`,
     color: C.brass,
     fontWeight: 600,
-  },
-  sideCard: {
+  };
+
+  const sideCard: CSSProperties = {
     marginTop: "auto",
     padding: 12,
     borderRadius: 12,
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.06)",
+    background: mode === "light" ? "rgba(26,18,8,0.04)" : "rgba(255,255,255,0.03)",
+    border: `1px solid ${C.border}`,
     marginBottom: 12,
-  },
-  sideCta: {
+  };
+
+  const sideCta: CSSProperties = {
     marginTop: 10,
     width: "100%",
     padding: "9px 12px",
@@ -290,8 +184,9 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontFamily: "inherit",
     boxSizing: "border-box",
-  },
-  avatar: {
+  };
+
+  const avatar: CSSProperties = {
     width: 36,
     height: 36,
     borderRadius: 999,
@@ -303,16 +198,32 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 600,
     flexShrink: 0,
-  },
-  main: {
+  };
+
+  const main: CSSProperties = {
     flex: 1,
     minWidth: 0,
     height: "100%",
     overflowY: "auto",
     background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)`,
     WebkitOverflowScrolling: "touch",
-  },
-  bottomNav: {
+  };
+
+  const mobileHeader: CSSProperties = {
+    position: "sticky",
+    top: 0,
+    zIndex: 40,
+    display: "none",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "10px 16px",
+    paddingTop: "calc(10px + env(safe-area-inset-top, 0px))",
+    borderBottom: `1px solid ${C.border}`,
+    background: C.navGlass,
+    backdropFilter: "blur(16px)",
+  };
+
+  const bottomNav: CSSProperties = {
     position: "fixed",
     left: 0,
     right: 0,
@@ -321,15 +232,16 @@ const S: Record<string, React.CSSProperties> = {
     height: "auto",
     paddingTop: 8,
     paddingBottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
-    background: "rgba(11,10,15,0.94)",
+    background: C.navGlass,
     backdropFilter: "blur(16px)",
     borderTop: `1px solid ${C.border}`,
     zIndex: 50,
     alignItems: "stretch",
     justifyContent: "space-around",
     boxSizing: "border-box",
-  },
-  bottomItem: {
+  };
+
+  const bottomItem: CSSProperties = {
     flex: 1,
     display: "flex",
     flexDirection: "column",
@@ -343,5 +255,156 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     padding: "6px 0 4px",
     minHeight: 56,
-  },
-};
+  };
+
+  return (
+    <div style={shell}>
+      <style>{`
+        .studio-sidebar { display: flex; }
+        .studio-bottom-nav { display: none; }
+        .studio-mobile-header { display: none !important; }
+        .studio-main-pad {
+          padding-bottom: 32px;
+          box-sizing: border-box;
+        }
+        .studio-main-pad::after {
+          content: "";
+          display: block;
+          width: 100%;
+          height: 0;
+          pointer-events: none;
+        }
+        @media (max-width: 899px) {
+          .studio-sidebar { display: none !important; }
+          .studio-bottom-nav { display: flex !important; }
+          .studio-mobile-header { display: flex !important; }
+          .studio-main-pad {
+            padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
+          }
+          .studio-main-pad::after {
+            height: 24px;
+          }
+        }
+      `}</style>
+
+      <aside className="studio-sidebar" style={sidebar}>
+        <div style={brandRow}>
+          <div style={brand}>
+            <img
+              src={STUDIO_LOGO_URL}
+              alt="Studio"
+              width={22}
+              height={22}
+              style={{ borderRadius: 6, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }}
+            />
+            STUDIO
+          </div>
+          <ThemeToggle compact />
+        </div>
+        <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }} aria-label="Main">
+          {NAV.map(({ key, label, href, Icon }) => {
+            const isActive = current === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => go(key, href)}
+                style={{ ...navItem, ...(isActive ? navActive : {}) }}
+                aria-current={isActive ? "page" : undefined}
+              >
+                <Icon size={18} color={isActive ? C.brass : C.textMuted} />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div style={sideCard}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={avatar}>{initials}</div>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  color: C.text,
+                }}
+              >
+                {userName || "Artist"}
+              </div>
+              <button
+                type="button"
+                onClick={onSignOut}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: C.textFaint,
+                  fontSize: 11.5,
+                  padding: 0,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+          <Link href="/app/studio" style={{ ...sideCta, display: "block", textAlign: "center", textDecoration: "none" }}>
+            New session
+          </Link>
+        </div>
+      </aside>
+
+      <main style={main} className="studio-main-pad">
+        <div className="studio-mobile-header" style={mobileHeader}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <img
+              src={STUDIO_LOGO_URL}
+              alt=""
+              width={22}
+              height={22}
+              style={{ borderRadius: 6, objectFit: "cover" }}
+            />
+            <span
+              style={{
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 11,
+                letterSpacing: 2,
+                color: C.brass,
+              }}
+            >
+              STUDIO
+            </span>
+          </div>
+          <ThemeToggle compact />
+        </div>
+        {children}
+      </main>
+
+      <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
+        {NAV.map(({ key, label, href, Icon }) => {
+          const isActive = current === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => go(key, href)}
+              style={{
+                ...bottomItem,
+                color: isActive ? C.brass : C.textFaint,
+                fontWeight: isActive ? 600 : 500,
+              }}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <Icon size={22} color={isActive ? C.brass : C.textFaint} />
+              {label}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
