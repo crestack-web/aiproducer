@@ -109,7 +109,11 @@ async function insertRecordingWithFallback(
     const { data, error } = await service.from("recordings").insert(attempt).select().single();
     if (!error && data) {
       if (!(attempt as { is_selected?: boolean }).is_selected && data.id) {
-        await service.from("recordings").update({ is_selected: true }).eq("id", data.id).catch(() => undefined);
+        try {
+          await service.from("recordings").update({ is_selected: true }).eq("id", data.id as string);
+        } catch {
+          /* is_selected column may be missing */
+        }
       }
       return { recording: data, error: null };
     }
