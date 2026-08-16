@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { ProductTour, useProductTour } from "@/components/product-tour";
+import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
 
 type Project = {
@@ -185,6 +186,12 @@ function AppInner() {
     flexShrink: 0,
   };
 
+  const ctaBtn: React.CSSProperties = {
+    ...primary,
+    display: "inline-block",
+    textDecoration: "none",
+  };
+
   function ProjectRow({ p, meta }: { p: Project; meta: string }) {
     return (
       <div style={rowStyle}>
@@ -266,7 +273,16 @@ function AppInner() {
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
               {!loading && projects.length === 0 && (
-                <p style={{ color: C.textMuted, fontSize: 14 }}>No songs yet — start from Studio.</p>
+                <EmptyState
+                  scene="home"
+                  title="Nothing on the deck yet"
+                  description="Your first song starts in Studio — drop a beat, follow the plan, and hit record."
+                  action={
+                    <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                      Open Studio
+                    </button>
+                  }
+                />
               )}
               {projects.slice(0, 12).map((p) => (
                 <ProjectRow
@@ -316,7 +332,16 @@ function AppInner() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading && projects.filter((p) => p.status === "complete").length === 0 && (
-                  <p style={{ color: C.textMuted, fontSize: 14 }}>No finished songs yet — produce a session from Studio.</p>
+                  <EmptyState
+                    scene="songs"
+                    title="No finished songs yet"
+                    description="Record your sections, preview the full arrangement, then Produce — masters land here."
+                    action={
+                      <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                        Make a song
+                      </button>
+                    }
+                  />
                 )}
                 {projects
                   .filter((p) => p.status === "complete")
@@ -333,7 +358,16 @@ function AppInner() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading && projects.length === 0 && (
-                  <p style={{ color: C.textMuted, fontSize: 14 }}>No beats yet — create or upload one in Studio.</p>
+                  <EmptyState
+                    scene="beats"
+                    title="No beats on the shelf"
+                    description="Generate an AI instrumental or upload your own — every beat becomes a session."
+                    action={
+                      <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                        Create a beat
+                      </button>
+                    }
+                  />
                 )}
                 {projects.map((p) => (
                   <ProjectRow
@@ -351,20 +385,16 @@ function AppInner() {
                   projects.filter((p) =>
                     ["recording", "in_progress", "blueprint_ready", "complete", "beat_ready"].includes(p.status)
                   ).length === 0 && (
-                    <div
-                      style={{
-                        padding: "28px 16px",
-                        textAlign: "center",
-                        borderRadius: 14,
-                        background: C.surface,
-                        border: `1px solid ${C.border}`,
-                      }}
-                    >
-                      <p style={{ fontWeight: 600, margin: 0 }}>Your voice belongs here.</p>
-                      <p style={{ color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-                        Every take you record will show up when you open a session.
-                      </p>
-                    </div>
+                    <EmptyState
+                      scene="recordings"
+                      title="Your voice belongs here"
+                      description="Every take you record in a session shows up when you open that project. Grab headphones and hit Record."
+                      action={
+                        <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                          Start a session
+                        </button>
+                      }
+                    />
                   )}
                 {projects
                   .filter((p) =>
