@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { STUDIO_LOGO_URL } from "@/lib/brand";
 
 const C = {
   bg: "#0B0A0F",
@@ -126,7 +127,6 @@ export function AppShell({
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          /* Fixed nav ~74px + iOS home indicator; generous slack so CTAs never hide */
           .studio-main-pad {
             padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
           }
@@ -138,7 +138,13 @@ export function AppShell({
 
       <aside className="studio-sidebar" style={S.sidebar}>
         <div style={S.brand}>
-          <img src="/logo.svg" alt="" width={18} height={18} style={{ borderRadius: 4, marginRight: 8, verticalAlign: "middle" }} />
+          <img
+            src={STUDIO_LOGO_URL}
+            alt="Studio"
+            width={22}
+            height={22}
+            style={{ borderRadius: 6, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }}
+          />
           STUDIO
         </div>
         <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }} aria-label="Main">
