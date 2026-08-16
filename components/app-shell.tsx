@@ -313,6 +313,7 @@ export function AppShell({
               <button
                 key={key}
                 type="button"
+                data-tour-nav={key}
                 onClick={() => go(key, href)}
                 style={{ ...navItem, ...(isActive ? navActive : {}) }}
                 aria-current={isActive ? "page" : undefined}
@@ -396,6 +397,7 @@ export function AppShell({
             <button
               key={key}
               type="button"
+              data-tour-nav={key}
               onClick={() => go(key, href)}
               style={{
                 ...bottomItem,
