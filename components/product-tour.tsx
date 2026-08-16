@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "@/lib/theme";
 
 export const TOUR_STORAGE_KEY = "studio_product_tour_v1";
+/** In-progress tour survives AppShell remounts across /app ↔ /app/studio */
+export const TOUR_ACTIVE_KEY = "studio_product_tour_active";
 
 export type TourStep = {
   id: string;
@@ -64,19 +66,51 @@ export const TOUR_STEPS: TourStep[] = [
   },
 ];
 
+type ActiveTour = { open: boolean; index: number };
+
+function readActiveTour(): ActiveTour | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(TOUR_ACTIVE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ActiveTour;
+    if (typeof parsed?.open !== "boolean" || typeof parsed?.index !== "number") return null;
+    return {
+      open: parsed.open,
+      index: Math.max(0, Math.min(TOUR_STEPS.length - 1, parsed.index)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeActiveTour(state: ActiveTour | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (!state || !state.open) {
+      sessionStorage.removeItem(TOUR_ACTIVE_KEY);
+    } else {
+      sessionStorage.setItem(TOUR_ACTIVE_KEY, JSON.stringify(state));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export function markTourCompleted() {
   try {
     localStorage.setItem(TOUR_STORAGE_KEY, "done");
   } catch {
     /* ignore */
   }
+  writeActiveTour(null);
 }
 
 export function isTourCompleted(): boolean {
   try {
     return localStorage.getItem(TOUR_STORAGE_KEY) === "done";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -91,26 +125,41 @@ export function resetTourFlag() {
 type Props = {
   open: boolean;
   onClose: () => void;
+  /** Controlled step index (persisted by parent). */
+  index: number;
+  onIndexChange: (index: number) => void;
 };
 
-export function ProductTour({ open, onClose }: Props) {
+export function ProductTour({ open, onClose, index, onIndexChange }: Props) {
   const { colors: C } = useTheme();
   const router = useRouter();
-  const [index, setIndex] = useState(0);
 
   const step = TOUR_STEPS[index] || TOUR_STEPS[0];
   const isLast = index >= TOUR_STEPS.length - 1;
 
-  useEffect(() => {
-    if (!open) return;
-    setIndex(0);
-  }, [open]);
-
+  // Navigate when step has an href (survives remount via persisted index)
   useEffect(() => {
     if (!open || !step?.href) return;
-    router.push(step.href);
+    const target = step.href;
+    try {
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (current === target || (target.startsWith("/app/studio") && window.location.pathname.startsWith("/app/studio"))) {
+        return;
+      }
+      if (target.startsWith("/app?") && window.location.pathname === "/app") {
+        const want = new URL(target, window.location.origin).searchParams.get("tab");
+        const have = new URLSearchParams(window.location.search).get("tab");
+        if ((want || "home") === (have || "home") || (!want && !have)) {
+          // still push for tab changes
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    router.push(target);
   }, [open, step?.id, step?.href, router]);
 
+  // Highlight nav targets after route settles
   useEffect(() => {
     if (!open) {
       document.querySelectorAll("[data-tour-active]").forEach((el) => {
@@ -118,20 +167,25 @@ export function ProductTour({ open, onClose }: Props) {
       });
       return;
     }
-    document.querySelectorAll("[data-tour-active]").forEach((el) => {
-      el.removeAttribute("data-tour-active");
-    });
-    if (step?.nav) {
-      document.querySelectorAll(`[data-tour-nav="${step.nav}"]`).forEach((el) => {
-        el.setAttribute("data-tour-active", "true");
+    const apply = () => {
+      document.querySelectorAll("[data-tour-active]").forEach((el) => {
+        el.removeAttribute("data-tour-active");
       });
-    }
+      if (step?.nav) {
+        document.querySelectorAll(`[data-tour-nav="${step.nav}"]`).forEach((el) => {
+          el.setAttribute("data-tour-active", "true");
+        });
+      }
+    };
+    apply();
+    const t = window.setTimeout(apply, 350);
     return () => {
+      window.clearTimeout(t);
       document.querySelectorAll("[data-tour-active]").forEach((el) => {
         el.removeAttribute("data-tour-active");
       });
     };
-  }, [open, step?.nav]);
+  }, [open, step?.nav, step?.id]);
 
   const finish = useCallback(() => {
     markTourCompleted();
@@ -140,11 +194,11 @@ export function ProductTour({ open, onClose }: Props) {
 
   const next = () => {
     if (isLast) finish();
-    else setIndex((i) => i + 1);
+    else onIndexChange(index + 1);
   };
 
   const back = () => {
-    if (index > 0) setIndex((i) => i - 1);
+    if (index > 0) onIndexChange(index - 1);
   };
 
   if (!open) return null;
@@ -179,74 +233,33 @@ export function ProductTour({ open, onClose }: Props) {
           position: relative;
           z-index: 201;
         }
-        /* Clear fixed bottom nav (~74px) + home indicator on mobile */
         @media (max-width: 899px) {
           .studio-tour-overlay {
             padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
-            align-items: flex-end !important;
           }
         }
       `}</style>
+
       <div
         style={{
           width: "100%",
-          maxWidth: 440,
+          maxWidth: 420,
           borderRadius: 20,
           background: C.surfaceRaised || C.surface,
           border: `1px solid ${C.border}`,
-          boxShadow: C.cardShadow || "0 20px 50px rgba(0,0,0,0.35)",
-          padding: "20px 18px 16px",
+          boxShadow: C.cardShadow,
+          padding: "22px 20px 18px",
           color: C.text,
-          fontFamily: "system-ui, sans-serif",
-          maxHeight: "min(70vh, 520px)",
-          overflowY: "auto",
-          WebkitOverflowScrolling: "touch",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 10,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 1.2,
-              textTransform: "uppercase",
-              color: C.brass,
-            }}
-          >
-            How Studio works · {index + 1}/{TOUR_STEPS.length}
-          </span>
-          <button
-            type="button"
-            onClick={finish}
-            style={{
-              background: "none",
-              border: "none",
-              color: C.textMuted,
-              fontSize: 13,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              padding: 4,
-            }}
-          >
-            Skip
-          </button>
-        </div>
-
-        <div style={{ display: "flex", gap: 4, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
           {TOUR_STEPS.map((_, i) => (
-            <i
+            <span
               key={i}
               style={{
-                flex: 1,
-                height: 3,
+                width: 8,
+                height: 8,
                 borderRadius: 99,
                 background: i <= index ? C.brass : C.border,
               }}
@@ -322,31 +335,59 @@ export function ProductTour({ open, onClose }: Props) {
   );
 }
 
-/** Auto-open tour once for new users; expose open state to parent if needed. */
+/** Auto-open tour once for new users; state survives route changes via sessionStorage. */
 export function useProductTour(enabled = true) {
   const [open, setOpen] = useState(false);
+  const [index, setIndexState] = useState(0);
 
+  // Restore in-progress tour after AppShell remount (e.g. /app → /app/studio)
   useEffect(() => {
     if (!enabled) return;
     if (typeof window === "undefined") return;
+    const active = readActiveTour();
+    if (active?.open) {
+      setOpen(true);
+      setIndexState(active.index);
+      return;
+    }
     if (!isTourCompleted()) {
-      const t = setTimeout(() => setOpen(true), 600);
+      const t = setTimeout(() => {
+        setOpen(true);
+        setIndexState(0);
+        writeActiveTour({ open: true, index: 0 });
+      }, 600);
       return () => clearTimeout(t);
     }
   }, [enabled]);
 
+  const setIndex = useCallback((next: number | ((prev: number) => number)) => {
+    setIndexState((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      const clamped = Math.max(0, Math.min(TOUR_STEPS.length - 1, value));
+      writeActiveTour({ open: true, index: clamped });
+      return clamped;
+    });
+  }, []);
+
   const start = useCallback(() => {
     resetTourFlag();
+    setIndexState(0);
     setOpen(true);
+    writeActiveTour({ open: true, index: 0 });
+  }, []);
+
+  const close = useCallback(() => {
+    markTourCompleted();
+    setOpen(false);
+    writeActiveTour(null);
   }, []);
 
   return {
     open,
+    index,
+    setIndex,
     setOpen,
     start,
-    close: () => {
-      markTourCompleted();
-      setOpen(false);
-    },
+    close,
   };
 }

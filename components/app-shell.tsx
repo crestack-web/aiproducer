@@ -467,7 +467,7 @@ export function AppShell({
         {children}
       </main>
 
-      <ProductTour open={tour.open} onClose={tour.close} />
+      <ProductTour open={tour.open} onClose={tour.close} index={tour.index} onIndexChange={tour.setIndex} />
 
       <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
         {NAV.map(({ key, label, href, Icon }) => {
