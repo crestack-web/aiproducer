@@ -110,7 +110,7 @@ export default function ProjectDetailPage() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selectedMicId, setSelectedMicId] = useState("");
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState("");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
   const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
@@ -522,7 +522,7 @@ export default function ProjectDetailPage() {
     if (beatAudioRef.current && beatUrl) {
       void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      beatAudioRef.current.volume = 0.28;
+      beatAudioRef.current.volume = 0.18;
       beatAudioRef.current.play().catch(() => undefined);
     }
     rec.start(250);
@@ -555,7 +555,7 @@ export default function ProjectDetailPage() {
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
         // Lower monitor level — reduces bleed if OS still routes to the phone speaker
-        beatAudioRef.current.volume = 0.28;
+        beatAudioRef.current.volume = 0.18;
         beatAudioRef.current.play().catch(() => undefined);
       }
       let n = 3;
@@ -1009,7 +1009,7 @@ export default function ProjectDetailPage() {
                       beatStartMs={current.start_ms ?? 0}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.12}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.05}
                     />
                     <button
                       type="button"

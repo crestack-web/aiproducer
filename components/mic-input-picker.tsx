@@ -64,14 +64,19 @@ export function MicInputPicker({ selectedDeviceId, onSelect, disabled, compact }
         }));
       setDevices(inputs);
 
-      // If current selection vanished, fall back to default (empty) or first device
+      // If current selection vanished, fall back to phone/built-in mic (not headset)
       if (
         selectedDeviceId &&
         inputs.length > 0 &&
         !inputs.some((d) => d.deviceId === selectedDeviceId)
       ) {
-        onSelect("");
-        setError("Selected mic disconnected — using default microphone");
+        const fallback = preferBuiltInMicId(inputs);
+        onSelect(fallback);
+        setError("Selected mic disconnected — switched to phone mic");
+      } else if (!selectedDeviceId && inputs.length > 0) {
+        // Empty selection often becomes the EarPods mic on mobile — lock to phone mic
+        const preferred = preferBuiltInMicId(inputs);
+        if (preferred) onSelect(preferred);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not list microphones");
@@ -388,6 +393,31 @@ export function looksLikeBuiltInMic(label: string): boolean {
   return BUILTIN_MIC_RE.test(label || "");
 }
 
+export type SpeakerDevice = {
+  deviceId: string;
+  label: string;
+};
+
+/** Prefer phone/built-in mic — never auto-pick EarPods headset mic. */
+export function preferBuiltInMicId(devices: MicDevice[]): string {
+  const notHeadset = devices.filter((d) => !looksLikeHeadphones(d.label));
+  const builtin =
+    notHeadset.find((d) => looksLikeBuiltInMic(d.label)) ||
+    notHeadset.find((d) => /microphone|mic/i.test(d.label) && !/headset|headphone|ear.?pod|airpod|bluetooth/i.test(d.label)) ||
+    notHeadset[0];
+  return builtin?.deviceId || "";
+}
+
+/** Prefer phone loudspeaker among audio outputs (not headphones). */
+export function preferPhoneSpeakerId(devices: SpeakerDevice[]): string {
+  const notHp = devices.filter((d) => !looksLikeHeadphones(d.label));
+  const phone =
+    notHp.find((d) => /speaker|phone|built.?in|default/i.test(d.label) && !/earpiece/i.test(d.label)) ||
+    notHp.find((d) => /speaker/i.test(d.label)) ||
+    notHp[0];
+  return phone?.deviceId || "";
+}
+
 /**
  * Route an HTMLMediaElement to a headphone-like output when the browser supports
  * setSinkId (Chromium/Android). No-op on iOS Safari (unsupported).
@@ -417,27 +447,35 @@ export async function routePlaybackToPreferredOutput(
   try {
     const all = await navigator.mediaDevices.enumerateDevices();
     const outputs = all.filter((d) => d.kind === "audiooutput");
-    if (outputs.length === 0) return { routed: false };
+    const mapped = outputs.map((d, i) => ({
+      deviceId: d.deviceId,
+      label: d.label?.trim() || `Speaker ${i + 1}`,
+    }));
 
-    let preferred =
-      (preferredSinkId && outputs.find((d) => d.deviceId === preferredSinkId)) ||
-      outputs.find((d) => looksLikeHeadphones(d.label)) ||
-      outputs.find((d) => d.deviceId === "default") ||
-      outputs.find((d) => /default|speaker|external/i.test(d.label)) ||
-      outputs[0];
+    let preferred: { deviceId: string; label: string } | undefined;
 
-    if (!preferred?.deviceId) return { routed: false };
+    if (preferredSinkId === "__headphones__" || preferredSinkId === "" || preferredSinkId == null) {
+      preferred =
+        mapped.find((d) => looksLikeHeadphones(d.label)) ||
+        mapped.find((d) => d.deviceId === "default") ||
+        mapped[0];
+    } else if (preferredSinkId === "__speaker__") {
+      const phoneId = preferPhoneSpeakerId(mapped);
+      preferred = mapped.find((d) => d.deviceId === phoneId) || mapped.find((d) => !looksLikeHeadphones(d.label));
+    } else {
+      preferred = mapped.find((d) => d.deviceId === preferredSinkId);
+    }
+
+    if (!preferred?.deviceId) {
+      if (outputs.length === 0) return { routed: false };
+      preferred = { deviceId: outputs[0].deviceId, label: outputs[0].label };
+    }
     await setSinkId.call(el, preferred.deviceId);
     return { routed: true, sinkId: preferred.deviceId, label: preferred.label };
   } catch {
     return { routed: false };
   }
 }
-
-export type SpeakerDevice = {
-  deviceId: string;
-  label: string;
-};
 
 type SpeakerProps = {
   selectedDeviceId: string;
@@ -575,17 +613,34 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
         </button>
       )}
 
-      {supported && devices.length > 0 && (
+      {supported && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button
             type="button"
             disabled={disabled}
-            onClick={() => onSelect("")}
-            style={radio(!selectedDeviceId)}
+            onClick={() => onSelect("__headphones__")}
+            style={radio(selectedDeviceId === "__headphones__" || selectedDeviceId === "")}
           >
-            <span style={{ fontSize: 14, color: C.text }}>
-              Auto (prefer headphones)
-            </span>
+            <span style={{ fontSize: 14, color: C.text }}>Headphones / EarPods</span>
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              const phone = preferPhoneSpeakerId(devices);
+              onSelect(phone || "__speaker__");
+            }}
+            style={radio(
+              selectedDeviceId === "__speaker__" ||
+                (!!selectedDeviceId &&
+                  selectedDeviceId !== "__headphones__" &&
+                  !looksLikeHeadphones(
+                    devices.find((d) => d.deviceId === selectedDeviceId)?.label || ""
+                  ) &&
+                  selectedDeviceId === preferPhoneSpeakerId(devices))
+            )}
+          >
+            <span style={{ fontSize: 14, color: C.text }}>Phone speaker</span>
           </button>
           {devices.map((d) => (
             <button
@@ -601,6 +656,16 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
               </span>
             </button>
           ))}
+          {devices.length === 0 && (
+            <button
+              type="button"
+              disabled={disabled || busy}
+              onClick={() => void ensureAndList()}
+              style={{ ...radio(false), justifyContent: "center", fontWeight: 600, fontSize: 13, color: C.textMuted }}
+            >
+              {busy ? "Listing…" : "Refresh speaker list"}
+            </button>
+          )}
         </div>
       )}
 
@@ -633,9 +698,26 @@ export async function openMicStream(
     return { stream, usedDeviceId: settingsId, usedLabel, fellBack };
   };
 
+  // Resolve empty preference to built-in phone mic so EarPods don't steal the input
+  let targetId = preferredDeviceId;
+  if (!targetId && navigator.mediaDevices?.enumerateDevices) {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const inputs = all
+        .filter((d) => d.kind === "audioinput")
+        .map((d, i) => ({
+          deviceId: d.deviceId,
+          label: d.label?.trim() || `Microphone ${i + 1}`,
+        }));
+      targetId = preferBuiltInMicId(inputs);
+    } catch {
+      /* ignore */
+    }
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: micAudioConstraints(preferredDeviceId),
+      audio: micAudioConstraints(targetId),
     });
     return fromTrack(stream, false);
   } catch (e) {

@@ -391,10 +391,17 @@ export function CompactAudioPlayer({
     };
   }, []);
 
-  // Keep volumes in sync if props change while mounted
+  // Keep volumes in sync; fully stop beat when voice-only (volume 0)
   useEffect(() => {
     if (vocalRef.current) vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
-    if (beatRef.current) beatRef.current.volume = Math.min(1, Math.max(0, beatVolume));
+    const beat = beatRef.current;
+    if (!beat) return;
+    if (beatVolume <= 0.001) {
+      beat.volume = 0;
+      beat.pause();
+    } else {
+      beat.volume = Math.min(1, Math.max(0, beatVolume));
+    }
   }, [vocalVolume, beatVolume]);
 
   async function ensureReady(el: HTMLAudioElement) {
@@ -423,16 +430,19 @@ export function CompactAudioPlayer({
     // Voice first — full level
     vocal.volume = Math.min(1, Math.max(0, vocalVolume));
     const beat = beatRef.current;
-    if (beat && beatSrc) {
+    const wantBeat = Boolean(beat && beatSrc && beatVolume > 0.001);
+    if (wantBeat && beat) {
       await ensureReady(beat);
       try {
         beat.currentTime = Math.max(0, (beatStartMs || 0) / 1000);
       } catch {
         /* ignore */
       }
-      // Quiet bed under the take
       beat.volume = Math.min(1, Math.max(0, beatVolume));
       await beat.play().catch(() => undefined);
+    } else if (beat) {
+      beat.pause();
+      beat.volume = 0;
     }
     await vocal.play().catch(() => undefined);
     setPlaying(true);
