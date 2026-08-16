@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" fill="none">
+  <!-- Transparent background -->
+  <ellipse cx="240" cy="445" rx="140" ry="16" fill="#eaf4f7" opacity="0.5"/>
+
+  <!-- Simple doorway / portal into studio -->
+  <rect x="160" y="70" width="160" height="220" rx="12" fill="#f8fafc" stroke="#09799f" stroke-width="2.5"/>
+  <rect x="175" y="90" width="130" height="180" rx="6" fill="#eaf4f7"/>
+  
+  <!-- Timeline hints inside doorway -->
+  <rect x="190" y="110" width="100" height="8" rx="2" fill="#cee4ec"/>
+  <rect x="190" y="130" width="70" height="6" rx="2" fill="#9dc9d9"/>
+  <rect x="190" y="150" width="85" height="6" rx="2" fill="#9dc9d9"/>
+  <rect x="190" y="175" width="40" height="20" rx="3" fill="#57a202" opacity="0.8"/>
+  <rect x="240" y="175" width="40" height="20" rx="3" fill="#3a94b2" opacity="0.6"/>
+  <rect x="190" y="210" width="100" height="6" rx="2" fill="#cee4ec"/>
+  <rect x="190" y="225" width="60" height="6" rx="2" fill="#9dc9d9"/>
+
+  <!-- Soft glow / invitation -->
+  <ellipse cx="240" cy="180" rx="50" ry="70" fill="#09799f" opacity="0.06"/>
+
+  <!-- Chipmunk walking in, excited, looking toward doorway -->
+  <g id="character">
+    <!-- Tail -->
+    <path d="M155 300 Q120 270 115 230 Q112 205 135 210" fill="none" stroke="#c48a5a" stroke-width="9" stroke-linecap="round"/>
+    <path d="M155 300 Q120 270 115 230 Q112 205 135 210" fill="none" stroke="#f5d0a9" stroke-width="5" stroke-linecap="round"/>
+    
+    <!-- Body -->
+    <ellipse cx="180" cy="310" rx="36" ry="44" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.8"/>
+    <ellipse cx="180" cy="320" rx="20" ry="25" fill="#fce8d0"/>
+    
+    <!-- Head -->
+    <circle cx="180" cy="245" r="36" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.8"/>
+    
+    <!-- Cheeks -->
+    <ellipse cx="158" cy="255" rx="11" ry="10" fill="#f8c8a0"/>
+    <ellipse cx="202" cy="255" rx="11" ry="10" fill="#f8c8a0"/>
+    
+    <!-- Ears -->
+    <ellipse cx="155" cy="218" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="155" cy="218" rx="5.5" ry="8" fill="#f8c8a0"/>
+    <ellipse cx="205" cy="218" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="205" cy="218" rx="5.5" ry="8" fill="#f8c8a0"/>
+    
+    <!-- Eyes looking toward doorway -->
+    <ellipse cx="168" cy="241" rx="7" ry="8.5" fill="#fff" stroke="#333" stroke-width="1.3"/>
+    <ellipse cx="192" cy="241" rx="7" ry="8.5" fill="#fff" stroke="#333" stroke-width="1.3"/>
+    <circle cx="170" cy="241" r="3.2" fill="#333"/>
+    <circle cx="194" cy="241" r="3.2" fill="#333"/>
+    <circle cx="171.2" cy="239.5" r="1.2" fill="#fff"/>
+    <circle cx="195.2" cy="239.5" r="1.2" fill="#fff"/>
+    
+    <!-- Nose + smile -->
+    <ellipse cx="180" cy="257" rx="5.5" ry="4" fill="#c48a5a"/>
+    <path d="M168 266 Q180 276 192 266" fill="none" stroke="#c48a5a" stroke-width="1.6" stroke-linecap="round"/>
+    
+    <!-- Jacket accent -->
+    <path d="M155 275 Q180 283 205 275" fill="none" stroke="#09799f" stroke-width="2.3" stroke-linecap="round" opacity="0.85"/>
+    
+    <!-- Arms - one reaching forward -->
+    <path d="M150 290 Q135 300 130 325" fill="none" stroke="#c48a5a" stroke-width="6.5" stroke-linecap="round"/>
+    <circle cx="128" cy="327" r="7" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.2"/>
+    <path d="M210 290 Q240 280 255 260" fill="none" stroke="#c48a5a" stroke-width="6.5" stroke-linecap="round"/>
+    <circle cx="257" cy="258" r="7" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.2"/>
+    
+    <!-- Legs walking -->
+    <ellipse cx="168" cy="370" rx="10" ry="15" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="192" cy="370" rx="10" ry="15" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="168" cy="386" rx="11" ry="5.5" fill="#c48a5a"/>
+    <ellipse cx="192" cy="386" rx="11" ry="5.5" fill="#c48a5a"/>
+  </g>
+</svg>

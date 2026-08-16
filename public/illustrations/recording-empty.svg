@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" width="480" height="480" fill="none">
+  <ellipse cx="240" cy="445" rx="130" ry="16" fill="#eaf4f7" opacity="0.5"/>
+
+  <!-- Big countdown numbers -->
+  <text x="120" y="140" font-family="system-ui" font-size="64" fill="#9dc9d9" text-anchor="middle" font-weight="800" opacity="0.5">3</text>
+  <text x="240" y="140" font-family="system-ui" font-size="72" fill="#09799f" text-anchor="middle" font-weight="800">2</text>
+  <text x="360" y="140" font-family="system-ui" font-size="64" fill="#9dc9d9" text-anchor="middle" font-weight="800" opacity="0.5">1</text>
+
+  <!-- Record button ready -->
+  <circle cx="240" cy="200" r="28" fill="#db2428" stroke="#b91c1c" stroke-width="2"/>
+  <circle cx="240" cy="200" r="12" fill="#fff"/>
+
+  <!-- Chipmunk nervous/excited, ready -->
+  <g id="character">
+    <path d="M310 350 Q345 320 355 280 Q360 255 335 260" fill="none" stroke="#c48a5a" stroke-width="9" stroke-linecap="round"/>
+    <path d="M310 350 Q345 320 355 280 Q360 255 335 260" fill="none" stroke="#f5d0a9" stroke-width="5" stroke-linecap="round"/>
+    
+    <ellipse cx="240" cy="330" rx="38" ry="46" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.8"/>
+    <ellipse cx="240" cy="342" rx="22" ry="26" fill="#fce8d0"/>
+    
+    <circle cx="240" cy="260" r="38" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.8"/>
+    <ellipse cx="217" cy="270" rx="11" ry="10" fill="#f8c8a0"/>
+    <ellipse cx="263" cy="270" rx="11" ry="10" fill="#f8c8a0"/>
+    
+    <ellipse cx="214" cy="232" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="214" cy="232" rx="5.5" ry="8" fill="#f8c8a0"/>
+    <ellipse cx="266" cy="232" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="266" cy="232" rx="5.5" ry="8" fill="#f8c8a0"/>
+    
+    <!-- Wide excited eyes -->
+    <ellipse cx="227" cy="256" rx="8" ry="9.5" fill="#fff" stroke="#333" stroke-width="1.3"/>
+    <ellipse cx="253" cy="256" rx="8" ry="9.5" fill="#fff" stroke="#333" stroke-width="1.3"/>
+    <circle cx="228.5" cy="257" r="3.5" fill="#333"/>
+    <circle cx="254.5" cy="257" r="3.5" fill="#333"/>
+    <circle cx="230" cy="255.5" r="1.3" fill="#fff"/>
+    <circle cx="256" cy="255.5" r="1.3" fill="#fff"/>
+    
+    <ellipse cx="240" cy="272" rx="5.5" ry="4" fill="#c48a5a"/>
+    <path d="M228 282 Q240 290 252 282" fill="none" stroke="#c48a5a" stroke-width="1.6" stroke-linecap="round"/>
+    
+    <path d="M212 288 Q240 296 268 288" fill="none" stroke="#09799f" stroke-width="2.3" stroke-linecap="round" opacity="0.85"/>
+    
+    <!-- Hands clasped / ready pose -->
+    <path d="M210 310 Q195 300 200 280" fill="none" stroke="#c48a5a" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M270 310 Q285 300 280 280" fill="none" stroke="#c48a5a" stroke-width="6.5" stroke-linecap="round"/>
+    <circle cx="202" cy="278" r="7" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.2"/>
+    <circle cx="278" cy="278" r="7" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.2"/>
+    
+    <ellipse cx="228" cy="390" rx="10" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="252" cy="390" rx="10" ry="14" fill="#f5d0a9" stroke="#c48a5a" stroke-width="1.5"/>
+    <ellipse cx="228" cy="405" rx="11" ry="5.5" fill="#c48a5a"/>
+    <ellipse cx="252" cy="405" rx="11" ry="5.5" fill="#c48a5a"/>
+  </g>
+</svg>

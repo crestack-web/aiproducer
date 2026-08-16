@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTheme } from "@/lib/theme";
 
 /** Scene keys map to cassette label + copy tone */
@@ -137,6 +137,126 @@ export function StudioMascot({
   );
 }
 
+
+/** Animated 3-2-1 countdown for recordings empty state */
+function RecordingCountdownIllustration({ size = 180 }: { size?: number }) {
+  const [step, setStep] = useState(0); // 0=3, 1=2, 2=1
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setStep((s) => (s + 1) % 3);
+    }, 900);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const active = 3 - step; // 3, 2, 1
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 480 480"
+      width={size}
+      height={size}
+      fill="none"
+      role="img"
+      aria-label={`Countdown ${active}`}
+      style={{ display: "block", maxWidth: "100%", height: "auto" }}
+    >
+      <ellipse cx="240" cy="445" rx="130" ry="16" fill="#eaf4f7" opacity="0.5" />
+
+      {/* Animated countdown numbers — active digit pops */}
+      <g>
+        {[3, 2, 1].map((n) => {
+          const x = n === 3 ? 120 : n === 2 ? 240 : 360;
+          const isActive = n === active;
+          return (
+            <text
+              key={`${n}-${isActive}`}
+              x={x}
+              y={140}
+              textAnchor="middle"
+              fontFamily="system-ui, sans-serif"
+              fontWeight={800}
+              fontSize={isActive ? 80 : 56}
+              fill={isActive ? "#09799f" : "#9dc9d9"}
+              opacity={isActive ? 1 : 0.38}
+              style={{
+                transition: "font-size 0.28s ease, opacity 0.28s ease, fill 0.28s ease",
+              }}
+            >
+              {n}
+            </text>
+          );
+        })}
+      </g>
+
+      {/* Record button — gentle pulse */}
+      <circle cx="240" cy="200" r="28" fill="#db2428" stroke="#b91c1c" strokeWidth="2">
+        <animate attributeName="r" values="26;30;26" dur="1.2s" repeatCount="indefinite" />
+      </circle>
+      <circle cx="240" cy="200" r="12" fill="#fff" />
+
+      <g id="character">
+        <path
+          d="M310 350 Q345 320 355 280 Q360 255 335 260"
+          fill="none"
+          stroke="#c48a5a"
+          strokeWidth="9"
+          strokeLinecap="round"
+        />
+        <path
+          d="M310 350 Q345 320 355 280 Q360 255 335 260"
+          fill="none"
+          stroke="#f5d0a9"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+
+        <ellipse cx="240" cy="330" rx="38" ry="46" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.8" />
+        <ellipse cx="240" cy="342" rx="22" ry="26" fill="#fce8d0" />
+
+        <circle cx="240" cy="260" r="38" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.8" />
+        <ellipse cx="217" cy="270" rx="11" ry="10" fill="#f8c8a0" />
+        <ellipse cx="263" cy="270" rx="11" ry="10" fill="#f8c8a0" />
+
+        <ellipse cx="214" cy="232" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.5" />
+        <ellipse cx="214" cy="232" rx="5.5" ry="8" fill="#f8c8a0" />
+        <ellipse cx="266" cy="232" rx="11" ry="14" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.5" />
+        <ellipse cx="266" cy="232" rx="5.5" ry="8" fill="#f8c8a0" />
+
+        <ellipse cx="227" cy="256" rx="8" ry="9.5" fill="#fff" stroke="#333" strokeWidth="1.3" />
+        <ellipse cx="253" cy="256" rx="8" ry="9.5" fill="#fff" stroke="#333" strokeWidth="1.3" />
+        <circle cx="228.5" cy="257" r="3.5" fill="#333" />
+        <circle cx="254.5" cy="257" r="3.5" fill="#333" />
+        <circle cx="230" cy="255.5" r="1.3" fill="#fff" />
+        <circle cx="256" cy="255.5" r="1.3" fill="#fff" />
+
+        <ellipse cx="240" cy="272" rx="5.5" ry="4" fill="#c48a5a" />
+        <path d="M228 282 Q240 290 252 282" fill="none" stroke="#c48a5a" strokeWidth="1.6" strokeLinecap="round" />
+
+        <path
+          d="M212 288 Q240 296 268 288"
+          fill="none"
+          stroke="#09799f"
+          strokeWidth="2.3"
+          strokeLinecap="round"
+          opacity="0.85"
+        />
+
+        <path d="M210 310 Q195 300 200 280" fill="none" stroke="#c48a5a" strokeWidth="6.5" strokeLinecap="round" />
+        <path d="M270 310 Q285 300 280 280" fill="none" stroke="#c48a5a" strokeWidth="6.5" strokeLinecap="round" />
+        <circle cx="202" cy="278" r="7" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.2" />
+        <circle cx="278" cy="278" r="7" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.2" />
+
+        <ellipse cx="228" cy="390" rx="10" ry="14" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.5" />
+        <ellipse cx="252" cy="390" rx="10" ry="14" fill="#f5d0a9" stroke="#c48a5a" strokeWidth="1.5" />
+        <ellipse cx="228" cy="405" rx="11" ry="5.5" fill="#c48a5a" />
+        <ellipse cx="252" cy="405" rx="11" ry="5.5" fill="#c48a5a" />
+      </g>
+    </svg>
+  );
+}
+
 export function EmptyState({
   scene = "default",
   title,
@@ -162,10 +282,47 @@ export function EmptyState({
     boxShadow: C.cardShadow,
   };
 
+  const illustration =
+    scene === "home" ? (
+      // Home / no projects: walk into the studio
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src="/illustrations/home-empty.svg"
+        alt="Enter the studio"
+        width={size}
+        height={size}
+        style={{ display: "block", maxWidth: "100%", height: "auto" }}
+      />
+    ) : scene === "songs" ? (
+      // Songs empty: new song studio panel + ready mascot
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src="/illustrations/song-empty.svg"
+        alt="Create a new song"
+        width={size}
+        height={size}
+        style={{ display: "block", maxWidth: "100%", height: "auto" }}
+      />
+    ) : scene === "beats" ? (
+      // Beat shelf empty: chipmunk putting on headphones while the instrumental plays
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src="/illustrations/beat-empty.svg"
+        alt="Put on headphones and listen to the beat"
+        width={size}
+        height={size}
+        style={{ display: "block", maxWidth: "100%", height: "auto" }}
+      />
+    ) : scene === "recordings" ? (
+      <RecordingCountdownIllustration size={size} />
+    ) : (
+      <StudioMascot scene={scene} size={size} />
+    );
+
   return (
     <div style={box}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
-        <StudioMascot scene={scene} size={size} />
+        {illustration}
       </div>
       <p style={{ fontWeight: 600, fontSize: 16, margin: "0 0 6px", color: C.text }}>{title}</p>
       {description && (
