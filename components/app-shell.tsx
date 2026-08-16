@@ -226,10 +226,7 @@ export function AppShell({
   };
 
   const mobileAppBar: CSSProperties = {
-    position: "sticky",
-    top: 0,
-    zIndex: 45,
-    display: "none",
+    /* Visibility controlled by .studio-mobile-appbar CSS (hidden on desktop). */
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
@@ -237,7 +234,7 @@ export function AppShell({
     padding: "8px 14px",
     paddingTop: "calc(8px + env(safe-area-inset-top, 0px))",
     borderBottom: `1px solid ${C.border}`,
-    background: mode === "light" ? C.surfaceRaised || C.surface : C.navGlass,
+    background: mode === "light" ? (C.surfaceRaised || C.surface) : (C.navGlass || C.surface || C.bg),
     backdropFilter: "blur(18px)",
     WebkitBackdropFilter: "blur(18px)",
     boxSizing: "border-box",
@@ -296,17 +293,30 @@ export function AppShell({
         }
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
-          .studio-bottom-nav { display: flex !important; }
+          .studio-bottom-nav {
+            display: flex !important;
+            position: fixed !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            z-index: 50 !important;
+          }
           .studio-mobile-appbar {
             display: flex !important;
             visibility: visible !important;
             opacity: 1 !important;
+            position: sticky !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 45 !important;
+            width: 100% !important;
           }
           .studio-main-pad {
-            padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
           }
           .studio-main-pad::after {
-            height: 24px;
+            height: 16px;
           }
         }
       `}</style>
@@ -455,8 +465,9 @@ export function AppShell({
         </header>
 
         {children}
-      <ProductTour open={tour.open} onClose={tour.close} />
       </main>
+
+      <ProductTour open={tour.open} onClose={tour.close} />
 
       <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
         {NAV.map(({ key, label, href, Icon }) => {
