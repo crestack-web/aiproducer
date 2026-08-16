@@ -23,11 +23,6 @@ import {
   type StemRow,
 } from "@/lib/audio/produce-job";
 
-/**
- * Advance a produce job. Safe to call repeatedly.
- * Resumes from persisted stage + mix/master provider_task_ids.
- * Does not re-submit RoEx when a provider_task_id already exists.
- */
 export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number }) {
   const maxWorkMs = opts?.maxWorkMs ?? 25_000;
   const startedAt = Date.now();
@@ -107,13 +102,34 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       stage = "arrange";
 
       const placements: ArrangementPlacement[] = takes.map((t) => {
-        const task = t.recording_tasks;
+        const task = t.recording_tasks as {
+          id?: string;
+          type?: string;
+          start_ms?: number | null;
+          end_ms?: number | null;
+        } | null;
+        const rec = t as TakeRow & {
+          timeline_start_ms?: number | null;
+          timeline_end_ms?: number | null;
+        };
+        const start =
+          typeof rec.timeline_start_ms === "number"
+            ? rec.timeline_start_ms
+            : typeof task?.start_ms === "number"
+              ? task.start_ms
+              : 0;
+        const end =
+          typeof rec.timeline_end_ms === "number"
+            ? rec.timeline_end_ms
+            : typeof task?.end_ms === "number"
+              ? task.end_ms
+              : start + (rec.duration_ms || 0);
         return {
-          recording_id: t.id,
-          task_id: task?.id || t.task_id,
+          recording_id: rec.id,
+          task_id: task?.id || rec.task_id,
           stem_kind: vocalStemKind(task?.type || "lead"),
-          start_ms: task?.start_ms ?? 0,
-          end_ms: task?.end_ms ?? t.duration_ms ?? 0,
+          start_ms: start,
+          end_ms: end,
           gain_db: 0,
         };
       });
@@ -161,7 +177,13 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           duration_ms: rec?.duration_ms,
           order_index: order++,
           source_recording_ids: list.map((l) => l.recording_id),
-          metadata: { placements: list, mock_render: mode === "mock" },
+          metadata: {
+            placements: list,
+            mock_render: mode === "mock",
+            timeline_aligned: true,
+            // Full-song silence pad is metadata-first; ffmpeg pad can be added later.
+            full_song_pad: "metadata_only",
+          },
         });
       }
 
