@@ -31,7 +31,8 @@ type Task = {
   required: boolean;
   start_ms: number | null;
   end_ms: number | null;
-  metadata?: { section_label?: string; vocal_part?: string };
+  section_id?: string | null;
+  metadata?: { section_label?: string; vocal_part?: string; section_id?: string };
 };
 
 type ProjectMeta = {
@@ -45,6 +46,9 @@ type ProjectMeta = {
 
 type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
 type Phase = "ready" | "countdown" | "recording" | "review";
+
+const PRODUCE_POLL_MS = 4000;
+const PRODUCE_MAX_MS = 15 * 60 * 1000; // 15 minutes
 
 function humanTitle(type: string) {
   const t = (type || "").toLowerCase();
@@ -83,6 +87,7 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [producerTip, setProducerTip] = useState<string | null>(null);
   const [producing, setProducing] = useState(false);
+  const [produceStage, setProduceStage] = useState<string | null>(null);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
@@ -105,11 +110,22 @@ export default function ProjectDetailPage() {
   const resumedRef = useRef(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const autoStoppedRef = useRef(false);
+  const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const produceStartedAtRef = useRef(0);
+  const produceActiveRef = useRef(false);
 
   const current =
     tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
   const isRetake = current ? isTaskDone(current) : false;
   const sectionMs = current ? sectionDurationMs(current) : null;
+
+  function clearProducePoll() {
+    if (producePollRef.current) {
+      clearTimeout(producePollRef.current);
+      producePollRef.current = null;
+    }
+    produceActiveRef.current = false;
+  }
 
   async function markRecordingStatus() {
     try {
@@ -138,6 +154,83 @@ export default function ProjectDetailPage() {
     setScreen("session");
     void markRecordingStatus();
   }
+
+  const pollProduceOnce = useCallback(async (): Promise<
+    "complete" | "failed" | "pending" | "error"
+  > => {
+    try {
+      const sr = await fetch(`/api/projects/${id}/status`);
+      const st = await sr.json().catch(() => ({}));
+      if (!sr.ok) return "error";
+
+      if (st.project) setProject(st.project);
+      const jobs = (st.jobs || []) as { type?: string; status?: string; stage?: string; error?: string }[];
+      const produceJob =
+        jobs.find((j) => j.type === "PRODUCE_SONG") ||
+        jobs.find((j) => (j.status || "").includes("process"));
+
+      if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+
+      const jobStatus = (produceJob?.status || "").toLowerCase();
+      const projectStatus = String(st.project?.status || "").toLowerCase();
+
+      if (jobStatus === "failed" || projectStatus === "failed") {
+        setError(produceJob?.error || "Produce failed");
+        return "failed";
+      }
+
+      // Complete only when job is complete AND we have a CryoMix storage signed URL
+      if (
+        (jobStatus === "complete" || projectStatus === "complete") &&
+        st.master_url &&
+        st.master?.audio_path &&
+        !String(st.master.audio_path).startsWith("http")
+      ) {
+        setMasterUrl(st.master_url);
+        return "complete";
+      }
+
+      if (jobStatus === "complete" && st.master_url) {
+        setMasterUrl(st.master_url);
+        return "complete";
+      }
+
+      return "pending";
+    } catch {
+      return "error";
+    }
+  }, [id]);
+
+  const scheduleProducePoll = useCallback(() => {
+    clearProducePoll();
+    produceActiveRef.current = true;
+    const tick = async () => {
+      if (!produceActiveRef.current) return;
+      if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
+        setProducing(false);
+        setError("Produce timed out. Refresh the page — if the job is still running it will resume.");
+        produceActiveRef.current = false;
+        return;
+      }
+      const result = await pollProduceOnce();
+      if (result === "complete") {
+        setProducing(false);
+        setProduceStage("complete");
+        setScreen("done");
+        produceActiveRef.current = false;
+        return;
+      }
+      if (result === "failed") {
+        setProducing(false);
+        setScreen("assemble");
+        produceActiveRef.current = false;
+        return;
+      }
+      if (!produceActiveRef.current) return;
+      producePollRef.current = setTimeout(tick, PRODUCE_POLL_MS);
+    };
+    producePollRef.current = setTimeout(tick, 800);
+  }, [pollProduceOnce]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,10 +261,21 @@ export default function ProjectDetailPage() {
           setProject(st.project);
         }
         if (st.master_url) setMasterUrl(st.master_url);
+
+        const jobs = (st.jobs || []) as { type?: string; status?: string; stage?: string }[];
+        const produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+        const js = (produceJob?.status || "").toLowerCase();
+        if (js === "queued" || js === "processing") {
+          setProducing(true);
+          setScreen("assemble");
+          setProduceStage(produceJob?.stage || "processing");
+          produceStartedAtRef.current = Date.now();
+          scheduleProducePoll();
+        }
       }
       if (loadedProject && !resumedRef.current) {
         const next = screenForStatus(loadedProject.status, loadedTasks.length > 0);
-        if (next) {
+        if (next && !produceActiveRef.current) {
           setScreen(next);
           if (next === "session" && loadedTasks.length > 0) {
             const open =
@@ -188,7 +292,7 @@ export default function ProjectDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, scheduleProducePoll]);
 
   useEffect(() => {
     load();
@@ -199,6 +303,7 @@ export default function ProjectDetailPage() {
       if (countdownRef.current) clearInterval(countdownRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
       if (sectionStopRef.current) clearTimeout(sectionStopRef.current);
+      clearProducePoll();
     };
   }, []);
 
@@ -318,7 +423,6 @@ export default function ProjectDetailPage() {
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
       setRecordSeconds(Math.floor(elapsed / 1000));
-      // Safety: also stop from the tick if section length is known
       if (limitMs != null && elapsed >= limitMs && !autoStoppedRef.current) {
         autoStoppedRef.current = true;
         clearRecordTimers();
@@ -329,7 +433,6 @@ export default function ProjectDetailPage() {
       }
     }, 100);
 
-    // Primary auto-stop at exact section end
     if (limitMs != null) {
       sectionStopRef.current = setTimeout(() => {
         if (autoStoppedRef.current) return;
@@ -491,15 +594,25 @@ export default function ProjectDetailPage() {
   async function startProduce() {
     setProducing(true);
     setError(null);
+    setProduceStage("queued");
+    setScreen("assemble");
     try {
       const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
-      if (j.master_url) setMasterUrl(j.master_url);
-      setScreen("done");
+
+      // 202 = job started — NOT done. Poll until complete + CryoMix master path.
+      if (j.master_url && res.status === 200 && j.status === "complete") {
+        setMasterUrl(j.master_url);
+        setProducing(false);
+        setScreen("done");
+        return;
+      }
+
+      produceStartedAtRef.current = Date.now();
+      scheduleProducePoll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Produce failed");
-    } finally {
       setProducing(false);
     }
   }
@@ -710,10 +823,20 @@ export default function ProjectDetailPage() {
         {screen === "assemble" && (
           <div style={wrap}>
             {producing ? (
-              <PlayerLoadingState title="Producing" subtitle="Mix & master…" seed={`produce-${id}`} />
+              <>
+                <PlayerLoadingState
+                  title="Producing"
+                  subtitle={produceStage ? `Stage: ${produceStage}` : "Mix & master (preview)…"}
+                  seed={`produce-${id}`}
+                />
+                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12 }}>
+                  This can take a few minutes. You can refresh — progress will resume.
+                </p>
+              </>
             ) : (
               <>
                 <h1 style={{ ...title, textAlign: "center" }}>Ready to produce</h1>
+                {error && <p style={{ color: C.danger, textAlign: "center" }}>{error}</p>}
                 <ProjectSamplesPanel projectId={id} />
                 <button type="button" style={{ ...btn, marginTop: 20 }} onClick={startProduce}>
                   Produce my song
@@ -728,9 +851,12 @@ export default function ProjectDetailPage() {
             <h1 style={{ ...title, textAlign: "center" }}>Your song is ready</h1>
             {masterUrl && <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed="master" accent="signal" />}
             {!masterUrl && (
-              <button type="button" style={btn} onClick={startProduce}>
-                Produce my song
-              </button>
+              <>
+                <p style={{ textAlign: "center", color: C.textMuted }}>Master not ready yet.</p>
+                <button type="button" style={btn} onClick={startProduce}>
+                  Produce my song
+                </button>
+              </>
             )}
           </div>
         )}
