@@ -7,6 +7,7 @@ import {
   enhanceBlueprintWithMistral,
   isMistralConfigured,
 } from "@/lib/ai/mistral-producer";
+import { timeRangeToBarRange, parseTimeSignature } from "@/lib/audio/timing";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -19,16 +20,6 @@ const SESSION_READY_STATUSES = new Set([
   "complete",
 ]);
 
-/**
- * POST /api/projects/:id/analyze
- *
- * 1) Song blueprint (sections) — timed from measured duration when available
- * 2) Production blueprint (ProductionTasks via ProductionPlanner)
- * 3) Optional Mistral pass — warm, plain-language instruction rewrite
- *
- * If a blueprint already exists (tasks saved + status past analyze), return it
- * so reopening a project never regenerates the plan.
- */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -47,7 +38,6 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // —— Resume path: keep existing saved blueprint ——
   const { data: existingTasks } = await supabase
     .from("recording_tasks")
     .select("*")
@@ -200,20 +190,43 @@ export async function POST(_req: Request, ctx: Ctx) {
     await supabase.from("recording_tasks").delete().eq("project_id", projectId);
     await supabase.from("song_sections").delete().eq("project_id", projectId);
 
-    const sectionRows = songSections.map((s) => ({
-      project_id: projectId,
-      type: s.type,
-      label: s.label,
-      start_ms: s.start_ms,
-      end_ms: s.end_ms,
-      order_index: s.order_index,
-      energy: s.energy,
-      metadata: {
-        role: s.role,
-        timed_from: analysis.source,
-        bpm: analysis.bpm,
-      },
-    }));
+    const bpmForBars = analysis.bpm ? Number(analysis.bpm) : null;
+    const ts = parseTimeSignature(
+      (project as { time_signature?: string }).time_signature ||
+        (beat as { time_signature?: string }).time_signature ||
+        "4/4"
+    );
+    const sectionRows = songSections.map((s) => {
+      let start_bar: number | null = null;
+      let end_bar: number | null = null;
+      if (bpmForBars && bpmForBars > 0) {
+        try {
+          const bars = timeRangeToBarRange(s.start_ms, s.end_ms, bpmForBars, ts);
+          start_bar = bars.start_bar;
+          end_bar = bars.end_bar;
+        } catch {
+          /* BPM invalid */
+        }
+      }
+      return {
+        project_id: projectId,
+        type: s.type,
+        label: s.label,
+        start_ms: s.start_ms,
+        end_ms: s.end_ms,
+        order_index: s.order_index,
+        energy: s.energy,
+        start_bar,
+        end_bar,
+        metadata: {
+          role: s.role,
+          timed_from: analysis.source,
+          bpm: analysis.bpm,
+          start_bar,
+          end_bar,
+        },
+      };
+    });
 
     const { data: insertedSections, error: sErr } = await supabase
       .from("song_sections")
@@ -255,7 +268,9 @@ export async function POST(_req: Request, ctx: Ctx) {
     }
 
     const taskRows = production.tasks.map((t) => {
-      const dbSec = sectionByOrder.get(t.section_order);
+      const dbSec = sectionByOrder.get(t.section_order) as
+        | { id?: string; start_bar?: number | null; end_bar?: number | null }
+        | undefined;
       return {
         project_id: projectId,
         section_id: dbSec?.id ?? null,
@@ -274,6 +289,10 @@ export async function POST(_req: Request, ctx: Ctx) {
           section_type: t.section_type,
           production_type: t.type,
           depends_on_type: t.depends_on_type,
+          start_bar: dbSec?.start_bar ?? null,
+          end_bar: dbSec?.end_bar ?? null,
+          timeline_start_ms: t.start_ms,
+          timeline_end_ms: t.end_ms,
         },
       };
     });
@@ -285,7 +304,6 @@ export async function POST(_req: Request, ctx: Ctx) {
 
     if (tErr) throw tErr;
 
-    // Keep project tempo in sync with measured BPM
     await supabase
       .from("projects")
       .update({
