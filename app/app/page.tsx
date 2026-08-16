@@ -16,6 +16,7 @@ const C = {
   text: "#F4F1EC",
   textMuted: "#9B96A3",
   textFaint: "#5C5866",
+  danger: "#E8756A",
 };
 
 type Project = { id: string; title: string; status: string; genre: string | null; mood: string | null; updated_at: string };
@@ -61,6 +62,7 @@ function AppInner() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("home");
   const [libraryTab, setLibraryTab] = useState<"songs" | "beats" | "recordings">("songs");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -92,6 +94,25 @@ function AppInner() {
   async function signOut() {
     await createClient().auth.signOut();
     router.replace("/");
+  }
+
+  async function deleteProject(projectId: string, title: string) {
+    if (deletingId) return;
+    const ok = window.confirm(`Delete “${title || "this project"}”? This cannot be undone.`);
+    if (!ok) return;
+    setDeletingId(projectId);
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || "Could not delete");
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   function go(key: string) {
@@ -152,6 +173,39 @@ function AppInner() {
     whiteSpace: "nowrap",
   };
   const rowAction: React.CSSProperties = { color: C.brass, fontSize: 13, fontWeight: 600, flexShrink: 0 };
+
+  function ProjectRow({ p, meta }: { p: Project; meta: string }) {
+    return (
+      <div style={rowStyle}>
+        <Link href={`/app/studio/${p.id}`} style={{ ...rowBody, textDecoration: "none", color: "inherit" }}>
+          <div style={rowTitle}>{p.title}</div>
+          <div style={rowMeta}>{meta}</div>
+        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <Link href={`/app/studio/${p.id}`} style={{ ...rowAction, textDecoration: "none" }}>
+            Open
+          </Link>
+          <button
+            type="button"
+            disabled={deletingId === p.id}
+            onClick={() => deleteProject(p.id, p.title)}
+            style={{
+              background: "none",
+              border: "none",
+              color: C.textFaint,
+              fontSize: 12,
+              cursor: deletingId === p.id ? "wait" : "pointer",
+              fontFamily: "inherit",
+              padding: 0,
+            }}
+            aria-label={`Delete ${p.title}`}
+          >
+            {deletingId === p.id ? "…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={S.shell}>
@@ -223,15 +277,11 @@ function AppInner() {
                   <p style={{ color: C.textMuted, fontSize: 14 }}>No songs yet — start from Studio.</p>
                 )}
                 {projects.slice(0, 12).map((p) => (
-                  <Link key={p.id} href={`/app/studio/${p.id}`} style={rowStyle}>
-                    <div style={rowBody}>
-                      <div style={rowTitle}>{p.title}</div>
-                      <div style={rowMeta}>
-                        {p.status} · {[p.genre, p.mood].filter(Boolean).join(" · ")}
-                      </div>
-                    </div>
-                    <span style={rowAction}>Open</span>
-                  </Link>
+                  <ProjectRow
+                    key={p.id}
+                    p={p}
+                    meta={`${p.status} · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`}
+                  />
                 ))}
               </div>
             </>
@@ -273,15 +323,11 @@ function AppInner() {
                   {projects
                     .filter((p) => p.status === "complete")
                     .map((p) => (
-                      <Link key={p.id} href={`/app/studio/${p.id}`} style={rowStyle}>
-                        <div style={rowBody}>
-                          <div style={rowTitle}>{p.title}</div>
-                          <div style={rowMeta}>
-                            Song ready · {[p.genre, p.mood].filter(Boolean).join(" · ")}
-                          </div>
-                        </div>
-                        <span style={rowAction}>Open</span>
-                      </Link>
+                      <ProjectRow
+                        key={p.id}
+                        p={p}
+                        meta={`Song ready · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`}
+                      />
                     ))}
                 </div>
               )}
@@ -292,15 +338,11 @@ function AppInner() {
                     <p style={{ color: C.textMuted, fontSize: 14 }}>No beats yet — create or upload one in Studio.</p>
                   )}
                   {projects.map((p) => (
-                    <Link key={p.id} href={`/app/studio/${p.id}`} style={rowStyle}>
-                      <div style={rowBody}>
-                        <div style={rowTitle}>{p.title}</div>
-                        <div style={rowMeta}>
-                          Beat · {[p.genre, p.mood].filter(Boolean).join(" · ") || p.status}
-                        </div>
-                      </div>
-                      <span style={rowAction}>Open</span>
-                    </Link>
+                    <ProjectRow
+                      key={p.id}
+                      p={p}
+                      meta={`Beat · ${[p.genre, p.mood].filter(Boolean).join(" · ") || p.status}`}
+                    />
                   ))}
                 </div>
               )}
@@ -331,13 +373,7 @@ function AppInner() {
                       ["recording", "in_progress", "blueprint_ready", "complete", "beat_ready"].includes(p.status)
                     )
                     .map((p) => (
-                      <Link key={p.id} href={`/app/studio/${p.id}`} style={rowStyle}>
-                        <div style={rowBody}>
-                          <div style={rowTitle}>{p.title}</div>
-                          <div style={rowMeta}>Session · {p.status}</div>
-                        </div>
-                        <span style={rowAction}>Open</span>
-                      </Link>
+                      <ProjectRow key={p.id} p={p} meta={`Session · ${p.status}`} />
                     ))}
                 </div>
               )}
