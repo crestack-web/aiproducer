@@ -65,6 +65,17 @@ function humanTitle(type: string) {
   return "Lead vocal";
 }
 
+function screenForStatus(status: string, hasTasks: boolean): Screen | null {
+  const s = (status || "").toLowerCase();
+  if (s === "complete" || s === "produced" || s === "done") return "done";
+  if (s === "processing" || s === "mixing" || s === "mastering") return "assemble";
+  if (s === "recording" || s === "in_progress") return hasTasks ? "session" : "plan";
+  if (s === "blueprint_ready" || s === "ready" || s === "planned") return hasTasks ? "plan" : "beat";
+  if (s === "analyzing") return "analyzing";
+  if (s === "beat_ready" || s === "draft" || s === "generating_beat" || s === "failed") return "beat";
+  return null;
+}
+
 export default function ProjectDetailPage() {
   const id = useParams().id as string;
   const [project, setProject] = useState<ProjectMeta | null>(null);
@@ -93,9 +104,26 @@ export default function ProjectDetailPage() {
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const startedAtRef = useRef(0);
   const mimeRef = useRef("audio/webm");
+  const resumedRef = useRef(false);
 
   const current = tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
   const isRetake = current ? isTaskDone(current) : false;
+
+  async function markRecordingStatus() {
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "recording" }),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        if (j.project) setProject(j.project);
+      }
+    } catch {
+      /* non-blocking */
+    }
+  }
 
   function selectTask(taskId: string) {
     if (phase === "recording" || phase === "countdown") return;
@@ -105,6 +133,7 @@ export default function ProjectDetailPage() {
     setActiveTaskId(taskId);
     setPhase("ready");
     setScreen("session");
+    void markRecordingStatus();
   }
 
   const requiredLeft = requiredOpen(tasks);
@@ -119,17 +148,42 @@ export default function ProjectDetailPage() {
         fetch(`/api/projects/${id}/beat`),
         fetch(`/api/projects/${id}/recording-tasks`),
       ]);
+      let loadedProject: ProjectMeta | null = null;
+      let loadedTasks: Task[] = [];
       if (pr.ok) {
         const j = await pr.json();
-        setProject(j.project || j);
+        loadedProject = j.project || j;
+        setProject(loadedProject);
       }
       if (br.ok) setBeatUrl((await br.json()).audio_url || null);
-      if (tr.ok) setTasks((await tr.json()).tasks || []);
+      if (tr.ok) {
+        loadedTasks = (await tr.json()).tasks || [];
+        setTasks(loadedTasks);
+      }
       const sr = await fetch(`/api/projects/${id}/status`);
       if (sr.ok) {
         const st = await sr.json();
-        if (st.project) setProject(st.project);
+        if (st.project) {
+          loadedProject = st.project;
+          setProject(st.project);
+        }
         if (st.master_url) setMasterUrl(st.master_url);
+      }
+
+      // Resume into the right step from saved blueprint / session status
+      if (loadedProject && !resumedRef.current) {
+        const next = screenForStatus(loadedProject.status, loadedTasks.length > 0);
+        if (next) {
+          setScreen(next);
+          if (next === "session" && loadedTasks.length > 0) {
+            const open =
+              loadedTasks.find((t) => isTaskOpen(t) && t.required) ||
+              loadedTasks.find((t) => isTaskOpen(t)) ||
+              null;
+            if (open) setActiveTaskId(open.id);
+          }
+          resumedRef.current = true;
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
@@ -143,11 +197,15 @@ export default function ProjectDetailPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!project) return;
-    if (project.status === "ready" || project.status === "planned") setScreen("plan");
-    if (project.status === "recording" || project.status === "in_progress") setScreen("session");
-    if (project.status === "produced" || project.status === "done") setScreen("done");
-  }, [project?.status]);
+    if (!project || loading) return;
+    // Only auto-route when status changes after initial resume (e.g. after analyze)
+    const next = screenForStatus(project.status, tasks.length > 0);
+    if (!next) return;
+    if (project.status === "blueprint_ready" && tasks.length > 0 && screen === "analyzing") {
+      setScreen("plan");
+    }
+    if (project.status === "complete" && screen !== "done") setScreen("done");
+  }, [project?.status, tasks.length, loading]);
 
   useEffect(() => {
     return () => {
@@ -157,6 +215,11 @@ export default function ProjectDetailPage() {
   }, []);
 
   async function startProducerSession() {
+    // If blueprint already exists, jump to plan without regenerating
+    if (tasks.length > 0 && ["blueprint_ready", "recording", "processing", "mixing", "mastering", "complete"].includes(project?.status || "")) {
+      setScreen("plan");
+      return;
+    }
     setAnalyzing(true);
     setError(null);
     setScreen("analyzing");
@@ -168,6 +231,9 @@ export default function ProjectDetailPage() {
       if (tr.ok) setTasks((await tr.json()).tasks || []);
       const sr = await fetch(`/api/projects/${id}/status`);
       if (sr.ok) setProject((await sr.json()).project);
+      else if (j.project_status) {
+        setProject((p) => (p ? { ...p, status: j.project_status } : p));
+      }
       setScreen("plan");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Analyze failed");
@@ -175,6 +241,14 @@ export default function ProjectDetailPage() {
     } finally {
       setAnalyzing(false);
     }
+  }
+
+  async function enterSession() {
+    const open = requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
+    if (open) setActiveTaskId(open.id);
+    setPhase("ready");
+    setScreen("session");
+    await markRecordingStatus();
   }
 
   async function playSection() {
@@ -236,6 +310,7 @@ export default function ProjectDetailPage() {
         await fetch(`/api/recording-tasks/${task.id}/recordings/${j.recording.id}/select`, {
           method: "POST",
         }).catch(() => undefined);
+        void markRecordingStatus();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Save failed");
         setSavedRecordingId(null);
@@ -271,6 +346,7 @@ export default function ProjectDetailPage() {
       setMicStream(stream);
       setCountdown(3);
       setPhase("countdown");
+      void markRecordingStatus();
 
       if (beatAudioRef.current && beatUrl) {
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
@@ -461,7 +537,7 @@ export default function ProjectDetailPage() {
               />
             )}
             <button type="button" style={{ ...btn, marginTop: 18 }} disabled={analyzing || !beatUrl} onClick={startProducerSession}>
-              {analyzing ? "Analyzing…" : "Start with AI Producer"}
+              {analyzing ? "Analyzing…" : tasks.length > 0 ? "Continue plan" : "Start with AI Producer"}
             </button>
           </div>
         )}
@@ -487,16 +563,7 @@ export default function ProjectDetailPage() {
             </p>
             <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
             <ProjectSamplesPanel projectId={id} />
-            <button
-              type="button"
-              style={{ ...btn, marginTop: 20 }}
-              onClick={() => {
-                const open = requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
-                if (open) setActiveTaskId(open.id);
-                setPhase("ready");
-                setScreen("session");
-              }}
-            >
+            <button type="button" style={{ ...btn, marginTop: 20 }} onClick={enterSession}>
               {requiredLeft.length === 0 && optionalLeft.length === 0
                 ? "Review takes"
                 : requiredLeft.length === 0
