@@ -22,6 +22,8 @@ import {
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
 import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
+import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
+import { canProduce, type PlanMode } from "@/lib/plan";
 
 type Task = {
   id: string;
@@ -97,6 +99,7 @@ export default function ProjectDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const [planMode, setPlanMode] = useState<PlanMode>("ai");
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
@@ -282,6 +285,19 @@ export default function ProjectDetailPage() {
         loadedTasks = (await tr.json()).tasks || [];
         setTasks(loadedTasks);
       }
+      try {
+        const planRes = await fetch(`/api/projects/${id}/plan`);
+        if (planRes.ok) {
+          const pj = await planRes.json();
+          if (pj.plan_mode) setPlanMode(pj.plan_mode);
+          if (Array.isArray(pj.tasks) && pj.tasks.length) {
+            // Prefer full plan list for editor; session still uses filtered recording-tasks
+            // Keep session tasks from recording-tasks endpoint (active only).
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
       const sr = await fetch(`/api/projects/${id}/status`);
       if (sr.ok) {
         const st = await sr.json();
@@ -382,7 +398,9 @@ export default function ProjectDetailPage() {
   }
 
   async function enterSession() {
-    const open = requiredOpen(tasks)[0] || optionalOpen(tasks)[0] || tasks[0];
+    const open =
+      tasks.find((t) => t.status === "pending" || t.status === "in_progress") ||
+      tasks[0];
     if (open) setActiveTaskId(open.id);
     setPhase("ready");
     setScreen("session");
@@ -674,6 +692,23 @@ export default function ProjectDetailPage() {
   }
 
   async function startProduce() {
+    const gate = canProduce(
+      tasks.map((t) => ({
+        id: t.id,
+        type: t.type,
+        status: t.status,
+        required: t.required,
+        start_ms: t.start_ms,
+        end_ms: t.end_ms,
+        active: true,
+        selected_in_plan: true,
+      }))
+    );
+    if (!gate.ok) {
+      setError(gate.reason || "Record at least one selected part before Produce.");
+      setScreen("assemble");
+      return;
+    }
     setProducing(true);
     setError(null);
     setProduceStage("queued");
@@ -778,21 +813,59 @@ export default function ProjectDetailPage() {
         {screen === "plan" && (
           <div style={wrap}>
             <h1 style={titleStyle}>Song plan</h1>
+            <p style={{ color: C.textMuted, fontSize: 14, marginTop: 4 }}>
+              AI suggests. You decide. Only parts you keep are in your active plan.
+            </p>
+            <PlanEditor
+              projectId={id}
+              tasks={tasks as PlanEditorTask[]}
+              planMode={planMode}
+              onModeChange={setPlanMode}
+              onTasksChange={(next) => {
+                setTasks(
+                  next
+                    .filter((t) => t.active !== false && t.selected_in_plan !== false)
+                    .map((t) => ({
+                      id: t.id,
+                      type: t.type,
+                      title: t.title,
+                      instruction: t.instruction || "",
+                      reason: t.reason,
+                      status: t.status,
+                      required: Boolean(t.required),
+                      start_ms: t.start_ms,
+                      end_ms: t.end_ms,
+                      section_id: t.section_id,
+                      metadata: t.metadata as Task["metadata"],
+                    }))
+                );
+                // Refresh session list from active plan endpoint
+                void fetch(`/api/projects/${id}/recording-tasks`)
+                  .then((r) => r.json())
+                  .then((j) => {
+                    if (Array.isArray(j.tasks)) setTasks(j.tasks);
+                  })
+                  .catch(() => undefined);
+              }}
+            />
             <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
             <ProjectSamplesPanel projectId={id} />
-            <button type="button" style={{ ...btn, marginTop: 20 }} onClick={enterSession}>
+            <button
+              type="button"
+              style={{ ...btn, marginTop: 20 }}
+              onClick={enterSession}
+              disabled={tasks.filter((t) => t.status !== "skipped").length === 0}
+            >
               Start recording
             </button>
-            {optionalOpen(tasks).length > 0 && requiredOpen(tasks).length === 0 && (
+            {tasks.some((t) => t.status === "pending" || t.status === "in_progress") && (
               <button
                 type="button"
                 style={{ ...btn2, marginTop: 10 }}
                 disabled={skipping}
                 onClick={() => void skipAllOptional()}
               >
-                {skipping
-                  ? "Skipping…"
-                  : `Skip all optional (${optionalOpen(tasks).length}) and continue`}
+                {skipping ? "Skipping…" : "Skip remaining optional parts"}
               </button>
             )}
           </div>
@@ -909,6 +982,42 @@ export default function ProjectDetailPage() {
                 <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId} onClick={keepAndContinue}>
                   {uploading ? "Saving…" : "Keep take"}
                 </button>
+                {savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (
+                  <button
+                    type="button"
+                    style={{ ...btn2, marginTop: 8 }}
+                    disabled={uploading || skipping}
+                    onClick={() => {
+                      void (async () => {
+                        keepAndContinue();
+                        try {
+                          await fetch(`/api/projects/${id}/plan`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              action: "add",
+                              task: {
+                                type: "DOUBLE",
+                                title: "Double",
+                                instruction: "Sing the same line again, matching your lead as closely as you can.",
+                                start_ms: current.start_ms ?? 0,
+                                end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
+                                section_id: current.section_id,
+                                section_label: current.metadata?.section_label,
+                              },
+                            }),
+                          });
+                          const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+                          if (tr.ok) setTasks((await tr.json()).tasks || []);
+                        } catch {
+                          /* non-fatal */
+                        }
+                      })();
+                    }}
+                  >
+                    Add a double (optional)
+                  </button>
+                )}
                 <button
                   type="button"
                   style={{ ...btn2, marginTop: 8 }}
@@ -922,6 +1031,19 @@ export default function ProjectDetailPage() {
                 >
                   Record again
                 </button>
+                {savedRecordingId && (
+                  <button
+                    type="button"
+                    style={{ ...btn2, marginTop: 8 }}
+                    disabled={uploading}
+                    onClick={() => {
+                      if (savedRecordingId) keepAndContinue();
+                      setScreen("assemble");
+                    }}
+                  >
+                    I&apos;m done — preview song
+                  </button>
+                )}
               </div>
             )}
           </div>

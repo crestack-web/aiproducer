@@ -298,6 +298,6 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
   }
 
   await supabase.from("projects").update({ status: "processing" }).eq("id", projectId);
-  logProduce({ event: "enqueued", jobId: job.id, projectId, mode, status: "queued" });
+  logProduce({ event: "enqueued", jobId: job.id, projectId, mode, status: "queued", active_artist_plan: true });
   return { job_id: job.id, status: job.status, deduped: false, recording_count: rows.length };
 }

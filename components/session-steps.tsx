@@ -9,6 +9,9 @@ export type SessionTask = {
   instruction: string;
   status: string;
   required: boolean;
+  recommendation?: string | null;
+  active?: boolean | null;
+  selected_in_plan?: boolean | null;
   metadata?: { section_label?: string; vocal_part?: string };
 };
 
@@ -32,12 +35,28 @@ export function isTaskDone(t: SessionTask) {
   return t.status === "completed" || t.status === "skipped";
 }
 
+/** @deprecated AI recommended ≠ required. Prefer activePlanOpen from plan helpers. */
 export function requiredOpen(tasks: SessionTask[]) {
-  return tasks.filter((t) => t.required && isTaskOpen(t));
+  // Treat recommended/required as "suggested priority" for ordering only — never blocks produce
+  return tasks.filter(
+    (t) =>
+      isTaskOpen(t) &&
+      (t.required ||
+        (t as SessionTask & { recommendation?: string }).recommendation === "recommended")
+  );
 }
 
 export function optionalOpen(tasks: SessionTask[]) {
-  return tasks.filter((t) => !t.required && isTaskOpen(t));
+  return tasks.filter((t) => {
+    const rec = (t as SessionTask & { recommendation?: string }).recommendation;
+    const isRec = t.required || rec === "recommended";
+    return !isRec && isTaskOpen(t);
+  });
+}
+
+/** All open tasks in the current session list (active plan only is already filtered by API). */
+export function allOpen(tasks: SessionTask[]) {
+  return tasks.filter(isTaskOpen);
 }
 
 export function SessionSteps({
@@ -395,8 +414,8 @@ export function SessionSteps({
                         : "Done"
                       : active
                         ? "Now"
-                        : t.required
-                          ? "Req"
+                        : t.required || t.recommendation === "recommended"
+                          ? "AI"
                           : "Opt"}
                   </span>
                 </span>

@@ -327,6 +327,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       const dbSec = sectionByOrder.get(t.section_order) as
         | { id?: string; start_bar?: number | null; end_bar?: number | null }
         | undefined;
+      const recommendation = t.required ? "recommended" : "optional";
       return {
         project_id: projectId,
         section_id: dbSec?.id ?? null,
@@ -336,9 +337,14 @@ export async function POST(_req: Request, ctx: Ctx) {
         reason: t.reason,
         start_ms: t.start_ms,
         end_ms: t.end_ms,
-        required: t.required,
+        // required never blocks produce — AI signal lives in recommendation
+        required: false,
         priority: t.priority,
         status: "pending",
+        active: true,
+        selected_in_plan: true,
+        plan_source: "ai",
+        recommendation,
         metadata: {
           ...t.metadata,
           section_label: t.section_label,
@@ -349,6 +355,7 @@ export async function POST(_req: Request, ctx: Ctx) {
           end_bar: dbSec?.end_bar ?? null,
           timeline_start_ms: t.start_ms,
           timeline_end_ms: t.end_ms,
+          ai_required_hint: t.required,
         },
       };
     });
@@ -363,9 +370,20 @@ export async function POST(_req: Request, ctx: Ctx) {
       if (tErr) {
         const msg = errMessage(tErr);
         // Fallback if title/reason columns missing
-        if (/title|reason|column/i.test(msg)) {
-          console.warn("recording_tasks insert with title/reason failed, retrying minimal", msg);
-          const minimal = taskRows.map(({ title: _t, reason: _r, ...rest }) => rest);
+        if (/title|reason|column|active|selected_in_plan|plan_source|recommendation/i.test(msg)) {
+          console.warn("recording_tasks insert failed, retrying without new plan columns", msg);
+          const minimal = taskRows.map((row) => {
+            const {
+              title: _t,
+              reason: _r,
+              active: _a,
+              selected_in_plan: _s,
+              plan_source: _p,
+              recommendation: _rec,
+              ...rest
+            } = row as typeof row & Record<string, unknown>;
+            return rest;
+          });
           const retry = await supabase.from("recording_tasks").insert(minimal).select();
           if (retry.error) throw retry.error;
           insertedTasks = retry.data;
@@ -377,11 +395,41 @@ export async function POST(_req: Request, ctx: Ctx) {
       }
     }
 
+    const aiPlanSnapshot = {
+      version: 1,
+      created_at: new Date().toISOString(),
+      energy_curve: production.energy_curve,
+      notes: production.notes,
+      tasks: (insertedTasks || []).map((t: Record<string, unknown>) => ({
+        id: t.id,
+        type: t.type,
+        title: t.title,
+        instruction: t.instruction,
+        reason: t.reason,
+        start_ms: t.start_ms,
+        end_ms: t.end_ms,
+        section_id: t.section_id,
+        priority: t.priority,
+        recommendation: t.recommendation,
+        metadata: t.metadata,
+      })),
+    };
+
+    const prevMeta =
+      project.metadata && typeof project.metadata === "object"
+        ? (project.metadata as Record<string, unknown>)
+        : {};
+
     await supabase
       .from("projects")
       .update({
         status: "blueprint_ready",
         tempo: analysis.bpm ? Math.round(Number(analysis.bpm)) : project.tempo,
+        metadata: {
+          ...prevMeta,
+          plan_mode: "ai",
+          ai_plan: aiPlanSnapshot,
+        },
       })
       .eq("id", projectId);
 
