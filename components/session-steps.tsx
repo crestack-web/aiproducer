@@ -1,5 +1,6 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useTheme } from "@/lib/theme";
 
 export type SessionTask = {
   id: string;
@@ -9,17 +10,6 @@ export type SessionTask = {
   status: string;
   required: boolean;
   metadata?: { section_label?: string; vocal_part?: string };
-};
-
-const C = {
-  surface: "rgba(255,255,255,0.045)",
-  border: "rgba(255,255,255,0.09)",
-  brass: "#E7A961",
-  brassSoft: "rgba(231,169,97,0.15)",
-  signal: "#7BEBD4",
-  text: "#F4F1EC",
-  textMuted: "#9B96A3",
-  textFaint: "#5C5866",
 };
 
 function humanTitle(type: string) {
@@ -63,6 +53,7 @@ export function SessionSteps({
   compact?: boolean;
   onSelect: (taskId: string) => void;
 }) {
+  const { colors: C, mode } = useTheme();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
@@ -145,7 +136,7 @@ export function SessionSteps({
         style={{
           height: 3,
           borderRadius: 999,
-          background: "rgba(255,255,255,0.06)",
+          background: mode === "light" ? "rgba(55,40,22,0.08)" : "rgba(255,255,255,0.06)",
           overflow: "hidden",
           marginBottom: 10,
         }}
@@ -161,9 +152,7 @@ export function SessionSteps({
         />
       </div>
 
-      {/* Modern section slider */}
       <div style={{ position: "relative" }}>
-        {/* Edge fades */}
         <div
           aria-hidden
           style={{
@@ -174,7 +163,10 @@ export function SessionSteps({
             bottom: 14,
             width: 28,
             zIndex: 2,
-            background: "linear-gradient(90deg, rgba(11,10,15,0.92), transparent)",
+            background:
+              mode === "light"
+                ? "linear-gradient(90deg, rgba(250,246,240,0.95), transparent)"
+                : "linear-gradient(90deg, rgba(11,10,15,0.92), transparent)",
             opacity: canLeft ? 1 : 0,
             transition: "opacity 0.2s ease",
           }}
@@ -189,13 +181,15 @@ export function SessionSteps({
             bottom: 14,
             width: 28,
             zIndex: 2,
-            background: "linear-gradient(270deg, rgba(11,10,15,0.92), transparent)",
+            background:
+              mode === "light"
+                ? "linear-gradient(270deg, rgba(250,246,240,0.95), transparent)"
+                : "linear-gradient(270deg, rgba(11,10,15,0.92), transparent)",
             opacity: canRight ? 1 : 0,
             transition: "opacity 0.2s ease",
           }}
         />
 
-        {/* Desktop chevrons */}
         {canLeft && (
           <button
             type="button"
@@ -211,7 +205,7 @@ export function SessionSteps({
               height: 28,
               borderRadius: 999,
               border: `1px solid ${C.border}`,
-              background: "rgba(18,16,24,0.88)",
+              background: mode === "light" ? "rgba(255,255,255,0.95)" : "rgba(18,16,24,0.88)",
               color: C.text,
               cursor: "pointer",
               display: "grid",
@@ -219,7 +213,7 @@ export function SessionSteps({
               fontSize: 14,
               lineHeight: 1,
               backdropFilter: "blur(8px)",
-              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              boxShadow: mode === "light" ? C.cardShadow : "0 4px 16px rgba(0,0,0,0.35)",
             }}
           >
             ‹
@@ -240,7 +234,7 @@ export function SessionSteps({
               height: 28,
               borderRadius: 999,
               border: `1px solid ${C.border}`,
-              background: "rgba(18,16,24,0.88)",
+              background: mode === "light" ? "rgba(255,255,255,0.95)" : "rgba(18,16,24,0.88)",
               color: C.text,
               cursor: "pointer",
               display: "grid",
@@ -248,7 +242,7 @@ export function SessionSteps({
               fontSize: 14,
               lineHeight: 1,
               backdropFilter: "blur(8px)",
-              boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+              boxShadow: mode === "light" ? C.cardShadow : "0 4px 16px rgba(0,0,0,0.35)",
             }}
           >
             ›
@@ -294,11 +288,9 @@ export function SessionSteps({
                   maxWidth: 168,
                   padding: "11px 13px",
                   borderRadius: 16,
-                  border: active
-                    ? `1px solid ${C.brass}`
-                    : `1px solid ${C.border}`,
+                  border: active ? `1px solid ${C.brass}` : `1px solid ${C.border}`,
                   background: active
-                    ? `linear-gradient(160deg, ${C.brassSoft}, rgba(255,255,255,0.04))`
+                    ? `linear-gradient(160deg, ${C.brassSoft}, ${mode === "light" ? "#fff" : "rgba(255,255,255,0.04)"})`
                     : C.surface,
                   color: C.text,
                   textAlign: "left",
@@ -307,8 +299,12 @@ export function SessionSteps({
                   opacity: done && !active ? 0.72 : 1,
                   scrollSnapAlign: "center",
                   boxShadow: active
-                    ? "0 0 0 1px rgba(231,169,97,0.25), 0 8px 24px rgba(0,0,0,0.25)"
-                    : "0 1px 0 rgba(255,255,255,0.03)",
+                    ? mode === "light"
+                      ? "0 0 0 1px rgba(168,107,31,0.28), 0 8px 20px rgba(40,28,12,0.08)"
+                      : "0 0 0 1px rgba(231,169,97,0.25), 0 8px 24px rgba(0,0,0,0.25)"
+                    : mode === "light"
+                      ? C.cardShadow
+                      : "0 1px 0 rgba(255,255,255,0.03)",
                   transition: "border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease",
                   transform: active ? "translateY(-1px)" : "none",
                 }}
@@ -325,12 +321,16 @@ export function SessionSteps({
                       fontSize: 10,
                       fontWeight: 700,
                       background: done
-                        ? "rgba(61,214,140,0.18)"
+                        ? mode === "light"
+                          ? "rgba(10,138,118,0.12)"
+                          : "rgba(61,214,140,0.18)"
                         : active
                           ? C.brassSoft
-                          : "rgba(255,255,255,0.06)",
+                          : mode === "light"
+                            ? "rgba(55,40,22,0.06)"
+                            : "rgba(255,255,255,0.06)",
                       color: done ? C.signal : active ? C.brass : C.textFaint,
-                      border: `1px solid ${done ? "rgba(61,214,140,0.35)" : active ? C.brass : C.border}`,
+                      border: `1px solid ${done ? "rgba(10,138,118,0.3)" : active ? C.brass : C.border}`,
                     }}
                   >
                     {done ? "✓" : i + 1}
@@ -388,12 +388,11 @@ export function SessionSteps({
           })}
         </div>
 
-        {/* Scroll position pill */}
         <div
           style={{
             height: 3,
             borderRadius: 999,
-            background: "rgba(255,255,255,0.06)",
+            background: mode === "light" ? "rgba(55,40,22,0.08)" : "rgba(255,255,255,0.06)",
             overflow: "hidden",
             marginTop: 2,
             position: "relative",
@@ -409,7 +408,7 @@ export function SessionSteps({
               borderRadius: 999,
               background: `linear-gradient(90deg, ${C.brass}, ${C.signal})`,
               transition: "left 0.12s ease-out",
-              boxShadow: "0 0 8px rgba(231,169,97,0.35)",
+              boxShadow: mode === "light" ? "none" : "0 0 8px rgba(231,169,97,0.35)",
             }}
           />
         </div>
