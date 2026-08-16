@@ -922,7 +922,7 @@ export default function ProjectDetailPage() {
                   <button
                     type="button"
                     style={{ ...btn2, marginTop: 10 }}
-                    disabled={skipping || phase === "recording" || phase === "countdown"}
+                    disabled={skipping}
                     onClick={() => void skipAllOptional()}
                   >
                     {skipping
