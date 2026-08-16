@@ -545,9 +545,11 @@ export default function ProjectDetailPage() {
     border: `1px solid ${C.border}`,
   };
   const wrap: React.CSSProperties = {
-    maxWidth: 480,
+    width: "100%",
+    maxWidth: 920,
     margin: "0 auto",
-    padding: "20px 18px 40px",
+    padding: "28px 20px 40px",
+    boxSizing: "border-box",
     minHeight: "100%",
     background: "transparent",
     color: C.text,
@@ -575,7 +577,7 @@ export default function ProjectDetailPage() {
 
   return (
     <AppShell active="studio" userName="Artist">
-      <div style={{ minHeight: "100%" }}>
+      <div style={{ minHeight: "100%", width: "100%" }}>
         {beatUrl && (
           <audio ref={beatAudioRef} src={beatUrl} preload="auto" style={{ display: "none" }} />
         )}
