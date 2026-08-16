@@ -56,13 +56,6 @@ const NAV: { key: AppNavKey; label: string; href: string; Icon: typeof IconHome 
   { key: "profile", label: "Profile", href: "/app?tab=profile", Icon: IconProfile },
 ];
 
-const SECTION_TITLE: Record<AppNavKey, string> = {
-  home: "Home",
-  studio: "Studio",
-  library: "Library",
-  profile: "Profile",
-};
-
 function resolveActive(pathname: string | null, search: string, forced?: AppNavKey): AppNavKey {
   if (forced) return forced;
   if (pathname?.startsWith("/app/studio") || pathname?.startsWith("/app/projects")) return "studio";
@@ -91,7 +84,6 @@ export function AppShell({
   const { colors: C, mode } = useTheme();
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
-  const sectionTitle = SECTION_TITLE[current] || "Studio";
   const initials = (userName || "A")
     .split(/\s+/)
     .map((w) => w[0])
@@ -222,7 +214,6 @@ export function AppShell({
     WebkitOverflowScrolling: "touch",
   };
 
-  /** Mobile top app bar — visible only ≤899px */
   const mobileAppBar: CSSProperties = {
     position: "sticky",
     top: 0,
@@ -382,7 +373,6 @@ export function AppShell({
       </aside>
 
       <main style={main} className="studio-main-pad">
-        {/* Mobile app bar — ≤899px only */}
         <header
           className="studio-mobile-appbar"
           style={mobileAppBar}
@@ -419,32 +409,17 @@ export function AppShell({
                 boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
               }}
             />
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontSize: 10,
-                  letterSpacing: 1.6,
-                  color: C.brass,
-                  lineHeight: 1.2,
-                }}
-              >
-                STUDIO
-              </div>
-              <div
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: C.text,
-                  lineHeight: 1.25,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {sectionTitle}
-              </div>
-            </div>
+            <span
+              style={{
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 12,
+                letterSpacing: 2,
+                color: C.brass,
+                fontWeight: 600,
+              }}
+            >
+              STUDIO
+            </span>
           </button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
