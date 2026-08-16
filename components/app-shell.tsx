@@ -116,6 +116,7 @@ export function AppShell({
     padding: "20px 14px 16px",
     borderRight: `1px solid ${C.border}`,
     background: mode === "light" ? C.surfaceRaised : C.bgDeep,
+    boxShadow: mode === "light" ? "1px 0 0 rgba(55,40,22,0.04)" : "none",
   };
 
   const brandRow: CSSProperties = {
@@ -166,8 +167,9 @@ export function AppShell({
     marginTop: "auto",
     padding: 12,
     borderRadius: 12,
-    background: mode === "light" ? "rgba(26,18,8,0.04)" : "rgba(255,255,255,0.03)",
+    background: mode === "light" ? C.surface : "rgba(255,255,255,0.03)",
     border: `1px solid ${C.border}`,
+    boxShadow: mode === "light" ? C.cardShadow : "none",
     marginBottom: 12,
   };
 
@@ -205,7 +207,10 @@ export function AppShell({
     minWidth: 0,
     height: "100%",
     overflowY: "auto",
-    background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)`,
+    background:
+      mode === "light"
+        ? `radial-gradient(ellipse at 50% -20%, rgba(168,107,31,0.08), transparent 50%), linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 70%)`
+        : `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)`,
     WebkitOverflowScrolling: "touch",
   };
 
@@ -277,7 +282,6 @@ export function AppShell({
         @media (max-width: 899px) {
           .studio-sidebar { display: none !important; }
           .studio-bottom-nav { display: flex !important; }
-          .studio-mobile-header { display: flex !important; }
           .studio-main-pad {
             padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
           }
