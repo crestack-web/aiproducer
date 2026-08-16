@@ -18,6 +18,10 @@ export type TakeRow = {
     type: string;
     start_ms: number | null;
     end_ms: number | null;
+    title?: string | null;
+    active?: boolean | null;
+    selected_in_plan?: boolean | null;
+    status?: string | null;
   } | null;
 };
 export type StemRow = { audio_path: string; kind: string };
@@ -197,6 +201,34 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
   const attempt = (priorCount || 0) + 1;
   const idempotencyKey = attempt === 1 ? baseKey : `${baseKey}:attempt-${attempt}`;
 
+  // Active artist plan tasks only (AI recommendations that were removed must not enter Produce)
+  const { data: activePlanTasks } = await supabase
+    .from("recording_tasks")
+    .select("id, active, selected_in_plan, status")
+    .eq("project_id", projectId);
+
+  const activeTaskIds = new Set(
+    (activePlanTasks || [])
+      .filter((t: { active?: boolean | null; selected_in_plan?: boolean | null; status?: string }) => {
+        if (t.active === false) return false;
+        if (t.selected_in_plan === false) return false;
+        if (t.status === "skipped") return false;
+        return true;
+      })
+      .map((t: { id: string }) => t.id)
+  );
+
+  // Legacy projects without plan columns: treat all tasks as active
+  const hasPlanFields = (activePlanTasks || []).some(
+    (t: { active?: boolean | null; selected_in_plan?: boolean | null }) =>
+      t.active != null || t.selected_in_plan != null
+  );
+  if ((activePlanTasks || []).length > 0 && !hasPlanFields) {
+    for (const t of activePlanTasks || []) {
+      activeTaskIds.add((t as { id: string }).id);
+    }
+  }
+
   let { data: selected, error: recErr } = await supabase
     .from("recordings")
     .select("id, task_id, is_selected, audio_path, project_id")
@@ -204,16 +236,24 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
 
   if (recErr) console.error("enqueueProduceSong recordings", recErr);
 
-  let rows = (selected || []) as RecordingRow[];
+  let rows = ((selected || []) as RecordingRow[]).filter(
+    (r) => !r.task_id || activeTaskIds.has(r.task_id) || activeTaskIds.size === 0
+  );
 
   if (rows.length === 0) {
     const { data: completedTasks } = await supabase
       .from("recording_tasks")
-      .select("id")
+      .select("id, active, selected_in_plan, status")
       .eq("project_id", projectId)
       .eq("status", "completed");
 
-    const taskIds = (completedTasks || []).map((t: { id: string }) => t.id);
+    const taskIds = (completedTasks || [])
+      .filter((t: { id: string; active?: boolean | null; selected_in_plan?: boolean | null }) => {
+        if (t.active === false) return false;
+        if (t.selected_in_plan === false) return false;
+        return true;
+      })
+      .map((t: { id: string }) => t.id);
     if (taskIds.length > 0) {
       const { data: viaTasks } = await supabase
         .from("recordings")
@@ -238,10 +278,10 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
 
     if ((completedCount || 0) > 0) {
       throw new Error(
-        "Takes were marked complete but no audio files were saved. Go back and re-record each required part, wait for “Saved”, then Keep take."
+        "You have completed takes, but none are on your active plan. Restore a part in Customize, or record a selected part."
       );
     }
-    throw new Error("No recordings found. Complete at least one take first.");
+    throw new Error("No recordings found. Select at least one part on your plan and record it.");
   }
 
   const hasSelected = rows.some((r) => Boolean(r.is_selected));

@@ -17,7 +17,6 @@ import {
   asOutput,
   patchJob,
   logProduce,
-  toReadableUrl,
   vocalStemKind,
   sleep,
   type TakeRow,
@@ -69,26 +68,54 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       await patchJob(supabase, jobId, { progress: 15, stage: "prepare_vocals" });
       stage = "prepare_vocals";
 
+      // Active artist plan is the source of truth — never produce removed/unselected AI tasks.
+      const taskSelect =
+        "*, recording_tasks(id, type, start_ms, end_ms, title, active, selected_in_plan, status)";
+
+      function isTakeOnActiveArtistPlan(t: TakeRow): boolean {
+        const task = t.recording_tasks as
+          | {
+              active?: boolean | null;
+              selected_in_plan?: boolean | null;
+              status?: string | null;
+            }
+          | null
+          | undefined;
+        // Missing join (legacy): keep take so older projects still produce
+        if (!task || typeof task !== "object") return true;
+        if (task.active === false) return false;
+        if (task.selected_in_plan === false) return false;
+        if (task.status === "skipped") return false;
+        return true;
+      }
+
       let { data: takesRaw } = await supabase
         .from("recordings")
-        .select("*, recording_tasks(id, type, start_ms, end_ms, title)")
+        .select(taskSelect)
         .eq("project_id", projectId)
         .eq("is_selected", true);
 
-      let takes = (takesRaw || []) as TakeRow[];
+      let takes = ((takesRaw || []) as TakeRow[]).filter(isTakeOnActiveArtistPlan);
       if (takes.length === 0) {
         const { data: anyTakes } = await supabase
           .from("recordings")
-          .select("*, recording_tasks(id, type, start_ms, end_ms, title)")
+          .select(taskSelect)
           .eq("project_id", projectId);
-        takes = (anyTakes || []) as TakeRow[];
+        const candidates = ((anyTakes || []) as TakeRow[]).filter(isTakeOnActiveArtistPlan);
+        // Prefer latest take per active-plan task
+        const byTask = new Map<string, TakeRow>();
+        for (const t of candidates) {
+          const tid = t.task_id || t.id;
+          byTask.set(tid, t);
+        }
+        takes = [...byTask.values()];
         for (const t of takes) {
           await supabase.from("recordings").update({ is_selected: true }).eq("id", t.id);
         }
       }
       if (takes.length === 0) {
         throw new Error(
-          "No saved vocal takes found for this project. Re-record required parts and wait for save before Keep."
+          "No recordings on your active plan. Select at least one part, record it, wait for Saved, then Produce."
         );
       }
 
@@ -550,11 +577,33 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
         const style = mapMusicalStyle(project?.genre);
         let mixUrlForMaster: string | null = null;
         if (mode === "roex") {
-          mixUrlForMaster = await toReadableUrl(out.mix_storage_path as string);
-          if (!mixUrlForMaster && typeof out.mix_provider_url === "string") {
+          // Prefer provider-native mix URL if still available (already RoEx-safe).
+          // Otherwise re-upload our stored mix via RoEx /upload — never signed Supabase URLs.
+          if (
+            typeof out.mix_provider_url === "string" &&
+            out.mix_provider_url.startsWith("http") &&
+            !out.mix_provider_url.includes("supabase")
+          ) {
             mixUrlForMaster = out.mix_provider_url;
+          } else if (out.mix_storage_path && isStoragePath(out.mix_storage_path as string)) {
+            const prepared = await prepareRoexTrack({
+              provider,
+              storagePath: out.mix_storage_path as string,
+              kind: "INSTRUMENTAL",
+              jobId,
+              projectId,
+            });
+            mixUrlForMaster = prepared.providerUrl;
+          } else if (typeof out.mix_provider_url === "string") {
+            // Last resort: only if already a non-Supabase http URL
+            if (
+              out.mix_provider_url.startsWith("http") &&
+              !/supabase/i.test(out.mix_provider_url)
+            ) {
+              mixUrlForMaster = out.mix_provider_url;
+            }
           }
-          if (!mixUrlForMaster) throw new Error("No mix URL available for mastering");
+          if (!mixUrlForMaster) throw new Error("No RoEx-safe mix URL available for mastering");
         } else {
           mixUrlForMaster = (out.mix_storage_path as string) || `mock://mix/${projectId}`;
         }
