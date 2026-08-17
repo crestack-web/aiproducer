@@ -164,15 +164,19 @@ export default function ProjectDetailPage() {
     void load();
   }, [load]);
 
-  // Load full booth UI (same screens as before) when the module is present
+  // Prefer full booth UI when a real module is deployed (not the null placeholder)
   useEffect(() => {
     let cancelled = false;
     void import("@/components/project-session-ui")
       .then((mod) => {
-        if (!cancelled && mod.default) setFullUI(() => mod.default);
+        const Comp = mod.default as React.ComponentType & { name?: string };
+        // Placeholder exports ProjectSessionUI that returns null — skip it
+        if (cancelled || !Comp) return;
+        if (Comp.name === "ProjectSessionUI") return;
+        setFullUI(() => Comp);
       })
       .catch(() => {
-        /* module not yet deployed */
+        /* optional */
       });
     return () => {
       cancelled = true;
@@ -217,6 +221,12 @@ export default function ProjectDetailPage() {
     cursor: "pointer",
     marginTop: 16,
   };
+  const btn2: React.CSSProperties = {
+    ...btn,
+    background: C.surface,
+    color: C.text,
+    border: `1px solid ${C.border}`,
+  };
 
   return (
     <AppShell active="studio" userName="Artist">
@@ -229,15 +239,23 @@ export default function ProjectDetailPage() {
         </h1>
         {error && <p style={{ color: C.danger }}>{error}</p>}
         <p style={{ color: C.textMuted, fontSize: 14 }}>
-          Resume target: <strong>{screen}</strong>
-          {tasks.length ? ` · ${tasks.length} parts` : ""}
+          Resume opened as: <strong>{screen}</strong>
+          {tasks.length ? ` · ${tasks.length} parts on plan` : ""}
+        </p>
+        <p style={{ color: C.textMuted, fontSize: 13, lineHeight: 1.45 }}>
+          If you already recorded, this session opens for retakes (not the plan chooser).
+          The full recording booth UI is being restored to this entry point.
         </p>
         {beatUrl && (
           <audio controls src={beatUrl} style={{ width: "100%", marginTop: 12 }} />
         )}
-        <p style={{ color: C.textMuted, fontSize: 13, marginTop: 12 }}>
-          Loading full recording studio…
-        </p>
+        <ul style={{ marginTop: 16, color: C.textMuted, fontSize: 13, lineHeight: 1.5 }}>
+          {tasks.map((t) => (
+            <li key={t.id}>
+              {(t.title || t.type)} — {t.status}
+            </li>
+          ))}
+        </ul>
       </div>
     </AppShell>
   );
