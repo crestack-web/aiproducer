@@ -630,19 +630,21 @@ export default function ProjectDetailPage() {
         preferredInputId: selectedMicIdRef.current,
         outputPreference: selectedSpeakerIdRef.current || "__headphones__",
       });
-      if (opened.fellBack) {
-        setSelectedMicId(opened.info.inputDeviceId || "");
+      // Keep the artist's selection in the picker; do not silently rewrite it to the OS mic.
+      // Surface honest routing status when the platform overrode input.
+      const qualityWarn = describeInputQualityWarning(opened.info);
+      if (qualityWarn) {
+        setError(qualityWarn);
+      } else if (opened.fellBack && opened.info.routingStatus === "FALLBACK") {
         setError(
-          opened.info.inputLabel
-            ? `Using microphone: “${opened.info.inputLabel}”`
+          opened.info.actualInputLabel
+            ? `Using microphone: “${opened.info.actualInputLabel}”`
             : "Selected microphone unavailable — using default mic"
         );
       }
-      const qualityWarn = describeInputQualityWarning(opened.info);
-      if (qualityWarn) setError(qualityWarn);
       streamRef.current = opened.recordStream;
       setMicStream(opened.stream);
-      // Playback route only — does not change MediaRecorder input
+      // Playback route only — does not change MediaRecorder input (beat stays on <audio>)
       await routePlaybackToPreferredOutput(
         beatAudioRef.current,
         selectedSpeakerIdRef.current || undefined

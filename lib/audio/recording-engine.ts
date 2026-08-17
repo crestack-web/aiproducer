@@ -13,9 +13,13 @@
 
 export type RecordingConstraintsMode = "music_headphones" | "music_speaker" | "speech_fallback";
 
+/** Honest outcome of requested vs actual input routing */
+export type RoutingStatus = "MATCHED" | "OS_OVERRIDE" | "FALLBACK" | "DEFAULT";
+
 export type RecordingDeviceInfo = {
   /** What the user/app requested */
   requestedInputDeviceId: string;
+  requestedInputLabel?: string;
   requestedOutputDeviceId: string;
   /** What the platform actually granted (from track settings / labels) */
   actualInputDeviceId: string;
@@ -33,6 +37,8 @@ export type RecordingDeviceInfo = {
   mimeType?: string;
   /** True when actual input differs from requested in a meaningful way */
   inputMismatch: boolean;
+  /** MATCHED | OS_OVERRIDE | FALLBACK | DEFAULT */
+  routingStatus: RoutingStatus;
   /** Human-readable reason when platform overrode input */
   routingNote: string | null;
   /** Legacy aliases used by existing UI */
@@ -128,6 +134,15 @@ function isHeadphonesOutputPreference(pref: string): boolean {
 /**
  * Open mic for vocal recording. Never touches playback routing.
  * Input selection is independent of output preference.
+ *
+ * Architecture (unchanged):
+ *   INPUT:  selected mic → getUserMedia → MediaRecorder  (vocal only)
+ *   OUTPUT: beat <audio> → setSinkId                     (monitor only)
+ * The beat must never enter MediaRecorder / MediaStreamDestination.
+ *
+ * Explicit selection uses deviceId: { exact }. We do NOT fight the OS with
+ * repeated getUserMedia retries when Bluetooth forces a headset mic — that
+ * override is reported as OS_OVERRIDE instead of silently claiming phone mic.
  */
 export async function openRecordingStream(opts: {
   preferredInputId: string;
@@ -141,7 +156,6 @@ export async function openRecordingStream(opts: {
     : "music_speaker";
 
   let inputs: { deviceId: string; label: string }[] = [];
-  let targetId = requestedInputDeviceId;
 
   if (navigator.mediaDevices?.enumerateDevices) {
     try {
@@ -152,114 +166,104 @@ export async function openRecordingStream(opts: {
           deviceId: d.deviceId,
           label: d.label?.trim() || `Microphone ${i + 1}`,
         }));
-      if (!targetId) {
-        targetId = preferBuiltInMicId(inputs);
-      }
     } catch {
       /* ignore */
     }
   }
 
-  const userWantsBuiltIn = deviceWantsBuiltInMic(requestedInputDeviceId, inputs);
+  const requestedLabel =
+    inputs.find((d) => d.deviceId === requestedInputDeviceId)?.label || "";
+  const explicitSelection = Boolean(requestedInputDeviceId);
+  // Explicit choice → that deviceId only. Empty → system default (no force-built-in).
+  const targetId = requestedInputDeviceId;
 
-  const tryOpen = async (id: string, softExact: boolean) => {
-    const constraints = softExact
-      ? ({
-          ...buildMusicMicConstraints("", headphonesMonitoring),
-          ...(id ? { deviceId: { ideal: id } } : {}),
-        } as MediaTrackConstraints)
-      : buildMusicMicConstraints(id, headphonesMonitoring);
+  const tryOpen = async (id: string, mode: "exact" | "ideal" | "default") => {
+    const base = buildMusicMicConstraints(
+      mode === "default" ? "" : mode === "exact" ? id : "",
+      headphonesMonitoring
+    );
+    let constraints: MediaTrackConstraints = base;
+    if (mode === "ideal" && id) {
+      constraints = { ...base, deviceId: { ideal: id } };
+    }
+    // exact path already embeds deviceId: { exact } via buildMusicMicConstraints
     return navigator.mediaDevices.getUserMedia({ audio: constraints });
   };
 
   let stream: MediaStream;
   let fellBack = false;
 
-  try {
-    stream = await tryOpen(targetId, false);
-  } catch {
-    fellBack = true;
+  if (explicitSelection) {
     try {
-      stream = await tryOpen(targetId, true);
+      // Strongest: honor artist’s exact mic choice
+      stream = await tryOpen(targetId, "exact");
     } catch {
-      stream = await tryOpen("", false);
+      // Platform rejected exact (unplugged / OS block) — one soft ideal, then default
+      fellBack = true;
+      try {
+        stream = await tryOpen(targetId, "ideal");
+      } catch {
+        stream = await tryOpen("", "default");
+      }
     }
+  } else {
+    // No explicit pick: system/default mic (do not force built-in over Bluetooth)
+    stream = await tryOpen("", "default");
   }
 
-  let track = stream.getAudioTracks()[0];
-  let settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
-  let inputLabel = (track?.label || "").trim();
-  let inputDeviceId = settings.deviceId || targetId || "";
+  const track = stream.getAudioTracks()[0];
+  const settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+  const inputLabel = (track?.label || "").trim();
+  const inputDeviceId = settings.deviceId || targetId || "";
+
+  // —— Honest requested vs actual (no further getUserMedia fights) ——
+  let inputMismatch = false;
+  let routingStatus: RoutingStatus = explicitSelection ? "MATCHED" : "DEFAULT";
   let routingNote: string | null = null;
 
-  // Only retry built-in when the USER wanted phone mic but OS handed BT mic.
-  // Never override intentional headset mic choice.
-  if (
-    userWantsBuiltIn &&
-    looksLikeBluetoothOrHeadsetMic(inputLabel) &&
-    navigator.mediaDevices?.enumerateDevices
-  ) {
-    try {
-      const all = await navigator.mediaDevices.enumerateDevices();
-      const listed = all
-        .filter((d) => d.kind === "audioinput")
-        .map((d, i) => ({
-          deviceId: d.deviceId,
-          label: d.label?.trim() || `Microphone ${i + 1}`,
-        }));
-      const phoneId = preferBuiltInMicId(listed);
-      if (phoneId && phoneId !== inputDeviceId) {
-        stream.getTracks().forEach((t) => t.stop());
-        try {
-          stream = await tryOpen(phoneId, false);
-          fellBack = true;
-        } catch {
-          try {
-            stream = await tryOpen(phoneId, true);
-            fellBack = true;
-          } catch {
-            stream = await tryOpen(targetId, true);
-          }
-        }
-        track = stream.getAudioTracks()[0];
-        settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
-        inputLabel = (track?.label || "").trim();
-        inputDeviceId = settings.deviceId || phoneId;
-      }
-    } catch {
-      /* keep first stream */
-    }
-  }
-
-  let inputMismatch = false;
-  if (userWantsBuiltIn && looksLikeBluetoothOrHeadsetMic(inputLabel)) {
-    inputMismatch = true;
-    routingNote =
-      "Your device is using the headset/Bluetooth microphone because of the current audio route. " +
-      "The phone microphone could not be selected independently on this platform.";
-  } else if (
-    requestedInputDeviceId &&
+  const userWantedPhoneMic =
+    explicitSelection && deviceWantsBuiltInMic(requestedInputDeviceId, inputs);
+  const actualIsBtMic = looksLikeBluetoothOrHeadsetMic(inputLabel);
+  const idMismatch =
+    explicitSelection &&
     inputDeviceId &&
     requestedInputDeviceId !== inputDeviceId &&
-    requestedInputDeviceId !== "default"
-  ) {
-    const requested = inputs.find((d) => d.deviceId === requestedInputDeviceId);
-    if (
-      requested &&
-      inputLabel &&
-      requested.label &&
-      requested.label !== inputLabel &&
-      !inputLabel.toLowerCase().includes(requested.label.toLowerCase().slice(0, 12))
-    ) {
+    requestedInputDeviceId !== "default";
+
+  if (userWantedPhoneMic && actualIsBtMic) {
+    // Classic iOS/Bluetooth case: OS binds headset mic to BT audio route
+    inputMismatch = true;
+    routingStatus = "OS_OVERRIDE";
+    routingNote =
+      "Your device is using the AirPods/headset microphone because of the current Bluetooth audio route. " +
+      "To use your phone microphone, disconnect AirPods or change the device’s audio route, " +
+      "then select Phone Microphone and record again.";
+  } else if (idMismatch || (explicitSelection && fellBack && actualIsBtMic)) {
+    inputMismatch = true;
+    routingStatus = fellBack ? "FALLBACK" : "OS_OVERRIDE";
+    const wanted = requestedLabel || "selected microphone";
+    const got = inputLabel || "another microphone";
+    routingNote =
+      `Requested “${wanted}” but the system activated “${got}”. ` +
+      (actualIsBtMic
+        ? "Bluetooth audio often forces the headset mic on mobile — disconnect AirPods to use the phone mic."
+        : "Recording will use the microphone the system actually provided.");
+  } else if (fellBack && explicitSelection) {
+    routingStatus = "FALLBACK";
+    if (requestedLabel && inputLabel && requestedLabel !== inputLabel) {
       inputMismatch = true;
-      routingNote = `Requested “${requested.label}” but the system activated “${inputLabel}”.`;
+      routingNote = `Could not lock “${requestedLabel}”; using “${inputLabel}”.`;
     }
+  } else if (explicitSelection) {
+    routingStatus = "MATCHED";
   }
 
+  // recordStream is the same mic MediaStream — beat is never mixed in
   const recordStream = stream;
 
   const info: RecordingDeviceInfo = {
     requestedInputDeviceId,
+    requestedInputLabel: requestedLabel || undefined,
     requestedOutputDeviceId,
     actualInputDeviceId: inputDeviceId,
     actualInputLabel: inputLabel,
@@ -274,6 +278,7 @@ export async function openRecordingStream(opts: {
     sampleRate: typeof settings.sampleRate === "number" ? settings.sampleRate : undefined,
     channelCount: typeof settings.channelCount === "number" ? settings.channelCount : 1,
     inputMismatch,
+    routingStatus,
     routingNote,
     inputDeviceId,
     inputLabel,
@@ -299,7 +304,7 @@ export async function openRecordingStream(opts: {
     info,
     fellBack,
     dispose: () => {
-      /* no extra graph yet */
+      /* no extra Web Audio graph — mic stream only */
     },
   };
 }
@@ -336,31 +341,48 @@ export function createVocalRecorder(stream: MediaStream): {
 
 export function describeInputQualityWarning(info: RecordingDeviceInfo): string | null {
   if (info.routingNote) return info.routingNote;
-  if (looksLikeBluetoothOrHeadsetMic(info.actualInputLabel || info.inputLabel)) {
-    return "Headset/Bluetooth microphone is active. You can switch to the phone microphone above if you prefer higher quality.";
+  if (
+    info.routingStatus === "OS_OVERRIDE" ||
+    (info.inputMismatch && looksLikeBluetoothOrHeadsetMic(info.actualInputLabel || info.inputLabel))
+  ) {
+    return (
+      info.routingNote ||
+      "Your device is using the AirPods/headset microphone because of the current Bluetooth audio route. " +
+        "To use your phone microphone, disconnect AirPods or change the device’s audio route."
+    );
   }
   return null;
 }
 
-/** Developer diagnostics for a recording session (no secrets). */
+/** Developer diagnostics for a recording session (no secrets / no technical IDs in user UI). */
 export function buildRecordingRouteDiagnostics(
   info: RecordingDeviceInfo,
   outputRoute?: {
     requestedOutputDeviceId?: string;
+    requestedOutputLabel?: string;
     actualOutputDeviceId?: string;
+    actualOutputLabel?: string;
     setSinkIdSupported?: boolean;
     routed?: boolean;
   }
 ): Record<string, unknown> {
   return {
-    inputRequested: info.requestedInputDeviceId || "(default/built-in preference)",
-    inputActual: info.actualInputDeviceId || info.inputDeviceId || "(unknown)",
-    inputActualLabel: info.actualInputLabel || info.inputLabel || "(unlabeled)",
+    requestedInput: info.requestedInputLabel || info.requestedInputDeviceId || "(system default)",
+    actualInput: info.actualInputLabel || info.inputLabel || "(unlabeled)",
+    requestedInputDeviceId: info.requestedInputDeviceId || null,
+    actualInputDeviceId: info.actualInputDeviceId || info.inputDeviceId || null,
     inputGroupId: info.actualInputGroupId || null,
     inputMismatch: info.inputMismatch,
+    routingStatus: info.routingStatus,
     routingNote: info.routingNote,
-    outputRequested: outputRoute?.requestedOutputDeviceId || info.requestedOutputDeviceId,
-    outputActual: outputRoute?.actualOutputDeviceId || "(system-managed)",
+    requestedOutput:
+      outputRoute?.requestedOutputLabel ||
+      outputRoute?.requestedOutputDeviceId ||
+      info.requestedOutputDeviceId,
+    actualOutput:
+      outputRoute?.actualOutputLabel ||
+      outputRoute?.actualOutputDeviceId ||
+      "(system-managed)",
     outputControlSupported: outputRoute?.setSinkIdSupported ?? null,
     outputRouted: outputRoute?.routed ?? null,
     headphonesMonitoring: info.headphonesMonitoring,
@@ -370,6 +392,8 @@ export function buildRecordingRouteDiagnostics(
     autoGainControl: info.autoGainControl,
     sampleRate: info.sampleRate ?? null,
     channelCount: info.channelCount ?? null,
+    /** Capture purity: MediaRecorder receives mic stream only; beat is separate <audio> */
+    beatInMediaRecorder: false,
     browser: typeof navigator !== "undefined" ? navigator.userAgent : "",
     platform: typeof navigator !== "undefined" ? navigator.platform : "",
   };
