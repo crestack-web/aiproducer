@@ -1,29 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Studio">
-  <rect width="32" height="32" fill="#000000"/>
-  <path fill="#C17A12" d="M16 3 L29 16 L16 29 L3 16 Z"/>
-  <g transform="translate(16 16) rotate(-40)">
-    <ellipse cx="0" cy="-3.6" rx="3.6" ry="4.4" fill="#0A0A0A"/>
-    <g fill="none" stroke="#C17A12" stroke-width="0.9" stroke-linecap="round">
-      <line x1="-3" y1="-4.9" x2="3" y2="-4.9"/>
-      <line x1="-3.2" y1="-3.6" x2="3.2" y2="-3.6"/>
-      <line x1="-3" y1="-2.3" x2="3" y2="-2.3"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="AI Producer Studio">
+  <rect width="512" height="512" fill="#000000"/>
+  <path fill="#C17A12" d="M256 48 L464 256 L256 464 L48 256 Z"/>
+  <!-- Microphone body -->
+  <g transform="translate(256 250) rotate(-38)">
+    <!-- Grille / head -->
+    <ellipse cx="0" cy="-58" rx="42" ry="52" fill="#0A0A0A"/>
+    <g fill="none" stroke="#0A0A0A" stroke-width="8" stroke-linecap="round">
+      <line x1="-32" y1="-78" x2="32" y2="-78"/>
+      <line x1="-36" y1="-58" x2="36" y2="-58"/>
+      <line x1="-32" y1="-38" x2="32" y2="-38"/>
     </g>
-    <path fill="#0A0A0A" d="M-1.4 -0.5 C-1.5 1.2 -1.25 4.4 -1 6.75 C-0.9 7.6 -0.5 8.1 0 8.2 C0.5 8.1 0.9 7.6 1 6.75 C1.25 4.4 1.5 1.2 1.4 -0.5 Z"/>
-    <ellipse cx="0" cy="-0.4" rx="1.75" ry="1.1" fill="#0A0A0A"/>
-    <circle cx="0" cy="8.6" r="0.75" fill="#0A0A0A"/>
+    <!-- Handle -->
+    <path fill="#0A0A0A" d="M-16 -8 C-18 18 -14 68 -10 98 C-8 112 -2 120 0 122 C2 120 8 112 10 98 C14 68 18 18 16 -8 Z"/>
+    <!-- Neck connector -->
+    <ellipse cx="0" cy="-6" rx="20" ry="14" fill="#0A0A0A"/>
+    <!-- Tip -->
+    <circle cx="0" cy="128" r="10" fill="#0A0A0A"/>
   </g>
-  <g fill="#0A0A0A" transform="translate(9.2 12.5) scale(0.55)">
-    <ellipse cx="0" cy="3.5" rx="2" ry="1.5" transform="rotate(-18)"/>
-    <ellipse cx="4.75" cy="1.75" rx="2" ry="1.5" transform="rotate(-18)"/>
-    <rect x="1.25" y="-4.25" width="0.9" height="7.25" rx="0.2"/>
-    <rect x="6" y="-6" width="0.9" height="7.25" rx="0.2"/>
-    <path d="M1.25 -4.25 L6.9 -6.25 L6.9 -5 L1.25 -3 Z"/>
-  </g>
-  <g fill="#0A0A0A" transform="translate(19.8 18.2) scale(0.55)">
-    <ellipse cx="0" cy="3.5" rx="2" ry="1.5" transform="rotate(-18)"/>
-    <ellipse cx="4.75" cy="1.75" rx="2" ry="1.5" transform="rotate(-18)"/>
-    <rect x="1.25" y="-4.25" width="0.9" height="7.25" rx="0.2"/>
-    <rect x="6" y="-6" width="0.9" height="7.25" rx="0.2"/>
-    <path d="M1.25 -4.25 L6.9 -6.25 L6.9 -5 L1.25 -3 Z"/>
+  <!-- Music notes -->
+  <g fill="#0A0A0A">
+    <!-- Left note -->
+    <ellipse cx="148" cy="210" rx="18" ry="14" transform="rotate(-18 148 210)"/>
+    <rect x="160" y="120" width="8" height="92" rx="2"/>
+    <path d="M168 120 L210 108 L210 118 L168 130 Z"/>
+    <!-- Right note -->
+    <ellipse cx="340" cy="300" rx="18" ry="14" transform="rotate(-18 340 300)"/>
+    <rect x="352" y="210" width="8" height="92" rx="2"/>
+    <path d="M360 210 L402 198 L402 208 L360 220 Z"/>
   </g>
 </svg>
