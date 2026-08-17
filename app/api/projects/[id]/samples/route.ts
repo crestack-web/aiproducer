@@ -99,6 +99,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const contentType = req.headers.get("content-type") || "";
 
+  // --- Signed upload (large files / Vercel body limit) ---
   if (contentType.includes("application/json")) {
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const mode = String(body.mode || "");
@@ -110,7 +111,7 @@ export async function POST(req: Request, ctx: Ctx) {
       const ext = audioExt(fileType, filename);
       const path = samplePath(user.id, projectId, sampleId, ext);
       try {
-        const signed = await createSignedUploadUrl(path);
+        const signed = await createSignedUploadUrl(path, { upsert: true });
         return NextResponse.json({
           sample_id: sampleId,
           path: signed.path,
@@ -120,12 +121,14 @@ export async function POST(req: Request, ctx: Ctx) {
         });
       } catch (e) {
         console.error("sample signed upload url", e);
+        const msg = e instanceof Error ? e.message : String(e);
         return NextResponse.json(
           {
             error:
-              e instanceof Error
-                ? e.message
-                : "Could not create upload URL. Check STORAGE_BUCKET (case-sensitive).",
+              msg.includes("Bucket") || msg.includes("bucket") || msg.includes("not found")
+                ? `Storage bucket error: ${msg}. Check STORAGE_BUCKET (default "Studio", case-sensitive) and bucket policies for signed uploads.`
+                : msg ||
+                  "Could not create upload URL. Check STORAGE_BUCKET (case-sensitive) and that the samples path is allowed.",
           },
           { status: 500 }
         );
@@ -156,6 +159,48 @@ export async function POST(req: Request, ctx: Ctx) {
       const includeInProduce = body.include_in_produce !== false;
 
       const service = createServiceClient();
+      const bucket = getStorageBucket();
+
+      // Verify object actually landed in storage (catches policy / CORS / failed PUT)
+      try {
+        const folder = path.split("/").slice(0, -1).join("/");
+        const name = path.split("/").pop() || "";
+        const { data: listed, error: listErr } = await service.storage
+          .from(bucket)
+          .list(folder, { search: name, limit: 5 });
+        if (listErr) {
+          console.error("sample complete list", listErr);
+        }
+        const found = (listed || []).some((f) => f.name === name);
+        if (!found) {
+          // One more try: download head via createSignedUrl + HEAD
+          try {
+            const probe = await service.storage.from(bucket).createSignedUrl(path, 60);
+            if (probe.error || !probe.data?.signedUrl) {
+              return NextResponse.json(
+                {
+                  error:
+                    "File did not arrive in storage after upload. Check bucket policies (allow signed uploads + upsert) for path users/*/projects/*/samples/*.",
+                  code: "STORAGE_OBJECT_MISSING",
+                },
+                { status: 400 }
+              );
+            }
+          } catch {
+            return NextResponse.json(
+              {
+                error:
+                  "File did not arrive in storage after upload. Check bucket policies (allow signed uploads + upsert) for path users/*/projects/*/samples/*.",
+                code: "STORAGE_OBJECT_MISSING",
+              },
+              { status: 400 }
+            );
+          }
+        }
+      } catch (verifyErr) {
+        console.warn("sample complete verify", verifyErr);
+      }
+
       const row = {
         id: sampleId,
         project_id: projectId,
@@ -175,6 +220,7 @@ export async function POST(req: Request, ctx: Ctx) {
         },
       };
 
+      // Prefer service insert after ownership check (avoids RLS edge cases)
       const { data: sample, error: insErr } = await service
         .from("samples")
         .insert(row)
@@ -183,6 +229,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
       if (insErr || !sample) {
         console.error("sample complete insert", insErr);
+        // Retry without placement columns if migration not applied yet
         const { data: sample2, error: insErr2 } = await service
           .from("samples")
           .insert({
@@ -211,7 +258,7 @@ export async function POST(req: Request, ctx: Ctx) {
               error:
                 insErr2?.message ||
                 insErr?.message ||
-                "Could not save sample record. Check samples table / RLS.",
+                "Could not save sample record. Confirm samples table exists, migration 20260816220000_sample_placement is applied, and RLS allows insert.",
             },
             { status: 500 }
           );
@@ -240,6 +287,7 @@ export async function POST(req: Request, ctx: Ctx) {
     );
   }
 
+  // --- Direct multipart upload (small files) ---
   if (!contentType.includes("multipart/form-data")) {
     return NextResponse.json(
       {
@@ -308,7 +356,7 @@ export async function POST(req: Request, ctx: Ctx) {
     console.error("sample storage upload", upErr);
     return NextResponse.json(
       {
-        error: `Upload failed: ${upErr.message || "storage error"}. Check STORAGE_BUCKET (default Studio, case-sensitive).`,
+        error: `Upload failed: ${upErr.message || "storage error"}. Check STORAGE_BUCKET (default Studio, case-sensitive) and that the service role can write to samples/.`,
       },
       { status: 500 }
     );
@@ -428,6 +476,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     .single();
 
   if (uErr || !data) {
+    // Fallback: store placement in metadata if columns missing
     const { data: existing } = await supabase
       .from("samples")
       .select("*")
