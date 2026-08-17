@@ -17,15 +17,20 @@ export function RotatingHeadline() {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    const id = setInterval(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const intervalId = setInterval(() => {
       setVisible(false);
-      const timeout = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         setIndex((i) => (i + 1) % PHRASES.length);
         setVisible(true);
       }, FADE_MS);
-      return () => clearTimeout(timeout);
     }, INTERVAL_MS);
-    return () => clearInterval(id);
+
+    return () => {
+      clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   return (
