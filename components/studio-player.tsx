@@ -348,5 +348,3 @@ export function PlayerLoadingState({
     </div>
   );
 }
-
-export { CompactAudioPlayer } from "@/components/compact-audio-player";
