@@ -1,11 +1,20 @@
 /**
  * Diagnostic-only analysis of the ORIGINAL MediaRecorder capture.
  *
- * - Does NOT modify, normalize, compress, or re-encode the blob.
- * - Measures vocal vs background energy and classifies acoustic bleed.
- * - Used to validate whether VAD speaker-ducking actually reduced
- *   the beat energy that physically entered the microphone.
+ * - Does NOT modify, normalize, compress, gate, or denoise the blob
+ * - decodeAudioData works on a copy of the ArrayBuffer; the Blob is left intact
+ * - Used only to measure whether speaker ducking reduced acoustic bleed
+ *
+ * Limitations (browser):
+ * - No reliable isolated "beat track" reference inside the mic capture
+ * - Low-band energy during non-vocal regions is a PROXY for acoustic beat bleed,
+ *   not a perfect spectral separation of kick vs room noise
+ * - WebM/Opus decode may fail on some Safari builds; analysis is best-effort
+ * - Comparing before/during/after duck requires duck event timestamps aligned
+ *   to recording wall-clock start
  */
+
+import type { SpeakerDuckDiagnostics, SpeakerDuckEvent } from "@/lib/audio/speaker-monitor-duck";
 
 export type CaptureClassification =
   | "DIGITAL_BEAT_IN_CAPTURE"
@@ -14,310 +23,464 @@ export type CaptureClassification =
   | "CLEAN_CAPTURE"
   | "UNKNOWN";
 
-export type DuckWindowEnergy = {
-  beforeRms: number | null;
-  duringRms: number | null;
-  afterRms: number | null;
-  beforePeak: number | null;
-  duringPeak: number | null;
-  afterPeak: number | null;
-};
-
-export type OriginalCaptureBleedReport = {
-  originalDurationMs: number;
-  sampleRate: number;
-  channelCount: number;
-  frameMs: number;
-  vocalEnergy: number;
-  backgroundEnergy: number;
-  voiceToBackgroundRatio: number;
-  vocalPeak: number;
-  backgroundPeak: number;
-  nonVocalFrameCount: number;
+export type CaptureBleedAnalysis = {
+  ok: boolean;
+  reason?: string;
+  originalDurationMs: number | null;
+  sampleRate: number | null;
+  /** Whole-file RMS */
+  fullRms: number | null;
+  fullPeak: number | null;
+  /** Energy in frames classified as vocal (high mid-band + high RMS) */
+  vocalRms: number | null;
+  vocalPeak: number | null;
   vocalFrameCount: number;
-  lowBandBackgroundEnergy: number;
-  duckWindow: DuckWindowEnergy;
+  /** Energy in frames classified as non-vocal / background */
+  backgroundRms: number | null;
+  backgroundPeak: number | null;
+  backgroundFrameCount: number;
+  /**
+   * Mean low-band (≲180 Hz) magnitude during non-vocal frames.
+   * Proxy for kick/bass acoustic bleed — NOT a definitive beat detector.
+   */
+  backgroundLowBandEnergy: number | null;
+  /** vocalRms / max(backgroundRms, eps) */
+  voiceToBackgroundRatio: number | null;
+  /**
+   * Background RMS in time windows mapped from duck events
+   * (recording-relative). Null if no events or decode failed.
+   */
+  backgroundRmsBeforeDuck: number | null;
+  backgroundRmsDuringDuck: number | null;
+  backgroundRmsAfterDuck: number | null;
+  /** Relative reduction during duck vs before: (before - during) / before */
+  duckBackgroundReduction: number | null;
   classification: CaptureClassification;
-  notes: string[];
+  classificationReason: string;
+  analysisMethod: string;
+  limitations: string[];
 };
 
-const FRAME_MS = 50;
-const VOCAL_RMS_THRESHOLD = 0.02;
-const BLEED_RATIO_THRESHOLD = 4.0;
-const IMPROVED_RATIO_THRESHOLD = 8.0;
-const CLEAN_BG_THRESHOLD = 0.008;
+export type CaptureDiagnosticSummary = {
+  route: string;
+  requestedInput: string | null;
+  actualInput: string | null;
+  requestedOutput: string | null;
+  actualOutput: string | null;
+  beatInMediaRecorder: boolean;
+  duckEventCount: number;
+  originalDurationMs: number | null;
+  vocalEnergy: number | null;
+  backgroundEnergy: number | null;
+  voiceToBackgroundRatio: number | null;
+  backgroundLowBandEnergy: number | null;
+  backgroundRmsBeforeDuck: number | null;
+  backgroundRmsDuringDuck: number | null;
+  backgroundRmsAfterDuck: number | null;
+  duckBackgroundReduction: number | null;
+  classification: CaptureClassification;
+  classificationReason: string;
+};
 
-function rmsOf(samples: Float32Array): number {
-  if (!samples.length) return 0;
+const FRAME_SEC = 0.05;
+const VOCAL_RMS_ON = 0.02;
+const BACKGROUND_BLEED_RMS = 0.008;
+const BACKGROUND_LOWBAND_BLEED = 0.04;
+const MATERIAL_REDUCTION = 0.15; // 15% lower background during duck vs before
+
+function rmsOf(channel: Float32Array, start: number, end: number): { rms: number; peak: number } {
+  const n = Math.max(0, end - start);
+  if (n <= 0) return { rms: 0, peak: 0 };
   let sum = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const v = samples[i];
+  let peak = 0;
+  for (let i = start; i < end; i++) {
+    const v = channel[i];
     sum += v * v;
+    const a = Math.abs(v);
+    if (a > peak) peak = a;
   }
-  return Math.sqrt(sum / samples.length);
+  return { rms: Math.sqrt(sum / n), peak };
 }
 
-function peakOf(samples: Float32Array): number {
-  let p = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const a = Math.abs(samples[i]);
-    if (a > p) p = a;
-  }
-  return p;
-}
-
-/** Rough low-band energy proxy (beat fundamental region) via simple box average. */
-function lowBandEnergy(samples: Float32Array, sampleRate: number): number {
-  // Decimate-ish average over ~20ms windows as a crude low-frequency proxy
-  const win = Math.max(1, Math.floor(sampleRate * 0.02));
+/** Simple DFT magnitude sum for low bins of one frame (diagnostic proxy only). */
+function lowBandEnergy(frame: Float32Array, sampleRate: number): number {
+  const n = frame.length;
+  if (n < 32) return 0;
+  // Rectangular-window DFT for bins under ~180 Hz
+  const maxBin = Math.max(1, Math.floor((180 * n) / sampleRate));
   let energy = 0;
-  let count = 0;
-  for (let i = 0; i + win < samples.length; i += win) {
-    let sum = 0;
-    for (let j = 0; j < win; j++) sum += samples[i + j];
-    const mean = sum / win;
-    energy += mean * mean;
-    count += 1;
+  for (let k = 1; k <= maxBin; k++) {
+    let re = 0;
+    let im = 0;
+    const w = (2 * Math.PI * k) / n;
+    for (let i = 0; i < n; i++) {
+      const x = frame[i];
+      re += x * Math.cos(w * i);
+      im -= x * Math.sin(w * i);
+    }
+    energy += Math.sqrt(re * re + im * im) / n;
   }
-  return count ? Math.sqrt(energy / count) : 0;
+  return energy / maxBin;
 }
 
-export type DuckEventLite = {
-  tMs: number;
-  type: "duck" | "release";
-  volume?: number;
+function midBandEnergy(frame: Float32Array, sampleRate: number): number {
+  const n = frame.length;
+  if (n < 32) return 0;
+  const lo = Math.max(1, Math.floor((250 * n) / sampleRate));
+  const hi = Math.min(Math.floor(n / 2) - 1, Math.floor((3000 * n) / sampleRate));
+  if (hi <= lo) return 0;
+  let energy = 0;
+  let bins = 0;
+  // Sparse bins for speed
+  const step = Math.max(1, Math.floor((hi - lo) / 12));
+  for (let k = lo; k <= hi; k += step) {
+    let re = 0;
+    let im = 0;
+    const w = (2 * Math.PI * k) / n;
+    for (let i = 0; i < n; i++) {
+      const x = frame[i];
+      re += x * Math.cos(w * i);
+      im -= x * Math.sin(w * i);
+    }
+    energy += Math.sqrt(re * re + im * im) / n;
+    bins++;
+  }
+  return bins > 0 ? energy / bins : 0;
+}
+
+type FrameStat = {
+  t0: number;
+  t1: number;
+  rms: number;
+  peak: number;
+  isVocal: boolean;
+  lowBand: number;
+  midBand: number;
 };
 
-export async function analyzeOriginalCaptureBleed(
-  blob: Blob,
-  opts?: {
-    beatInMediaRecorder?: boolean;
-    duckEvents?: DuckEventLite[];
+function buildFrames(channel: Float32Array, sampleRate: number): FrameStat[] {
+  const frameSamples = Math.max(64, Math.floor(sampleRate * FRAME_SEC));
+  const frames: FrameStat[] = [];
+  for (let start = 0; start + frameSamples <= channel.length; start += frameSamples) {
+    const end = start + frameSamples;
+    const { rms, peak } = rmsOf(channel, start, end);
+    const slice = channel.subarray(start, end);
+    // Mid-band preference: high mid + high RMS ⇒ vocal; high low + low mid ⇒ likely bleed/background
+    const mid = midBandEnergy(slice, sampleRate);
+    const low = lowBandEnergy(slice, sampleRate);
+    const isVocal = rms >= VOCAL_RMS_ON && mid >= low * 0.85;
+    frames.push({
+      t0: start / sampleRate,
+      t1: end / sampleRate,
+      rms,
+      peak,
+      isVocal,
+      lowBand: low,
+      midBand: mid,
+    });
   }
-): Promise<OriginalCaptureBleedReport> {
-  const notes: string[] = [];
-  const beatIn = opts?.beatInMediaRecorder === true;
+  return frames;
+}
 
-  if (typeof AudioContext === "undefined" && typeof (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext === "undefined") {
-    return {
-      originalDurationMs: 0,
-      sampleRate: 0,
-      channelCount: 0,
-      frameMs: FRAME_MS,
-      vocalEnergy: 0,
-      backgroundEnergy: 0,
-      voiceToBackgroundRatio: 0,
-      vocalPeak: 0,
-      backgroundPeak: 0,
-      nonVocalFrameCount: 0,
-      vocalFrameCount: 0,
-      lowBandBackgroundEnergy: 0,
-      duckWindow: {
-        beforeRms: null,
-        duringRms: null,
-        afterRms: null,
-        beforePeak: null,
-        duringPeak: null,
-        afterPeak: null,
-      },
-      classification: beatIn ? "DIGITAL_BEAT_IN_CAPTURE" : "UNKNOWN",
-      notes: ["AudioContext unavailable in this environment"],
-    };
+function mean(xs: number[]): number | null {
+  if (!xs.length) return null;
+  let s = 0;
+  for (const x of xs) s += x;
+  return s / xs.length;
+}
+
+function maxOf(xs: number[]): number | null {
+  if (!xs.length) return null;
+  let m = xs[0];
+  for (const x of xs) if (x > m) m = x;
+  return m;
+}
+
+/**
+ * Map duck events (performance.now based) onto recording timeline [0, duration].
+ * recordingWallStartMs should be Date.now()-style or performance.now at MediaRecorder start —
+ * use the same clock as event.atMs when possible.
+ */
+function duckWindows(
+  events: SpeakerDuckEvent[],
+  recordingStartPerfMs: number | null,
+  durationSec: number
+): { before: [number, number][]; during: [number, number][]; after: [number, number][] } {
+  const during: [number, number][] = [];
+  if (!events.length || recordingStartPerfMs == null || durationSec <= 0) {
+    return { before: [], during: [], after: [] };
   }
-
-  const AC =
-    typeof AudioContext !== "undefined"
-      ? AudioContext
-      : (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const ctx = new AC();
-  let buffer: AudioBuffer;
-  try {
-    const ab = await blob.arrayBuffer();
-    buffer = await ctx.decodeAudioData(ab.slice(0));
-  } catch (e) {
-    notes.push(`decode failed: ${e instanceof Error ? e.message : String(e)}`);
-    try {
-      await ctx.close();
-    } catch {
-      /* ignore */
-    }
-    return {
-      originalDurationMs: 0,
-      sampleRate: 0,
-      channelCount: 0,
-      frameMs: FRAME_MS,
-      vocalEnergy: 0,
-      backgroundEnergy: 0,
-      voiceToBackgroundRatio: 0,
-      vocalPeak: 0,
-      backgroundPeak: 0,
-      nonVocalFrameCount: 0,
-      vocalFrameCount: 0,
-      lowBandBackgroundEnergy: 0,
-      duckWindow: {
-        beforeRms: null,
-        duringRms: null,
-        afterRms: null,
-        beforePeak: null,
-        duringPeak: null,
-        afterPeak: null,
-      },
-      classification: beatIn ? "DIGITAL_BEAT_IN_CAPTURE" : "UNKNOWN",
-      notes,
-    };
-  }
-
-  const sampleRate = buffer.sampleRate;
-  const channelCount = buffer.numberOfChannels;
-  const durationMs = buffer.duration * 1000;
-  const ch0 = buffer.getChannelData(0);
-  const frameSamples = Math.max(1, Math.floor((sampleRate * FRAME_MS) / 1000));
-
-  let vocalSum = 0;
-  let vocalCount = 0;
-  let bgSum = 0;
-  let bgCount = 0;
-  let vocalPeak = 0;
-  let bgPeak = 0;
-  let lowBandBg = 0;
-  let lowBandCount = 0;
-
-  const frameRms: { tMs: number; rms: number; peak: number; isVocal: boolean }[] = [];
-
-  for (let i = 0; i + frameSamples <= ch0.length; i += frameSamples) {
-    const slice = ch0.subarray(i, i + frameSamples);
-    const r = rmsOf(slice);
-    const p = peakOf(slice);
-    const tMs = (i / sampleRate) * 1000;
-    const isVocal = r >= VOCAL_RMS_THRESHOLD;
-    frameRms.push({ tMs, rms: r, peak: p, isVocal });
-    if (isVocal) {
-      vocalSum += r;
-      vocalCount += 1;
-      if (p > vocalPeak) vocalPeak = p;
-    } else {
-      bgSum += r;
-      bgCount += 1;
-      if (p > bgPeak) bgPeak = p;
-      lowBandBg += lowBandEnergy(slice, sampleRate);
-      lowBandCount += 1;
+  let open: number | null = null;
+  for (const ev of events) {
+    const t = (ev.atMs - recordingStartPerfMs) / 1000;
+    if (ev.type === "duck_start") {
+      open = Math.max(0, Math.min(durationSec, t));
+    } else if (ev.type === "duck_release" && open != null) {
+      const t1 = Math.max(0, Math.min(durationSec, t));
+      if (t1 > open) during.push([open, t1]);
+      open = null;
     }
   }
+  if (open != null && open < durationSec) {
+    during.push([open, durationSec]);
+  }
+  // Before = [0, first duck start); After = (last duck release, end]
+  const firstStart = during.length ? during[0][0] : null;
+  const lastEnd = during.length ? during[during.length - 1][1] : null;
+  const before: [number, number][] = firstStart != null && firstStart > 0.05 ? [[0, firstStart]] : [];
+  const after: [number, number][] =
+    lastEnd != null && lastEnd < durationSec - 0.05 ? [[lastEnd, durationSec]] : [];
+  return { before, during, after };
+}
 
-  const vocalEnergy = vocalCount ? vocalSum / vocalCount : 0;
-  const backgroundEnergy = bgCount ? bgSum / bgCount : 0;
-  const voiceToBackgroundRatio =
-    backgroundEnergy > 1e-9 ? vocalEnergy / backgroundEnergy : vocalEnergy > 0 ? 999 : 0;
-  const lowBandBackgroundEnergy = lowBandCount ? lowBandBg / lowBandCount : 0;
-
-  // Duck window comparison from duck events (if provided)
-  const duckEvents = opts?.duckEvents || [];
-  let beforeRms: number | null = null;
-  let duringRms: number | null = null;
-  let afterRms: number | null = null;
-  let beforePeak: number | null = null;
-  let duringPeak: number | null = null;
-  let afterPeak: number | null = null;
-
-  if (duckEvents.length > 0) {
-    const duckStarts = duckEvents.filter((e) => e.type === "duck").map((e) => e.tMs);
-    const releases = duckEvents.filter((e) => e.type === "release").map((e) => e.tMs);
-    const firstDuck = duckStarts[0];
-    const firstRelease = releases.find((t) => firstDuck != null && t > firstDuck);
-
-    if (firstDuck != null) {
-      const beforeFrames = frameRms.filter((f) => !f.isVocal && f.tMs < firstDuck);
-      if (beforeFrames.length) {
-        beforeRms = beforeFrames.reduce((s, f) => s + f.rms, 0) / beforeFrames.length;
-        beforePeak = Math.max(...beforeFrames.map((f) => f.peak));
-      }
-      if (firstRelease != null) {
-        const duringFrames = frameRms.filter(
-          (f) => !f.isVocal && f.tMs >= firstDuck && f.tMs <= firstRelease
-        );
-        if (duringFrames.length) {
-          duringRms = duringFrames.reduce((s, f) => s + f.rms, 0) / duringFrames.length;
-          duringPeak = Math.max(...duringFrames.map((f) => f.peak));
-        }
-        const afterFrames = frameRms.filter((f) => !f.isVocal && f.tMs > firstRelease);
-        if (afterFrames.length) {
-          afterRms = afterFrames.reduce((s, f) => s + f.rms, 0) / afterFrames.length;
-          afterPeak = Math.max(...afterFrames.map((f) => f.peak));
-        }
+function backgroundRmsInWindows(frames: FrameStat[], windows: [number, number][]): number | null {
+  if (!windows.length) return null;
+  const vals: number[] = [];
+  for (const f of frames) {
+    if (f.isVocal) continue;
+    const mid = (f.t0 + f.t1) / 2;
+    for (const [a, b] of windows) {
+      if (mid >= a && mid <= b) {
+        vals.push(f.rms);
+        break;
       }
     }
   }
+  return mean(vals);
+}
 
-  let classification: CaptureClassification;
-  if (beatIn) {
-    classification = "DIGITAL_BEAT_IN_CAPTURE";
-    notes.push("beat_in_media_recorder === true");
-  } else if (backgroundEnergy <= CLEAN_BG_THRESHOLD && voiceToBackgroundRatio >= IMPROVED_RATIO_THRESHOLD) {
-    classification = "CLEAN_CAPTURE";
-  } else if (
-    duringRms != null &&
-    beforeRms != null &&
-    duringRms < beforeRms * 0.7 &&
-    voiceToBackgroundRatio >= BLEED_RATIO_THRESHOLD
+function classifyFromAnalysis(
+  beatInMediaRecorder: boolean,
+  backgroundRms: number | null,
+  backgroundLowBand: number | null,
+  duckReduction: number | null,
+  hadDuckEvents: boolean
+): { classification: CaptureClassification; reason: string } {
+  if (beatInMediaRecorder) {
+    return {
+      classification: "DIGITAL_BEAT_IN_CAPTURE",
+      reason: "beat_in_media_recorder === true (architecture violation)",
+    };
+  }
+
+  const bg = backgroundRms ?? 0;
+  const low = backgroundLowBand ?? 0;
+  const bleedPresent =
+    bg >= BACKGROUND_BLEED_RMS || low >= BACKGROUND_LOWBAND_BLEED;
+
+  if (
+    hadDuckEvents &&
+    duckReduction != null &&
+    duckReduction >= MATERIAL_REDUCTION &&
+    bleedPresent
   ) {
-    classification = "IMPROVED_ACOUSTIC_CAPTURE";
-    notes.push("background energy dropped during duck windows");
-  } else if (backgroundEnergy > CLEAN_BG_THRESHOLD && voiceToBackgroundRatio < IMPROVED_RATIO_THRESHOLD) {
-    classification = "ACOUSTIC_BLEED";
-    notes.push("non-vocal energy suggests speaker bleed into mic");
-  } else if (voiceToBackgroundRatio >= IMPROVED_RATIO_THRESHOLD) {
-    classification = "IMPROVED_ACOUSTIC_CAPTURE";
-  } else {
-    classification = "UNKNOWN";
+    return {
+      classification: "IMPROVED_ACOUSTIC_CAPTURE",
+      reason: `background energy during ducked windows ${(duckReduction * 100).toFixed(0)}% lower than pre-duck background; residual bleed still measurable`,
+    };
   }
 
-  try {
-    await ctx.close();
-  } catch {
-    /* ignore */
+  if (!bleedPresent && bg < BACKGROUND_BLEED_RMS && low < BACKGROUND_LOWBAND_BLEED) {
+    return {
+      classification: "CLEAN_CAPTURE",
+      reason: `non-vocal RMS ${bg.toFixed(4)} and low-band ${low.toFixed(4)} below bleed thresholds`,
+    };
+  }
+
+  if (bleedPresent) {
+    return {
+      classification: "ACOUSTIC_BLEED",
+      reason: `measurable non-vocal energy (RMS ${bg.toFixed(4)}, low-band ${low.toFixed(4)}) in original capture; beat_in_media_recorder false`,
+    };
   }
 
   return {
-    originalDurationMs: durationMs,
-    sampleRate,
-    channelCount,
-    frameMs: FRAME_MS,
-    vocalEnergy,
-    backgroundEnergy,
-    voiceToBackgroundRatio,
-    vocalPeak,
-    backgroundPeak: bgPeak,
-    nonVocalFrameCount: bgCount,
-    vocalFrameCount: vocalCount,
-    lowBandBackgroundEnergy,
-    duckWindow: {
-      beforeRms,
-      duringRms,
-      afterRms,
-      beforePeak,
-      duringPeak,
-      afterPeak,
-    },
-    classification,
-    notes,
+    classification: "UNKNOWN",
+    reason: "insufficient frame statistics to classify",
   };
 }
 
-export function summarizeCaptureForensics(report: OriginalCaptureBleedReport, extra?: Record<string, unknown>) {
+/**
+ * Analyze the ORIGINAL capture blob. Never mutates the blob.
+ */
+export async function analyzeOriginalCaptureBleed(
+  blob: Blob,
+  opts: {
+    beatInMediaRecorder: boolean;
+    duck?: SpeakerDuckDiagnostics | null;
+    /** performance.now() (or same clock as duck events) at MediaRecorder start */
+    recordingStartPerfMs?: number | null;
+  }
+): Promise<CaptureBleedAnalysis> {
+  const limitations: string[] = [
+    "Low-band energy is a proxy for acoustic beat bleed, not a full beat source separator",
+    "Vocal vs non-vocal frames use energy/mid-band heuristics; soft speech may be under-counted",
+    "Duck before/during/after windows require aligned performance.now timestamps",
+    "decodeAudioData may fail for some WebM/Opus encodings on Safari",
+  ];
+
+  const fail = (reason: string): CaptureBleedAnalysis => ({
+    ok: false,
+    reason,
+    originalDurationMs: null,
+    sampleRate: null,
+    fullRms: null,
+    fullPeak: null,
+    vocalRms: null,
+    vocalPeak: null,
+    vocalFrameCount: 0,
+    backgroundRms: null,
+    backgroundPeak: null,
+    backgroundFrameCount: 0,
+    backgroundLowBandEnergy: null,
+    voiceToBackgroundRatio: null,
+    backgroundRmsBeforeDuck: null,
+    backgroundRmsDuringDuck: null,
+    backgroundRmsAfterDuck: null,
+    duckBackgroundReduction: null,
+    classification: opts.beatInMediaRecorder ? "DIGITAL_BEAT_IN_CAPTURE" : "UNKNOWN",
+    classificationReason: reason,
+    analysisMethod: "none",
+    limitations,
+  });
+
+  if (!blob || blob.size < 64) {
+    return fail("blob empty or too small");
+  }
+
+  let ctx: AudioContext | null = null;
+  try {
+    const AC =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    ctx = new AC();
+    const ab = await blob.arrayBuffer(); // copy; original Blob untouched
+    const audio = await ctx.decodeAudioData(ab.slice(0));
+    const channel = audio.getChannelData(0);
+    const sampleRate = audio.sampleRate;
+    const durationSec = audio.duration;
+    const full = rmsOf(channel, 0, channel.length);
+    const frames = buildFrames(channel, sampleRate);
+
+    const vocalRmsList: number[] = [];
+    const vocalPeakList: number[] = [];
+    const bgRmsList: number[] = [];
+    const bgPeakList: number[] = [];
+    const bgLowList: number[] = [];
+
+    for (const f of frames) {
+      if (f.isVocal) {
+        vocalRmsList.push(f.rms);
+        vocalPeakList.push(f.peak);
+      } else {
+        bgRmsList.push(f.rms);
+        bgPeakList.push(f.peak);
+        bgLowList.push(f.lowBand);
+      }
+    }
+
+    const vocalRms = mean(vocalRmsList);
+    const backgroundRms = mean(bgRmsList);
+    const backgroundLowBandEnergy = mean(bgLowList);
+    const voiceToBackgroundRatio =
+      vocalRms != null && backgroundRms != null && backgroundRms > 1e-6
+        ? vocalRms / backgroundRms
+        : vocalRms != null && (backgroundRms == null || backgroundRms <= 1e-6)
+          ? null
+          : null;
+
+    const events = opts.duck?.events ?? [];
+    const windows = duckWindows(
+      events,
+      opts.recordingStartPerfMs ?? null,
+      durationSec
+    );
+    const backgroundRmsBeforeDuck = backgroundRmsInWindows(frames, windows.before);
+    const backgroundRmsDuringDuck = backgroundRmsInWindows(frames, windows.during);
+    const backgroundRmsAfterDuck = backgroundRmsInWindows(frames, windows.after);
+
+    let duckBackgroundReduction: number | null = null;
+    if (
+      backgroundRmsBeforeDuck != null &&
+      backgroundRmsDuringDuck != null &&
+      backgroundRmsBeforeDuck > 1e-6
+    ) {
+      duckBackgroundReduction =
+        (backgroundRmsBeforeDuck - backgroundRmsDuringDuck) / backgroundRmsBeforeDuck;
+    }
+
+    const { classification, reason } = classifyFromAnalysis(
+      opts.beatInMediaRecorder,
+      backgroundRms,
+      backgroundLowBandEnergy,
+      duckBackgroundReduction,
+      events.length > 0
+    );
+
+    return {
+      ok: true,
+      originalDurationMs: Math.round(durationSec * 1000),
+      sampleRate,
+      fullRms: full.rms,
+      fullPeak: full.peak,
+      vocalRms,
+      vocalPeak: maxOf(vocalPeakList),
+      vocalFrameCount: vocalRmsList.length,
+      backgroundRms,
+      backgroundPeak: maxOf(bgPeakList),
+      backgroundFrameCount: bgRmsList.length,
+      backgroundLowBandEnergy,
+      voiceToBackgroundRatio,
+      backgroundRmsBeforeDuck,
+      backgroundRmsDuringDuck,
+      backgroundRmsAfterDuck,
+      duckBackgroundReduction,
+      classification,
+      classificationReason: reason,
+      analysisMethod:
+        "decodeAudioData + 50ms frames; vocal=mid-band+rms heuristic; low-band DFT proxy for bleed; duck windows from VAD events",
+      limitations,
+    };
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "decodeAudioData failed");
+  } finally {
+    try {
+      await ctx?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function buildCaptureDiagnosticSummary(opts: {
+  route: string;
+  requestedInput: string | null;
+  actualInput: string | null;
+  requestedOutput: string | null;
+  actualOutput: string | null;
+  beatInMediaRecorder: boolean;
+  duckEventCount: number;
+  analysis: CaptureBleedAnalysis | null;
+}): CaptureDiagnosticSummary {
+  const a = opts.analysis;
   return {
-    route: extra?.route ?? null,
-    requestedInput: extra?.requestedInput ?? null,
-    actualInput: extra?.actualInput ?? null,
-    requestedOutput: extra?.requestedOutput ?? null,
-    actualOutput: extra?.actualOutput ?? null,
-    beatInMediaRecorder: extra?.beatInMediaRecorder === true,
-    duckEventCount: extra?.duckEventCount ?? 0,
-    originalDurationMs: report.originalDurationMs,
-    vocalEnergy: report.vocalEnergy,
-    backgroundEnergy: report.backgroundEnergy,
-    voiceToBackgroundRatio: report.voiceToBackgroundRatio,
-    classification: report.classification,
-    duckWindow: report.duckWindow,
-    notes: report.notes,
+    route: opts.route,
+    requestedInput: opts.requestedInput,
+    actualInput: opts.actualInput,
+    requestedOutput: opts.requestedOutput,
+    actualOutput: opts.actualOutput,
+    beatInMediaRecorder: opts.beatInMediaRecorder,
+    duckEventCount: opts.duckEventCount,
+    originalDurationMs: a?.originalDurationMs ?? null,
+    vocalEnergy: a?.vocalRms ?? null,
+    backgroundEnergy: a?.backgroundRms ?? null,
+    voiceToBackgroundRatio: a?.voiceToBackgroundRatio ?? null,
+    backgroundLowBandEnergy: a?.backgroundLowBandEnergy ?? null,
+    backgroundRmsBeforeDuck: a?.backgroundRmsBeforeDuck ?? null,
+    backgroundRmsDuringDuck: a?.backgroundRmsDuringDuck ?? null,
+    backgroundRmsAfterDuck: a?.backgroundRmsAfterDuck ?? null,
+    duckBackgroundReduction: a?.duckBackgroundReduction ?? null,
+    classification: a?.classification ?? (opts.beatInMediaRecorder ? "DIGITAL_BEAT_IN_CAPTURE" : "UNKNOWN"),
+    classificationReason: a?.classificationReason ?? "analysis unavailable",
   };
 }
