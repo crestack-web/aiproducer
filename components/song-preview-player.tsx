@@ -93,7 +93,6 @@ export function SongPreviewPlayer({
     else vocalRefs.current.delete(id);
   }
 
-  // When layers/URLs change, drop stale refs so play uses the new elements
   useEffect(() => {
     const keep = new Set(layers.map((l) => l.task_id));
     vocalRefs.current.forEach((_el, id) => {
@@ -154,7 +153,7 @@ export function SongPreviewPlayer({
     try {
       if (beat) {
         await ensureReady(beat, "beat");
-        beat.volume = 0.55;
+        beat.volume = 0.35;
         beat.currentTime = 0;
       }
       const failedVocals: string[] = [];
@@ -162,11 +161,14 @@ export function SongPreviewPlayer({
         const el = vocalRefs.current.get(layer.task_id);
         if (!el) {
           failedVocals.push(layer.section_label || layer.title || layer.type || "vocal");
+          console.warn("[song-preview] missing audio element for layer", layer.task_id, layer.audio_url?.slice?.(0, 64));
           continue;
         }
         try {
           await ensureReady(el, layer.section_label || layer.title || "vocal");
+          el.muted = false;
           el.volume = 1;
+          el.playbackRate = 1;
           el.currentTime = 0;
           el.pause();
         } catch (ve) {
@@ -204,7 +206,12 @@ export function SongPreviewPlayer({
       }
       if (failedVocals.length) {
         setError(
-          `Some takes could not play (${failedVocals.join(", ")}). Beat still plays — try Refresh preview.`
+          `Some takes could not play (${failedVocals.join(", ")}). ${Math.max(0, layers.length - failedVocals.length)} of ${layers.length} vocals may still play — try Refresh preview.`
+        );
+      }
+      if (layers.length === 0) {
+        setError(
+          "No vocal takes on this preview. Record selected parts, wait for Saved, then Refresh preview."
         );
       }
 
@@ -240,6 +247,8 @@ export function SongPreviewPlayer({
             if (el.paused) {
               const offsetSec = Math.max(0, (now - start) / 1000);
               try {
+                el.muted = false;
+                el.volume = 1;
                 if (Math.abs(el.currentTime - offsetSec) > 0.35) {
                   el.currentTime = offsetSec;
                 }
@@ -307,7 +316,6 @@ export function SongPreviewPlayer({
           src={beatUrl}
           preload="auto"
           playsInline
-          crossOrigin="anonymous"
         />
       )}
       {layers.map((l) => (
@@ -317,7 +325,6 @@ export function SongPreviewPlayer({
           src={l.audio_url}
           preload="auto"
           playsInline
-          crossOrigin="anonymous"
         />
       ))}
 
