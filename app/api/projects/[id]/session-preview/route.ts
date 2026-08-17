@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createSignedDownloadUrl } from "@/lib/storage";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
+import {
+  activePlanTaskIds,
+  matchRecordingsToActivePlan,
+  oneTakePerTask,
+  type PlanTaskFlags,
+} from "@/lib/audio/active-plan-membership";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 type RecRow = {
   id: string;
-  task_id: string;
+  task_id: string | null;
   audio_path: string | null;
   original_audio_path?: string | null;
   original_path?: string | null;
@@ -18,12 +24,24 @@ type RecRow = {
   timeline_end_ms?: number | null;
   recording_offset_ms?: number | null;
   metadata?: Record<string, unknown> | null;
+  project_id?: string | null;
+};
+
+type TaskRow = PlanTaskFlags & {
+  type?: string | null;
+  title?: string | null;
+  instruction?: string | null;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  required?: boolean | null;
+  metadata?: { section_label?: string } | null;
 };
 
 /**
  * GET /api/projects/:id/session-preview
- * Beat + selected vocal takes so the artist can hear "what I have so far"
- * before Produce.
+ *
+ * Membership (same as Produce):
+ *   active plan task ids → recordings.task_id → one take per task → placementStartMs
  */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -73,24 +91,23 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not load tasks" }, { status: 500 });
   }
 
-  // Active plan only — same membership rule as Produce (task identity)
-  const tasks = (tasksRaw ?? []).filter((t) => {
-    if (t.active === false) return false;
-    if (t.selected_in_plan === false) return false;
-    if (t.status === "skipped") return false;
-    return true;
-  });
-  const taskIds = tasks.map((t) => t.id);
+  const allTasks = (tasksRaw ?? []) as TaskRow[];
+  const selectedTaskIds = [...activePlanTaskIds(allTasks)];
+  const tasks = allTasks.filter((t) => selectedTaskIds.includes(t.id));
 
   const diagnostics: string[] = [];
+  diagnostics.push(
+    `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length}`
+  );
+
   let recordings: RecRow[] = [];
 
-  if (taskIds.length > 0) {
-    // Prefer full column set; fall back if migrations lag (unknown columns break PostgREST selects)
+  if (selectedTaskIds.length > 0) {
     const selects = [
-      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms, metadata",
-      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, metadata",
-      "id, task_id, audio_path, duration_ms, take_number, is_selected, timeline_start_ms, metadata",
+      "id, task_id, project_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms, metadata",
+      "id, task_id, project_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, metadata",
+      "id, task_id, project_id, audio_path, duration_ms, take_number, is_selected, timeline_start_ms, metadata",
+      "id, task_id, project_id, audio_path, duration_ms, take_number, is_selected, metadata",
       "id, task_id, audio_path, duration_ms, take_number, is_selected, metadata",
       "id, task_id, audio_path, duration_ms, take_number, is_selected",
     ];
@@ -101,49 +118,78 @@ export async function GET(_req: Request, ctx: Ctx) {
         .from("recordings")
         .select(cols)
         .eq("project_id", projectId)
-        .in("task_id", taskIds)
         .order("take_number", { ascending: false });
-
       if (rErr) {
-        diagnostics.push(`recordings select failed (${cols.split(",")[0]}…): ${rErr.message}`);
+        diagnostics.push(`recordings by project failed: ${rErr.message}`);
         continue;
       }
       recordings = ((recs as unknown) as RecRow[]) ?? [];
       loaded = true;
+      diagnostics.push(`recordings_by_project=${recordings.length}`);
       break;
+    }
+
+    if (!loaded || recordings.length === 0) {
+      for (const cols of selects) {
+        const { data: recs, error: rErr } = await supabase
+          .from("recordings")
+          .select(cols)
+          .in("task_id", selectedTaskIds)
+          .order("take_number", { ascending: false });
+        if (rErr) {
+          diagnostics.push(`recordings by task_id failed: ${rErr.message}`);
+          continue;
+        }
+        recordings = ((recs as unknown) as RecRow[]) ?? [];
+        loaded = true;
+        diagnostics.push(`recordings_by_task_id=${recordings.length}`);
+        break;
+      }
     }
 
     if (!loaded) {
       diagnostics.push("Could not load any recordings for active plan tasks");
-    } else {
-      diagnostics.push(`recordings_rows=${recordings.length} active_tasks=${taskIds.length}`);
     }
   } else {
     diagnostics.push("No active/selected plan tasks");
   }
 
-  // Prefer selected take per task; else latest take (query ordered take_number desc)
+  const matched = matchRecordingsToActivePlan(
+    allTasks as PlanTaskFlags[],
+    recordings.map((r) => ({
+      id: r.id,
+      task_id: r.task_id,
+      is_selected: r.is_selected,
+    }))
+  );
+  const matchedIds = new Set(matched.map((m) => m.id));
+  const planRecordings = recordings.filter((r) => matchedIds.has(r.id));
+  const onePerTask = oneTakePerTask(
+    planRecordings.map((r) => ({
+      ...r,
+      task_id: r.task_id,
+      is_selected: r.is_selected,
+    }))
+  ) as RecRow[];
+
   const byTask = new Map<string, RecRow>();
-  for (const r of recordings) {
-    const existing = byTask.get(r.task_id);
-    if (!existing) {
-      byTask.set(r.task_id, r);
-      continue;
-    }
-    if (r.is_selected && !existing.is_selected) {
-      byTask.set(r.task_id, r);
-    }
+  for (const r of onePerTask) {
+    if (r.task_id) byTask.set(r.task_id, r);
   }
 
-  const layers = [];
+  const matchedTaskIds: string[] = [];
+  const unmatchedSelectedTaskIds: string[] = [];
+  const layers: Array<Record<string, unknown>> = [];
+
   for (const task of tasks) {
     const rec = byTask.get(task.id);
     if (!rec) {
+      unmatchedSelectedTaskIds.push(task.id);
       diagnostics.push(`no recording for task ${task.type || task.id}`);
       continue;
     }
+    matchedTaskIds.push(task.id);
 
-    // Prefer WAV-looking paths for browser playback (Safari cannot play many webm takes)
     const candidates = [
       rec.audio_path,
       rec.original_audio_path,
@@ -151,12 +197,13 @@ export async function GET(_req: Request, ctx: Ctx) {
     ].filter((p): p is string => Boolean(p));
 
     candidates.sort((a, b) => {
-      const score = (p: string) =>
-        p.toLowerCase().endsWith(".wav")
-          ? 0
-          : p.toLowerCase().endsWith(".mp3") || p.toLowerCase().endsWith(".m4a")
-            ? 1
-            : 2;
+      const score = (p: string) => {
+        const l = p.toLowerCase();
+        if (l.endsWith(".wav")) return 0;
+        if (l.endsWith(".m4a") || l.endsWith(".mp4") || l.endsWith(".mp3")) return 1;
+        if (l.endsWith(".webm") || l.endsWith(".ogg")) return 3;
+        return 2;
+      };
       return score(a) - score(b);
     });
 
@@ -178,7 +225,10 @@ export async function GET(_req: Request, ctx: Ctx) {
         );
       }
     }
-    if (!audio_url || !usedPath) continue;
+    if (!audio_url || !usedPath) {
+      diagnostics.push(`no playable url for task ${task.type || task.id}`);
+      continue;
+    }
 
     const meta = (rec.metadata || {}) as Record<string, unknown>;
     const offsetFromMeta =
@@ -204,8 +254,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       recording_id: rec.id,
       type: task.type,
       title: task.title,
-      section_label:
-        (task.metadata as { section_label?: string } | null)?.section_label ?? null,
+      section_label: task.metadata?.section_label ?? null,
       start_ms,
       end_ms,
       take_number: rec.take_number,
@@ -216,11 +265,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     });
   }
 
-  if (layers.length === 0) {
-    console.warn("session-preview empty layers", { projectId, diagnostics });
-  }
-
-  return NextResponse.json({
+  const payload = {
     project_id: projectId,
     title: project.title,
     beat_url,
@@ -228,6 +273,29 @@ export async function GET(_req: Request, ctx: Ctx) {
     bpm: beat?.bpm ?? null,
     layers,
     layer_count: layers.length,
-    diagnostics: diagnostics.slice(0, 12),
+    vocal_layer_count: layers.length,
+    selected_task_ids: selectedTaskIds,
+    matched_task_ids: matchedTaskIds,
+    unmatched_selected_task_ids: unmatchedSelectedTaskIds,
+    diagnostics: diagnostics.slice(0, 20),
+  };
+
+  console.info("[session-preview]", {
+    projectId,
+    selectedTaskIds,
+    matchedTaskIds,
+    unmatchedSelectedTaskIds,
+    vocalLayerCount: layers.length,
+    placementStartMs: layers.map((l) => l.start_ms),
   });
+
+  if (layers.length === 0 && selectedTaskIds.length > 0) {
+    console.warn("session-preview empty layers despite active tasks", {
+      projectId,
+      diagnostics,
+      selectedTaskIds,
+    });
+  }
+
+  return NextResponse.json(payload);
 }
