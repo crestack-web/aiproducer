@@ -1,3 +1,6 @@
 "use client";
-/** Re-export: load full session from historical implementation when available. */
-export { default } from "./project-session-impl";
+
+/** Optional full session UI slot (not used while router lives in project-session-impl). */
+export default function ProjectSessionFullPlaceholder() {
+  return null;
+}
