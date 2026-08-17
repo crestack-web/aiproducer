@@ -2,7 +2,7 @@
 
 /**
  * Session entry: load full booth UI when available.
- * NEVER render a blank page (return null). Always show loading or recovery UI.
+ * NEVER render a blank page. Always show loading or recovery UI.
  */
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
@@ -28,12 +28,11 @@ export default function ProjectSessionEntry() {
     void import("@/components/project-session-ui")
       .then((mod: FullMod) => {
         if (cancelled) return;
-        // Require explicit marker — never trust a null placeholder even if minified name differs
         if (mod.FULL_SESSION_UI === true && typeof mod.default === "function") {
           setFullUI(() => mod.default);
         } else {
           setLoadError(
-            "Recording booth module is not fully deployed (placeholder only). Refresh after deploy."
+            "Recording booth module is not fully deployed. Refresh after the latest deploy."
           );
         }
         setTried(true);
@@ -52,7 +51,6 @@ export default function ProjectSessionEntry() {
     return <FullUI />;
   }
 
-  // Always visible loading / recovery — never blank
   return (
     <AppShell active="studio">
       <div
