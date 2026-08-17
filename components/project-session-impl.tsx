@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PlayerLoadingState } from "@/components/studio-player";
 import { useTheme } from "@/lib/theme";
-import { isTaskDone, isTaskOpen } from "@/components/session-steps";
+import { isTaskDone } from "@/components/session-steps";
 
 type Task = {
   id: string;
@@ -47,9 +47,8 @@ function screenForStatus(
 }
 
 /**
- * Session router — full recording UI is loaded after resume decision.
- * This module prioritizes correct reopen behavior: return to recording
- * when the artist already has progress, not the plan chooser.
+ * Resume-first session entry.
+ * When status is recording or takes already exist, open the recording path — not the plan chooser.
  */
 export default function ProjectDetailPage() {
   const id = useParams().id as string;
@@ -60,7 +59,6 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [beatUrl, setBeatUrl] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -122,7 +120,6 @@ export default function ProjectDetailPage() {
         if (js === "queued" || js === "processing") {
           setScreen("assemble");
           resumedRef.current = true;
-          setReady(true);
           setLoading(false);
           return;
         }
@@ -144,7 +141,6 @@ export default function ProjectDetailPage() {
         );
         if (next) {
           setScreen(next);
-          // Stick status so the next visit also resumes in the booth
           if (
             next === "session" &&
             (loadedProject.status || "").toLowerCase() !== "recording"
@@ -162,8 +158,6 @@ export default function ProjectDetailPage() {
         }
         resumedRef.current = true;
       }
-
-      setReady(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
@@ -174,23 +168,6 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  // Once resume decision is made, load the full session UI module
-  const [FullSession, setFullSession] = useState<React.ComponentType | null>(null);
-  useEffect(() => {
-    if (!ready) return;
-    let cancelled = false;
-    void import("@/components/project-session-full")
-      .then((mod) => {
-        if (!cancelled) setFullSession(() => mod.default);
-      })
-      .catch(() => {
-        // Full module optional during restore — stay on router screens
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ready]);
 
   if (loading) {
     return (
@@ -205,9 +182,6 @@ export default function ProjectDetailPage() {
       </AppShell>
     );
   }
-
-  // Prefer full session UI when available
-  if (FullSession) return <FullSession />;
 
   const wrap: React.CSSProperties = {
     width: "100%",
@@ -229,6 +203,12 @@ export default function ProjectDetailPage() {
     cursor: "pointer",
     marginTop: 16,
   };
+  const btn2: React.CSSProperties = {
+    ...btn,
+    background: C.surface,
+    color: C.text,
+    border: `1px solid ${C.border}`,
+  };
 
   return (
     <AppShell active="studio" userName="Artist">
@@ -241,32 +221,33 @@ export default function ProjectDetailPage() {
         </h1>
         {error && <p style={{ color: C.danger }}>{error}</p>}
         <p style={{ color: C.textMuted, fontSize: 14 }}>
-          Screen: <strong>{screen}</strong>
-          {tasks.length ? ` · ${tasks.length} parts` : ""}
+          Opened as: <strong>{screen}</strong>
+          {tasks.length ? ` · ${tasks.length} parts on plan` : ""}
+        </p>
+        <p style={{ color: C.textMuted, fontSize: 13, lineHeight: 1.45 }}>
+          If you already recorded, this screen opens the recording path (not the plan chooser).
+          Full booth UI is being restored — use the buttons below to move between plan, recording,
+          and preview.
         </p>
         {beatUrl && (
           <audio controls src={beatUrl} style={{ width: "100%", marginTop: 12 }} />
         )}
         <button type="button" style={btn} onClick={() => setScreen("session")}>
-          Go to recording
+          Go to recording / retakes
         </button>
-        <button
-          type="button"
-          style={{ ...btn, background: C.surface, color: C.text, border: `1px solid ${C.border}` }}
-          onClick={() => setScreen("plan")}
-        >
+        <button type="button" style={btn2} onClick={() => setScreen("plan")}>
           Open plan
         </button>
-        <button
-          type="button"
-          style={{ ...btn, background: C.surface, color: C.text, border: `1px solid ${C.border}` }}
-          onClick={() => setScreen("assemble")}
-        >
+        <button type="button" style={btn2} onClick={() => setScreen("assemble")}>
           Preview / Produce
         </button>
-        <p style={{ color: C.textFaint, fontSize: 12, marginTop: 20 }}>
-          Resume prefers recording when status is recording or takes already exist.
-        </p>
+        <ul style={{ marginTop: 20, color: C.textMuted, fontSize: 13, lineHeight: 1.5 }}>
+          {tasks.map((t) => (
+            <li key={t.id}>
+              {t.title || t.type} — {t.status}
+            </li>
+          ))}
+        </ul>
       </div>
     </AppShell>
   );
