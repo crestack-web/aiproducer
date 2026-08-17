@@ -1,1 +1,1 @@
-PLACEHOLDER_READ_FROM_ARTIFACT
+SEE_FILE_/home/workdir/artifacts/project-session-ui.tsx
