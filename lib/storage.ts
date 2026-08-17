@@ -75,13 +75,16 @@ export function customBeatPath(userId: string, projectId: string, ext = "wav") {
   return `users/${userId}/projects/${projectId}/beats/custom.${ext}`;
 }
 
-export async function createSignedUploadUrl(path: string) {
+export async function createSignedUploadUrl(
+  path: string,
+  opts?: { upsert?: boolean }
+) {
   const supabase = createServiceClient();
   const { data, error } = await supabase.storage
     .from(getStorageBucket())
-    .createSignedUploadUrl(path);
+    .createSignedUploadUrl(path, { upsert: opts?.upsert ?? true });
   if (error) throw error;
-  return { signedUrl: data.signedUrl, token: data.token, path };
+  return { signedUrl: data.signedUrl, token: data.token, path: data.path || path };
 }
 
 export async function uploadBuffer(
