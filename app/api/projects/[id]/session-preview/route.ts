@@ -17,6 +17,7 @@ type RecRow = {
   timeline_start_ms?: number | null;
   timeline_end_ms?: number | null;
   recording_offset_ms?: number | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 /**
@@ -87,9 +88,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (taskIds.length > 0) {
     // Prefer full column set; fall back if migrations lag (unknown columns break PostgREST selects)
     const selects = [
-      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms",
-      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms",
-      "id, task_id, audio_path, duration_ms, take_number, is_selected, timeline_start_ms",
+      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms, metadata",
+      "id, task_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, metadata",
+      "id, task_id, audio_path, duration_ms, take_number, is_selected, timeline_start_ms, metadata",
+      "id, task_id, audio_path, duration_ms, take_number, is_selected, metadata",
       "id, task_id, audio_path, duration_ms, take_number, is_selected",
     ];
 
@@ -178,10 +180,17 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
     if (!audio_url || !usedPath) continue;
 
+    const meta = (rec.metadata || {}) as Record<string, unknown>;
+    const offsetFromMeta =
+      typeof meta.recording_offset_ms === "number" ? (meta.recording_offset_ms as number) : null;
+    const placementFromMeta =
+      typeof meta.placement_start_ms === "number" ? (meta.placement_start_ms as number) : null;
     const start_ms = resolvePlacementStartMs({
       sectionStartMs: task.start_ms,
-      recordingOffsetMs: rec.recording_offset_ms,
+      recordingOffsetMs:
+        typeof rec.recording_offset_ms === "number" ? rec.recording_offset_ms : offsetFromMeta,
       timelineStartMs: rec.timeline_start_ms,
+      placementStartMs: placementFromMeta,
     });
     const end_ms =
       typeof rec.timeline_end_ms === "number"
