@@ -188,7 +188,7 @@ export function StudioPlayer({
         boxShadow: C.cardShadow,
       }}
     >
-      <audio ref={audioRef} src={src} preload="metadata" />
+      <audio ref={audioRef} src={src} preload="metadata" playsInline />
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <CoverArt seed={seed} size={56} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -349,6 +349,11 @@ export function PlayerLoadingState({
   );
 }
 
+/**
+ * Review player: vocal is primary; beat is optional monitor only.
+ * Voice-only (beatVolume ≈ 0) must never start or keep the beat element playing.
+ * Recording capture remains separate — this component only plays already-recorded audio.
+ */
 export function CompactAudioPlayer({
   src,
   label,
@@ -375,44 +380,93 @@ export function CompactAudioPlayer({
   const beatRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const bars = useMemo(() => makeWave(seed, 40), [seed]);
   const rafRef = useRef<number | null>(null);
+  const voiceOnly = beatVolume <= 0.001;
 
   const stopRaf = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
   };
 
+  const hardStopBeat = useCallback(() => {
+    const beat = beatRef.current;
+    if (!beat) return;
+    try {
+      beat.pause();
+      beat.volume = 0;
+      // Do not leave a silent track "playing" on mobile audio session
+      if (!beat.paused) beat.pause();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // New take / src change → reset playback state
+  useEffect(() => {
+    stopRaf();
+    setPlaying(false);
+    setProgress(0);
+    setLoadError(null);
+    const vocal = vocalRef.current;
+    if (vocal) {
+      try {
+        vocal.pause();
+        vocal.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
+    }
+    hardStopBeat();
+  }, [src, hardStopBeat]);
+
   useEffect(() => {
     return () => {
       stopRaf();
       vocalRef.current?.pause();
-      beatRef.current?.pause();
+      hardStopBeat();
     };
-  }, []);
+  }, [hardStopBeat]);
 
-  // Keep volumes in sync; fully stop beat when voice-only (volume 0)
+  // Live volume + voice-only: fully stop beat when volume is ~0 (toggle while playing)
   useEffect(() => {
-    if (vocalRef.current) vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
+    if (vocalRef.current) {
+      vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
+    }
+    if (voiceOnly) {
+      hardStopBeat();
+      return;
+    }
     const beat = beatRef.current;
     if (!beat) return;
-    if (beatVolume <= 0.001) {
-      beat.volume = 0;
-      beat.pause();
-    } else {
-      beat.volume = Math.min(1, Math.max(0, beatVolume));
-    }
-  }, [vocalVolume, beatVolume]);
+    beat.volume = Math.min(1, Math.max(0, beatVolume));
+  }, [vocalVolume, beatVolume, voiceOnly, hardStopBeat]);
 
-  async function ensureReady(el: HTMLAudioElement) {
-    if (el.readyState >= 2) return;
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        el.removeEventListener("canplay", done);
-        resolve();
+  async function ensureReady(el: HTMLAudioElement, ms = 8000): Promise<boolean> {
+    if (el.readyState >= 2) return true;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        el.removeEventListener("canplay", onOk);
+        el.removeEventListener("loadeddata", onOk);
+        el.removeEventListener("error", onErr);
+        clearTimeout(timer);
+        resolve(ok);
       };
-      el.addEventListener("canplay", done);
-      el.load();
+      const onOk = () => finish(true);
+      const onErr = () => finish(false);
+      const timer = setTimeout(() => finish(el.readyState >= 2), ms);
+      el.addEventListener("canplay", onOk);
+      el.addEventListener("loadeddata", onOk);
+      el.addEventListener("error", onErr);
+      try {
+        el.load();
+      } catch {
+        finish(el.readyState >= 2);
+      }
     });
   }
 
@@ -421,41 +475,61 @@ export function CompactAudioPlayer({
     if (!vocal) return;
     if (playing) {
       vocal.pause();
-      beatRef.current?.pause();
+      hardStopBeat();
       stopRaf();
       setPlaying(false);
       return;
     }
-    await ensureReady(vocal);
-    // Voice first — full level
-    vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-    const beat = beatRef.current;
-    const wantBeat = Boolean(beat && beatSrc && beatVolume > 0.001);
-    if (wantBeat && beat) {
-      await ensureReady(beat);
-      try {
-        beat.currentTime = Math.max(0, (beatStartMs || 0) / 1000);
-      } catch {
-        /* ignore */
-      }
-      beat.volume = Math.min(1, Math.max(0, beatVolume));
-      await beat.play().catch(() => undefined);
-    } else if (beat) {
-      beat.pause();
-      beat.volume = 0;
+
+    setLoadError(null);
+    const vocalOk = await ensureReady(vocal);
+    if (!vocalOk) {
+      setLoadError("Could not load your take for playback");
+      return;
     }
-    await vocal.play().catch(() => undefined);
+
+    vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+
+    const beat = beatRef.current;
+    const wantBeat = Boolean(beat && beatSrc && !voiceOnly);
+
+    if (wantBeat && beat) {
+      const beatOk = await ensureReady(beat);
+      if (beatOk) {
+        try {
+          beat.currentTime = Math.max(0, (beatStartMs || 0) / 1000);
+        } catch {
+          /* ignore */
+        }
+        beat.volume = Math.min(1, Math.max(0, beatVolume));
+        await beat.play().catch(() => undefined);
+      }
+    } else {
+      hardStopBeat();
+    }
+
+    try {
+      await vocal.play();
+    } catch {
+      hardStopBeat();
+      setLoadError("Playback was blocked — tap again");
+      setPlaying(false);
+      return;
+    }
+
     setPlaying(true);
     const tick = () => {
-      if (!vocal.duration) {
-        rafRef.current = requestAnimationFrame(tick);
-        return;
+      const v = vocalRef.current;
+      const b = beatRef.current;
+      if (!v) return;
+      if (v.duration) setProgress(v.currentTime / v.duration);
+      // Voice-only safety: if mode flipped mid-play, kill beat
+      if (voiceOnly || (beatVolume <= 0.001)) {
+        if (b && !b.paused) hardStopBeat();
+      } else if (b && beatEndMs != null && b.currentTime * 1000 >= beatEndMs) {
+        b.pause();
       }
-      setProgress(vocal.currentTime / vocal.duration);
-      if (beat && beatEndMs != null && beat.currentTime * 1000 >= beatEndMs) {
-        beat.pause();
-      }
-      if (!vocal.paused) rafRef.current = requestAnimationFrame(tick);
+      if (!v.paused) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   }
@@ -464,14 +538,16 @@ export function CompactAudioPlayer({
     const vocal = vocalRef.current;
     if (!vocal) return;
     const onEnd = () => {
-      beatRef.current?.pause();
+      hardStopBeat();
       stopRaf();
       setPlaying(false);
       setProgress(1);
     };
     vocal.addEventListener("ended", onEnd);
     return () => vocal.removeEventListener("ended", onEnd);
-  }, []);
+  }, [hardStopBeat]);
+
+  const modeHint = voiceOnly ? "voice only" : "voice up · beat low";
 
   return (
     <div
@@ -484,19 +560,25 @@ export function CompactAudioPlayer({
         boxShadow: C.cardShadow,
       }}
     >
-      <audio ref={vocalRef} src={src} preload="auto" />
-      {beatSrc && <audio ref={beatRef} src={beatSrc} preload="auto" />}
+      <audio ref={vocalRef} src={src} preload="auto" playsInline />
+      {/* Beat element only for monitor mix — never mixed into the recorded file */}
+      {beatSrc ? (
+        <audio ref={beatRef} src={beatSrc} preload="auto" playsInline />
+      ) : null}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
             {label || "Take"}
-            <span style={{ marginLeft: 8, opacity: 0.7 }}>voice up · beat low</span>
+            <span style={{ marginLeft: 8, opacity: 0.7 }}>{modeHint}</span>
           </div>
           <Waveform bars={bars} progress={progress} height={28} />
+          {loadError && (
+            <div style={{ fontSize: 12, color: C.danger, marginTop: 6 }}>{loadError}</div>
+          )}
         </div>
         <button
           type="button"
-          onClick={toggle}
+          onClick={() => void toggle()}
           aria-label={playing ? "Pause" : "Play"}
           style={{
             width: 40,
