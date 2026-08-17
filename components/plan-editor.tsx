@@ -102,11 +102,14 @@ export function PlanEditor({
     }
   }
 
-  async function setMode(mode: PlanMode) {
-    await call("set_mode", { mode });
+  /**
+   * Tab switch must ONLY change selection state — no API requests.
+   * restore_ai_plan / clear_to_scratch are destructive and must be explicit actions.
+   * Mode is persisted when Generate / Start recording runs (parent).
+   */
+  function setMode(mode: PlanMode) {
+    if (mode === planMode) return;
     onModeChange(mode);
-    if (mode === "scratch") await call("clear_to_scratch");
-    if (mode === "ai") await call("restore_ai_plan");
   }
 
   function startEdit(t: PlanEditorTask) {
@@ -164,7 +167,7 @@ export function PlanEditor({
       <button
         type="button"
         disabled={busy}
-        onClick={() => void setMode(mode)}
+        onClick={() => setMode(mode)}
         style={{
           flex: 1,
           padding: "10px 8px",
