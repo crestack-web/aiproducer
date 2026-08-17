@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { RotatingHeadline } from "@/components/rotating-headline";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -34,7 +35,11 @@ export default function WelcomePage() {
 
         <section className="hero">
           <div className="eyebrow"><span /> AI Music Producer</div>
-          <h1>Radio-ready songs.<br /><em>With your real voice.</em></h1>
+          <h1>
+            <RotatingHeadline />
+            <br />
+            <em>With your real voice.</em>
+          </h1>
           <p className="hero-sub">
             Create a beat, follow a clear recording plan, and let Studio assemble, mix, and master —
             so you leave with a <strong>finished, professional-sounding track</strong>, not a rough freestyle.
