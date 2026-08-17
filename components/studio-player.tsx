@@ -405,6 +405,10 @@ export function CompactAudioPlayer({
   const voiceOnly = beatVolume <= 0.001;
   /** placementStartMs on the song timeline — single source from parent */
   const placementStartMs = Math.max(0, beatStartMs || 0);
+  /** Song timeline ms at last pause — resume from here, do not jump to placement */
+  const pausedSongMsRef = useRef<number | null>(null);
+  /** Only correct vocal when drift exceeds this (seconds) — avoid fighting the clock */
+  const SYNC_TOLERANCE_SEC = 0.08;
 
   const stopRaf = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -434,7 +438,7 @@ export function CompactAudioPlayer({
     if (beat && beatSrc && !voiceOnly) {
       try {
         const bt = Math.max(0, songMs / 1000);
-        if (Math.abs(beat.currentTime - bt) > 0.04) beat.currentTime = bt;
+        if (Math.abs(beat.currentTime - bt) > SYNC_TOLERANCE_SEC) beat.currentTime = bt;
       } catch {
         /* ignore */
       }
@@ -446,7 +450,7 @@ export function CompactAudioPlayer({
           if (!vocal.paused) vocal.pause();
           if (vocal.currentTime !== 0) vocal.currentTime = 0;
         } else {
-          if (Math.abs(vocal.currentTime - vt) > 0.04) vocal.currentTime = vt;
+          if (Math.abs(vocal.currentTime - vt) > SYNC_TOLERANCE_SEC) vocal.currentTime = vt;
         }
       } catch {
         /* ignore */
@@ -535,6 +539,13 @@ export function CompactAudioPlayer({
     const vocal = vocalRef.current;
     if (!vocal) return;
     if (playing) {
+      // Capture song position before pause (beat master, else vocal→song)
+      const b = beatRef.current;
+      const songMs =
+        b && beatSrc && !voiceOnly && !b.paused
+          ? b.currentTime * 1000
+          : placementStartMs + vocal.currentTime * 1000;
+      pausedSongMsRef.current = songMs;
       vocal.pause();
       hardStopBeat();
       stopRaf();
@@ -555,8 +566,9 @@ export function CompactAudioPlayer({
     const beat = beatRef.current;
     const wantBeat = Boolean(beat && beatSrc && !voiceOnly);
 
-    // Common song timeline starts at placement (vocal sample 0)
-    const songMs = placementStartMs;
+    // Resume from paused song position, or start at placement (vocal file 0)
+    const songMs =
+      pausedSongMsRef.current != null ? pausedSongMsRef.current : placementStartMs;
     applySongTimelineMs(songMs);
 
     if (wantBeat && beat) {
@@ -564,7 +576,7 @@ export function CompactAudioPlayer({
       if (beatOk) {
         try {
           beat.playbackRate = 1;
-          beat.currentTime = songMs / 1000;
+          beat.currentTime = Math.max(0, songMs / 1000);
         } catch {
           /* ignore */
         }
@@ -575,10 +587,12 @@ export function CompactAudioPlayer({
       hardStopBeat();
     }
 
-    // Vocal starts at file 0 when songMs === placementStartMs
+    // Vocal file time from shared song timeline
     try {
-      vocal.currentTime = 0;
-      await vocal.play();
+      const vt = vocalFileTimeFromSongMs(songMs);
+      vocal.currentTime = Math.max(0, vt);
+      if (vt >= 0) await vocal.play();
+      else vocal.pause();
     } catch {
       hardStopBeat();
       setLoadError("Playback was blocked — tap again");
@@ -602,7 +616,7 @@ export function CompactAudioPlayer({
           if (v.currentTime !== 0) v.currentTime = 0;
         } else {
           if (v.paused && playing) void v.play().catch(() => undefined);
-          if (Math.abs(v.currentTime - vt) > 0.05) {
+          if (Math.abs(v.currentTime - vt) > SYNC_TOLERANCE_SEC) {
             try {
               v.currentTime = vt;
             } catch {
@@ -632,6 +646,7 @@ export function CompactAudioPlayer({
     const onEnd = () => {
       hardStopBeat();
       stopRaf();
+      pausedSongMsRef.current = null; // replay starts at placement
       setPlaying(false);
       setProgress(1);
     };

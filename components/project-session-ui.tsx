@@ -180,6 +180,19 @@ export default function ProjectDetailPage() {
     selectedSpeakerIdRef.current = selectedSpeakerId;
   }, [selectedSpeakerId]);
 
+  // Recorded Section: only CompactAudioPlayer may play the beat — booth monitor stays dead
+  useEffect(() => {
+    if (phase !== "review") return;
+    try {
+      const el = beatAudioRef.current;
+      if (!el) return;
+      el.pause();
+      el.volume = 0;
+    } catch {
+      /* ignore */
+    }
+  }, [phase, localBlobUrl, reviewVoiceOnly]);
+
   // Apply speaker choice whenever it changes (and when beat element is ready)
   useEffect(() => {
     void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerId || undefined);
