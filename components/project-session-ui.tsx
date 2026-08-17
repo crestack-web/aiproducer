@@ -1,1 +1,1 @@
-FILE_CONTENTS_MUST_BE_INLINE
+@/tmp/psui_push.tsx
