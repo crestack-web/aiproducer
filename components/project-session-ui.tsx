@@ -548,6 +548,7 @@ export default function ProjectDetailPage() {
       setMicStream(null);
       beatAudioRef.current?.pause();
       const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
+      const wallClockMs = Date.now() - startedAtRef.current;
       setLocalBlobUrl(URL.createObjectURL(blob));
       setPhase("review");
       setUploading(true);
@@ -556,8 +557,47 @@ export default function ProjectDetailPage() {
         const form = new FormData();
         form.append("file", blob, "take.webm");
         form.append("source", "record");
-        form.append("duration_ms", String(Date.now() - startedAtRef.current));
-        await attachAnalysisToForm(form, blob, task, id);
+        form.append("duration_ms", String(wallClockMs));
+        // Forensic: capture purity — beat is never in this MediaRecorder graph
+        try {
+          sessionStorage.setItem(
+            "studio_last_capture_forensics",
+            JSON.stringify({
+              mimeType: mimeRef.current,
+              blobBytes: blob.size,
+              wallClockRecordingMs: wallClockMs,
+              beat_in_media_recorder: false,
+              beat_capture_possible: "acoustic_only_if_phone_speaker",
+              captureGraph: "mic→getUserMedia→MediaRecorder (vocal only); beat→HTMLAudioElement",
+              at: Date.now(),
+            })
+          );
+        } catch {
+          /* ignore */
+        }
+        const attached = await attachAnalysisToForm(form, blob, task, id);
+        try {
+          sessionStorage.setItem(
+            "studio_last_capture_forensics",
+            JSON.stringify({
+              mimeType: mimeRef.current,
+              blobBytes: blob.size,
+              wallClockRecordingMs: wallClockMs,
+              analysisDurationMs: attached.analysis?.durationMs ?? null,
+              mic_peak: attached.analysis?.loudness?.peak ?? null,
+              mic_rms: attached.analysis?.loudness?.rms ?? null,
+              sourceSampleRate: attached.sourceSampleRate,
+              conversionSampleRate: attached.conversionSampleRate,
+              conversionMethod: attached.conversionMethod,
+              beat_in_media_recorder: false,
+              beat_capture_possible: "acoustic_only_if_phone_speaker",
+              captureGraph: "mic→getUserMedia→MediaRecorder (vocal only); beat→HTMLAudioElement",
+              at: Date.now(),
+            })
+          );
+        } catch {
+          /* ignore */
+        }
         const res = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
           method: "POST",
           body: form,

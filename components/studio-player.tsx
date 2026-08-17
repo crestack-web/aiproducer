@@ -403,7 +403,7 @@ export function CompactAudioPlayer({
     }
   }, []);
 
-  // New take / src change → reset playback state
+  // New take / src change → reset playback state; lock rate to 1.0 (never stretch)
   useEffect(() => {
     stopRaf();
     setPlaying(false);
@@ -414,6 +414,18 @@ export function CompactAudioPlayer({
       try {
         vocal.pause();
         vocal.currentTime = 0;
+        vocal.playbackRate = 1;
+        if ("preservesPitch" in vocal) {
+          (vocal as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    const beat = beatRef.current;
+    if (beat) {
+      try {
+        beat.playbackRate = 1;
       } catch {
         /* ignore */
       }
@@ -488,6 +500,8 @@ export function CompactAudioPlayer({
       return;
     }
 
+    // Explicit rate lock — review must never stretch/pitch-shift the take
+    vocal.playbackRate = 1;
     vocal.volume = Math.min(1, Math.max(0, vocalVolume));
 
     const beat = beatRef.current;
@@ -497,6 +511,7 @@ export function CompactAudioPlayer({
       const beatOk = await ensureReady(beat);
       if (beatOk) {
         try {
+          beat.playbackRate = 1;
           beat.currentTime = Math.max(0, (beatStartMs || 0) / 1000);
         } catch {
           /* ignore */

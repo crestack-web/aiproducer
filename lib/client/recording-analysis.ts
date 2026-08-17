@@ -20,6 +20,11 @@ export type AttachAnalysisResult = {
   conversionSampleRate: number | null;
   sourceSampleRate: number | null;
   sourceChannels: number | null;
+  sourceDurationSec: number | null;
+  outputDurationSec: number | null;
+  sourceFrameCount: number | null;
+  outputFrameCount: number | null;
+  durationDeltaMs: number | null;
 };
 
 /**
@@ -50,6 +55,11 @@ export async function attachAnalysisToForm(
     conversionSampleRate: null,
     sourceSampleRate: null,
     sourceChannels: null,
+    sourceDurationSec: null,
+    outputDurationSec: null,
+    sourceFrameCount: null,
+    outputFrameCount: null,
+    durationDeltaMs: null,
   };
 
   if (!form.has("original_file")) {
@@ -71,11 +81,19 @@ export async function attachAnalysisToForm(
     result.conversionSampleRate = wav.sampleRate;
     result.sourceSampleRate = wav.sourceSampleRate;
     result.sourceChannels = wav.sourceChannels;
+    result.sourceDurationSec = wav.sourceDurationSec;
+    result.outputDurationSec = wav.outputDurationSec;
+    result.sourceFrameCount = wav.sourceFrameCount;
+    result.outputFrameCount = wav.outputFrameCount;
+    result.durationDeltaMs = wav.durationDeltaMs;
     form.set("file", wav.blob, "take.wav");
     form.set("conversion_method", wav.method);
     form.set("conversion_sample_rate", String(wav.sampleRate));
     form.set("source_sample_rate", String(wav.sourceSampleRate));
     form.set("source_channels", String(wav.sourceChannels));
+    form.set("source_duration_sec", String(wav.sourceDurationSec));
+    form.set("output_duration_sec", String(wav.outputDurationSec));
+    form.set("duration_delta_ms", String(wav.durationDeltaMs));
   } catch {
     /* keep original file field if already set by caller */
   }
