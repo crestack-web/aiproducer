@@ -71,6 +71,12 @@ assert(
   "explicit placementStartMs wins"
 );
 
+
+// Extra offsets
+assert(resolvePlacementStartMs({ sectionStartMs: 32000, recordingOffsetMs: 500 }) === 32500, "offset +500");
+assert(resolvePlacementStartMs({ sectionStartMs: 32000, recordingOffsetMs: -500 }) === 31500, "offset -500");
+assert(resolvePlacementStartMs({ sectionStartMs: 65000, recordingOffsetMs: 0 }) === 65000, "chorus-only keeps 65000");
+
 if (process.exitCode) {
   console.error("\nPlacement tests failed.");
   process.exit(1);
