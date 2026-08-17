@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTheme } from "@/lib/theme";
+import {
+  normalizeOutputDevices,
+  preferHeadphonesFromNormalized,
+  preferPhoneSpeakerFromNormalized,
+  type NormalizedOutputDevice,
+} from "@/lib/audio/output-devices";
 
 export type MicDevice = {
   deviceId: string;
@@ -396,6 +402,9 @@ export function looksLikeBuiltInMic(label: string): boolean {
 export type SpeakerDevice = {
   deviceId: string;
   label: string;
+  groupId?: string;
+  isHeadphones?: boolean;
+  isDefaultAlias?: boolean;
 };
 
 /** Prefer phone/built-in mic — never auto-pick EarPods headset mic. */
@@ -410,18 +419,25 @@ export function preferBuiltInMicId(devices: MicDevice[]): string {
 
 /** Prefer phone loudspeaker among audio outputs (not headphones). */
 export function preferPhoneSpeakerId(devices: SpeakerDevice[]): string {
-  const notHp = devices.filter((d) => !looksLikeHeadphones(d.label));
-  const phone =
-    notHp.find((d) => /speaker|phone|built.?in|default/i.test(d.label) && !/earpiece/i.test(d.label)) ||
-    notHp.find((d) => /speaker/i.test(d.label)) ||
-    notHp[0];
-  return phone?.deviceId || "";
+  const normalized = normalizeOutputDevices(
+    devices.map((d) => ({
+      deviceId: d.deviceId,
+      label: d.label,
+      groupId: d.groupId,
+      kind: "audiooutput",
+    }))
+  );
+  return preferPhoneSpeakerFromNormalized(normalized);
 }
 
 /**
  * Route an HTMLMediaElement to a headphone-like output when the browser supports
  * setSinkId (Chromium/Android). No-op on iOS Safari (unsupported).
  * Does not change the microphone — only where the beat/monitor plays.
+ *
+ * requested vs actual: we only report routed:true after setSinkId resolves.
+ * If the platform cannot apply the sink, we return routed:false and do not
+ * claim the route changed.
  */
 export function canSelectAudioOutput(): boolean {
   if (typeof HTMLMediaElement === "undefined") return false;
@@ -430,6 +446,8 @@ export function canSelectAudioOutput(): boolean {
 
 /**
  * Apply a specific output sink, or auto-prefer headphones when sinkId is empty.
+ * Uses normalizeOutputDevices so semantic ids (__headphones__/__speaker__) map
+ * onto the same clean list the picker shows.
  */
 export async function routePlaybackToPreferredOutput(
   el: HTMLMediaElement | null | undefined,
@@ -441,36 +459,60 @@ export async function routePlaybackToPreferredOutput(
       setSinkId?: (id: string) => Promise<void>;
     }
   ).setSinkId;
+  // iOS Safari: setSinkId missing — system Control Center owns routing.
   if (typeof setSinkId !== "function") return { routed: false, unsupported: true };
   if (!navigator.mediaDevices?.enumerateDevices) return { routed: false, unsupported: true };
 
   try {
     const all = await navigator.mediaDevices.enumerateDevices();
-    const outputs = all.filter((d) => d.kind === "audiooutput");
-    const mapped = outputs.map((d, i) => ({
-      deviceId: d.deviceId,
-      label: d.label?.trim() || `Speaker ${i + 1}`,
-    }));
+    const normalized = normalizeOutputDevices(
+      all
+        .filter((d) => d.kind === "audiooutput")
+        .map((d) => ({
+          deviceId: d.deviceId,
+          label: d.label || "",
+          groupId: d.groupId,
+          kind: d.kind,
+        }))
+    );
 
-    let preferred: { deviceId: string; label: string } | undefined;
+    let preferred: NormalizedOutputDevice | undefined;
 
     if (preferredSinkId === "__headphones__" || preferredSinkId === "" || preferredSinkId == null) {
+      const hpId = preferHeadphonesFromNormalized(normalized);
       preferred =
-        mapped.find((d) => looksLikeHeadphones(d.label)) ||
-        mapped.find((d) => d.deviceId === "default") ||
-        mapped[0];
+        normalized.find((d) => d.deviceId === hpId) ||
+        normalized.find((d) => d.isHeadphones) ||
+        normalized.find((d) => d.isDefaultAlias) ||
+        normalized[0];
     } else if (preferredSinkId === "__speaker__") {
-      const phoneId = preferPhoneSpeakerId(mapped);
-      preferred = mapped.find((d) => d.deviceId === phoneId) || mapped.find((d) => !looksLikeHeadphones(d.label));
+      const phoneId = preferPhoneSpeakerFromNormalized(normalized);
+      preferred =
+        normalized.find((d) => d.deviceId === phoneId) ||
+        normalized.find((d) => !d.isHeadphones) ||
+        normalized[0];
     } else {
-      preferred = mapped.find((d) => d.deviceId === preferredSinkId);
+      preferred = normalized.find((d) => d.deviceId === preferredSinkId);
+      // Selection may still be a raw id from an older session
+      if (!preferred) {
+        const raw = all.find((d) => d.kind === "audiooutput" && d.deviceId === preferredSinkId);
+        if (raw) {
+          preferred = {
+            deviceId: raw.deviceId,
+            label: raw.label || "Speaker",
+            groupId: raw.groupId || "",
+            isDefaultAlias: false,
+            isHeadphones: looksLikeHeadphones(raw.label || ""),
+          };
+        }
+      }
     }
 
     if (!preferred?.deviceId) {
-      if (outputs.length === 0) return { routed: false };
-      preferred = { deviceId: outputs[0].deviceId, label: outputs[0].label };
+      return { routed: false };
     }
     await setSinkId.call(el, preferred.deviceId);
+    // Only claim success after setSinkId resolves without throwing
     return { routed: true, sinkId: preferred.deviceId, label: preferred.label };
   } catch {
     return { routed: false };
@@ -485,7 +527,14 @@ type SpeakerProps = {
 
 /**
  * Explicit speaker / headphone output picker (mirrors mic picker).
- * Requires HTMLMediaElement.setSinkId (Chrome/Android; not iOS Safari).
+ *
+ * Uses normalizeOutputDevices so each physical route appears once.
+ * Does NOT mix audioinput devices. Does NOT append on devicechange —
+ * each enumeration replaces the list with a fresh normalized snapshot.
+ *
+ * Requires HTMLMediaElement.setSinkId (Chrome/Android). On iOS Safari
+ * setSinkId is missing: we show guidance and no fake selectable sinks.
+ * Output selection never changes the microphone capture path.
  */
 export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: SpeakerProps) {
   const { colors: C } = useTheme();
@@ -498,8 +547,10 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
     if (!navigator.mediaDevices?.enumerateDevices) {
       setError("This browser cannot list speakers");
       setSupported(false);
+      setDevices([]);
       return;
     }
+    // iOS / browsers without setSinkId: do not invent selectable options
     if (!canSelectAudioOutput()) {
       setSupported(false);
       setDevices([]);
@@ -508,15 +559,30 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
     setSupported(true);
     try {
       const all = await navigator.mediaDevices.enumerateDevices();
-      const outs = all
-        .filter((d) => d.kind === "audiooutput")
-        .map((d, i) => ({
-          deviceId: d.deviceId,
-          label: d.label?.trim() || `Speaker ${i + 1}`,
-        }));
+      // Replace state — never append (devicechange must not accumulate duplicates)
+      const normalized = normalizeOutputDevices(
+        all
+          .filter((d) => d.kind === "audiooutput")
+          .map((d) => ({
+            deviceId: d.deviceId,
+            label: d.label || "",
+            groupId: d.groupId,
+            kind: d.kind,
+          }))
+      );
+      const outs: SpeakerDevice[] = normalized.map((d) => ({
+        deviceId: d.deviceId,
+        label: d.label,
+        groupId: d.groupId,
+        isHeadphones: d.isHeadphones,
+        isDefaultAlias: d.isDefaultAlias,
+      }));
       setDevices(outs);
+
       if (
         selectedDeviceId &&
+        selectedDeviceId !== "__headphones__" &&
+        selectedDeviceId !== "__speaker__" &&
         outs.length > 0 &&
         !outs.some((d) => d.deviceId === selectedDeviceId)
       ) {
@@ -574,6 +640,42 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
     fontFamily: "inherit",
   });
 
+  const isSelected = (d: SpeakerDevice) => {
+    if (selectedDeviceId === d.deviceId) return true;
+    // Semantic shortcuts map onto normalized rows
+    if (
+      (selectedDeviceId === "__headphones__" || selectedDeviceId === "") &&
+      d.isHeadphones &&
+      d.deviceId === preferHeadphonesFromNormalized(
+        devices.map((x) => ({
+          deviceId: x.deviceId,
+          label: x.label,
+          groupId: x.groupId || "",
+          isDefaultAlias: Boolean(x.isDefaultAlias),
+          isHeadphones: Boolean(x.isHeadphones),
+        }))
+      )
+    ) {
+      return true;
+    }
+    if (
+      selectedDeviceId === "__speaker__" &&
+      !d.isHeadphones &&
+      d.deviceId === preferPhoneSpeakerFromNormalized(
+        devices.map((x) => ({
+          deviceId: x.deviceId,
+          label: x.label,
+          groupId: x.groupId || "",
+          isDefaultAlias: Boolean(x.isDefaultAlias),
+          isHeadphones: Boolean(x.isHeadphones),
+        }))
+      )
+    ) {
+      return true;
+    }
+    return false;
+  };
+
   return (
     <div style={{ marginTop: 12 }}>
       <div
@@ -613,65 +715,42 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
         </button>
       )}
 
-      {supported && (
+      {supported && devices.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect("__headphones__")}
-            style={radio(selectedDeviceId === "__headphones__" || selectedDeviceId === "")}
-          >
-            <span style={{ fontSize: 14, color: C.text }}>Headphones / EarPods</span>
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              const phone = preferPhoneSpeakerId(devices);
-              onSelect(phone || "__speaker__");
-            }}
-            style={radio(
-              selectedDeviceId === "__speaker__" ||
-                (!!selectedDeviceId &&
-                  selectedDeviceId !== "__headphones__" &&
-                  !looksLikeHeadphones(
-                    devices.find((d) => d.deviceId === selectedDeviceId)?.label || ""
-                  ) &&
-                  selectedDeviceId === preferPhoneSpeakerId(devices))
-            )}
-          >
-            <span style={{ fontSize: 14, color: C.text }}>Phone speaker</span>
-          </button>
           {devices.map((d) => (
             <button
               key={d.deviceId || d.label}
               type="button"
               disabled={disabled}
               onClick={() => onSelect(d.deviceId)}
-              style={radio(selectedDeviceId === d.deviceId)}
+              style={radio(isSelected(d))}
             >
               <span style={{ fontSize: 14, color: C.text, lineHeight: 1.3 }}>
                 {d.label}
-                {looksLikeHeadphones(d.label) ? " · headphones" : ""}
+                {d.isHeadphones ? " · headphones" : ""}
               </span>
             </button>
           ))}
-          {devices.length === 0 && (
-            <button
-              type="button"
-              disabled={disabled || busy}
-              onClick={() => void ensureAndList()}
-              style={{ ...radio(false), justifyContent: "center", fontWeight: 600, fontSize: 13, color: C.textMuted }}
-            >
-              {busy ? "Listing…" : "Refresh speaker list"}
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={disabled || busy}
+            onClick={() => void ensureAndList()}
+            style={{
+              ...radio(false),
+              justifyContent: "center",
+              fontWeight: 600,
+              fontSize: 13,
+              color: C.textMuted,
+            }}
+          >
+            {busy ? "Listing…" : "Refresh speaker list"}
+          </button>
         </div>
       )}
 
       <p style={{ margin: "8px 0 0", fontSize: 11.5, color: C.textMuted, lineHeight: 1.4 }}>
-        Choose EarPods / headphones here so the beat plays in your ears — not the phone speaker —
-        while you record with the mic above.
+        Choose headphones so the beat plays in your ears — not the phone speaker — while you
+        record with the mic above. Output does not change the microphone.
       </p>
       {error && (
         <p style={{ margin: "6px 0 0", fontSize: 12.5, color: C.danger, lineHeight: 1.35 }}>{error}</p>
