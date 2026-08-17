@@ -16,6 +16,8 @@ export type ArrangementPlacement = {
   start_ms: number;
   end_ms: number;
   gain_db: number;
+  /** Canonical placement manifest for RoEx / debug (optional) */
+  metadata?: Record<string, unknown>;
 };
 
 export type MixTrackInput = {

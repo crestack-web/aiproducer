@@ -19,6 +19,17 @@ import {
   createVocalRecorder,
   describeInputQualityWarning,
 } from "@/lib/audio/recording-engine";
+import {
+  createSessionTimeline,
+  markCountdownStart,
+  markRecordingStart,
+  markRecordingStop,
+  placementStartMs,
+  resolvePlacementStartMs,
+  reviewBeatStartMs,
+  sessionTimelineToMeta,
+  type SessionTimeline,
+} from "@/lib/audio/session-timeline";
 import { AppShell } from "@/components/app-shell";
 import {
   SessionSteps,
@@ -143,6 +154,9 @@ export default function ProjectDetailPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const startedAtRef = useRef(0);
+  /** Canonical musical placement for the active take (session timeline). */
+  const sessionTimelineRef = useRef<SessionTimeline | null>(null);
+  const [lastRecordingOffsetMs, setLastRecordingOffsetMs] = useState(0);
   const mimeRef = useRef("audio/webm");
   const resumedRef = useRef(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -534,6 +548,11 @@ export default function ProjectDetailPage() {
   function beginMediaCapture(stream: MediaStream, task: Task) {
     chunksRef.current = [];
     autoStoppedRef.current = false;
+    // Mark actual MediaRecorder start on the session timeline (musical offset)
+    if (sessionTimelineRef.current) {
+      sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
+      setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
+    }
     // Vocal-only MediaRecorder — stream must be mic path, never beat mix
     const { recorder: rec, mimeType: mime } = createVocalRecorder(stream);
     mimeRef.current = mime;
@@ -554,10 +573,31 @@ export default function ProjectDetailPage() {
       setUploading(true);
       setProducerTip(null);
       try {
+        // Finalize timeline duration (wall-clock of MediaRecorder; not stretched)
+        if (sessionTimelineRef.current) {
+          sessionTimelineRef.current = markRecordingStop(sessionTimelineRef.current);
+        }
+        const tl = sessionTimelineRef.current;
+        const offsetMs = tl?.recordingOffsetMs ?? 0;
+        const sectionStart = tl?.sectionStartMs ?? (task.start_ms ?? 0);
+        const placeMs = tl
+          ? placementStartMs(tl)
+          : resolvePlacementStartMs({ sectionStartMs: sectionStart, recordingOffsetMs: offsetMs });
+        const recordedMs = tl?.recordedDurationMs ?? wallClockMs;
+        setLastRecordingOffsetMs(offsetMs);
+
         const form = new FormData();
         form.append("file", blob, "take.webm");
         form.append("source", "record");
-        form.append("duration_ms", String(wallClockMs));
+        form.append("duration_ms", String(recordedMs));
+        form.append("recording_offset_ms", String(offsetMs));
+        form.append("placement_start_ms", String(placeMs));
+        form.append("section_start_ms", String(sectionStart));
+        if (tl?.sectionEndMs != null) form.append("section_end_ms", String(tl.sectionEndMs));
+        form.append("task_id", task.id);
+        if (tl) {
+          form.append("session_timeline", JSON.stringify(sessionTimelineToMeta(tl)));
+        }
         // Forensic: capture purity — beat is never in this MediaRecorder graph
         try {
           sessionStorage.setItem(
@@ -623,6 +663,13 @@ export default function ProjectDetailPage() {
     const limitMs = sectionDurationMs(task);
 
     startedAtRef.current = Date.now();
+    // Beat seeks to canonical section start (musical position), not 0
+    if (beatAudioRef.current && beatUrl) {
+      void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
+      beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+      beatAudioRef.current.volume = 0.14;
+      beatAudioRef.current.play().catch(() => undefined);
+    }
     setRecordSeconds(0);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
@@ -649,15 +696,8 @@ export default function ProjectDetailPage() {
       }, limitMs);
     }
 
-    if (beatAudioRef.current && beatUrl) {
-      void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
-      beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      beatAudioRef.current.volume = 0.14;
-      beatAudioRef.current.play().catch(() => undefined);
-    }
     rec.start(250);
-    setPhase("recording");
-  }
+    setPhase("recording");  }
 
   async function startRecording() {
     if (!current) return;
@@ -689,10 +729,22 @@ export default function ProjectDetailPage() {
         beatAudioRef.current,
         selectedSpeakerIdRef.current || undefined
       );
+      // Canonical session timeline from task musical position (never rewritten by plan)
+      let tl = createSessionTimeline({
+        taskId: current.id,
+        sectionStartMs: current.start_ms ?? 0,
+        sectionEndMs: current.end_ms,
+        countInMs: 3000,
+      });
+      tl = markCountdownStart(tl);
+      sessionTimelineRef.current = tl;
+      setLastRecordingOffsetMs(0);
+
       setCountdown(3);
       setPhase("countdown");
       void markRecordingStatus();
       if (beatAudioRef.current && beatUrl) {
+        // Pre-roll: beat seeks to sectionStart - countIn (musical clock)
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
         // Lower monitor level — reduces bleed if OS still routes to the phone speaker
         beatAudioRef.current.volume = 0.14;
@@ -1213,7 +1265,10 @@ export default function ProjectDetailPage() {
                       label="Your take"
                       seed={`take-${current.id}`}
                       beatSrc={beatUrl}
-                      beatStartMs={current.start_ms ?? 0}
+                      beatStartMs={reviewBeatStartMs(
+                        current.start_ms ?? 0,
+                        lastRecordingOffsetMs
+                      )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.03}

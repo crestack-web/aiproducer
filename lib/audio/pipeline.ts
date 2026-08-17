@@ -27,6 +27,10 @@ import {
   userFacingProduceError,
 } from "@/lib/audio/roex-assets";
 import { appendSampleStems } from "@/lib/audio/sample-stems";
+import {
+  resolvePlacementStartMs,
+  buildPlacementManifest,
+} from "@/lib/audio/session-timeline";
 
 export { getPipelineMode, getMixProvider, enqueueProduceSong } from "@/lib/audio/produce-job";
 
@@ -95,19 +99,45 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
         const rec = t as TakeRow & {
           timeline_start_ms?: number | null;
           timeline_end_ms?: number | null;
+          recording_offset_ms?: number | null;
+          metadata?: Record<string, unknown> | null;
         };
-        const start =
-          typeof rec.timeline_start_ms === "number"
-            ? rec.timeline_start_ms
-            : typeof task?.start_ms === "number"
-              ? task.start_ms
+        const meta = (rec.metadata || {}) as Record<string, unknown>;
+        const sectionStart =
+          typeof task?.start_ms === "number"
+            ? task.start_ms
+            : typeof rec.timeline_start_ms === "number"
+              ? rec.timeline_start_ms
+              : typeof meta.section_start_ms === "number"
+                ? (meta.section_start_ms as number)
+                : 0;
+        const offset =
+          typeof rec.recording_offset_ms === "number"
+            ? rec.recording_offset_ms
+            : typeof meta.recording_offset_ms === "number"
+              ? (meta.recording_offset_ms as number)
+              : 0;
+        const explicitPlacement =
+          typeof meta.placement_start_ms === "number" ? (meta.placement_start_ms as number) : null;
+        // ONE formula: resolvePlacementStartMs — same as review / timeline-stem
+        const start = resolvePlacementStartMs({
+          sectionStartMs: sectionStart,
+          recordingOffsetMs: offset,
+          timelineStartMs: rec.timeline_start_ms,
+          placementStartMs: explicitPlacement,
+        });
+        const durationMs =
+          typeof rec.duration_ms === "number"
+            ? rec.duration_ms
+            : typeof meta.recorded_duration_ms === "number"
+              ? (meta.recorded_duration_ms as number)
               : 0;
         const end =
           typeof rec.timeline_end_ms === "number"
             ? rec.timeline_end_ms
             : typeof task?.end_ms === "number"
               ? task.end_ms
-              : start + (rec.duration_ms || 0);
+              : start + durationMs;
         return {
           recording_id: rec.id,
           task_id: task?.id || rec.task_id,
@@ -115,6 +145,15 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           start_ms: start,
           end_ms: end,
           gain_db: 0,
+          metadata: buildPlacementManifest({
+            taskId: task?.id || rec.task_id,
+            sectionLabel: (meta.section_label as string) || null,
+            sectionStartMs: sectionStart,
+            sectionEndMs: typeof task?.end_ms === "number" ? task.end_ms : null,
+            recordingOffsetMs: offset,
+            recordedDurationMs: durationMs || null,
+            placementStartMs: start,
+          }),
         };
       });
 

@@ -295,6 +295,13 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     const durationMs = Number(form.get("duration_ms") || 0) || null;
+    const recordingOffsetMs = Number(form.get("recording_offset_ms") || 0) || 0;
+    const clientPlacement = Number(form.get("placement_start_ms") || NaN);
+    const placementStartMs = Number.isFinite(clientPlacement)
+      ? Math.max(0, Math.round(clientPlacement))
+      : Math.max(0, Math.round(ctxData.timeline_start_ms + recordingOffsetMs));
+    // timeline_start_ms column remains canonical SECTION start (task.start_ms).
+    // placement_start_ms / recording_offset_ms live in metadata for produce/review.
     const alignment = assessDurationAlignment(durationMs, ctxData.expected_ms);
 
     let clientAnalysis: AudioAnalysis | null = null;
@@ -318,22 +325,40 @@ export async function POST(req: Request, ctx: Ctx) {
         role: ctxData.role,
       });
 
+    const sessionTimelineRaw = form.get("session_timeline");
+    let sessionTimelineMeta: unknown = null;
+    if (typeof sessionTimelineRaw === "string" && sessionTimelineRaw.trim()) {
+      try {
+        sessionTimelineMeta = JSON.parse(sessionTimelineRaw);
+      } catch {
+        sessionTimelineMeta = null;
+      }
+    }
+
     const sectionMeta = {
       source,
+      task_id: taskId,
       section_id: ctxData.section?.id || task.section_id || null,
       section_type: ctxData.section?.type || ctxData.meta.section_type || null,
       section_label: ctxData.section_label,
       start_bar: ctxData.start_bar,
       end_bar: ctxData.end_bar,
+      // Canonical musical section (never rewritten by plan selection)
       timeline_start_ms: ctxData.timeline_start_ms,
       timeline_end_ms: ctxData.timeline_end_ms,
+      section_start_ms: ctxData.timeline_start_ms,
+      section_end_ms: ctxData.timeline_end_ms,
+      recording_offset_ms: recordingOffsetMs,
+      placement_start_ms: placementStartMs,
       expected_duration_ms: ctxData.expected_ms,
       actual_duration_ms: durationMs,
+      recorded_duration_ms: durationMs,
       alignment,
       alignment_status: alignment.status,
       role: ctxData.role,
       analysis,
       analyzer_version: analysis.analyzerVersion,
+      session_timeline: sessionTimelineMeta,
     };
 
     try {

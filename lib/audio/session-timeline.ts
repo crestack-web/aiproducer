@@ -170,7 +170,19 @@ export function reviewBeatStartMs(sectionStartMs: number, recordingOffsetMs: num
   return placementStartMs({ sectionStartMs, recordingOffsetMs });
 }
 
-/** Resolve placement from stored recording fields (shared by preview/produce/review). */
+/**
+ * ONE authoritative placement resolver — Review / Preview / Produce / timeline-stem.
+ *
+ * Priority:
+ * 1. explicit placementStartMs (already section + offset)
+ * 2. sectionStartMs + recordingOffsetMs (canonical formula)
+ * 3. timelineStartMs + recordingOffsetMs when timeline is section start
+ * 4. timelineStartMs alone (legacy offset = 0)
+ * 5. 0
+ *
+ * NEVER use recording order. NEVER stretch audio to fit section duration.
+ * vocal file t=0 → song clock at returned ms.
+ */
 export function resolvePlacementStartMs(input: {
   sectionStartMs?: number | null;
   recordingOffsetMs?: number | null;
@@ -180,13 +192,55 @@ export function resolvePlacementStartMs(input: {
   if (typeof input.placementStartMs === "number" && Number.isFinite(input.placementStartMs)) {
     return Math.max(0, Math.round(input.placementStartMs));
   }
-  if (typeof input.timelineStartMs === "number" && Number.isFinite(input.timelineStartMs)) {
-    // New recordings store timeline_start_ms as placement (section + offset).
-    return Math.max(0, Math.round(input.timelineStartMs));
+
+  const offset =
+    typeof input.recordingOffsetMs === "number" && Number.isFinite(input.recordingOffsetMs)
+      ? Math.round(input.recordingOffsetMs)
+      : 0;
+
+  if (typeof input.sectionStartMs === "number" && Number.isFinite(input.sectionStartMs)) {
+    return Math.max(0, Math.round(input.sectionStartMs + offset));
   }
-  const section = typeof input.sectionStartMs === "number" ? input.sectionStartMs : 0;
-  const offset = typeof input.recordingOffsetMs === "number" ? input.recordingOffsetMs : 0;
-  return Math.max(0, Math.round(section + offset));
+
+  if (typeof input.timelineStartMs === "number" && Number.isFinite(input.timelineStartMs)) {
+    // Stored timeline_start_ms is the canonical section start (task.start_ms).
+    // Apply offset when present so produce matches review.
+    return Math.max(0, Math.round(input.timelineStartMs + offset));
+  }
+
+  return 0;
+}
+
+/** Build the RoEx / produce timeline manifest entry for one take. */
+export function buildPlacementManifest(input: {
+  taskId: string;
+  sectionLabel?: string | null;
+  sectionStartMs: number;
+  sectionEndMs?: number | null;
+  recordingOffsetMs?: number | null;
+  recordedDurationMs?: number | null;
+  placementStartMs?: number | null;
+}): Record<string, unknown> {
+  const offset =
+    typeof input.recordingOffsetMs === "number" ? Math.round(input.recordingOffsetMs) : 0;
+  const placement = resolvePlacementStartMs({
+    sectionStartMs: input.sectionStartMs,
+    recordingOffsetMs: offset,
+    placementStartMs: input.placementStartMs,
+  });
+  const duration =
+    typeof input.recordedDurationMs === "number" ? Math.max(0, Math.round(input.recordedDurationMs)) : null;
+  return {
+    taskId: input.taskId,
+    section: input.sectionLabel ?? null,
+    sectionStartMs: input.sectionStartMs,
+    sectionEndMs: input.sectionEndMs ?? null,
+    recordingOffsetMs: offset,
+    placementStartMs: placement,
+    recordedDurationMs: duration,
+    audioStartMs: placement,
+    audioEndMs: duration != null ? placement + duration : null,
+  };
 }
 
 export function reviewVocalDelayMs(recordingOffsetMs: number): number {
