@@ -350,20 +350,39 @@ export function PlayerLoadingState({
 }
 
 /**
- * Review player: vocal is primary; beat is optional monitor only.
- * Voice-only (beatVolume ≈ 0) must never start or keep the beat element playing.
- * Recording capture remains separate — this component only plays already-recorded audio.
+ * Recorded Section review player.
+ *
+ * Musical placement (same as Produce):
+ *   placementStartMs = resolvePlacementStartMs(recording)
+ *   = sectionStartMs + recordingOffsetMs
+ *
+ * Song timeline vs file clocks:
+ *   vocal file t=0  →  song time placementStartMs
+ *   beat element    →  song clock (currentTime * 1000 = song ms)
+ *
+ * Sync rule (one master = beat when present, else vocal):
+ *   songMs = beat.currentTime * 1000
+ *   vocal.currentTime = max(0, (songMs - placementStartMs) / 1000)
+ *   if songMs < placementStartMs → vocal stays paused at 0
+ *
+ * beatStartMs prop IS placementStartMs (from reviewBeatStartMs / resolvePlacementStartMs).
+ * Do not invent another offset here.
+ *
+ * Review mix only (does not touch stored audio):
+ *   vocalReviewGain default 1.0
+ *   beatReviewGain  default ~0.08 (underneath vocal)
  */
 export function CompactAudioPlayer({
   src,
   label,
   seed = "take",
   beatSrc,
+  /** Song-timeline placement of vocal sample 0 (ms). Same as Produce. */
   beatStartMs = 0,
   beatEndMs,
-  /** Keep beat quieter so the artist voice sits on top */
-  beatVolume = 0.22,
-  /** Full vocal level for review */
+  /** Review-only beat gain (not recording monitor, not master). */
+  beatVolume = 0.08,
+  /** Review-only vocal gain. */
   vocalVolume = 1,
 }: {
   src: string;
@@ -384,6 +403,8 @@ export function CompactAudioPlayer({
   const bars = useMemo(() => makeWave(seed, 40), [seed]);
   const rafRef = useRef<number | null>(null);
   const voiceOnly = beatVolume <= 0.001;
+  /** placementStartMs on the song timeline — single source from parent */
+  const placementStartMs = Math.max(0, beatStartMs || 0);
 
   const stopRaf = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -396,14 +417,44 @@ export function CompactAudioPlayer({
     try {
       beat.pause();
       beat.volume = 0;
-      // Do not leave a silent track "playing" on mobile audio session
-      if (!beat.paused) beat.pause();
     } catch {
       /* ignore */
     }
   }, []);
 
-  // New take / src change → reset playback state; lock rate to 1.0 (never stretch)
+  /** Map song timeline (ms) → vocal file seconds. Negative → not yet. */
+  function vocalFileTimeFromSongMs(songMs: number): number {
+    return (songMs - placementStartMs) / 1000;
+  }
+
+  /** Apply common song position to both elements (no wall-clock timers). */
+  function applySongTimelineMs(songMs: number) {
+    const beat = beatRef.current;
+    const vocal = vocalRef.current;
+    if (beat && beatSrc && !voiceOnly) {
+      try {
+        const bt = Math.max(0, songMs / 1000);
+        if (Math.abs(beat.currentTime - bt) > 0.04) beat.currentTime = bt;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (vocal) {
+      const vt = vocalFileTimeFromSongMs(songMs);
+      try {
+        if (vt < 0) {
+          if (!vocal.paused) vocal.pause();
+          if (vocal.currentTime !== 0) vocal.currentTime = 0;
+        } else {
+          if (Math.abs(vocal.currentTime - vt) > 0.04) vocal.currentTime = vt;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  // New take → reset; lock rates to 1.0
   useEffect(() => {
     stopRaf();
     setPlaying(false);
@@ -415,9 +466,6 @@ export function CompactAudioPlayer({
         vocal.pause();
         vocal.currentTime = 0;
         vocal.playbackRate = 1;
-        if ("preservesPitch" in vocal) {
-          (vocal as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
-        }
       } catch {
         /* ignore */
       }
@@ -425,13 +473,14 @@ export function CompactAudioPlayer({
     const beat = beatRef.current;
     if (beat) {
       try {
+        beat.pause();
         beat.playbackRate = 1;
+        beat.currentTime = placementStartMs / 1000;
       } catch {
         /* ignore */
       }
     }
-    hardStopBeat();
-  }, [src, hardStopBeat]);
+  }, [src, placementStartMs]);
 
   useEffect(() => {
     return () => {
@@ -441,7 +490,7 @@ export function CompactAudioPlayer({
     };
   }, [hardStopBeat]);
 
-  // Live volume + voice-only: fully stop beat when volume is ~0 (toggle while playing)
+  // Live volume + voice-only
   useEffect(() => {
     if (vocalRef.current) {
       vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
@@ -500,19 +549,22 @@ export function CompactAudioPlayer({
       return;
     }
 
-    // Explicit rate lock — review must never stretch/pitch-shift the take
     vocal.playbackRate = 1;
     vocal.volume = Math.min(1, Math.max(0, vocalVolume));
 
     const beat = beatRef.current;
     const wantBeat = Boolean(beat && beatSrc && !voiceOnly);
 
+    // Common song timeline starts at placement (vocal sample 0)
+    const songMs = placementStartMs;
+    applySongTimelineMs(songMs);
+
     if (wantBeat && beat) {
       const beatOk = await ensureReady(beat);
       if (beatOk) {
         try {
           beat.playbackRate = 1;
-          beat.currentTime = Math.max(0, (beatStartMs || 0) / 1000);
+          beat.currentTime = songMs / 1000;
         } catch {
           /* ignore */
         }
@@ -523,7 +575,9 @@ export function CompactAudioPlayer({
       hardStopBeat();
     }
 
+    // Vocal starts at file 0 when songMs === placementStartMs
     try {
+      vocal.currentTime = 0;
       await vocal.play();
     } catch {
       hardStopBeat();
@@ -533,18 +587,41 @@ export function CompactAudioPlayer({
     }
 
     setPlaying(true);
+
+    // Master clock = beat when present; else vocal. Re-lock slave each frame.
     const tick = () => {
       const v = vocalRef.current;
       const b = beatRef.current;
       if (!v) return;
-      if (v.duration) setProgress(v.currentTime / v.duration);
-      // Voice-only safety: if mode flipped mid-play, kill beat
-      if (voiceOnly || (beatVolume <= 0.001)) {
-        if (b && !b.paused) hardStopBeat();
-      } else if (b && beatEndMs != null && b.currentTime * 1000 >= beatEndMs) {
-        b.pause();
+
+      if (wantBeat && b && !b.paused) {
+        const song = b.currentTime * 1000;
+        const vt = vocalFileTimeFromSongMs(song);
+        if (vt < 0) {
+          if (!v.paused) v.pause();
+          if (v.currentTime !== 0) v.currentTime = 0;
+        } else {
+          if (v.paused && playing) void v.play().catch(() => undefined);
+          if (Math.abs(v.currentTime - vt) > 0.05) {
+            try {
+              v.currentTime = vt;
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        if (beatEndMs != null && song >= beatEndMs) {
+          b.pause();
+        }
       }
-      if (!v.paused) rafRef.current = requestAnimationFrame(tick);
+
+      if (v.duration) setProgress(v.currentTime / v.duration);
+      if (voiceOnly || beatVolume <= 0.001) {
+        if (b && !b.paused) hardStopBeat();
+      }
+      if (!v.paused || (b && !b.paused)) {
+        rafRef.current = requestAnimationFrame(tick);
+      }
     };
     rafRef.current = requestAnimationFrame(tick);
   }
@@ -575,11 +652,9 @@ export function CompactAudioPlayer({
         boxShadow: C.cardShadow,
       }}
     >
+      {/* Review-only elements — booth monitor beat must stay paused during review */}
       <audio ref={vocalRef} src={src} preload="auto" playsInline />
-      {/* Beat element only for monitor mix — never mixed into the recorded file */}
-      {beatSrc ? (
-        <audio ref={beatRef} src={beatSrc} preload="auto" playsInline />
-      ) : null}
+      {beatSrc ? <audio ref={beatRef} src={beatSrc} preload="auto" playsInline /> : null}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>

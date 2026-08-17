@@ -569,6 +569,13 @@ export default function ProjectDetailPage() {
       const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
       const wallClockMs = Date.now() - startedAtRef.current;
       setLocalBlobUrl(URL.createObjectURL(blob));
+      // BUG2: only ONE beat source in review — stop booth monitor element
+      try {
+        beatAudioRef.current?.pause();
+        if (beatAudioRef.current) beatAudioRef.current.volume = 0;
+      } catch {
+        /* ignore */
+      }
       setPhase("review");
       setUploading(true);
       setProducerTip(null);
@@ -1271,7 +1278,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.03}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.07}
                     />
                     <button
                       type="button"
