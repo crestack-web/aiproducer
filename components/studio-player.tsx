@@ -406,12 +406,6 @@ export function CompactAudioPlayer({
   /** Once true, vocal has been started for the current play session after placement. */
   const vocalEngagedRef = useRef(false);
   const vocalStartedAtBeatMsRef = useRef<number | null>(null);
-  // Review-only playback gain (does NOT modify stored blob / Produce)
-  const reviewAudioCtxRef = useRef<AudioContext | null>(null);
-  const vocalGainNodeRef = useRef<GainNode | null>(null);
-  const vocalMediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const vocalGraphReadyRef = useRef(false);
-  const playbackVocalGainRef = useRef(1.75);
   voiceOnlyRef.current = voiceOnly;
   beatVolumeRef.current = beatVolume;
   vocalVolumeRef.current = vocalVolume;
@@ -420,55 +414,6 @@ export function CompactAudioPlayer({
   /** Review mix: vocal at 1.0; reference beat ≈0.10 so vocal is clearly dominant. */
   /** Reference beat under the vocal — audible context, never dominant. */
   const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.06);
-
-  /**
-   * Review playback-only vocal boost via Web Audio GainNode.
-   * - Does not modify the MediaRecorder blob or uploaded take
-   * - One MediaElementSource per element (never recreate)
-   * - Safe ceiling ~2.0 to limit clipping
-   */
-  function ensureVocalPlaybackBoost(vocal: HTMLAudioElement, gainValue = 1.75): {
-    ok: boolean;
-    gain: number;
-  } {
-    const target = Math.min(2.0, Math.max(1.0, gainValue));
-    playbackVocalGainRef.current = target;
-    try {
-      if (vocalGraphReadyRef.current && vocalGainNodeRef.current) {
-        vocalGainNodeRef.current.gain.value = target;
-        return { ok: true, gain: target };
-      }
-      const AC =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AC) return { ok: false, gain: 1 };
-      let ctx = reviewAudioCtxRef.current;
-      if (!ctx) {
-        ctx = new AC();
-        reviewAudioCtxRef.current = ctx;
-      }
-      if (ctx.state === "suspended") {
-        void ctx.resume().catch(() => undefined);
-      }
-      // createMediaElementSource may only be called once per element
-      if (!vocalMediaSourceRef.current) {
-        const srcNode = ctx.createMediaElementSource(vocal);
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = target;
-        srcNode.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        vocalMediaSourceRef.current = srcNode;
-        vocalGainNodeRef.current = gainNode;
-        vocalGraphReadyRef.current = true;
-      } else if (vocalGainNodeRef.current) {
-        vocalGainNodeRef.current.gain.value = target;
-      }
-      return { ok: true, gain: target };
-    } catch {
-      // Already connected elsewhere or unsupported — element.volume remains 1
-      return { ok: false, gain: 1 };
-    }
-  }
 
   // Optional diagnostic: localStorage studio_review_nosync=1 disables continuous vocal seeks
   const noSyncCorrections = () => {
@@ -582,21 +527,6 @@ export function CompactAudioPlayer({
       stopRaf();
       vocalRef.current?.pause();
       hardStopBeat();
-      try {
-        vocalGainNodeRef.current?.disconnect();
-        vocalMediaSourceRef.current?.disconnect();
-      } catch {
-        /* ignore */
-      }
-      vocalGainNodeRef.current = null;
-      vocalMediaSourceRef.current = null;
-      vocalGraphReadyRef.current = false;
-      try {
-        void reviewAudioCtxRef.current?.close();
-      } catch {
-        /* ignore */
-      }
-      reviewAudioCtxRef.current = null;
     };
   }, [hardStopBeat]);
 
@@ -904,20 +834,11 @@ export function CompactAudioPlayer({
       /* ignore */
     }
 
-    // Playback-only vocal boost (Review mix) — never mutates the stored take
-    const boost = ensureVocalPlaybackBoost(vocal, 1.75);
-    try {
-      if (reviewAudioCtxRef.current?.state === "suspended") {
-        await reviewAudioCtxRef.current.resume().catch(() => undefined);
-      }
-    } catch {
-      /* ignore */
-    }
-
     /**
      * iOS: call vocal.play() inside the user gesture to "unlock" the element,
      * even if we immediately pause when still before placement. Later RAF
      * resume then works without a new gesture.
+     * Native HTMLAudioElement only — no Web Audio / GainNode (iOS silence regression).
      */
     try {
       await vocal.play();
@@ -925,11 +846,6 @@ export function CompactAudioPlayer({
     } catch (e) {
       vocalPlayError = e instanceof Error ? e.message : String(e);
     }
-    writeReviewDiagnostics({
-      event: "vocal_boost",
-      playbackVocalGain: boost.gain,
-      vocalGainNodeConnected: boost.ok,
-    });
 
     if (wantBeat && beat) {
       try {
@@ -1292,8 +1208,10 @@ export function CompactAudioPlayer({
               beatMuted: b.muted,
               beatVolume: b.volume,
               activeReviewBeatSources: !b.paused && b.volume > 0.001 ? 1 : 0,
-              playbackVocalGain: playbackVocalGainRef.current,
-              vocalGainNodeConnected: vocalGraphReadyRef.current,
+              reviewVocalPlay: v.paused ? "paused" : "playing",
+              reviewBeatPlay: b.paused ? "paused" : "playing",
+              vocalReadyState: v.readyState,
+              beatReadyState: b.readyState,
               vocalPauseCount: vocalPauseCountRef.current,
               vocalSeekCount: vocalSeekCountRef.current,
               vocalCorrectionCount: vocalCorrectionCountRef.current,
