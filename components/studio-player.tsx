@@ -562,40 +562,82 @@ export function CompactAudioPlayer({
     writeReviewDiagnostics({ event: "mode_to_beat_plus_voice" });
   }, [voiceOnly, beatVolume, vocalVolume, hardStopBeat]);
 
-  /** Wait for canplay without calling load() when already buffered (critical on iOS). */
-  async function ensureReady(el: HTMLAudioElement, ms = 4000): Promise<boolean> {
-    if (el.readyState >= 2) return true;
+  /**
+   * Soft readiness for Review takes (often blob: URLs on iOS).
+   * HAVE_METADATA (1) is enough to attempt play — do NOT require HAVE_CURRENT_DATA (2).
+   * Never call load() on an element that already has a src and is progressing —
+   * load() resets and is a common cause of "Could not load your take" on Safari.
+   */
+  async function ensureReady(el: HTMLAudioElement, ms = 8000): Promise<{
+    ok: boolean;
+    readyState: number;
+    errorCode: number | null;
+    errorMessage: string | null;
+  }> {
+    const snap = () => ({
+      ok: el.readyState >= 1 || (Number.isFinite(el.duration) && el.duration > 0),
+      readyState: el.readyState,
+      errorCode: el.error?.code ?? null,
+      errorMessage: el.error?.message ?? null,
+    });
+
+    // Already have metadata or current data — good to try play()
+    if (el.readyState >= 1) return { ...snap(), ok: true };
+    if (el.error) return { ...snap(), ok: false };
+
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (ok: boolean) => {
+      const finish = () => {
         if (settled) return;
         settled = true;
-        el.removeEventListener("canplay", onOk);
+        el.removeEventListener("loadedmetadata", onOk);
         el.removeEventListener("loadeddata", onOk);
+        el.removeEventListener("canplay", onOk);
         el.removeEventListener("error", onErr);
         clearTimeout(timer);
-        resolve(ok);
+        const s = snap();
+        // Soft pass: metadata OR non-zero duration OR readyState>=1
+        const ok =
+          !el.error &&
+          (s.readyState >= 1 ||
+            (Number.isFinite(el.duration) && el.duration > 0) ||
+            s.readyState >= 2);
+        resolve({ ...s, ok });
       };
-      const onOk = () => finish(true);
-      const onErr = () => finish(false);
-      const timer = setTimeout(() => finish(el.readyState >= 2), ms);
-      el.addEventListener("canplay", onOk);
+      const onOk = () => finish();
+      const onErr = () => finish();
+      const timer = setTimeout(finish, ms);
+      el.addEventListener("loadedmetadata", onOk);
       el.addEventListener("loadeddata", onOk);
+      el.addEventListener("canplay", onOk);
       el.addEventListener("error", onErr);
-      // Only load() when nothing has started — load() after play breaks iOS gesture chain
-      if (el.readyState === 0) {
-        try {
-          el.load();
-        } catch {
-          finish(el.readyState >= 2);
-        }
-      }
+      // Do NOT call el.load() here — React already set src with preload="auto".
+      // Calling load() on iOS blob URLs frequently clears buffered state mid-Review.
     });
+  }
+
+  function mediaErrorLabel(code: number | null | undefined): string {
+    switch (code) {
+      case 1:
+        return "MEDIA_ERR_ABORTED";
+      case 2:
+        return "MEDIA_ERR_NETWORK";
+      case 3:
+        return "MEDIA_ERR_DECODE";
+      case 4:
+        return "MEDIA_ERR_SRC_NOT_SUPPORTED";
+      default:
+        return code != null ? `MEDIA_ERR_${code}` : "none";
+    }
   }
 
   async function toggle() {
     const vocal = vocalRef.current;
-    if (!vocal) return;
+    if (!vocal) {
+      setLoadError("Vocal element missing");
+      writeReviewDiagnostics({ event: "no_vocal_element" });
+      return;
+    }
 
     // Pause
     if (playingRef.current) {
@@ -625,7 +667,26 @@ export function CompactAudioPlayer({
     const wantBeat = Boolean(beatSrc && !voiceOnlyRef.current);
     const beat = beatRef.current;
 
-    // Prepare element properties BEFORE any await (user-gesture critical path)
+    const vocalSrc = (vocal.currentSrc || vocal.src || src || "").slice(0, 96);
+    const isBlobUrl = /^blob:/i.test(vocal.currentSrc || vocal.src || src || "");
+
+    writeReviewDiagnostics({
+      event: "play_start",
+      vocalSrc,
+      vocalSrcType: isBlobUrl ? "blob" : "url",
+      vocalSrcLength: (vocal.currentSrc || vocal.src || src || "").length,
+      isBlobUrl,
+      vocalReadyState: vocal.readyState,
+      vocalNetworkState: vocal.networkState,
+      vocalErrorCode: vocal.error?.code ?? null,
+      vocalErrorMessage: vocal.error ? mediaErrorLabel(vocal.error.code) : null,
+      vocalDuration: Number.isFinite(vocal.duration) ? vocal.duration : null,
+      vocalMuted: vocal.muted,
+      vocalVolume: vocal.volume,
+      vocalPaused: vocal.paused,
+    });
+
+    // Prepare vocal properties (primary source — independent of beat)
     try {
       vocal.muted = false;
       vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
@@ -633,6 +694,7 @@ export function CompactAudioPlayer({
     } catch {
       /* ignore */
     }
+
     if (wantBeat && beat) {
       try {
         beat.muted = false;
@@ -645,43 +707,81 @@ export function CompactAudioPlayer({
       hardStopBeat();
     }
 
-    // Seek while still in gesture when possible
+    // Soft wait for vocal ONLY — never block vocal success on beat readiness
+    let vocalReady = vocal.readyState >= 1;
+    let vocalReadyMeta = {
+      ok: vocalReady,
+      readyState: vocal.readyState,
+      errorCode: vocal.error?.code ?? null,
+      errorMessage: vocal.error?.message ?? null,
+    };
+    if (!vocalReady) {
+      vocalReadyMeta = await ensureReady(vocal, 8000);
+      vocalReady = vocalReadyMeta.ok;
+    }
+
+    writeReviewDiagnostics({
+      event: "vocal_ready_check",
+      vocalLoadAttempted: true,
+      vocalLoadSucceeded: vocalReady,
+      vocalReadyState: vocalReadyMeta.readyState,
+      vocalErrorCode: vocalReadyMeta.errorCode,
+      vocalErrorMessage: vocalReadyMeta.errorCode
+        ? mediaErrorLabel(vocalReadyMeta.errorCode)
+        : vocalReadyMeta.errorMessage,
+      vocalDuration: Number.isFinite(vocal.duration) ? vocal.duration : null,
+      isBlobUrl,
+      vocalSrc,
+    });
+
+    // If still not ready, attempt play() anyway — Safari sometimes plays blob at readyState 0/1
+    // Only hard-fail when MediaError is set
+    if (vocal.error) {
+      const label = mediaErrorLabel(vocal.error.code);
+      setLoadError(`Could not load your take (${label})`);
+      writeReviewDiagnostics({
+        event: "VOCAL_LOAD_ERROR",
+        vocalLoadSucceeded: false,
+        vocalErrorCode: vocal.error.code,
+        vocalErrorMessage: label,
+        isBlobUrl,
+        vocalSrc,
+      });
+      return;
+    }
+
+    // Seek after readiness when possible (seeking before metadata breaks iOS blobs)
     try {
-      if (wantBeat && beat) {
+      if (wantBeat && beat && beat.readyState >= 1) {
         const bt = Math.max(0, songMs / 1000);
         if (Math.abs(beat.currentTime - bt) > 0.05) beat.currentTime = bt;
       }
-      const vt = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
-      if (Math.abs(vocal.currentTime - vt) > 0.05) vocal.currentTime = vt;
+      if (vocal.readyState >= 1) {
+        const vt = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
+        if (Math.abs(vocal.currentTime - vt) > 0.05) vocal.currentTime = vt;
+      }
     } catch {
       /* ignore */
     }
 
-    // Prefer not awaiting when already ready — keeps play() inside user gesture on iOS
-    let vocalOk = vocal.readyState >= 2;
-    let beatOk = !wantBeat || !beat || beat.readyState >= 2;
-    if (!vocalOk || (wantBeat && beat && !beatOk)) {
-      const waits: Promise<boolean>[] = [];
-      if (!vocalOk) waits.push(ensureReady(vocal));
-      if (wantBeat && beat && !beatOk) waits.push(ensureReady(beat));
-      const results = await Promise.all(waits);
-      let i = 0;
-      if (!vocalOk) vocalOk = results[i++];
-      if (wantBeat && beat && !beatOk) beatOk = results[i++];
+    // Best-effort beat readiness — failure must NOT fail the vocal
+    let beatReady = Boolean(beat && beat.readyState >= 1);
+    if (wantBeat && beat && !beatReady) {
+      const beatMeta = await ensureReady(beat, 5000);
+      beatReady = beatMeta.ok;
+      writeReviewDiagnostics({
+        event: beatReady ? "beat_ready" : "BEAT_LOAD_ERROR",
+        beatReadyState: beatMeta.readyState,
+        beatErrorCode: beatMeta.errorCode,
+        beatLoadSucceeded: beatReady,
+      });
     }
 
-    if (!vocalOk) {
-      setLoadError("Could not load your take for playback");
-      writeReviewDiagnostics({ event: "vocal_not_ready" });
-      return;
-    }
-
-    // Re-apply volumes after any load() side effects
     try {
       vocal.muted = false;
       vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
       vocal.playbackRate = 1;
-      if (wantBeat && beat && beatOk) {
+      if (wantBeat && beat && beatReady) {
         beat.muted = false;
         beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
         beat.playbackRate = 1;
@@ -695,10 +795,21 @@ export function CompactAudioPlayer({
     let vocalPlayError: string | null = null;
     let beatPlayError: string | null = null;
 
-    // Fire both play() as close together as possible (same turn after readiness)
     const playJobs: Promise<void>[] = [];
 
-    if (wantBeat && beat && beatOk) {
+    // Vocal is primary — always attempt
+    playJobs.push(
+      vocal
+        .play()
+        .then(() => {
+          vocalPlaySucceeded = true;
+        })
+        .catch((e) => {
+          vocalPlayError = e instanceof Error ? e.message : String(e);
+        })
+    );
+
+    if (wantBeat && beat && beatReady) {
       playJobs.push(
         beat
           .play()
@@ -711,17 +822,6 @@ export function CompactAudioPlayer({
       );
     }
 
-    playJobs.push(
-      vocal
-        .play()
-        .then(() => {
-          vocalPlaySucceeded = true;
-        })
-        .catch((e) => {
-          vocalPlayError = e instanceof Error ? e.message : String(e);
-        })
-    );
-
     await Promise.all(playJobs);
 
     writeReviewDiagnostics({
@@ -729,26 +829,41 @@ export function CompactAudioPlayer({
       vocalPlayAttempted: true,
       vocalPlaySucceeded,
       vocalPlayError,
-      beatPlayAttempted: Boolean(wantBeat && beat && beatOk),
+      beatPlayAttempted: Boolean(wantBeat && beat && beatReady),
       beatPlaySucceeded,
       beatPlayError,
+      vocalReadyState: vocal.readyState,
+      vocalPaused: vocal.paused,
+      vocalMuted: vocal.muted,
+      vocalVolume: vocal.volume,
+      isBlobUrl,
+      vocalSrc,
     });
 
     if (!vocalPlaySucceeded) {
       hardStopBeat();
+      const blocked =
+        vocalPlayError &&
+        /notallowed|interact|user.?gesture|gesture/i.test(vocalPlayError);
       setLoadError(
-        vocalPlayError
-          ? `Playback blocked (${vocalPlayError}) — tap Play again`
-          : "Playback was blocked — tap Play again"
+        blocked
+          ? "Playback blocked — tap Play again"
+          : vocalPlayError
+            ? `Could not play take (${vocalPlayError})`
+            : "Could not play your take — tap Play again"
       );
+      writeReviewDiagnostics({
+        event: blocked ? "AUTOPLAY_BLOCKED" : "VOCAL_PLAY_ERROR",
+        vocalPlaySucceeded: false,
+        vocalPlayError,
+      });
       setPlaying(false);
       playingRef.current = false;
       return;
     }
 
-    // Vocal is audible; beat is best-effort (still show mix if beat failed)
+    // Vocal playing — optional beat retry
     if (wantBeat && beat && !beatPlaySucceeded) {
-      // Retry beat once (still may fail without gesture on strict iOS)
       try {
         beat.muted = false;
         beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
@@ -757,14 +872,13 @@ export function CompactAudioPlayer({
       } catch (e) {
         beatPlayError = e instanceof Error ? e.message : String(e);
         writeReviewDiagnostics({
-          event: "beat_retry_failed",
+          event: "BEAT_PLAY_ERROR",
           beatPlayError,
           vocalPlaySucceeded: true,
         });
       }
     }
 
-    // Final affirm
     try {
       vocal.muted = false;
       vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
@@ -790,11 +904,9 @@ export function CompactAudioPlayer({
       const bv = beatVolumeRef.current;
       const want = Boolean(beatSrc && !vo);
 
-      // Live mode: if switched to Voice Only mid-tick, stop beat
       if (vo || bv <= 0.001) {
         if (b && !b.paused) hardStopBeat();
       } else if (want && b) {
-        // Master clock = beat when playing; otherwise vocal-driven song time
         if (!b.paused) {
           const song = b.currentTime * 1000;
           const vt = vocalFileTimeFromSongMs(song, placeNow);
@@ -819,7 +931,6 @@ export function CompactAudioPlayer({
             }
           }
         }
-        // Keep beat audible when mode is Beat + Voice
         try {
           if (b.muted) b.muted = false;
           const target = Math.min(1, Math.max(0, bv));
@@ -829,7 +940,6 @@ export function CompactAudioPlayer({
         }
       }
 
-      // Vocal always dominant when present
       try {
         if (v.muted) v.muted = false;
         const tv = Math.min(1, Math.max(0, vocalVolumeRef.current));
@@ -842,12 +952,9 @@ export function CompactAudioPlayer({
 
       if (!v.paused || (b && !b.paused && !vo)) {
         rafRef.current = requestAnimationFrame(tick);
-      } else {
-        // Both stopped unexpectedly
-        if (playingRef.current) {
-          setPlaying(false);
-          playingRef.current = false;
-        }
+      } else if (playingRef.current) {
+        setPlaying(false);
+        playingRef.current = false;
       }
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -871,9 +978,22 @@ export function CompactAudioPlayer({
       pausedSongMsRef.current = null;
       writeReviewDiagnostics({ event: "ended" });
     };
+    const onError = () => {
+      writeReviewDiagnostics({
+        event: "vocal_element_error",
+        vocalErrorCode: vocal.error?.code ?? null,
+        vocalErrorMessage: vocal.error ? mediaErrorLabel(vocal.error.code) : null,
+        vocalReadyState: vocal.readyState,
+        vocalNetworkState: vocal.networkState,
+      });
+    };
     vocal.addEventListener("ended", onEnd);
-    return () => vocal.removeEventListener("ended", onEnd);
-  }, [hardStopBeat]);
+    vocal.addEventListener("error", onError);
+    return () => {
+      vocal.removeEventListener("ended", onEnd);
+      vocal.removeEventListener("error", onError);
+    };
+  }, [hardStopBeat, src]);
 
   const modeHint = voiceOnly ? "voice only" : "beat + voice";
 
