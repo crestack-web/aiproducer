@@ -389,6 +389,17 @@ export function CompactAudioPlayer({
   const voiceOnly = beatVolume <= 0.001;
   const placementStartMs = Math.max(0, beatStartMs || 0);
   const pausedSongMsRef = useRef<number | null>(null);
+  // Live mode refs so RAF / transitions never use a stale closure from toggle()
+  const voiceOnlyRef = useRef(voiceOnly);
+  const beatVolumeRef = useRef(beatVolume);
+  const vocalVolumeRef = useRef(vocalVolume);
+  const playingRef = useRef(playing);
+  const placementRef = useRef(placementStartMs);
+  voiceOnlyRef.current = voiceOnly;
+  beatVolumeRef.current = beatVolume;
+  vocalVolumeRef.current = vocalVolume;
+  playingRef.current = playing;
+  placementRef.current = placementStartMs;
 
   const stopRaf = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -407,39 +418,51 @@ export function CompactAudioPlayer({
     }
   }, []);
 
-  function vocalFileTimeFromSongMs(songMs: number): number {
-    return (songMs - placementStartMs) / 1000;
+  function vocalFileTimeFromSongMs(songMs: number, placeMs: number): number {
+    return (songMs - placeMs) / 1000;
   }
 
-  function applySongTimelineMs(songMs: number) {
-    const beat = beatRef.current;
-    const vocal = vocalRef.current;
-    if (beat && beatSrc && !voiceOnly) {
-      try {
-        const bt = Math.max(0, songMs / 1000);
-        if (Math.abs(beat.currentTime - bt) > 0.08) beat.currentTime = bt;
-      } catch {
-        /* ignore */
-      }
-    }
-    if (vocal) {
-      const vt = vocalFileTimeFromSongMs(songMs);
-      try {
-        if (vt < 0) {
-          if (!vocal.paused) vocal.pause();
-          if (vocal.currentTime !== 0) vocal.currentTime = 0;
-        } else {
-          if (Math.abs(vocal.currentTime - vt) > 0.08) vocal.currentTime = vt;
-        }
-      } catch {
-        /* ignore */
-      }
+  function writeReviewDiagnostics(extra: Record<string, unknown> = {}) {
+    try {
+      if (typeof window === "undefined" || localStorage.getItem("studio_debug_audio") !== "1") return;
+      const vocal = vocalRef.current;
+      const beat = beatRef.current;
+      sessionStorage.setItem(
+        "studio_last_review_diagnostics",
+        JSON.stringify({
+          mode: voiceOnlyRef.current ? "voice_only" : "beat_plus_voice",
+          vocalSrcPresent: Boolean(vocal?.src || src),
+          vocalReadyState: vocal?.readyState ?? null,
+          vocalNetworkState: vocal?.networkState ?? null,
+          vocalPaused: vocal?.paused ?? null,
+          vocalMuted: vocal?.muted ?? null,
+          vocalVolume: vocal?.volume ?? null,
+          vocalCurrentTime: vocal?.currentTime ?? null,
+          vocalPlaybackRate: vocal?.playbackRate ?? null,
+          beatSrcPresent: Boolean(beat?.src || beatSrc),
+          beatReadyState: beat?.readyState ?? null,
+          beatPaused: beat?.paused ?? null,
+          beatMuted: beat?.muted ?? null,
+          beatVolume: beat?.volume ?? null,
+          beatCurrentTime: beat?.currentTime ?? null,
+          beatPlaybackRate: beat?.playbackRate ?? null,
+          activeReviewBeatSources:
+            beat && !beat.paused && !voiceOnlyRef.current && (beat.volume ?? 0) > 0.001 ? 1 : 0,
+          placementStartMs: placementRef.current,
+          reviewStartedAt: Date.now(),
+          ...extra,
+        })
+      );
+    } catch {
+      /* ignore */
     }
   }
 
+  // Reset transport when take / placement changes
   useEffect(() => {
     stopRaf();
     setPlaying(false);
+    playingRef.current = false;
     setProgress(0);
     setLoadError(null);
     pausedSongMsRef.current = null;
@@ -449,6 +472,8 @@ export function CompactAudioPlayer({
         vocal.pause();
         vocal.currentTime = 0;
         vocal.playbackRate = 1;
+        vocal.muted = false;
+        vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
       } catch {
         /* ignore */
       }
@@ -459,6 +484,13 @@ export function CompactAudioPlayer({
         beat.pause();
         beat.playbackRate = 1;
         beat.currentTime = placementStartMs / 1000;
+        if (voiceOnlyRef.current) {
+          beat.volume = 0;
+          beat.muted = true;
+        } else {
+          beat.muted = false;
+          beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
+        }
       } catch {
         /* ignore */
       }
@@ -473,29 +505,65 @@ export function CompactAudioPlayer({
     };
   }, [hardStopBeat]);
 
+  /**
+   * Mode transitions (Voice Only ↔ Beat + Voice).
+   * Must fully reverse hardStopBeat state when leaving Voice Only.
+   * Do NOT call play() here — iOS requires a user gesture; pause so the
+   * next Play tap starts both sources cleanly from that gesture.
+   */
   useEffect(() => {
+    const beat = beatRef.current;
     const vocal = vocalRef.current;
-    if (vocal) {
-      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-      vocal.muted = false;
-      vocal.playbackRate = 1;
-    }
     if (voiceOnly) {
       hardStopBeat();
+      // Keep vocal state usable for Voice Only play
+      if (vocal) {
+        try {
+          vocal.muted = false;
+          vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+          vocal.playbackRate = 1;
+        } catch {
+          /* ignore */
+        }
+      }
       return;
     }
-    const beat = beatRef.current;
-    if (!beat) return;
-    try {
-      beat.muted = false;
-      beat.playbackRate = 1;
-      beat.volume = Math.min(1, Math.max(0, beatVolume));
-    } catch {
-      /* ignore */
+    // Leaving Voice Only → restore beat element (still paused until Play)
+    if (beat) {
+      try {
+        beat.muted = false;
+        beat.playbackRate = 1;
+        beat.volume = Math.min(1, Math.max(0, beatVolume));
+      } catch {
+        /* ignore */
+      }
     }
-  }, [vocalVolume, beatVolume, voiceOnly, hardStopBeat]);
+    if (vocal) {
+      try {
+        vocal.muted = false;
+        vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+        vocal.playbackRate = 1;
+      } catch {
+        /* ignore */
+      }
+    }
+    // If we were mid-playback under the other mode, stop so next Play is a fresh gesture
+    if (playingRef.current) {
+      stopRaf();
+      try {
+        vocal?.pause();
+        beat?.pause();
+      } catch {
+        /* ignore */
+      }
+      setPlaying(false);
+      playingRef.current = false;
+    }
+    writeReviewDiagnostics({ event: "mode_to_beat_plus_voice" });
+  }, [voiceOnly, beatVolume, vocalVolume, hardStopBeat]);
 
-  async function ensureReady(el: HTMLAudioElement, ms = 8000): Promise<boolean> {
+  /** Wait for canplay without calling load() when already buffered (critical on iOS). */
+  async function ensureReady(el: HTMLAudioElement, ms = 4000): Promise<boolean> {
     if (el.readyState >= 2) return true;
     return new Promise((resolve) => {
       let settled = false;
@@ -514,10 +582,13 @@ export function CompactAudioPlayer({
       el.addEventListener("canplay", onOk);
       el.addEventListener("loadeddata", onOk);
       el.addEventListener("error", onErr);
-      try {
-        el.load();
-      } catch {
-        finish(el.readyState >= 2);
+      // Only load() when nothing has started — load() after play breaks iOS gesture chain
+      if (el.readyState === 0) {
+        try {
+          el.load();
+        } catch {
+          finish(el.readyState >= 2);
+        }
       }
     });
   }
@@ -525,76 +596,188 @@ export function CompactAudioPlayer({
   async function toggle() {
     const vocal = vocalRef.current;
     if (!vocal) return;
-    if (playing) {
+
+    // Pause
+    if (playingRef.current) {
       const beat = beatRef.current;
+      const place = placementRef.current;
       const songMs =
-        beat && beatSrc && !voiceOnly && !beat.paused
+        beat && beatSrc && !voiceOnlyRef.current && !beat.paused
           ? beat.currentTime * 1000
-          : placementStartMs + vocal.currentTime * 1000;
+          : place + vocal.currentTime * 1000;
       pausedSongMsRef.current = songMs;
-      vocal.pause();
+      try {
+        vocal.pause();
+      } catch {
+        /* ignore */
+      }
       hardStopBeat();
       stopRaf();
       setPlaying(false);
+      playingRef.current = false;
+      writeReviewDiagnostics({ event: "pause" });
       return;
     }
 
     setLoadError(null);
-    const vocalOk = await ensureReady(vocal);
-    if (!vocalOk) {
-      setLoadError("Could not load your take for playback");
-      return;
-    }
-
-    vocal.playbackRate = 1;
-    vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-
+    const place = placementRef.current;
+    const songMs = pausedSongMsRef.current != null ? pausedSongMsRef.current : place;
+    const wantBeat = Boolean(beatSrc && !voiceOnlyRef.current);
     const beat = beatRef.current;
-    const wantBeat = Boolean(beat && beatSrc && !voiceOnly);
-    const songMs = pausedSongMsRef.current != null ? pausedSongMsRef.current : placementStartMs;
-    applySongTimelineMs(songMs);
 
+    // Prepare element properties BEFORE any await (user-gesture critical path)
+    try {
+      vocal.muted = false;
+      vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
+      vocal.playbackRate = 1;
+    } catch {
+      /* ignore */
+    }
     if (wantBeat && beat) {
-      const beatOk = await ensureReady(beat);
-      if (beatOk) {
-        try {
-          beat.muted = false;
-          beat.playbackRate = 1;
-          beat.currentTime = songMs / 1000;
-        } catch {
-          /* ignore */
-        }
-        beat.volume = Math.min(1, Math.max(0, beatVolume));
-        await beat.play().catch(() => undefined);
+      try {
+        beat.muted = false;
+        beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
+        beat.playbackRate = 1;
+      } catch {
+        /* ignore */
       }
     } else {
       hardStopBeat();
     }
 
+    // Seek while still in gesture when possible
     try {
-      const vt = vocalFileTimeFromSongMs(songMs);
-      vocal.muted = false;
-      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-      vocal.playbackRate = 1;
-      vocal.currentTime = Math.max(0, vt);
-      await vocal.play();
+      if (wantBeat && beat) {
+        const bt = Math.max(0, songMs / 1000);
+        if (Math.abs(beat.currentTime - bt) > 0.05) beat.currentTime = bt;
+      }
+      const vt = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
+      if (Math.abs(vocal.currentTime - vt) > 0.05) vocal.currentTime = vt;
     } catch {
-      hardStopBeat();
-      setLoadError("Playback was blocked — tap again");
-      setPlaying(false);
+      /* ignore */
+    }
+
+    // Prefer not awaiting when already ready — keeps play() inside user gesture on iOS
+    let vocalOk = vocal.readyState >= 2;
+    let beatOk = !wantBeat || !beat || beat.readyState >= 2;
+    if (!vocalOk || (wantBeat && beat && !beatOk)) {
+      const waits: Promise<boolean>[] = [];
+      if (!vocalOk) waits.push(ensureReady(vocal));
+      if (wantBeat && beat && !beatOk) waits.push(ensureReady(beat));
+      const results = await Promise.all(waits);
+      let i = 0;
+      if (!vocalOk) vocalOk = results[i++];
+      if (wantBeat && beat && !beatOk) beatOk = results[i++];
+    }
+
+    if (!vocalOk) {
+      setLoadError("Could not load your take for playback");
+      writeReviewDiagnostics({ event: "vocal_not_ready" });
       return;
     }
 
-    // Reaffirm after play() — some iOS paths reset volume/muted
+    // Re-apply volumes after any load() side effects
     try {
       vocal.muted = false;
-      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+      vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
       vocal.playbackRate = 1;
+      if (wantBeat && beat && beatOk) {
+        beat.muted = false;
+        beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
+        beat.playbackRate = 1;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    let vocalPlaySucceeded = false;
+    let beatPlaySucceeded = false;
+    let vocalPlayError: string | null = null;
+    let beatPlayError: string | null = null;
+
+    // Fire both play() as close together as possible (same turn after readiness)
+    const playJobs: Promise<void>[] = [];
+
+    if (wantBeat && beat && beatOk) {
+      playJobs.push(
+        beat
+          .play()
+          .then(() => {
+            beatPlaySucceeded = true;
+          })
+          .catch((e) => {
+            beatPlayError = e instanceof Error ? e.message : String(e);
+          })
+      );
+    }
+
+    playJobs.push(
+      vocal
+        .play()
+        .then(() => {
+          vocalPlaySucceeded = true;
+        })
+        .catch((e) => {
+          vocalPlayError = e instanceof Error ? e.message : String(e);
+        })
+    );
+
+    await Promise.all(playJobs);
+
+    writeReviewDiagnostics({
+      event: "play_attempt",
+      vocalPlayAttempted: true,
+      vocalPlaySucceeded,
+      vocalPlayError,
+      beatPlayAttempted: Boolean(wantBeat && beat && beatOk),
+      beatPlaySucceeded,
+      beatPlayError,
+    });
+
+    if (!vocalPlaySucceeded) {
+      hardStopBeat();
+      setLoadError(
+        vocalPlayError
+          ? `Playback blocked (${vocalPlayError}) — tap Play again`
+          : "Playback was blocked — tap Play again"
+      );
+      setPlaying(false);
+      playingRef.current = false;
+      return;
+    }
+
+    // Vocal is audible; beat is best-effort (still show mix if beat failed)
+    if (wantBeat && beat && !beatPlaySucceeded) {
+      // Retry beat once (still may fail without gesture on strict iOS)
+      try {
+        beat.muted = false;
+        beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
+        await beat.play();
+        beatPlaySucceeded = true;
+      } catch (e) {
+        beatPlayError = e instanceof Error ? e.message : String(e);
+        writeReviewDiagnostics({
+          event: "beat_retry_failed",
+          beatPlayError,
+          vocalPlaySucceeded: true,
+        });
+      }
+    }
+
+    // Final affirm
+    try {
+      vocal.muted = false;
+      vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
+      if (wantBeat && beat && !beat.paused) {
+        beat.muted = false;
+        beat.volume = Math.min(1, Math.max(0, beatVolumeRef.current));
+      }
     } catch {
       /* ignore */
     }
 
     setPlaying(true);
+    playingRef.current = true;
     pausedSongMsRef.current = null;
 
     const tick = () => {
@@ -602,84 +785,78 @@ export function CompactAudioPlayer({
       const b = beatRef.current;
       if (!v) return;
 
-      if (wantBeat && b && !b.paused) {
-        const song = b.currentTime * 1000;
-        const vt = vocalFileTimeFromSongMs(song);
-        if (vt < 0) {
-          if (!v.paused) v.pause();
-          if (v.currentTime !== 0) v.currentTime = 0;
-        } else {
-          if (v.paused) void v.play().catch(() => undefined);
-          if (Math.abs(v.currentTime - vt) > 0.08) {
+      const placeNow = placementRef.current;
+      const vo = voiceOnlyRef.current;
+      const bv = beatVolumeRef.current;
+      const want = Boolean(beatSrc && !vo);
+
+      // Live mode: if switched to Voice Only mid-tick, stop beat
+      if (vo || bv <= 0.001) {
+        if (b && !b.paused) hardStopBeat();
+      } else if (want && b) {
+        // Master clock = beat when playing; otherwise vocal-driven song time
+        if (!b.paused) {
+          const song = b.currentTime * 1000;
+          const vt = vocalFileTimeFromSongMs(song, placeNow);
+          if (vt < 0) {
+            if (!v.paused) v.pause();
+            if (v.currentTime !== 0) v.currentTime = 0;
+          } else {
+            if (v.paused) void v.play().catch(() => undefined);
+            if (Math.abs(v.currentTime - vt) > 0.12) {
+              try {
+                v.currentTime = vt;
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+          if (beatEndMs != null && song >= beatEndMs) {
             try {
-              v.currentTime = vt;
+              b.pause();
             } catch {
               /* ignore */
             }
           }
         }
-        if (beatEndMs != null && song >= beatEndMs) {
-          b.pause();
+        // Keep beat audible when mode is Beat + Voice
+        try {
+          if (b.muted) b.muted = false;
+          const target = Math.min(1, Math.max(0, bv));
+          if (target > 0 && Math.abs(b.volume - target) > 0.02) b.volume = target;
+        } catch {
+          /* ignore */
         }
       }
 
-      // Keep vocal dominant — never let iOS/sync path leave it muted or quiet
+      // Vocal always dominant when present
       try {
         if (v.muted) v.muted = false;
-        if (Math.abs(v.volume - Math.min(1, Math.max(0, vocalVolume))) > 0.02) {
-          v.volume = Math.min(1, Math.max(0, vocalVolume));
-        }
-        if (wantBeat && b && !voiceOnly) {
-          if (b.muted) b.muted = false;
-          const targetBeat = Math.min(1, Math.max(0, beatVolume));
-          if (Math.abs(b.volume - targetBeat) > 0.02) b.volume = targetBeat;
-        }
+        const tv = Math.min(1, Math.max(0, vocalVolumeRef.current));
+        if (Math.abs(v.volume - tv) > 0.02) v.volume = tv;
       } catch {
         /* ignore */
       }
+
       if (v.duration) setProgress(v.currentTime / v.duration);
-      if (voiceOnly || beatVolume <= 0.001) {
-        if (b && !b.paused) hardStopBeat();
-      }
-      // Review diagnostics (studio_debug_audio=1)
-      try {
-        if (
-          typeof window !== "undefined" &&
-          localStorage.getItem("studio_debug_audio") === "1"
-        ) {
-          const songFromBeat = b && !b.paused ? b.currentTime * 1000 : null;
-          const songFromVocal = placementStartMs + v.currentTime * 1000;
-          const drift =
-            songFromBeat != null ? Math.abs(songFromBeat - songFromVocal) : null;
-          sessionStorage.setItem(
-            "studio_last_review_diagnostics",
-            JSON.stringify({
-              reviewMode: voiceOnly ? "voice_only" : "beat_plus_voice",
-              vocalPlaying: !v.paused,
-              vocalMuted: v.muted,
-              vocalVolume: v.volume,
-              vocalPlaybackRate: v.playbackRate,
-              beatPlaying: Boolean(b && !b.paused),
-              beatMuted: b ? b.muted : null,
-              beatVolume: b ? b.volume : null,
-              beatPlaybackRate: b ? b.playbackRate : null,
-              activeReviewBeatSources: wantBeat && b && !b.paused ? 1 : 0,
-              reviewBeatStartMs: placementStartMs,
-              vocalCurrentTime: v.currentTime,
-              beatCurrentTime: b ? b.currentTime : null,
-              maxDriftMs: drift,
-              at: Date.now(),
-            })
-          );
-        }
-      } catch {
-        /* ignore */
-      }
-      if (!v.paused || (b && !b.paused)) {
+
+      if (!v.paused || (b && !b.paused && !vo)) {
         rafRef.current = requestAnimationFrame(tick);
+      } else {
+        // Both stopped unexpectedly
+        if (playingRef.current) {
+          setPlaying(false);
+          playingRef.current = false;
+        }
       }
     };
     rafRef.current = requestAnimationFrame(tick);
+    writeReviewDiagnostics({
+      event: "playing",
+      vocalPlaySucceeded: true,
+      beatPlaySucceeded,
+      beatPlayError,
+    });
   }
 
   useEffect(() => {
@@ -689,8 +866,10 @@ export function CompactAudioPlayer({
       hardStopBeat();
       stopRaf();
       setPlaying(false);
+      playingRef.current = false;
       setProgress(1);
       pausedSongMsRef.current = null;
+      writeReviewDiagnostics({ event: "ended" });
     };
     vocal.addEventListener("ended", onEnd);
     return () => vocal.removeEventListener("ended", onEnd);
