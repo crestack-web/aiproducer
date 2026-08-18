@@ -691,8 +691,8 @@ export default function ProjectDetailPage() {
               voiceActivity: d.voiceActivity,
               duckingActive: d.duckingActive,
               beatMonitorVolume: d.currentBeatMonitorVolume,
-              normalVolume: 0.05,
-              duckedVolume: d.currentBeatMonitorVolume,
+              normalVolume: d.normalBeatVolume ?? 0.05,
+              duckedVolume: d.duckedBeatVolume ?? d.currentBeatMonitorVolume,
               duckingReductionDb: d.duckingReductionDb,
               micRms: d.micRms,
               micPeak: d.micPeak,
@@ -849,8 +849,8 @@ export default function ProjectDetailPage() {
               lastDuckStartMs: duck?.lastDuckStartMs ?? null,
               lastDuckReleaseMs: duck?.lastDuckReleaseMs ?? null,
               duckEvents: duck?.events ?? [],
-              normalBeatVolume: duck?.normalBeatVolume ?? 0.045,
-              duckedBeatVolume: duck?.duckedBeatVolume ?? 0.01,
+              normalBeatVolume: duck?.normalBeatVolume ?? 0.05,
+              duckedBeatVolume: duck?.duckedBeatVolume ?? 0.028,
               averageDuckedVolume: duck?.averageDuckedVolume ?? null,
               // Original blob analysis (diagnostic only — blob not modified)
               originalCaptureUnprocessed: true,
@@ -934,7 +934,7 @@ export default function ProjectDetailPage() {
       const isSpeaker = isPhoneSpeakerOutput(selectedSpeakerIdRef.current);
       beatAudioRef.current.muted = false;
       // Phone speaker: keep monitor low to reduce acoustic bleed into phone mic
-      beatAudioRef.current.volume = isSpeaker ? 0.045 : 0.1;
+      beatAudioRef.current.volume = isSpeaker ? 0.05 : 0.12;
       beatAudioRef.current.play().catch(() => undefined);
     }
     setRecordSeconds(0);
@@ -1043,7 +1043,7 @@ export default function ProjectDetailPage() {
         const isSpeaker = isPhoneSpeakerOutput(selectedSpeakerIdRef.current);
         beatAudioRef.current.muted = false;
         // Lower monitor level — reduces bleed if OS still routes to the phone speaker
-        beatAudioRef.current.volume = isSpeaker ? 0.045 : 0.1;
+        beatAudioRef.current.volume = isSpeaker ? 0.05 : 0.12;
         beatAudioRef.current.play().catch(() => undefined);
       }
       const captureStream = opened.recordStream;
@@ -1573,7 +1573,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.05}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.45}
                     />
                     <button
                       type="button"
@@ -1592,7 +1592,7 @@ export default function ProjectDetailPage() {
                         fontFamily: "inherit",
                       }}
                     >
-                      {reviewVoiceOnly ? "Voice only · on" : "Voice only"}
+                      {reviewVoiceOnly ? "Voice only · on" : "Beat + Voice"}
                     </button>
                   </>
                 )}

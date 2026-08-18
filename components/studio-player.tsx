@@ -353,8 +353,11 @@ export function PlayerLoadingState({
  * Recorded Section review player.
  * Musical placement (same as Produce):
  *   placementStartMs = sectionStartMs + recordingOffsetMs
- * Review mix only: vocal 1.0, beat ~0.05 (or 0 for Voice Only).
- * Booth monitor beat must stay paused during review.
+ *
+ * MODE A — Beat + Voice: CLEAN reference beat + original recorded vocal (both playing).
+ * MODE B — Voice Only: recorded vocal only (reference beat stopped/muted).
+ *
+ * Booth monitor beat must stay paused during review — this player owns its own beat element.
  */
 export function CompactAudioPlayer({
   src,
@@ -363,7 +366,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.08,
+  beatVolume = 0.4,
   vocalVolume = 1,
 }: {
   src: string;
@@ -398,6 +401,7 @@ export function CompactAudioPlayer({
     try {
       beat.pause();
       beat.volume = 0;
+      beat.muted = true;
     } catch {
       /* ignore */
     }
@@ -470,8 +474,11 @@ export function CompactAudioPlayer({
   }, [hardStopBeat]);
 
   useEffect(() => {
-    if (vocalRef.current) {
-      vocalRef.current.volume = Math.min(1, Math.max(0, vocalVolume));
+    const vocal = vocalRef.current;
+    if (vocal) {
+      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+      vocal.muted = false;
+      vocal.playbackRate = 1;
     }
     if (voiceOnly) {
       hardStopBeat();
@@ -479,7 +486,13 @@ export function CompactAudioPlayer({
     }
     const beat = beatRef.current;
     if (!beat) return;
-    beat.volume = Math.min(1, Math.max(0, beatVolume));
+    try {
+      beat.muted = false;
+      beat.playbackRate = 1;
+      beat.volume = Math.min(1, Math.max(0, beatVolume));
+    } catch {
+      /* ignore */
+    }
   }, [vocalVolume, beatVolume, voiceOnly, hardStopBeat]);
 
   async function ensureReady(el: HTMLAudioElement, ms = 8000): Promise<boolean> {
@@ -545,6 +558,7 @@ export function CompactAudioPlayer({
       const beatOk = await ensureReady(beat);
       if (beatOk) {
         try {
+          beat.muted = false;
           beat.playbackRate = 1;
           beat.currentTime = songMs / 1000;
         } catch {
@@ -601,6 +615,40 @@ export function CompactAudioPlayer({
       if (voiceOnly || beatVolume <= 0.001) {
         if (b && !b.paused) hardStopBeat();
       }
+      // Review diagnostics (studio_debug_audio=1)
+      try {
+        if (
+          typeof window !== "undefined" &&
+          localStorage.getItem("studio_debug_audio") === "1"
+        ) {
+          const songFromBeat = b && !b.paused ? b.currentTime * 1000 : null;
+          const songFromVocal = placementStartMs + v.currentTime * 1000;
+          const drift =
+            songFromBeat != null ? Math.abs(songFromBeat - songFromVocal) : null;
+          sessionStorage.setItem(
+            "studio_last_review_diagnostics",
+            JSON.stringify({
+              reviewMode: voiceOnly ? "voice_only" : "beat_plus_voice",
+              vocalPlaying: !v.paused,
+              vocalMuted: v.muted,
+              vocalVolume: v.volume,
+              vocalPlaybackRate: v.playbackRate,
+              beatPlaying: Boolean(b && !b.paused),
+              beatMuted: b ? b.muted : null,
+              beatVolume: b ? b.volume : null,
+              beatPlaybackRate: b ? b.playbackRate : null,
+              activeReviewBeatSources: wantBeat && b && !b.paused ? 1 : 0,
+              reviewBeatStartMs: placementStartMs,
+              vocalCurrentTime: v.currentTime,
+              beatCurrentTime: b ? b.currentTime : null,
+              maxDriftMs: drift,
+              at: Date.now(),
+            })
+          );
+        }
+      } catch {
+        /* ignore */
+      }
       if (!v.paused || (b && !b.paused)) {
         rafRef.current = requestAnimationFrame(tick);
       }
@@ -622,7 +670,7 @@ export function CompactAudioPlayer({
     return () => vocal.removeEventListener("ended", onEnd);
   }, [hardStopBeat]);
 
-  const modeHint = voiceOnly ? "voice only" : "voice up · beat low";
+  const modeHint = voiceOnly ? "voice only" : "beat + voice";
 
   return (
     <div

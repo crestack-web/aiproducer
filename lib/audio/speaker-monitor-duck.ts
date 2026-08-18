@@ -43,15 +43,16 @@ export type SpeakerDuckConfig = {
 };
 
 export const DEFAULT_SPEAKER_DUCK: SpeakerDuckConfig = {
-  /** Idle phone-speaker monitor — still followable, lower acoustic drive into mic */
-  normalVolume: 0.045,
+  /** Idle phone-speaker monitor — clearly audible performance cue */
+  normalVolume: 0.05,
   /**
-   * While artist is actively singing — aggressive reduction so the speaker
-   * drives far less energy into the phone mic. Not a full mute (timing cue remains).
+   * While artist is actively singing — moderate reduction to cut acoustic bleed.
+   * Must remain clearly audible so the artist can still follow the beat.
+   * Do NOT use near-silent values (e.g. 0.002) — that removes the performance cue.
    */
-  duckedVolume: 0.002,
-  /** Absolute floor so timing cues remain; never 0 */
-  minUsableVolume: 0.0015,
+  duckedVolume: 0.028,
+  /** Absolute floor so timing cues remain; never near-silent */
+  minUsableVolume: 0.02,
   voiceOnThreshold: 0.018,
   voiceOffThreshold: 0.01,
   voiceHoldOnMs: 50,
@@ -410,7 +411,7 @@ function emptyDiag(normalVol: number): SpeakerDuckDiagnostics {
     currentBeatMonitorVolume: normalVol,
     duckingReductionDb: 0,
     normalBeatVolume: normalVol,
-    duckedBeatVolume: 0.002,
+    duckedBeatVolume: 0.028,
     averageDuckedVolume: null,
     rmsSilentAvg: 0,
     rmsVoiceAvg: 0,
