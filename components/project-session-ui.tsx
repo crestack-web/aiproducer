@@ -182,6 +182,18 @@ export default function ProjectDetailPage() {
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
+  /** Diagnostic-only: exact MediaRecorder Blob (untouched) for raw playback. */
+  const rawTakeBlobRef = useRef<Blob | null>(null);
+  const rawTakeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [rawCaptureStatus, setRawCaptureStatus] = useState<
+    "UNKNOWN" | "RAW_CAPTURE_CLEAN" | "RAW_CAPTURE_DISTORTED" | "RAW_CAPTURE_UNPLAYABLE"
+  >("UNKNOWN");
+  const [rawCaptureMeta, setRawCaptureMeta] = useState<{
+    mimeType: string;
+    sizeBytes: number;
+    durationSec: number | null;
+    canDecode: boolean;
+  } | null>(null);
   const [reviewVoiceOnly, setReviewVoiceOnly] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
@@ -743,7 +755,172 @@ export default function ProjectDetailPage() {
     duckRafRef.current = requestAnimationFrame(loop);
   }
 
+  /**
+   * DIAGNOSTIC ONLY — decode original MediaRecorder Blob via native Audio.
+   * No beat, no CompactAudioPlayer, no Web Audio, no processing.
+   * Classification is decode/playability only; human ear still required for "scratchy".
+   */
+  async function diagnoseRawCaptureBlob(
+    blob: Blob,
+    mimeType: string,
+    deviceInfo: Record<string, unknown>
+  ): Promise<void> {
+    rawTakeBlobRef.current = blob;
+    const sizeBytes = blob.size;
+    let durationSec: number | null = null;
+    let canDecode = false;
+    let playError: string | null = null;
+    let status: "UNKNOWN" | "RAW_CAPTURE_CLEAN" | "RAW_CAPTURE_DISTORTED" | "RAW_CAPTURE_UNPLAYABLE" =
+      "UNKNOWN";
+
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = new Audio();
+      a.preload = "auto";
+      a.src = url;
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          a.removeEventListener("loadedmetadata", onMeta);
+          a.removeEventListener("error", onErr);
+          clearTimeout(timer);
+          resolve();
+        };
+        const onMeta = () => {
+          canDecode = true;
+          durationSec = Number.isFinite(a.duration) ? a.duration : null;
+          done();
+        };
+        const onErr = () => {
+          playError = a.error ? `MediaError code ${a.error.code}` : "audio element error";
+          canDecode = false;
+          done();
+        };
+        a.addEventListener("loadedmetadata", onMeta);
+        a.addEventListener("error", onErr);
+        const timer = setTimeout(() => {
+          if (a.readyState >= 1 && Number.isFinite(a.duration)) {
+            canDecode = true;
+            durationSec = a.duration;
+          }
+          done();
+        }, 4000);
+        try {
+          a.load();
+        } catch {
+          /* ignore */
+        }
+      });
+      try {
+        a.removeAttribute("src");
+        a.load();
+      } catch {
+        /* ignore */
+      }
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      playError = e instanceof Error ? e.message : String(e);
+      canDecode = false;
+    }
+
+    if (!canDecode || sizeBytes < 256) {
+      status = "RAW_CAPTURE_UNPLAYABLE";
+    } else {
+      status = "UNKNOWN";
+    }
+
+    setRawCaptureStatus(status);
+    setRawCaptureMeta({
+      mimeType: blob.type || mimeType,
+      sizeBytes,
+      durationSec,
+      canDecode,
+    });
+
+    const payload = {
+      classification: status,
+      note:
+        status === "RAW_CAPTURE_UNPLAYABLE"
+          ? "Blob failed to decode or is empty"
+          : "Play Raw Take and set classification to CLEAN or DISTORTED by ear",
+      mimeType: blob.type || mimeType,
+      sizeBytes,
+      durationSec,
+      canDecode,
+      playError,
+      mediaRecorderMime: mimeType,
+      beatInMediaRecorder: false,
+      captureGraph: "mic→getUserMedia→MediaRecorder (vocal only); beat→HTMLAudioElement",
+      device: deviceInfo,
+      at: Date.now(),
+    };
+    try {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("studio_last_raw_capture_diagnostic", JSON.stringify(payload));
+        if (localStorage.getItem("studio_debug_audio") === "1") {
+          sessionStorage.setItem("studio_last_capture_forensics", JSON.stringify(payload));
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function playRawTakeDiagnostic() {
+    const blob = rawTakeBlobRef.current;
+    if (!blob) return;
+    try {
+      rawTakeAudioRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+    const url = URL.createObjectURL(blob);
+    const a = new Audio();
+    a.preload = "auto";
+    a.src = url;
+    a.onended = () => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* ignore */
+      }
+    };
+    rawTakeAudioRef.current = a;
+    void a.play().catch((e) => {
+      setRawCaptureStatus("RAW_CAPTURE_UNPLAYABLE");
+      try {
+        sessionStorage.setItem(
+          "studio_last_raw_capture_diagnostic",
+          JSON.stringify({
+            classification: "RAW_CAPTURE_UNPLAYABLE",
+            playError: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+            at: Date.now(),
+          })
+        );
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  function markRawCaptureByEar(result: "RAW_CAPTURE_CLEAN" | "RAW_CAPTURE_DISTORTED") {
+    setRawCaptureStatus(result);
+    try {
+      const prev = sessionStorage.getItem("studio_last_raw_capture_diagnostic");
+      const base = prev ? JSON.parse(prev) : {};
+      sessionStorage.setItem(
+        "studio_last_raw_capture_diagnostic",
+        JSON.stringify({ ...base, classification: result, classifiedBy: "human_ear", at: Date.now() })
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
   function beginMediaCapture(stream: MediaStream, task: Task) {
+
     chunksRef.current = [];
     autoStoppedRef.current = false;
     // Mark actual MediaRecorder start on the session timeline (musical offset)
@@ -768,6 +945,10 @@ export default function ProjectDetailPage() {
       const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
       const wallClockMs = Date.now() - startedAtRef.current;
       setLocalBlobUrl(URL.createObjectURL(blob));
+      void diagnoseRawCaptureBlob(blob, mimeRef.current, {
+        ...(lastCaptureDeviceRef.current || {}),
+        wallClockMs,
+      });
       // BUG2: only ONE beat source in review — stop booth monitor element
       try {
         beatAudioRef.current?.pause();
@@ -1668,6 +1849,49 @@ export default function ProjectDetailPage() {
                 <p style={{ textAlign: "center", color: C.textMuted }}>
                   {uploading ? "Saving & analyzing take…" : savedRecordingId ? "Saved ✓" : "Review"}
                 </p>
+                {rawCaptureMeta && (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      marginBottom: 12,
+                      padding: 12,
+                      borderRadius: 12,
+                      border: `1px dashed ${C.border}`,
+                      background: C.surface,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textMuted }}>
+                      DIAGNOSTIC · PLAY RAW TAKE
+                    </div>
+                    <p style={{ fontSize: 12.5, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                      Exact MediaRecorder Blob — no beat, no placement, no processing.
+                      {` · ${rawCaptureMeta.mimeType || "?"} · ${Math.round(rawCaptureMeta.sizeBytes / 1024)}KB`}
+                      {rawCaptureMeta.durationSec != null
+                        ? ` · ${rawCaptureMeta.durationSec.toFixed(1)}s`
+                        : ""}
+                      {` · ${rawCaptureStatus}`}
+                    </p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                      <button type="button" style={{ ...btn2, marginTop: 0 }} onClick={playRawTakeDiagnostic}>
+                        Play Raw Take
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn2, marginTop: 0 }}
+                        onClick={() => markRawCaptureByEar("RAW_CAPTURE_CLEAN")}
+                      >
+                        Sounds clean
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn2, marginTop: 0 }}
+                        onClick={() => markRawCaptureByEar("RAW_CAPTURE_DISTORTED")}
+                      >
+                        Sounds distorted
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {localBlobUrl && (
                   <>
                     <CompactAudioPlayer

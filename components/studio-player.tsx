@@ -1038,6 +1038,7 @@ export function CompactAudioPlayer({
       beatReadyState: beat?.readyState ?? null,
       activeReviewBeatSources:
         beat && !beat.paused && (beat.volume ?? 0) > 0.001 ? 1 : 0,
+      progressSource: wantBeat ? 'beat_master_clock' : 'vocal_element',
       isBlobUrl,
       vocalSrc,
     });
