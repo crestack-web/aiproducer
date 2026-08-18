@@ -395,11 +395,27 @@ export function CompactAudioPlayer({
   const vocalVolumeRef = useRef(vocalVolume);
   const playingRef = useRef(playing);
   const placementRef = useRef(placementStartMs);
+  // Sync-loop forensics (Beat + Voice)
+  const vocalPauseCountRef = useRef(0);
+  const vocalSeekCountRef = useRef(0);
+  const vocalCorrectionCountRef = useRef(0);
+  const lastVocalPauseReasonRef = useRef<string | null>(null);
+  const lastVocalSeekTargetRef = useRef<number | null>(null);
+  const driftSamplesRef = useRef<{ sum: number; n: number; max: number }>({ sum: 0, n: 0, max: 0 });
+  const alignedRef = useRef(false);
   voiceOnlyRef.current = voiceOnly;
   beatVolumeRef.current = beatVolume;
   vocalVolumeRef.current = vocalVolume;
   playingRef.current = playing;
   placementRef.current = placementStartMs;
+  // Optional diagnostic: localStorage studio_review_nosync=1 disables continuous vocal seeks
+  const noSyncCorrections = () => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem("studio_review_nosync") === "1";
+    } catch {
+      return false;
+    }
+  };
 
   const stopRaf = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -893,44 +909,98 @@ export function CompactAudioPlayer({
     setPlaying(true);
     playingRef.current = true;
     pausedSongMsRef.current = null;
+    alignedRef.current = true;
+    vocalPauseCountRef.current = 0;
+    vocalSeekCountRef.current = 0;
+    vocalCorrectionCountRef.current = 0;
+    lastVocalPauseReasonRef.current = null;
+    lastVocalSeekTargetRef.current = null;
+    driftSamplesRef.current = { sum: 0, n: 0, max: 0 };
 
+    // Re-assert beat seek AFTER play() — iOS often ignores currentTime set while paused
+    if (wantBeat && beat && beatPlaySucceeded) {
+      try {
+        const targetBeatSec = Math.max(0, songMs / 1000);
+        if (Math.abs(beat.currentTime - targetBeatSec) > 0.35) {
+          beat.currentTime = targetBeatSec;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const DRIFT_TOLERANCE_SEC = 0.35; // only correct large drift — never every frame
     const tick = () => {
       const v = vocalRef.current;
       const b = beatRef.current;
       if (!v) return;
 
       const placeNow = placementRef.current;
+      const placeSec = placeNow / 1000;
       const vo = voiceOnlyRef.current;
       const bv = beatVolumeRef.current;
       const want = Boolean(beatSrc && !vo);
+      const nosync = noSyncCorrections();
 
       if (vo || bv <= 0.001) {
         if (b && !b.paused) hardStopBeat();
-      } else if (want && b) {
-        if (!b.paused) {
-          const song = b.currentTime * 1000;
-          const vt = vocalFileTimeFromSongMs(song, placeNow);
-          if (vt < 0) {
-            if (!v.paused) v.pause();
-            if (v.currentTime !== 0) v.currentTime = 0;
-          } else {
-            if (v.paused) void v.play().catch(() => undefined);
-            if (Math.abs(v.currentTime - vt) > 0.12) {
-              try {
-                v.currentTime = vt;
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-          if (beatEndMs != null && song >= beatEndMs) {
+      } else if (want && b && !b.paused) {
+        const songSec = b.currentTime;
+        const songMsNow = songSec * 1000;
+        const expectedVocalSec = songSec - placeSec; // vocal file time
+
+        // If beat clock is still BEFORE placement (seek failed / lag), DO NOT pause vocal.
+        // Re-seek the beat toward placement + vocal progress so the take stays audible.
+        if (expectedVocalSec < -0.05) {
+          if (!nosync) {
             try {
-              b.pause();
+              const repairSec = Math.max(0, placeSec + Math.max(0, v.currentTime));
+              if (Math.abs(b.currentTime - repairSec) > 0.2) {
+                b.currentTime = repairSec;
+              }
             } catch {
               /* ignore */
             }
           }
+          // Keep vocal running — never pause solely because beat is behind placement
+          if (v.paused) {
+            void v.play().catch(() => undefined);
+          }
+        } else if (!nosync) {
+          // Normal sync: beat is at/after placement
+          const drift = Math.abs(v.currentTime - expectedVocalSec);
+          const ds = driftSamplesRef.current;
+          ds.sum += drift * 1000;
+          ds.n += 1;
+          if (drift * 1000 > ds.max) ds.max = drift * 1000;
+
+          if (v.paused) {
+            void v.play().catch(() => undefined);
+          }
+          // Only correct large drift — continuous seeks fight the decoder and silence audio
+          if (drift > DRIFT_TOLERANCE_SEC) {
+            try {
+              v.currentTime = Math.max(0, expectedVocalSec);
+              vocalSeekCountRef.current += 1;
+              vocalCorrectionCountRef.current += 1;
+              lastVocalSeekTargetRef.current = expectedVocalSec;
+            } catch {
+              /* ignore */
+            }
+          }
+        } else {
+          // Diagnostic nosync: free-run both elements after initial align
+          if (v.paused) void v.play().catch(() => undefined);
         }
+
+        if (beatEndMs != null && songMsNow >= beatEndMs) {
+          try {
+            b.pause();
+          } catch {
+            /* ignore */
+          }
+        }
+
         try {
           if (b.muted) b.muted = false;
           const target = Math.min(1, Math.max(0, bv));
@@ -940,19 +1010,65 @@ export function CompactAudioPlayer({
         }
       }
 
+      // Vocal always unmuted and full volume during Review
       try {
         if (v.muted) v.muted = false;
         const tv = Math.min(1, Math.max(0, vocalVolumeRef.current));
         if (Math.abs(v.volume - tv) > 0.02) v.volume = tv;
+        if (v.playbackRate !== 1) v.playbackRate = 1;
       } catch {
         /* ignore */
       }
 
       if (v.duration) setProgress(v.currentTime / v.duration);
 
+      // Periodic diagnostics while Beat + Voice plays
+      try {
+        if (
+          typeof window !== "undefined" &&
+          localStorage.getItem("studio_debug_audio") === "1" &&
+          want &&
+          b
+        ) {
+          const ds = driftSamplesRef.current;
+          sessionStorage.setItem(
+            "studio_last_review_diagnostics",
+            JSON.stringify({
+              event: "raf_tick",
+              mode: vo ? "voice_only" : "beat_plus_voice",
+              nosync,
+              vocalPaused: v.paused,
+              vocalMuted: v.muted,
+              vocalVolume: v.volume,
+              vocalCurrentTime: v.currentTime,
+              vocalDuration: Number.isFinite(v.duration) ? v.duration : null,
+              vocalReadyState: v.readyState,
+              beatPaused: b.paused,
+              beatMuted: b.muted,
+              beatVolume: b.volume,
+              beatCurrentTime: b.currentTime,
+              beatDuration: Number.isFinite(b.duration) ? b.duration : null,
+              placementStartMs: placeNow,
+              expectedVocalSec: b.currentTime - placeSec,
+              vocalPauseCount: vocalPauseCountRef.current,
+              vocalSeekCount: vocalSeekCountRef.current,
+              vocalCorrectionCount: vocalCorrectionCountRef.current,
+              lastVocalPauseReason: lastVocalPauseReasonRef.current,
+              lastVocalSeekTarget: lastVocalSeekTargetRef.current,
+              maxVocalDriftMs: ds.max,
+              averageVocalDriftMs: ds.n ? ds.sum / ds.n : 0,
+              at: Date.now(),
+            })
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+
       if (!v.paused || (b && !b.paused && !vo)) {
         rafRef.current = requestAnimationFrame(tick);
       } else if (playingRef.current) {
+        // Only stop transport if BOTH are paused (user pause sets playingRef false first)
         setPlaying(false);
         playingRef.current = false;
       }
@@ -963,6 +1079,11 @@ export function CompactAudioPlayer({
       vocalPlaySucceeded: true,
       beatPlaySucceeded,
       beatPlayError,
+      placementStartMs: place,
+      songMs,
+      beatCurrentTimeAfterPlay: beat?.currentTime ?? null,
+      vocalCurrentTimeAfterPlay: vocal.currentTime,
+      nosync: noSyncCorrections(),
     });
   }
 
@@ -987,11 +1108,33 @@ export function CompactAudioPlayer({
         vocalNetworkState: vocal.networkState,
       });
     };
+    const onPause = () => {
+      vocalPauseCountRef.current += 1;
+      lastVocalPauseReasonRef.current = "element_pause_event";
+      writeReviewDiagnostics({
+        event: "vocal_pause_event",
+        vocalPauseCount: vocalPauseCountRef.current,
+        vocalCurrentTime: vocal.currentTime,
+        vocalPaused: vocal.paused,
+      });
+    };
+    const onPlay = () => {
+      writeReviewDiagnostics({ event: "vocal_play_event", vocalCurrentTime: vocal.currentTime });
+    };
+    const onPlaying = () => {
+      writeReviewDiagnostics({ event: "vocal_playing_event", vocalCurrentTime: vocal.currentTime });
+    };
     vocal.addEventListener("ended", onEnd);
     vocal.addEventListener("error", onError);
+    vocal.addEventListener("pause", onPause);
+    vocal.addEventListener("play", onPlay);
+    vocal.addEventListener("playing", onPlaying);
     return () => {
       vocal.removeEventListener("ended", onEnd);
       vocal.removeEventListener("error", onError);
+      vocal.removeEventListener("pause", onPause);
+      vocal.removeEventListener("play", onPlay);
+      vocal.removeEventListener("playing", onPlaying);
     };
   }, [hardStopBeat, src]);
 
