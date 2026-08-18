@@ -81,7 +81,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { data: tasksRaw, error: tErr } = await supabase
     .from("recording_tasks")
     .select(
-      "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan"
+      "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan, section_id"
     )
     .eq("project_id", projectId)
     .order("start_ms", { ascending: true });
@@ -254,6 +254,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       recording_id: rec.id,
       type: task.type,
       title: task.title,
+      section_id: (task as { section_id?: string | null }).section_id ?? null,
       section_label: task.metadata?.section_label ?? null,
       start_ms,
       end_ms,

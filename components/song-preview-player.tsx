@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { Waveform, makeWave, CoverArt } from "@/components/studio-player";
 import { defaultLinearGainForTaskType } from "@/lib/layer-model";
+import { routePlaybackToPreferredOutput } from "@/components/mic-input-picker";
 
 export type SongPreviewLayer = {
   task_id: string;
   type?: string;
   title?: string | null;
+  section_id?: string | null;
   section_label?: string | null;
   start_ms: number;
   end_ms?: number | null;
@@ -22,6 +24,11 @@ type Props = {
   layers: SongPreviewLayer[];
   title?: string;
   seed?: string;
+  /** When set, only play layers whose start_ms is within [start, end). */
+  sectionFilterStartMs?: number | null;
+  sectionFilterEndMs?: number | null;
+  /** Prefer speaker-style output for listening (not record monitor). */
+  playbackSinkId?: string | null;
 };
 
 function formatMs(ms: number) {
@@ -38,9 +45,12 @@ function formatMs(ms: number) {
 export function SongPreviewPlayer({
   beatUrl,
   beatDurationMs,
-  layers,
+  layers: layersIn,
   title = "Full song preview",
   seed = "song-preview",
+  sectionFilterStartMs = null,
+  sectionFilterEndMs = null,
+  playbackSinkId = "__speaker__",
 }: Props) {
   const { colors: C } = useTheme();
   const beatRef = useRef<HTMLAudioElement | null>(null);
@@ -53,7 +63,17 @@ export function SongPreviewPlayer({
   const startedRef = useRef(false);
   const bars = useMemo(() => makeWave(seed, 56), [seed]);
   /** Quiet reference bed under vocals (native element volume only). */
-  const PREVIEW_BEAT_VOLUME = 0.06;
+  const PREVIEW_BEAT_VOLUME = 0.04;
+  const layers = useMemo(() => {
+    if (sectionFilterStartMs == null && sectionFilterEndMs == null) return layersIn;
+    const start = sectionFilterStartMs ?? 0;
+    const end = sectionFilterEndMs;
+    return layersIn.filter((l) => {
+      const s = l.start_ms || 0;
+      if (end != null) return s >= start - 50 && s < end + 50;
+      return Math.abs(s - start) < 3000;
+    });
+  }, [layersIn, sectionFilterStartMs, sectionFilterEndMs]);
 
   const durationMs = useMemo(() => {
     const fromBeat = beatDurationMs && beatDurationMs > 0 ? beatDurationMs : 0;
@@ -189,6 +209,9 @@ export function SongPreviewPlayer({
       startedRef.current = true;
       if (beat) {
         try {
+          if (playbackSinkId) {
+            await routePlaybackToPreferredOutput(beat, playbackSinkId);
+          }
           await beat.play();
         } catch (pe) {
           throw new Error(

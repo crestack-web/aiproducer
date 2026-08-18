@@ -64,6 +64,7 @@ import {
   nextProductionRecommendation,
   layerRecommendationCopy,
 } from "@/components/session-steps";
+import { layerPhraseHint, normalizeLayerRole } from "@/lib/layer-model";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
 import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
@@ -195,6 +196,10 @@ export default function ProjectDetailPage() {
     canDecode: boolean;
   } | null>(null);
   const [reviewVoiceOnly, setReviewVoiceOnly] = useState(false);
+  const [taskTakes, setTaskTakes] = useState<
+    { id: string; take_number?: number | null; is_selected?: boolean | null; duration_ms?: number | null }[]
+  >([]);
+  const [sectionPreviewOnly, setSectionPreviewOnly] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
@@ -339,6 +344,48 @@ export default function ProjectDetailPage() {
       setPreviewLoading(false);
     }
   }, [id, beatUrl]);
+
+  const loadTaskTakes = useCallback(async (taskId: string) => {
+    try {
+      const res = await fetch(`/api/recording-tasks/${taskId}/recordings`);
+      if (!res.ok) {
+        setTaskTakes([]);
+        return;
+      }
+      const j = await res.json();
+      const list = (j.recordings || []) as {
+        id: string;
+        take_number?: number | null;
+        is_selected?: boolean | null;
+        duration_ms?: number | null;
+      }[];
+      setTaskTakes(Array.isArray(list) ? list : []);
+    } catch {
+      setTaskTakes([]);
+    }
+  }, []);
+
+  const selectTake = useCallback(
+    async (taskId: string, recordingId: string) => {
+      try {
+        await fetch(`/api/recording-tasks/${taskId}/recordings/${recordingId}/select`, {
+          method: "POST",
+        });
+        await loadTaskTakes(taskId);
+        void loadSongPreview();
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [loadTaskTakes, loadSongPreview]
+  );
+
+  useEffect(() => {
+    if (phase === "review" && current?.id) {
+      void loadTaskTakes(current.id);
+    }
+  }, [phase, current?.id, loadTaskTakes]);
+
 
   async function markRecordingStatus() {
     try {
@@ -1770,9 +1817,17 @@ export default function ProjectDetailPage() {
                   {layerRecommendationCopy(current.type).headline}
                 </h1>
                 <p style={{ color: C.text, fontSize: 14.5, marginTop: 6, lineHeight: 1.45 }}>
-                  {layerRecommendationCopy(current.type).body}
+                  {layerPhraseHint(
+                    normalizeLayerRole(current.type),
+                    current.metadata?.section_label || sectionLabel(current)
+                  )}
                 </p>
                 <p style={{ color: C.textMuted, fontSize: 13, marginTop: 8 }}>{current.instruction}</p>
+                {current.reason ? (
+                  <p style={{ color: C.textMuted, fontSize: 12.5, marginTop: 6, fontStyle: "italic" }}>
+                    {current.reason}
+                  </p>
+                ) : null}
                 {(current.start_ms != null || current.end_ms != null) && (
                   <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
                     Same musical window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
@@ -1957,6 +2012,7 @@ export default function ProjectDetailPage() {
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.18}
+                      playbackSinkId="__speaker__"
                     />
                     <button
                       type="button"
@@ -1977,6 +2033,49 @@ export default function ProjectDetailPage() {
                     >
                       {reviewVoiceOnly ? "Voice only · on" : "Beat + Voice"}
                     </button>
+
+                    {taskTakes.length > 1 && (
+                      <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: `1px solid ${C.border}` }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>TAKES</div>
+                        {taskTakes.map((tk, i) => (
+                          <button
+                            key={tk.id}
+                            type="button"
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              textAlign: "left",
+                              marginTop: 6,
+                              padding: "8px 10px",
+                              borderRadius: 10,
+                              border: `1px solid ${tk.is_selected ? C.brass : C.border}`,
+                              background: tk.is_selected ? C.brassSoft : "transparent",
+                              color: C.text,
+                              cursor: "pointer",
+                            }}
+                            onClick={() => void selectTake(current.id, tk.id)}
+                          >
+                            Take {tk.take_number ?? i + 1}
+                            {tk.is_selected ? " · selected for preview" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      style={{ ...btn2, marginTop: 10 }}
+                      onClick={() => {
+                        setSectionPreviewOnly(true);
+                        setScreen("assemble");
+                        void loadSongPreview();
+                      }}
+                    >
+                      Preview this section
+                    </button>
+                    <p style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8, textAlign: "center" }}>
+                      Review uses normal speaker output (not the recording earpiece route). On iPhone, set
+                      Control Center to speaker if needed.
+                    </p>
                   </>
                 )}
                 {producerTip && (
@@ -2075,8 +2174,16 @@ export default function ProjectDetailPage() {
                   : `Skip all optional (${optionalOpen(tasks).length})`}
               </button>
             )}
-            <button type="button" style={{ ...btn, marginTop: 12 }} onClick={() => setScreen("assemble")}>
-              Preview full song
+            <button
+              type="button"
+              style={{ ...btn, marginTop: 12 }}
+              onClick={() => {
+                setSectionPreviewOnly(false);
+                setScreen("assemble");
+                void loadSongPreview();
+              }}
+            >
+              Preview recorded
             </button>
           </div>
         )}
@@ -2097,6 +2204,29 @@ export default function ProjectDetailPage() {
             ) : (
               <>
                 <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song so far</h1>
+                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14 }}>
+                  {coreDone(tasks).length} / {coreTasks(tasks).length} core sections recorded
+                  {productionLayersAdded(tasks).length > 0
+                    ? ` · ${productionLayersAdded(tasks).length} layers`
+                    : ""}
+                </p>
+                <ul style={{ listStyle: "none", padding: 0, margin: "12px auto", maxWidth: 320 }}>
+                  {coreTasks(tasks).map((t0) => {
+                    const done = t0.status === "completed";
+                    return (
+                      <li
+                        key={t0.id}
+                        style={{
+                          fontSize: 14,
+                          color: done ? C.text : C.textMuted,
+                          padding: "4px 0",
+                        }}
+                      >
+                        {done ? "✓" : "○"} {sectionLabel(t0)} · {humanTitle(t0.type)}
+                      </li>
+                    );
+                  })}
+                </ul>
                 <p style={{ color: C.textMuted, textAlign: "center", fontSize: 14, marginTop: 6 }}>
                   Play the full timeline — beat plus every recorded section — then produce when it feels right.
                 </p>
@@ -2109,23 +2239,48 @@ export default function ProjectDetailPage() {
                     beatUrl={previewBeatUrl || beatUrl}
                     beatDurationMs={previewBeatDurationMs}
                     layers={previewLayers}
-                    title={project?.title || "Full song preview"}
+                    title={
+                      sectionPreviewOnly && current
+                        ? `${sectionLabel(current)} · section layers`
+                        : `Recorded · ${coreDone(tasks).length}/${coreTasks(tasks).length} sections`
+                    }
                     seed={project?.title || id}
+                    sectionFilterStartMs={
+                      sectionPreviewOnly && current?.start_ms != null ? current.start_ms : null
+                    }
+                    sectionFilterEndMs={
+                      sectionPreviewOnly && current?.end_ms != null ? current.end_ms : null
+                    }
+                    playbackSinkId="__speaker__"
                   />
                 )}
 
                 <button
                   type="button"
                   style={{ ...btn2, marginTop: 12 }}
-                  onClick={() => void loadSongPreview()}
+                  onClick={() => {
+                    setSectionPreviewOnly(false);
+                    void loadSongPreview();
+                  }}
                   disabled={previewLoading}
                 >
-                  Refresh preview
+                  Refresh preview (all recorded)
                 </button>
 
                 <ProjectSamplesPanel projectId={id} />
-                <button type="button" style={{ ...btn, marginTop: 20 }} onClick={startProduce}>
-                  Produce my song
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 16 }}
+                  onClick={() => {
+                    setSectionPreviewOnly(false);
+                    setScreen("session");
+                    setPhase("ready");
+                  }}
+                >
+                  Continue Recording
+                </button>
+                <button type="button" style={{ ...btn, marginTop: 12 }} onClick={startProduce}>
+                  Produce recorded
                 </button>
               </>
             )}

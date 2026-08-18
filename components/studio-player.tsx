@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { routePlaybackToPreferredOutput } from "@/components/mic-input-picker";
 import { useTheme } from "@/lib/theme";
 
 function usePlayerColors() {
@@ -368,6 +369,8 @@ export function CompactAudioPlayer({
   beatEndMs,
   beatVolume = 0.10,
   vocalVolume = 1,
+  /** Review/preview output preference — not the recording-monitor route. */
+  playbackSinkId,
 }: {
   src: string;
   label?: string;
@@ -377,6 +380,7 @@ export function CompactAudioPlayer({
   beatEndMs?: number | null;
   beatVolume?: number;
   vocalVolume?: number;
+  playbackSinkId?: string | null;
 }) {
   const C = usePlayerColors();
   const vocalRef = useRef<HTMLAudioElement | null>(null);
@@ -416,6 +420,15 @@ export function CompactAudioPlayer({
   /** Review mix: vocal at 1.0; reference beat ≈0.10 so vocal is clearly dominant. */
   /** Reference beat under the vocal — audible context, never dominant. */
   const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.06);
+
+  // Review playback uses normal device output preference (not recording handset monitor).
+  useEffect(() => {
+    if (!playbackSinkId) return;
+    const vocal = vocalRef.current;
+    const beat = beatRef.current;
+    void routePlaybackToPreferredOutput(vocal, playbackSinkId);
+    void routePlaybackToPreferredOutput(beat, playbackSinkId);
+  }, [playbackSinkId, src, beatSrc]);
 
   // Optional diagnostic: localStorage studio_review_nosync=1 disables continuous vocal seeks
   const noSyncCorrections = () => {
