@@ -43,12 +43,11 @@ export type SpeakerDuckConfig = {
 };
 
 export const DEFAULT_SPEAKER_DUCK: SpeakerDuckConfig = {
-  /** Idle phone-speaker monitor — clearly audible performance cue */
+  /** Idle phone loudspeaker monitor — clearly audible performance cue */
   normalVolume: 0.05,
   /**
-   * While artist is actively singing — moderate reduction to cut acoustic bleed.
-   * Must remain clearly audible so the artist can still follow the beat.
-   * Do NOT use near-silent values (e.g. 0.002) — that removes the performance cue.
+   * While artist is actively singing on LOUDSPEAKER — moderate reduction.
+   * Must remain clearly audible. Never near-silent.
    */
   duckedVolume: 0.028,
   /** Absolute floor so timing cues remain; never near-silent */
@@ -61,6 +60,23 @@ export const DEFAULT_SPEAKER_DUCK: SpeakerDuckConfig = {
   attackMs: 55,
   releaseMs: 350,
   /** Higher mid-band bias: kick/bass bleed less likely to latch as "voice" */
+  midBandBias: 1.75,
+};
+
+/**
+ * Phone handset / earpiece mode — physical separation already reduces bleed.
+ * Only a SMALL volume reduction if VAD fires; beat must stay clearly audible.
+ */
+export const HANDSET_SPEAKER_DUCK: SpeakerDuckConfig = {
+  normalVolume: 0.12,
+  duckedVolume: 0.09,
+  minUsableVolume: 0.07,
+  voiceOnThreshold: 0.022,
+  voiceOffThreshold: 0.012,
+  voiceHoldOnMs: 70,
+  voiceHoldOffMs: 280,
+  attackMs: 80,
+  releaseMs: 400,
   midBandBias: 1.75,
 };
 
@@ -426,12 +442,50 @@ function emptyDiag(normalVol: number): SpeakerDuckDiagnostics {
   };
 }
 
-export function isPhoneSpeakerOutput(outputId: string | undefined | null): boolean {
+export type MonitorMode =
+  | "PHONE_HANDSET"
+  | "PHONE_SPEAKER"
+  | "HEADPHONES"
+  | "AIRPODS"
+  | "BLUETOOTH"
+  | "UNKNOWN";
+
+/** Classify preferred monitor route for diagnostics and duck policy. */
+export function classifyMonitorMode(outputId: string | undefined | null): MonitorMode {
   const o = (outputId || "").toLowerCase();
-  // Explicit speaker routes only — headphones / AirPods / external never match
-  if (!o) return false;
-  if (o === "__headphones__" || o.includes("headphone") || o.includes("airpod") || o.includes("bluetooth") || o.includes("earpiece")) {
-    return false;
+  if (!o) return "UNKNOWN";
+  if (o === "__handset__" || o.includes("handset") || o.includes("earpiece") || o.includes("receiver")) {
+    return "PHONE_HANDSET";
   }
-  return o === "__speaker__" || o === "speaker" || o.includes("speaker");
+  if (o.includes("airpod")) return "AIRPODS";
+  if (o.includes("bluetooth") || o.includes("bt ")) return "BLUETOOTH";
+  if (
+    o === "__headphones__" ||
+    o.includes("headphone") ||
+    o.includes("headset") ||
+    o.includes("earphone") ||
+    o.includes("wired")
+  ) {
+    return "HEADPHONES";
+  }
+  if (o === "__speaker__" || o === "speaker" || o.includes("speaker")) {
+    return "PHONE_SPEAKER";
+  }
+  return "UNKNOWN";
+}
+
+/** True for main loudspeaker only — NOT handset/earpiece, NOT headphones. */
+export function isPhoneSpeakerOutput(outputId: string | undefined | null): boolean {
+  return classifyMonitorMode(outputId) === "PHONE_SPEAKER";
+}
+
+/** True for phone handset / earpiece / receiver monitoring mode. */
+export function isPhoneHandsetOutput(outputId: string | undefined | null): boolean {
+  return classifyMonitorMode(outputId) === "PHONE_HANDSET";
+}
+
+/** Loudspeaker or handset — either may warrant light VAD duck (never headphones). */
+export function isPhoneBuiltInOutput(outputId: string | undefined | null): boolean {
+  const m = classifyMonitorMode(outputId);
+  return m === "PHONE_SPEAKER" || m === "PHONE_HANDSET";
 }

@@ -153,7 +153,7 @@ export function SongPreviewPlayer({
     try {
       if (beat) {
         await ensureReady(beat, "beat");
-        beat.volume = 0.35;
+        beat.volume = 0.2;
         beat.currentTime = 0;
       }
       const failedVocals: string[] = [];

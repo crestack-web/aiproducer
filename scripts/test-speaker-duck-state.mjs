@@ -177,5 +177,39 @@ assert(CFG.minUsableVolume <= CFG.duckedVolume, "floor ≤ ducked target");
 assert(CFG.attackMs >= 40 && CFG.attackMs <= 70, "attack 40–70ms");
 assert(CFG.releaseMs >= 250 && CFG.releaseMs <= 400, "release 250–400ms");
 
+
+// --- monitor mode classification (mirrors speaker-monitor-duck) ---
+function classifyMonitorMode(outputId) {
+  const o = (outputId || "").toLowerCase();
+  if (!o) return "UNKNOWN";
+  if (o === "__handset__" || o.includes("handset") || o.includes("earpiece") || o.includes("receiver")) {
+    return "PHONE_HANDSET";
+  }
+  if (o.includes("airpod")) return "AIRPODS";
+  if (o.includes("bluetooth") || o.includes("bt ")) return "BLUETOOTH";
+  if (
+    o === "__headphones__" ||
+    o.includes("headphone") ||
+    o.includes("headset") ||
+    o.includes("earphone") ||
+    o.includes("wired")
+  ) {
+    return "HEADPHONES";
+  }
+  if (o === "__speaker__" || o === "speaker" || o.includes("speaker")) {
+    return "PHONE_SPEAKER";
+  }
+  return "UNKNOWN";
+}
+
+console.log("\n9) Monitor mode");
+assert(classifyMonitorMode("__handset__") === "PHONE_HANDSET", "handset semantic");
+assert(classifyMonitorMode("__speaker__") === "PHONE_SPEAKER", "speaker semantic");
+assert(classifyMonitorMode("__headphones__") === "HEADPHONES", "headphones semantic");
+assert(classifyMonitorMode("AirPods Pro") === "AIRPODS", "airpods label");
+assert(classifyMonitorMode("earpiece") === "PHONE_HANDSET", "earpiece label");
+assert(isPhoneSpeakerOutput("__handset__") === false, "handset is not loudspeaker");
+assert(isPhoneSpeakerOutput("__speaker__") === true, "speaker is loudspeaker");
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

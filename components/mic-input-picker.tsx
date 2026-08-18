@@ -485,6 +485,14 @@ export async function routePlaybackToPreferredOutput(
         normalized.find((d) => d.isHeadphones) ||
         normalized.find((d) => d.isDefaultAlias) ||
         normalized[0];
+    } else if (preferredSinkId === "__handset__") {
+      // Prefer communications / receiver / earpiece-like sinks when the OS exposes them.
+      // iOS Safari never reaches here (setSinkId missing). Chromium may expose "communications".
+      preferred =
+        normalized.find((d) => /communication|earpiece|receiver|handset|call/i.test(d.label)) ||
+        normalized.find((d) => d.isDefaultAlias) ||
+        normalized.find((d) => !d.isHeadphones) ||
+        normalized[0];
     } else if (preferredSinkId === "__speaker__") {
       const phoneId = preferPhoneSpeakerFromNormalized(normalized);
       preferred =
@@ -691,10 +699,60 @@ export function SpeakerOutputPicker({ selectedDeviceId, onSelect, disabled }: Sp
         Beat / monitor speaker
       </div>
 
+      {/* Semantic routes — work even when setSinkId is unavailable (iOS) as preference + UX guidance */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+        {(
+          [
+            {
+              id: "__handset__",
+              title: "Phone handset (earpiece)",
+              sub: "Best for phone mic — hold like a phone call",
+            },
+            {
+              id: "__speaker__",
+              title: "Phone speaker",
+              sub: "Main loudspeaker — more bleed risk",
+            },
+            {
+              id: "__headphones__",
+              title: "Headphones / AirPods",
+              sub: "No speaker duck — use system audio route",
+            },
+          ] as const
+        ).map((opt) => {
+          const active = selectedDeviceId === opt.id || (opt.id === "__headphones__" && selectedDeviceId === "");
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(opt.id)}
+              style={radio(active)}
+            >
+              <span
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: 999,
+                  border: `2px solid ${active ? C.brass : C.border}`,
+                  background: active ? C.brass : "transparent",
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{opt.title}</span>
+                <span style={{ fontSize: 12, color: C.textMuted }}>{opt.sub}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {!supported && (
         <p style={{ margin: "0 0 8px", fontSize: 12.5, color: C.textMuted, lineHeight: 1.4 }}>
-          This browser cannot pick a speaker in-page (common on iPhone Safari). Use the system
-          Control Center / audio route to send sound to EarPods while recording.
+          This browser cannot pick a speaker in-page (common on iPhone Safari). System Control Center
+          owns the audio route. For phone mic recording, prefer Handset mode below and hold the phone
+          like a call (earpiece to ear, bottom mic clear).
         </p>
       )}
 

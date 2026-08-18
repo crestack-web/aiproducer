@@ -22,7 +22,12 @@ import {
 import {
   startSpeakerMonitorDuck,
   isPhoneSpeakerOutput,
+  isPhoneHandsetOutput,
+  isPhoneBuiltInOutput,
+  classifyMonitorMode,
   classifyCapture,
+  DEFAULT_SPEAKER_DUCK,
+  HANDSET_SPEAKER_DUCK,
   type SpeakerDuckHandle,
   type SpeakerDuckDiagnostics,
 } from "@/lib/audio/speaker-monitor-duck";
@@ -180,7 +185,7 @@ export default function ProjectDetailPage() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selectedMicId, setSelectedMicId] = useState("");
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("__handset__");
   const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
@@ -672,9 +677,13 @@ export default function ProjectDetailPage() {
   function startSpeakerDuckIfNeeded(micStream: MediaStream) {
     stopSpeakerDuck();
     lastDuckSummaryRef.current = null;
+    const routeId = selectedSpeakerIdRef.current;
     // Headphones / AirPods / external: never start VAD duck
-    if (!isPhoneSpeakerOutput(selectedSpeakerIdRef.current)) return;
-    const handle = startSpeakerMonitorDuck(micStream, () => beatAudioRef.current);
+    if (!isPhoneBuiltInOutput(routeId)) return;
+    // Handset: mild duck only (physical separation does most of the work)
+    // Loudspeaker: moderate duck from DEFAULT_SPEAKER_DUCK
+    const duckCfg = isPhoneHandsetOutput(routeId) ? HANDSET_SPEAKER_DUCK : DEFAULT_SPEAKER_DUCK;
+    const handle = startSpeakerMonitorDuck(micStream, () => beatAudioRef.current, duckCfg);
     speakerDuckRef.current = handle;
     const loop = () => {
       if (!speakerDuckRef.current) return;
@@ -706,7 +715,9 @@ export default function ProjectDetailPage() {
               duckEvents: d.events,
               requestedOutput: selectedSpeakerIdRef.current,
               actualOutput: selectedSpeakerIdRef.current,
-              routeIsPhoneSpeaker: true,
+              monitorMode: classifyMonitorMode(selectedSpeakerIdRef.current),
+              routeIsPhoneSpeaker: isPhoneSpeakerOutput(selectedSpeakerIdRef.current),
+              routeIsPhoneHandset: isPhoneHandsetOutput(selectedSpeakerIdRef.current),
               at: Date.now(),
             })
           );
@@ -807,9 +818,12 @@ export default function ProjectDetailPage() {
           const finalClass = blobAnalysis?.classification ?? liveClass.classification;
           const finalReason = blobAnalysis?.classificationReason ?? liveClass.reason;
           const summary = buildCaptureDiagnosticSummary({
-            route: isPhoneSpeakerOutput(selectedSpeakerIdRef.current)
-              ? "phone_mic+phone_speaker"
-              : "other",
+            route: (() => {
+              const m = classifyMonitorMode(selectedSpeakerIdRef.current);
+              if (m === "PHONE_HANDSET") return "phone_mic+handset";
+              if (m === "PHONE_SPEAKER") return "phone_mic+phone_speaker";
+              return m.toLowerCase();
+            })(),
             requestedInput: lastCaptureDeviceRef.current.requestedInput || selectedMicIdRef.current || null,
             actualInput:
               lastCaptureDeviceRef.current.actualInputLabel ||
@@ -833,7 +847,8 @@ export default function ProjectDetailPage() {
               beatInMediaRecorder: false,
               beat_capture_possible: "acoustic_only_if_phone_speaker",
               captureGraph: "mic→getUserMedia→MediaRecorder (vocal only); beat→HTMLAudioElement",
-              speaker_monitor_duck: isPhoneSpeakerOutput(selectedSpeakerIdRef.current),
+              speaker_monitor_duck: isPhoneBuiltInOutput(selectedSpeakerIdRef.current),
+              monitorMode: classifyMonitorMode(selectedSpeakerIdRef.current),
               requestedInput: summary.requestedInput,
               actualInput: summary.actualInput,
               requestedOutput: summary.requestedOutput,
@@ -931,10 +946,12 @@ export default function ProjectDetailPage() {
     if (beatAudioRef.current && beatUrl) {
       void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
       beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
-      const isSpeaker = isPhoneSpeakerOutput(selectedSpeakerIdRef.current);
+      const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
       beatAudioRef.current.muted = false;
-      // Phone speaker: keep monitor low to reduce acoustic bleed into phone mic
-      beatAudioRef.current.volume = isSpeaker ? 0.05 : 0.12;
+      // Handset: higher usable level (earpiece far from bottom mic). Loudspeaker: moderate.
+      // Headphones: normal monitoring level.
+      beatAudioRef.current.volume =
+        mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
       beatAudioRef.current.play().catch(() => undefined);
     }
     setRecordSeconds(0);
@@ -1040,10 +1057,10 @@ export default function ProjectDetailPage() {
       if (beatAudioRef.current && beatUrl) {
         // Pre-roll: beat seeks to sectionStart - countIn (musical clock)
         beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
-        const isSpeaker = isPhoneSpeakerOutput(selectedSpeakerIdRef.current);
+        const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
         beatAudioRef.current.muted = false;
-        // Lower monitor level — reduces bleed if OS still routes to the phone speaker
-        beatAudioRef.current.volume = isSpeaker ? 0.05 : 0.12;
+        beatAudioRef.current.volume =
+          mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
         beatAudioRef.current.play().catch(() => undefined);
       }
       const captureStream = opened.recordStream;
@@ -1493,6 +1510,23 @@ export default function ProjectDetailPage() {
                   onSelect={setSelectedSpeakerId}
                   disabled={false}
                 />
+                {isPhoneHandsetOutput(selectedSpeakerId) && (
+                  <p
+                    style={{
+                      margin: "10px 0 0",
+                      fontSize: 13,
+                      color: C.textMuted,
+                      lineHeight: 1.45,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                    }}
+                  >
+                    For best phone recording: hold your phone like a phone call, with the earpiece
+                    near your ear. Keep the bottom microphone unobstructed.
+                  </p>
+                )}
                 <button type="button" style={{ ...btn, marginTop: 14 }} onClick={startRecording}>
                   {isRetake ? "Retake" : "Record"}
                 </button>
@@ -1573,7 +1607,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.45}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.18}
                     />
                     <button
                       type="button"

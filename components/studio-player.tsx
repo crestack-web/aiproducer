@@ -366,7 +366,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.4,
+  beatVolume = 0.18,
   vocalVolume = 1,
 }: {
   src: string;
@@ -573,6 +573,9 @@ export function CompactAudioPlayer({
 
     try {
       const vt = vocalFileTimeFromSongMs(songMs);
+      vocal.muted = false;
+      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+      vocal.playbackRate = 1;
       vocal.currentTime = Math.max(0, vt);
       await vocal.play();
     } catch {
@@ -580,6 +583,15 @@ export function CompactAudioPlayer({
       setLoadError("Playback was blocked — tap again");
       setPlaying(false);
       return;
+    }
+
+    // Reaffirm after play() — some iOS paths reset volume/muted
+    try {
+      vocal.muted = false;
+      vocal.volume = Math.min(1, Math.max(0, vocalVolume));
+      vocal.playbackRate = 1;
+    } catch {
+      /* ignore */
     }
 
     setPlaying(true);
@@ -611,6 +623,20 @@ export function CompactAudioPlayer({
         }
       }
 
+      // Keep vocal dominant — never let iOS/sync path leave it muted or quiet
+      try {
+        if (v.muted) v.muted = false;
+        if (Math.abs(v.volume - Math.min(1, Math.max(0, vocalVolume))) > 0.02) {
+          v.volume = Math.min(1, Math.max(0, vocalVolume));
+        }
+        if (wantBeat && b && !voiceOnly) {
+          if (b.muted) b.muted = false;
+          const targetBeat = Math.min(1, Math.max(0, beatVolume));
+          if (Math.abs(b.volume - targetBeat) > 0.02) b.volume = targetBeat;
+        }
+      } catch {
+        /* ignore */
+      }
       if (v.duration) setProgress(v.currentTime / v.duration);
       if (voiceOnly || beatVolume <= 0.001) {
         if (b && !b.paused) hardStopBeat();
