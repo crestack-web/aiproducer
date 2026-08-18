@@ -742,8 +742,9 @@ export function CompactAudioPlayer({
       errorCode: vocal.error?.code ?? null,
       errorMessage: vocal.error?.message ?? null,
     };
-    if (!vocalReady) {
-      vocalReadyMeta = await ensureReady(vocal, 8000);
+    if (!vocalReady && vocal.readyState === 0 && !vocal.error) {
+      // Short wait only — avoid long awaits that drop iOS user-gesture for play()
+      vocalReadyMeta = await ensureReady(vocal, 2000);
       vocalReady = vocalReadyMeta.ok;
     }
 
@@ -791,123 +792,147 @@ export function CompactAudioPlayer({
       /* ignore */
     }
 
-    // Best-effort beat readiness — failure must NOT fail the vocal
-    let beatReady = Boolean(beat && beat.readyState >= 1);
-    if (wantBeat && beat && !beatReady) {
-      const beatMeta = await ensureReady(beat, 5000);
-      beatReady = beatMeta.ok;
-      writeReviewDiagnostics({
-        event: beatReady ? "beat_ready" : "BEAT_LOAD_ERROR",
-        beatReadyState: beatMeta.readyState,
-        beatErrorCode: beatMeta.errorCode,
-        beatLoadSucceeded: beatReady,
-      });
-    }
-
-    try {
-      vocal.muted = false;
-      vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
-      vocal.playbackRate = 1;
-      if (wantBeat && beat && beatReady) {
-        beat.muted = false;
-        beat.volume = reviewBeatGain(beatVolumeRef.current);
-        beat.playbackRate = 1;
-      }
-    } catch {
-      /* ignore */
-    }
+    // Do not await beat readiness here — keeps play() inside the user-gesture chain.
+    // Beat load failure is handled after play attempts below.
 
     let vocalPlaySucceeded = false;
     let beatPlaySucceeded = false;
     let vocalPlayError: string | null = null;
     let beatPlayError: string | null = null;
 
-    // Seek beat to review song position BEFORE play (placement clock)
+    // Intentional review song clock (usually placementStartMs on first Play)
+    const startAtOrAfterPlacement = songMs + 50 >= place;
+
+    // Sync seeks BEFORE any await (still in user-gesture turn when possible)
     try {
       if (wantBeat && beat) {
+        beat.muted = false;
+        beat.volume = reviewBeatGain(beatVolumeRef.current);
+        beat.playbackRate = 1;
         beat.currentTime = Math.max(0, songMs / 1000);
       }
-      // Vocal file time relative to placement; 0 when starting at placement
       const vt0 = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
-      if (vocal.readyState >= 1) vocal.currentTime = vt0;
+      if (vocal.readyState >= 1) {
+        vocal.currentTime = vt0;
+      }
+      vocal.muted = false;
+      vocal.volume = 1;
+      vocal.playbackRate = 1;
     } catch {
       /* ignore */
     }
 
     /**
-     * iOS: call vocal.play() inside the user gesture to "unlock" the element,
-     * even if we immediately pause when still before placement. Later RAF
-     * resume then works without a new gesture.
-     * Native HTMLAudioElement only — no Web Audio / GainNode (iOS silence regression).
+     * Native dual-source play — fire both from this user-gesture path.
+     * Do NOT pause the vocal afterward when Review intentionally starts at
+     * placement: iOS often reports beat.currentTime≈0 for a moment after play(),
+     * and a false "before placement" pause leaves vocal dead (RAF play blocked).
      */
-    try {
-      await vocal.play();
-      vocalPlaySucceeded = true;
-    } catch (e) {
-      vocalPlayError = e instanceof Error ? e.message : String(e);
+    const vocalPlayPromise = vocal.play().then(
+      () => {
+        vocalPlaySucceeded = true;
+      },
+      (e: unknown) => {
+        vocalPlayError =
+          e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      }
+    );
+
+    let beatPlayPromise: Promise<void> = Promise.resolve();
+    if (wantBeat && beat) {
+      beatPlayPromise = beat.play().then(
+        () => {
+          beatPlaySucceeded = true;
+        },
+        (e: unknown) => {
+          beatPlayError =
+            e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        }
+      );
+    } else {
+      hardStopBeat();
     }
 
-    if (wantBeat && beat) {
+    await Promise.all([vocalPlayPromise, beatPlayPromise]);
+
+    // Re-assert beat seek after play (Safari)
+    if (wantBeat && beat && beatPlaySucceeded) {
       try {
+        const target = Math.max(0, songMs / 1000);
+        if (Math.abs(beat.currentTime - target) > 0.4) {
+          beat.currentTime = target;
+        }
         beat.muted = false;
         beat.volume = reviewBeatGain(beatVolumeRef.current);
-        beat.playbackRate = 1;
-        // Re-seek after unlock — Safari often applies currentTime more reliably here
-        beat.currentTime = Math.max(0, songMs / 1000);
-        await beat.play();
-        beatPlaySucceeded = true;
-        // Assert seek stuck
-        if (Math.abs(beat.currentTime * 1000 - songMs) > 500) {
-          try {
-            beat.currentTime = Math.max(0, songMs / 1000);
-          } catch {
-            /* ignore */
-          }
-        }
-      } catch (e) {
-        beatPlayError = e instanceof Error ? e.message : String(e);
+      } catch {
+        /* ignore */
       }
     }
 
-    // Gate: if Beat + Voice and beat is still before placement, silence vocal now
+    // Placement engagement decision based on *intent* (songMs), not flaky currentTime
     if (wantBeat && beat) {
-      const beatMsNow = beat.currentTime * 1000;
-      if (beatMsNow + 40 < place) {
+      if (startAtOrAfterPlacement) {
+        // Started at/after section — vocal MUST stay playing
         try {
-          vocal.pause();
-          vocal.currentTime = 0;
-          vocalEngagedRef.current = false;
+          vocal.muted = false;
+          vocal.volume = 1;
+          if (vocal.paused) {
+            await vocal.play().catch((e: unknown) => {
+              vocalPlayError =
+                e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+              vocalPlaySucceeded = false;
+            });
+            if (!vocal.paused) vocalPlaySucceeded = true;
+          }
+          vocalEngagedRef.current = true;
+          vocalStartedAtBeatMsRef.current = Math.max(place, songMs);
         } catch {
           /* ignore */
         }
       } else {
+        // Intentional pre-roll before section — keep vocal silent until RAF crosses placement
         try {
-          vocal.muted = false;
-          vocal.volume = 1;
-          if (vocal.paused) await vocal.play().catch(() => undefined);
-          vocalEngagedRef.current = true;
-          vocalStartedAtBeatMsRef.current = beatMsNow;
+          vocal.pause();
+          vocal.currentTime = 0;
+          vocalEngagedRef.current = false;
+          lastVocalPauseReasonRef.current = "intentional_pre_placement";
         } catch {
           /* ignore */
         }
       }
+    } else {
+      // Voice Only
+      vocalEngagedRef.current = true;
     }
 
     writeReviewDiagnostics({
       event: "play_attempt",
-      vocalPlayAttempted: true,
+      reviewMode: wantBeat ? "beat_plus_voice" : "voice_only",
       vocalPlaySucceeded,
       vocalPlayError,
-      beatPlayAttempted: Boolean(wantBeat && beat),
       beatPlaySucceeded,
       beatPlayError,
       placementStartMs: place,
+      songMs,
+      startAtOrAfterPlacement,
       beatCurrentTimeMs: beat ? beat.currentTime * 1000 : null,
+      expectedVocalTimeMs: beat
+        ? beat.currentTime * 1000 - place
+        : vocal.currentTime * 1000,
       vocalEngaged: vocalEngagedRef.current,
       vocalPaused: vocal.paused,
+      vocalMuted: vocal.muted,
       vocalVolume: vocal.volume,
+      vocalReadyState: vocal.readyState,
+      vocalNetworkState: vocal.networkState,
+      vocalDuration: Number.isFinite(vocal.duration) ? vocal.duration : null,
+      vocalCurrentTime: vocal.currentTime,
+      beatPaused: beat?.paused ?? null,
+      beatMuted: beat?.muted ?? null,
       beatVolume: beat?.volume ?? null,
-      activeReviewBeatSources: beat && !beat.paused && (beat.volume ?? 0) > 0.001 ? 1 : 0,
+      beatReadyState: beat?.readyState ?? null,
+      activeReviewBeatSources:
+        beat && !beat.paused && (beat.volume ?? 0) > 0.001 ? 1 : 0,
       isBlobUrl,
       vocalSrc,
     });
@@ -934,7 +959,7 @@ export function CompactAudioPlayer({
       return;
     }
 
-    // Beat + Voice: beat must start; vocal may be gated until placement
+    // Beat + Voice: beat must start; vocal may be gated only for intentional pre-roll
     if (wantBeat && !beatPlaySucceeded) {
       setLoadError(
         beatPlayError
@@ -950,6 +975,30 @@ export function CompactAudioPlayer({
       setPlaying(false);
       playingRef.current = false;
       return;
+    }
+
+    // If we intended vocal at placement and it is still paused, surface that clearly
+    if (wantBeat && startAtOrAfterPlacement && vocal.paused) {
+      writeReviewDiagnostics({
+        event: "VOCAL_STILL_PAUSED_AFTER_ENGAGE",
+        vocalPlaySucceeded,
+        vocalPlayError,
+        vocalReadyState: vocal.readyState,
+      });
+      // Last-chance play still inside this call stack
+      try {
+        await vocal.play();
+        vocalPlaySucceeded = true;
+        vocalEngagedRef.current = true;
+      } catch (e) {
+        vocalPlayError =
+          e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        setLoadError(`Vocal did not start (${vocalPlayError})`);
+        hardStopBeat();
+        setPlaying(false);
+        playingRef.current = false;
+        return;
+      }
     }
 
     try {
@@ -969,8 +1018,7 @@ export function CompactAudioPlayer({
     playingRef.current = true;
     pausedSongMsRef.current = null;
     alignedRef.current = true;
-    vocalEngagedRef.current = false;
-    vocalStartedAtBeatMsRef.current = null;
+    // Do NOT clear vocalEngagedRef here — set above based on startAtOrAfterPlacement
     vocalPauseCountRef.current = 0;
     vocalSeekCountRef.current = 0;
     vocalCorrectionCountRef.current = 0;
@@ -982,55 +1030,16 @@ export function CompactAudioPlayer({
     const placeSec = placeMs / 1000;
     const startSongMs = songMs;
 
-    // Force beat onto the placement clock after play() (iOS often ignores pre-play seeks)
-    if (wantBeat && beat) {
+    // Re-assert beat seek once more after transport starts (iOS)
+    if (wantBeat && beat && beatPlaySucceeded) {
       try {
-        const target = Math.max(0, startSongMs / 1000);
-        beat.currentTime = target;
-        // Second assert on next microtask
-        void Promise.resolve().then(() => {
-          try {
-            if (beatRef.current && Math.abs(beatRef.current.currentTime - target) > 0.4) {
-              beatRef.current.currentTime = target;
-            }
-          } catch {
-            /* ignore */
-          }
-        });
+        const target = Math.max(0, songMs / 1000);
+        if (Math.abs(beat.currentTime - target) > 0.35) {
+          beat.currentTime = target;
+        }
       } catch {
         /* ignore */
       }
-    }
-
-    // Initial vocal policy:
-    // - If beat is already at/after placement → engage vocal at matched file time
-    // - If beat is still before placement → keep vocal paused at 0
-    if (wantBeat && beat) {
-      const beatMs = beat.currentTime * 1000;
-      if (beatMs + 40 >= placeMs) {
-        const vt = Math.max(0, (beatMs - placeMs) / 1000);
-        try {
-          vocal.currentTime = vt;
-          vocal.muted = false;
-          vocal.volume = 1;
-          if (vocal.paused) void vocal.play().catch(() => undefined);
-          vocalEngagedRef.current = true;
-          vocalStartedAtBeatMsRef.current = beatMs;
-        } catch {
-          /* ignore */
-        }
-      } else {
-        try {
-          vocal.pause();
-          vocal.currentTime = 0;
-          vocalEngagedRef.current = false;
-        } catch {
-          /* ignore */
-        }
-      }
-    } else {
-      // Voice Only — vocal is the only source; already playing from earlier play()
-      vocalEngagedRef.current = true;
     }
 
     const DRIFT_TOLERANCE_SEC = 0.08; // 80ms — correct only real drift, not every frame
@@ -1083,55 +1092,29 @@ export function CompactAudioPlayer({
           const beatMs = b.currentTime * 1000;
           const expectedVocalSec = (beatMs - placeNow) / 1000;
 
-          if (beatMs + 30 < placeNow) {
-            // BEFORE SECTION — vocal must stay silent
-            if (lastGateState !== "before") {
-              lastGateState = "before";
-              try {
-                if (!v.paused) {
-                  v.pause();
-                  vocalPauseCountRef.current += 1;
-                  lastVocalPauseReasonRef.current = "before_placement";
-                }
-                if (v.currentTime !== 0) v.currentTime = 0;
-                vocalEngagedRef.current = false;
-              } catch {
-                /* ignore */
-              }
-            } else if (!v.paused) {
-              // Rare: only re-pause if something restarted it
-              try {
-                v.pause();
-                vocalPauseCountRef.current += 1;
-                lastVocalPauseReasonRef.current = "before_placement_reassert";
-              } catch {
-                /* ignore */
-              }
-            }
-          } else {
-            // AT / AFTER PLACEMENT
+          // If vocal already engaged this session, NEVER re-enter "before" pause —
+          // beat.currentTime can lag behind placement after iOS seeks and would
+          // permanently silence the take (RAF play is not a user gesture).
+          if (vocalEngagedRef.current) {
             lastGateState = "after";
-            if (!vocalEngagedRef.current) {
-              // First engage — align once and play
-              try {
-                const vt = Math.max(0, expectedVocalSec);
-                v.currentTime = vt;
-                v.muted = false;
-                v.volume = 1;
-                v.playbackRate = 1;
-                void v.play().catch(() => undefined);
-                vocalEngagedRef.current = true;
-                vocalStartedAtBeatMsRef.current = beatMs;
-                vocalSeekCountRef.current += 1;
-                lastVocalSeekTargetRef.current = vt;
-              } catch {
-                /* ignore */
+            if (beatMs + 30 < placeNow) {
+              // Repair beat clock toward placement + vocal progress
+              if (!nosync) {
+                try {
+                  const repairSec = Math.max(
+                    0,
+                    placeSecNow + Math.max(0, v.currentTime)
+                  );
+                  if (Math.abs(b.currentTime - repairSec) > 0.25) {
+                    b.currentTime = repairSec;
+                  }
+                } catch {
+                  /* ignore */
+                }
               }
+              if (v.paused) void v.play().catch(() => undefined);
             } else if (!nosync) {
-              // Already engaged — free-run with rare drift correction
-              if (v.paused) {
-                void v.play().catch(() => undefined);
-              }
+              if (v.paused) void v.play().catch(() => undefined);
               const drift = Math.abs(v.currentTime - Math.max(0, expectedVocalSec));
               const ds = driftSamplesRef.current;
               ds.sum += drift * 1000;
@@ -1150,11 +1133,42 @@ export function CompactAudioPlayer({
             } else if (v.paused) {
               void v.play().catch(() => undefined);
             }
-
             try {
               if (v.muted) v.muted = false;
               if (v.volume !== 1) v.volume = 1;
               if (v.playbackRate !== 1) v.playbackRate = 1;
+            } catch {
+              /* ignore */
+            }
+          } else if (beatMs + 30 < placeNow) {
+            // Not yet engaged AND beat truly before placement (intentional pre-roll)
+            if (lastGateState !== "before") {
+              lastGateState = "before";
+              try {
+                if (!v.paused) {
+                  v.pause();
+                  vocalPauseCountRef.current += 1;
+                  lastVocalPauseReasonRef.current = "before_placement";
+                }
+                if (v.currentTime !== 0) v.currentTime = 0;
+              } catch {
+                /* ignore */
+              }
+            }
+          } else {
+            // First cross into placement — engage once
+            lastGateState = "after";
+            try {
+              const vt = Math.max(0, expectedVocalSec);
+              v.currentTime = vt;
+              v.muted = false;
+              v.volume = 1;
+              v.playbackRate = 1;
+              void v.play().catch(() => undefined);
+              vocalEngagedRef.current = true;
+              vocalStartedAtBeatMsRef.current = beatMs;
+              vocalSeekCountRef.current += 1;
+              lastVocalSeekTargetRef.current = vt;
             } catch {
               /* ignore */
             }
