@@ -12,7 +12,10 @@ export type SessionTask = {
   recommendation?: string | null;
   active?: boolean | null;
   selected_in_plan?: boolean | null;
-  metadata?: { section_label?: string; vocal_part?: string };
+  start_ms?: number | null;
+  end_ms?: number | null;
+  section_id?: string | null;
+  metadata?: { section_label?: string; vocal_part?: string; section_id?: string };
 };
 
 function humanTitle(type: string) {
@@ -57,6 +60,135 @@ export function optionalOpen(tasks: SessionTask[]) {
 /** All open tasks in the current session list (active plan only is already filtered by API). */
 export function allOpen(tasks: SessionTask[]) {
   return tasks.filter(isTaskOpen);
+}
+
+/**
+ * Core song sections the artist must work through (lead / required).
+ * Production layers (double, harmony, adlib, …) are NOT core.
+ */
+export function isCoreTask(t: SessionTask): boolean {
+  if (t.required) return true;
+  const ty = (t.type || "").toLowerCase();
+  if (ty.includes("double") || ty.includes("harmony") || ty.includes("adlib") || ty.includes("ad-lib")) {
+    return false;
+  }
+  if (ty.includes("hum") || ty.includes("background") || ty.includes("texture") || ty.includes("whisper")) {
+    return false;
+  }
+  if (ty.includes("call") || ty.includes("response") || ty.includes("chant")) {
+    return false;
+  }
+  // LEAD and unknown required-shaped types
+  if (ty.includes("lead") || ty === "lead_vocal") return true;
+  return Boolean(t.required);
+}
+
+export function isProductionLayer(t: SessionTask): boolean {
+  return !isCoreTask(t);
+}
+
+export function coreTasks(tasks: SessionTask[]): SessionTask[] {
+  return tasks.filter(isCoreTask);
+}
+
+export function coreOpen(tasks: SessionTask[]): SessionTask[] {
+  return tasks.filter((t) => isCoreTask(t) && isTaskOpen(t));
+}
+
+export function coreDone(tasks: SessionTask[]): SessionTask[] {
+  return tasks.filter((t) => isCoreTask(t) && isTaskDone(t));
+}
+
+export function productionLayersAdded(tasks: SessionTask[]): SessionTask[] {
+  return tasks.filter((t) => isProductionLayer(t) && t.status === "completed");
+}
+
+function sectionKey(t: SessionTask): string {
+  const sid = t.section_id || t.metadata?.section_id || null;
+  if (sid) return `s:${sid}`;
+  if (t.start_ms != null) return `ms:${t.start_ms}`;
+  return `id:${t.id}`;
+}
+
+/**
+ * After finishing a core (or any) take, recommend at most ONE open production layer
+ * for the same section — never flood the artist with a list of "sections".
+ */
+export function nextProductionRecommendation(
+  tasks: SessionTask[],
+  parent: SessionTask
+): SessionTask | null {
+  const key = sectionKey(parent);
+  const layers = tasks.filter(
+    (t) => isProductionLayer(t) && isTaskOpen(t) && sectionKey(t) === key
+  );
+  // Prefer doubles, then harmony, then others (stable product priority)
+  const rank = (type: string) => {
+    const ty = (type || "").toLowerCase();
+    if (ty.includes("double")) return 0;
+    if (ty.includes("harmony")) return 1;
+    if (ty.includes("background")) return 2;
+    if (ty.includes("adlib") || ty.includes("ad-lib")) return 3;
+    if (ty.includes("response") || ty.includes("call")) return 4;
+    return 5;
+  };
+  layers.sort((a, b) => rank(a.type) - rank(b.type));
+  return layers[0] || null;
+}
+
+export function layerRecommendationCopy(type: string): {
+  headline: string;
+  body: string;
+  cta: string;
+} {
+  const ty = (type || "").toLowerCase();
+  if (ty.includes("double")) {
+    return {
+      headline: "Let's make this bigger.",
+      body: "Record the same melody again. I'll layer it underneath your lead.",
+      cta: "Record Double",
+    };
+  }
+  if (ty.includes("harmony")) {
+    return {
+      headline: "One more idea — harmony.",
+      body: "Sing a higher version of this melody. Try it on the lines that need lift.",
+      cta: "Record Harmony",
+    };
+  }
+  if (ty.includes("adlib") || ty.includes("ad-lib")) {
+    return {
+      headline: "Add some ad-libs.",
+      body: "Add free, expressive vocal responses in the open spaces.",
+      cta: "Record Ad-libs",
+    };
+  }
+  if (ty.includes("background")) {
+    return {
+      headline: "Background vocal.",
+      body: "Add a softer background response behind the lead.",
+      cta: "Record Background",
+    };
+  }
+  if (ty.includes("hum")) {
+    return {
+      headline: "A soft hum.",
+      body: "Give me a soft hum to thicken the texture under this part.",
+      cta: "Record Hum",
+    };
+  }
+  if (ty.includes("response") || ty.includes("call")) {
+    return {
+      headline: "Call and response.",
+      body: "Answer the lead with a short response vocal.",
+      cta: "Record Response",
+    };
+  }
+  return {
+    headline: "Optional production layer.",
+    body: "This is optional — record it if you want more depth, or skip.",
+    cta: "Record layer",
+  };
 }
 
 export function SessionSteps({

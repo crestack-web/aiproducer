@@ -55,6 +55,14 @@ import {
   isTaskDone,
   requiredOpen,
   optionalOpen,
+  isCoreTask,
+  isProductionLayer,
+  coreOpen,
+  coreDone,
+  coreTasks,
+  productionLayersAdded,
+  nextProductionRecommendation,
+  layerRecommendationCopy,
 } from "@/components/session-steps";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
@@ -224,8 +232,13 @@ export default function ProjectDetailPage() {
     actualOutput?: string | null;
   }>({});
 
-  const current =
-    tasks.find((t) => t.id === activeTaskId) || tasks.find((t) => isTaskOpen(t)) || null;
+  const current: Task | null =
+    tasks.find((t) => t.id === activeTaskId) ||
+    (coreOpen(tasks)[0] as Task | undefined) ||
+    (optionalOpen(tasks)[0] as Task | undefined) ||
+    tasks.find((t) => isTaskOpen(t)) ||
+    null;
+  const currentIsLayer = current ? isProductionLayer(current) : false;
   const isRetake = current ? isTaskDone(current) : false;
   const sectionMs = current ? sectionDurationMs(current) : null;
 
@@ -1145,12 +1158,33 @@ export default function ProjectDetailPage() {
     }
   }
 
-  function clearFocusAndAdvance(next: Task[]) {
-    setActiveTaskId(null);
+  function clearFocusAndAdvance(next: Task[], completed?: Task | null | undefined) {
     setLocalBlobUrl(null);
     setPhase("ready");
     setScreen("session");
-    if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
+    // After a core take: offer at most ONE production-layer recommendation for that section
+    if (completed && isCoreTask(completed)) {
+      const rec = nextProductionRecommendation(next, completed);
+      if (rec) {
+        setActiveTaskId(rec.id);
+        return;
+      }
+    }
+    // After a production layer: another layer for same section, or next core
+    if (completed && isProductionLayer(completed)) {
+      const rec = nextProductionRecommendation(next, completed);
+      if (rec) {
+        setActiveTaskId(rec.id);
+        return;
+      }
+    }
+    const nextCore = coreOpen(next)[0];
+    if (nextCore) {
+      setActiveTaskId(nextCore.id);
+      return;
+    }
+    setActiveTaskId(null);
+    if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
   }
 
   function keepAndContinue() {
@@ -1160,6 +1194,7 @@ export default function ProjectDetailPage() {
       return;
     }
     const wasRetake = isRetake;
+    const completedSnapshot = current;
     setSavedRecordingId(null);
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
@@ -1168,14 +1203,14 @@ export default function ProjectDetailPage() {
         setLocalBlobUrl(null);
         setPhase("ready");
         setScreen("session");
-        if (requiredOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
-      } else clearFocusAndAdvance(next);
+        if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
+      } else clearFocusAndAdvance(next, completedSnapshot);
       return next;
     });
   }
 
   async function skipCurrent() {
-    if (!current || current.required) return;
+    if (!current || (current.required && isCoreTask(current))) return;
     setSkipping(true);
     try {
       const res = await fetch(`/api/recording-tasks/${current.id}/skip`, { method: "POST" });
@@ -1183,7 +1218,7 @@ export default function ProjectDetailPage() {
       if (!res.ok) throw new Error(j.error || "Skip failed");
       setTasks((prev) => {
         const next = prev.map((t) => (t.id === current.id ? { ...t, status: "skipped" } : t));
-        clearFocusAndAdvance(next);
+        clearFocusAndAdvance(next, current);
         return next;
       });
     } catch (e) {
@@ -1450,7 +1485,7 @@ export default function ProjectDetailPage() {
 
             {(planTasks.length > 0 || tasks.length > 0) && (
               <>
-                <SessionSteps tasks={tasks} locked={false} onSelect={selectTask} />
+                <SessionSteps tasks={coreTasks(tasks)} locked={false} onSelect={selectTask} />
                 <ProjectSamplesPanel projectId={id} />
                 <button
                   type="button"
@@ -1484,18 +1519,48 @@ export default function ProjectDetailPage() {
             <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
               ← Plan
             </button>
-            <SessionSteps tasks={tasks} highlightId={current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
-            <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: `1px solid ${C.brass}`, background: C.brassSoft }}>
-              <div style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{sectionLabel(current)}</div>
-              <h1 style={{ ...titleStyle, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
-              <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
-              {(current.start_ms != null || current.end_ms != null) && (
-                <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
-                  Section window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
-                  {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
+            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
+            <p style={{ textAlign: "center", fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>
+              {coreDone(tasks).length}/{coreTasks(tasks).length} core sections
+              {productionLayersAdded(tasks).length > 0
+                ? ` · ${productionLayersAdded(tasks).length} production layer${productionLayersAdded(tasks).length === 1 ? "" : "s"} added`
+                : ""}
+            </p>
+            {currentIsLayer ? (
+              <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: `1px solid ${C.signal}`, background: C.surface }}>
+                <div style={{ fontSize: 11, letterSpacing: "0.08em", fontWeight: 700, color: C.signal }}>
+                  AI PRODUCER
+                </div>
+                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
+                  {sectionLabel(current)} · optional layer
+                </div>
+                <h1 style={{ ...titleStyle, fontSize: "1.25rem", marginTop: 8 }}>
+                  {layerRecommendationCopy(current.type).headline}
+                </h1>
+                <p style={{ color: C.text, fontSize: 14.5, marginTop: 6, lineHeight: 1.45 }}>
+                  {layerRecommendationCopy(current.type).body}
                 </p>
-              )}
-            </div>
+                <p style={{ color: C.textMuted, fontSize: 13, marginTop: 8 }}>{current.instruction}</p>
+                {(current.start_ms != null || current.end_ms != null) && (
+                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
+                    Same musical window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
+                    {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: `1px solid ${C.brass}`, background: C.brassSoft }}>
+                <div style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{sectionLabel(current)}</div>
+                <h1 style={{ ...titleStyle, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
+                <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
+                {(current.start_ms != null || current.end_ms != null) && (
+                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
+                    Section window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
+                    {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
+                  </p>
+                )}
+              </div>
+            )}
             {error && <p style={{ color: C.danger }}>{error}</p>}
 
             {phase === "ready" && (
@@ -1528,7 +1593,11 @@ export default function ProjectDetailPage() {
                   </p>
                 )}
                 <button type="button" style={{ ...btn, marginTop: 14 }} onClick={startRecording}>
-                  {isRetake ? "Retake" : "Record"}
+                  {isRetake
+                    ? "Retake"
+                    : currentIsLayer
+                      ? layerRecommendationCopy(current.type).cta
+                      : "Record"}
                 </button>
                 <input
                   ref={uploadInputRef}
@@ -1543,7 +1612,12 @@ export default function ProjectDetailPage() {
                 <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
                   {uploading ? "Uploading…" : "Upload recording"}
                 </button>
-                {!current.required && (
+                {currentIsLayer && (
+                  <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
+                    {skipping ? "Skipping…" : "Skip"}
+                  </button>
+                )}
+                {!current.required && !currentIsLayer && (
                   <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
                     {skipping ? "Skipping…" : "Skip this part"}
                   </button>
