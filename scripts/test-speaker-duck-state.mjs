@@ -22,14 +22,14 @@ function isPhoneSpeakerOutput(outputId) {
 
 const CFG = {
   normalVolume: 0.045,
-  duckedVolume: 0.01,
-  minUsableVolume: 0.008,
+  duckedVolume: 0.002,
+  minUsableVolume: 0.0015,
   voiceOnThreshold: 0.018,
   voiceOffThreshold: 0.01,
   voiceHoldOnMs: 50,
-  voiceHoldOffMs: 200,
-  attackMs: 70,
-  releaseMs: 320,
+  voiceHoldOffMs: 220,
+  attackMs: 55,
+  releaseMs: 350,
 };
 
 function createLatch() {
@@ -43,7 +43,9 @@ function createLatch() {
   );
 
   function step(voiceScore, rms, nowMs, dtMs = 16) {
-    if (voiceScore >= CFG.voiceOnThreshold || rms >= CFG.voiceOnThreshold * 1.15) {
+    const strongRms =
+      rms >= CFG.voiceOnThreshold * 1.45 && voiceScore >= CFG.voiceOnThreshold * 0.55;
+    if (voiceScore >= CFG.voiceOnThreshold || strongRms) {
       belowSinceMs = null;
       if (aboveSinceMs == null) aboveSinceMs = nowMs;
       if (!duckingLatched && nowMs - aboveSinceMs >= CFG.voiceHoldOnMs) {
@@ -110,7 +112,7 @@ console.log("\n3) VOICE START → DUCKED BEAT");
   s = L.step(0.05, 0.05, 60);
   assert(s.duckingLatched === true, "latches after hold-on");
   for (let t = 70; t < 400; t += 16) s = L.step(0.05, 0.05, t);
-  assert(s.currentVol <= 0.015, "volume in ducked range ≤ 0.015");
+  assert(s.currentVol <= 0.004, "volume in ducked range ≤ 0.004");
   assert(s.currentVol >= CFG.minUsableVolume - 1e-6, "never below minUsableVolume");
 }
 
@@ -136,7 +138,8 @@ console.log("\n5) VOICE STOPS → RELEASE");
   assert(s.duckingLatched === true, "still ducked during hold-off window");
   for (let t = 260; t < 500; t += 16) s = L.step(0.001, 0.001, t);
   assert(s.duckingLatched === false, "released after hold-off");
-  for (let t = 500; t < 1200; t += 16) s = L.step(0.001, 0.001, t);
+  // Deeper duck needs more release time to approach normal (releaseMs ~350)
+  for (let t = 500; t < 2200; t += 16) s = L.step(0.001, 0.001, t);
   assert(Math.abs(s.currentVol - CFG.normalVolume) < 0.005, "smoothly returned to normal");
 }
 
@@ -163,15 +166,15 @@ console.log("\n7) NEVER FULL MUTE");
   const L = createLatch();
   let s;
   for (let t = 0; t < 500; t += 16) s = L.step(0.1, 0.1, t);
-  assert(s.currentVol >= 0.008, "ducked volume ≥ 0.008");
+  assert(s.currentVol >= CFG.minUsableVolume - 1e-6, "ducked volume ≥ minUsable");
   assert(s.currentVol > 0, "never zero");
 }
 
 console.log("\n8) Config targets");
 assert(CFG.normalVolume >= 0.04 && CFG.normalVolume <= 0.05, "normalVolume in 0.04–0.05");
-assert(CFG.duckedVolume >= 0.008 && CFG.duckedVolume <= 0.015, "duckedVolume in 0.008–0.015");
+assert(CFG.duckedVolume >= 0.001 && CFG.duckedVolume <= 0.003, "duckedVolume in 0.001–0.003");
 assert(CFG.minUsableVolume <= CFG.duckedVolume, "floor ≤ ducked target");
-assert(CFG.attackMs >= 50 && CFG.attackMs <= 100, "attack 50–100ms");
+assert(CFG.attackMs >= 40 && CFG.attackMs <= 70, "attack 40–70ms");
 assert(CFG.releaseMs >= 250 && CFG.releaseMs <= 400, "release 250–400ms");
 
 console.log(`\n${passed} passed, ${failed} failed`);

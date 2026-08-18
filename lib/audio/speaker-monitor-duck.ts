@@ -45,17 +45,22 @@ export type SpeakerDuckConfig = {
 export const DEFAULT_SPEAKER_DUCK: SpeakerDuckConfig = {
   /** Idle phone-speaker monitor — still followable, lower acoustic drive into mic */
   normalVolume: 0.045,
-  /** While artist is actively singing — strong reduction, not full mute */
-  duckedVolume: 0.01,
+  /**
+   * While artist is actively singing — aggressive reduction so the speaker
+   * drives far less energy into the phone mic. Not a full mute (timing cue remains).
+   */
+  duckedVolume: 0.002,
   /** Absolute floor so timing cues remain; never 0 */
-  minUsableVolume: 0.008,
+  minUsableVolume: 0.0015,
   voiceOnThreshold: 0.018,
   voiceOffThreshold: 0.01,
   voiceHoldOnMs: 50,
-  voiceHoldOffMs: 200,
-  attackMs: 70,
-  releaseMs: 320,
-  midBandBias: 1.4,
+  /** Keep duck through short gaps between words/phrases */
+  voiceHoldOffMs: 220,
+  attackMs: 55,
+  releaseMs: 350,
+  /** Higher mid-band bias: kick/bass bleed less likely to latch as "voice" */
+  midBandBias: 1.75,
 };
 
 export type SpeakerDuckEvent = {
@@ -245,7 +250,7 @@ export function startSpeakerMonitorDuck(
       const lowAvg = nLow > 0 ? low / nLow : 0;
       const midAvg = nMid > 0 ? mid / nMid : 0;
       // Score emphasizes mid-band; pure low-band energy scores lower
-      voiceScore = midAvg * cfg.midBandBias + rms * 0.35 - lowAvg * 0.25;
+      voiceScore = midAvg * cfg.midBandBias + rms * 0.28 - lowAvg * 0.35;
       if (voiceScore < 0) voiceScore = 0;
     }
     return { rms, peak, voiceScore };
@@ -300,8 +305,12 @@ export function startSpeakerMonitorDuck(
     if (peak > rmsPeak) rmsPeak = peak;
     if (rms > rmsPeak) rmsPeak = rms;
 
-    // Hysteresis + hold times — reduces pumping and beat-as-voice false triggers
-    if (voiceScore >= cfg.voiceOnThreshold || rms >= cfg.voiceOnThreshold * 1.15) {
+    // Hysteresis + hold times — reduces pumping and beat-as-voice false triggers.
+    // Prefer mid-band voiceScore; raw RMS alone must be stronger and still show some mid energy
+    // so continuous kick/bass acoustic bleed is less likely to latch the duck.
+    const strongRms =
+      rms >= cfg.voiceOnThreshold * 1.45 && voiceScore >= cfg.voiceOnThreshold * 0.55;
+    if (voiceScore >= cfg.voiceOnThreshold || strongRms) {
       belowSinceMs = null;
       if (aboveSinceMs == null) aboveSinceMs = nowMs;
       if (!duckingLatched && nowMs - aboveSinceMs >= cfg.voiceHoldOnMs) {
@@ -401,7 +410,7 @@ function emptyDiag(normalVol: number): SpeakerDuckDiagnostics {
     currentBeatMonitorVolume: normalVol,
     duckingReductionDb: 0,
     normalBeatVolume: normalVol,
-    duckedBeatVolume: 0.01,
+    duckedBeatVolume: 0.002,
     averageDuckedVolume: null,
     rmsSilentAvg: 0,
     rmsVoiceAvg: 0,

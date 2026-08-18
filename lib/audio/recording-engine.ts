@@ -30,6 +30,8 @@ export type RecordingDeviceInfo = {
   headphonesMonitoring: boolean;
   constraintsMode: RecordingConstraintsMode;
   echoCancellation: boolean;
+  /** Browser-reported track setting when available */
+  effectiveEchoCancellation: boolean | null;
   noiseSuppression: boolean;
   autoGainControl: boolean;
   sampleRate?: number;
@@ -273,6 +275,10 @@ export async function openRecordingStream(opts: {
     headphonesMonitoring,
     constraintsMode,
     echoCancellation: constraintsMode === "music_speaker",
+    effectiveEchoCancellation:
+      typeof (settings as { echoCancellation?: boolean }).echoCancellation === "boolean"
+        ? (settings as { echoCancellation: boolean }).echoCancellation
+        : null,
     noiseSuppression: false,
     autoGainControl: false,
     sampleRate: typeof settings.sampleRate === "number" ? settings.sampleRate : undefined,
@@ -388,6 +394,7 @@ export function buildRecordingRouteDiagnostics(
     headphonesMonitoring: info.headphonesMonitoring,
     constraintsMode: info.constraintsMode,
     echoCancellation: info.echoCancellation,
+    effectiveEchoCancellation: info.effectiveEchoCancellation,
     noiseSuppression: info.noiseSuppression,
     autoGainControl: info.autoGainControl,
     sampleRate: info.sampleRate ?? null,
