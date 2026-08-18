@@ -445,6 +445,49 @@ export function CompactAudioPlayer({
     return (songMs - placeMs) / 1000;
   }
 
+  /**
+   * Force HTMLAudioElement to a song position. iOS often ignores currentTime until
+   * after play() and may need seeked + retries. Returns applied time in seconds.
+   */
+  async function forceSeekBeat(
+    el: HTMLAudioElement,
+    targetSec: number,
+    attempts = 5
+  ): Promise<{ appliedSec: number; ok: boolean; samples: number[] }> {
+    const target = Math.max(0, targetSec);
+    const samples: number[] = [];
+    for (let i = 0; i < attempts; i++) {
+      try {
+        el.currentTime = target;
+      } catch {
+        /* ignore */
+      }
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          el.removeEventListener("seeked", onSeeked);
+          el.removeEventListener("timeupdate", onTu);
+          clearTimeout(timer);
+          resolve();
+        };
+        const onSeeked = () => finish();
+        const onTu = () => {
+          if (Math.abs(el.currentTime - target) < 0.6) finish();
+        };
+        el.addEventListener("seeked", onSeeked);
+        el.addEventListener("timeupdate", onTu);
+        const timer = setTimeout(finish, 180);
+      });
+      samples.push(el.currentTime);
+      if (Math.abs(el.currentTime - target) < 0.75) {
+        return { appliedSec: el.currentTime, ok: true, samples };
+      }
+    }
+    return { appliedSec: el.currentTime, ok: Math.abs(el.currentTime - target) < 1.5, samples };
+  }
+
   function writeReviewDiagnostics(extra: Record<string, unknown> = {}) {
     try {
       if (typeof window === "undefined" || localStorage.getItem("studio_debug_audio") !== "1") return;
@@ -802,18 +845,28 @@ export function CompactAudioPlayer({
 
     // Intentional review song clock (usually placementStartMs on first Play)
     const startAtOrAfterPlacement = songMs + 50 >= place;
+    const beatSeekTargetSec = Math.max(0, songMs / 1000);
+    let beatSeekAppliedMs: number | null = null;
+    let beatSeekOk = false;
+    const beatTimelineSamples: number[] = [];
 
-    // Sync seeks BEFORE any await (still in user-gesture turn when possible)
+    // Prepare properties in the same gesture turn (seek will be confirmed after play on iOS)
     try {
       if (wantBeat && beat) {
         beat.muted = false;
         beat.volume = reviewBeatGain(beatVolumeRef.current);
         beat.playbackRate = 1;
-        beat.currentTime = Math.max(0, songMs / 1000);
+        try {
+          beat.currentTime = beatSeekTargetSec;
+        } catch {
+          /* ignore */
+        }
       }
       const vt0 = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
-      if (vocal.readyState >= 1) {
-        vocal.currentTime = vt0;
+      try {
+        if (vocal.readyState >= 1) vocal.currentTime = vt0;
+      } catch {
+        /* ignore */
       }
       vocal.muted = false;
       vocal.volume = 1;
@@ -823,10 +876,9 @@ export function CompactAudioPlayer({
     }
 
     /**
-     * Native dual-source play — fire both from this user-gesture path.
-     * Do NOT pause the vocal afterward when Review intentionally starts at
-     * placement: iOS often reports beat.currentTime≈0 for a moment after play(),
-     * and a false "before placement" pause leaves vocal dead (RAF play blocked).
+     * Fire both play() immediately from the user gesture (native elements only).
+     * Then force-confirm beat seek to placement — iOS often only applies currentTime
+     * after playback has started.
      */
     const vocalPlayPromise = vocal.play().then(
       () => {
@@ -855,18 +907,67 @@ export function CompactAudioPlayer({
 
     await Promise.all([vocalPlayPromise, beatPlayPromise]);
 
-    // Re-assert beat seek after play (Safari)
+    // CRITICAL: confirm beat is at placementStartMs / songMs — not song start (0)
     if (wantBeat && beat && beatPlaySucceeded) {
+      const seekResult = await forceSeekBeat(beat, beatSeekTargetSec, 6);
+      beatSeekAppliedMs = seekResult.appliedSec * 1000;
+      beatSeekOk = seekResult.ok;
+      beatTimelineSamples.push(...seekResult.samples.map((s) => Math.round(s * 1000)));
       try {
-        const target = Math.max(0, songMs / 1000);
-        if (Math.abs(beat.currentTime - target) > 0.4) {
-          beat.currentTime = target;
-        }
         beat.muted = false;
         beat.volume = reviewBeatGain(beatVolumeRef.current);
+        beat.playbackRate = 1;
+        // If still wrong, one more hard assign
+        if (Math.abs(beat.currentTime - beatSeekTargetSec) > 0.75) {
+          beat.currentTime = beatSeekTargetSec;
+          beatSeekAppliedMs = beat.currentTime * 1000;
+        }
       } catch {
         /* ignore */
       }
+      // Sample timeline for diagnostics (~250ms × 12 ≈ 3s) without blocking UI long
+      void (async () => {
+        for (let i = 0; i < 12; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          const b = beatRef.current;
+          if (!b || b.paused) break;
+          beatTimelineSamples.push(Math.round(b.currentTime * 1000));
+          try {
+            if (
+              typeof window !== "undefined" &&
+              localStorage.getItem("studio_debug_audio") === "1"
+            ) {
+              sessionStorage.setItem(
+                "studio_last_review_diagnostics",
+                JSON.stringify({
+                  event: "beat_timeline_sample",
+                  placementStartMs: place,
+                  beatSeekRequestedMs: songMs,
+                  beatSeekAppliedMs,
+                  beatSeekOk,
+                  beatCurrentTimeMs: b.currentTime * 1000,
+                  beatTimelineMs: beatTimelineSamples.slice(-20),
+                  at: Date.now(),
+                })
+              );
+            }
+          } catch {
+            /* ignore */
+          }
+          // Re-assert if iOS drifted back near 0 while placement is far later
+          if (
+            place > 2000 &&
+            b.currentTime * 1000 < place * 0.25 &&
+            Math.abs(b.currentTime - beatSeekTargetSec) > 1
+          ) {
+            try {
+              b.currentTime = beatSeekTargetSec + i * 0.25;
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      })();
     }
 
     // Placement engagement decision based on *intent* (songMs), not flaky currentTime
@@ -914,6 +1015,10 @@ export function CompactAudioPlayer({
       beatPlayError,
       placementStartMs: place,
       songMs,
+      beatSeekRequestedMs: songMs,
+      beatSeekAppliedMs,
+      beatSeekOk,
+      beatTimelineMs: beatTimelineSamples.slice(0, 12),
       startAtOrAfterPlacement,
       beatCurrentTimeMs: beat ? beat.currentTime * 1000 : null,
       expectedVocalTimeMs: beat
@@ -1098,14 +1203,15 @@ export function CompactAudioPlayer({
           if (vocalEngagedRef.current) {
             lastGateState = "after";
             if (beatMs + 30 < placeNow) {
-              // Repair beat clock toward placement + vocal progress
+              // Beat is behind placement (seek failed / reset to 0) — force song clock
               if (!nosync) {
                 try {
                   const repairSec = Math.max(
                     0,
                     placeSecNow + Math.max(0, v.currentTime)
                   );
-                  if (Math.abs(b.currentTime - repairSec) > 0.25) {
+                  // Always re-seek when materially behind placement (iOS reset-to-0)
+                  if (Math.abs(b.currentTime - repairSec) > 0.15) {
                     b.currentTime = repairSec;
                   }
                 } catch {
@@ -1185,8 +1291,25 @@ export function CompactAudioPlayer({
         }
       }
 
-      if (v.duration && vocalEngagedRef.current) {
-        setProgress(v.currentTime / v.duration);
+      // Progress from beat master clock (not a frozen vocal element)
+      try {
+        if (want && b && !b.paused) {
+          const elapsedSec = Math.max(0, b.currentTime - placeSecNow);
+          const dur =
+            v.duration && Number.isFinite(v.duration) && v.duration > 0
+              ? v.duration
+              : null;
+          if (dur) {
+            setProgress(Math.min(1, elapsedSec / dur));
+          } else {
+            // Fallback: show motion from beat even without vocal duration
+            setProgress(Math.min(1, (elapsedSec % 30) / 30));
+          }
+        } else if (v.duration && Number.isFinite(v.duration) && v.duration > 0) {
+          setProgress(Math.min(1, v.currentTime / v.duration));
+        }
+      } catch {
+        /* ignore */
       }
 
       // Diagnostics
