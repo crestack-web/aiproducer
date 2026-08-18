@@ -51,6 +51,12 @@ export function SongPreviewPlayer({
   const rafRef = useRef<number | null>(null);
   const startedRef = useRef(false);
   const bars = useMemo(() => makeWave(seed, 56), [seed]);
+  // Preview-only playback gain — does not alter stored takes
+  const previewCtxRef = useRef<AudioContext | null>(null);
+  const vocalGainMapRef = useRef<Map<string, GainNode>>(new Map());
+  const vocalSrcMapRef = useRef<Map<string, MediaElementAudioSourceNode>>(new Map());
+  const PREVIEW_BEAT_VOLUME = 0.06;
+  const PREVIEW_VOCAL_GAIN = 1.75;
 
   const durationMs = useMemo(() => {
     const fromBeat = beatDurationMs && beatDurationMs > 0 ? beatDurationMs : 0;
@@ -82,9 +88,52 @@ export function SongPreviewPlayer({
     setPlaying(false);
   }, []);
 
+  const ensurePreviewVocalBoost = useCallback((id: string, el: HTMLAudioElement) => {
+    if (vocalSrcMapRef.current.has(id)) {
+      const g = vocalGainMapRef.current.get(id);
+      if (g) g.gain.value = PREVIEW_VOCAL_GAIN;
+      return;
+    }
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return;
+      let ctx = previewCtxRef.current;
+      if (!ctx) {
+        ctx = new AC();
+        previewCtxRef.current = ctx;
+      }
+      if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+      const srcNode = ctx.createMediaElementSource(el);
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = PREVIEW_VOCAL_GAIN;
+      srcNode.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      vocalSrcMapRef.current.set(id, srcNode);
+      vocalGainMapRef.current.set(id, gainNode);
+    } catch {
+      /* already connected or unsupported */
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
       pauseAll();
+      try {
+        vocalGainMapRef.current.forEach((g) => g.disconnect());
+        vocalSrcMapRef.current.forEach((s) => s.disconnect());
+      } catch {
+        /* ignore */
+      }
+      vocalGainMapRef.current.clear();
+      vocalSrcMapRef.current.clear();
+      try {
+        void previewCtxRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      previewCtxRef.current = null;
     };
   }, [pauseAll]);
 
@@ -153,7 +202,7 @@ export function SongPreviewPlayer({
     try {
       if (beat) {
         await ensureReady(beat, "beat");
-        beat.volume = 0.2;
+        beat.volume = PREVIEW_BEAT_VOLUME;
         beat.currentTime = 0;
       }
       const failedVocals: string[] = [];
@@ -171,6 +220,7 @@ export function SongPreviewPlayer({
           el.playbackRate = 1;
           el.currentTime = 0;
           el.pause();
+          ensurePreviewVocalBoost(layer.task_id, el);
         } catch (ve) {
           failedVocals.push(layer.section_label || layer.title || layer.type || "vocal");
           console.warn("[song-preview] vocal load failed", layer.task_id, ve);
@@ -183,6 +233,13 @@ export function SongPreviewPlayer({
       }
 
       startedRef.current = true;
+      try {
+        if (previewCtxRef.current?.state === "suspended") {
+          await previewCtxRef.current.resume().catch(() => undefined);
+        }
+      } catch {
+        /* ignore */
+      }
       if (beat) {
         try {
           await beat.play();
