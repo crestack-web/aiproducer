@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { Waveform, makeWave, CoverArt } from "@/components/studio-player";
+import { defaultLinearGainForTaskType } from "@/lib/layer-model";
 
 export type SongPreviewLayer = {
   task_id: string;
@@ -170,7 +171,7 @@ export function SongPreviewPlayer({
         try {
           await ensureReady(el, layer.section_label || layer.title || "vocal");
           el.muted = false;
-          el.volume = 1;
+          el.volume = defaultLinearGainForTaskType(layer.type);
           el.playbackRate = 1;
           el.currentTime = 0;
           el.pause();
@@ -251,7 +252,7 @@ export function SongPreviewPlayer({
               const offsetSec = Math.max(0, (now - start) / 1000);
               try {
                 el.muted = false;
-                el.volume = 1;
+                el.volume = defaultLinearGainForTaskType(layer.type);
                 if (Math.abs(el.currentTime - offsetSec) > 0.35) {
                   el.currentTime = offsetSec;
                 }

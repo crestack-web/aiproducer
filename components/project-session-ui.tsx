@@ -251,6 +251,20 @@ export default function ProjectDetailPage() {
     tasks.find((t) => isTaskOpen(t)) ||
     null;
   const currentIsLayer = current ? isProductionLayer(current) : false;
+  const sectionLayerStack = (() => {
+    if (!current) return [] as Task[];
+    const key =
+      current.section_id ||
+      current.metadata?.section_id ||
+      (current.start_ms != null ? `ms:${current.start_ms}` : current.id);
+    return tasks.filter((t) => {
+      const k =
+        t.section_id ||
+        t.metadata?.section_id ||
+        (t.start_ms != null ? `ms:${t.start_ms}` : t.id);
+      return k === key || (current.section_id && t.section_id === current.section_id);
+    });
+  })();
   const isRetake = current ? isTaskDone(current) : false;
   const sectionMs = current ? sectionDurationMs(current) : null;
 
@@ -1707,6 +1721,43 @@ export default function ProjectDetailPage() {
                 ? ` · ${productionLayersAdded(tasks).length} production layer${productionLayersAdded(tasks).length === 1 ? "" : "s"} added`
                 : ""}
             </p>
+            {sectionLayerStack.length > 1 && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textMuted }}>
+                  THIS SECTION · LAYERS
+                </div>
+                <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
+                  {sectionLayerStack.map((t) => {
+                    const done = t.status === "completed";
+                    const skipped = t.status === "skipped";
+                    const active = t.id === current?.id;
+                    return (
+                      <li
+                        key={t.id}
+                        style={{
+                          fontSize: 13,
+                          color: active ? C.text : C.textMuted,
+                          fontWeight: active ? 600 : 400,
+                          padding: "3px 0",
+                        }}
+                      >
+                        {done ? "✓ " : skipped ? "– " : active ? "● " : "○ "}
+                        {humanTitle(t.type)}
+                        {done ? " recorded" : skipped ? " skipped" : active ? " (now)" : ""}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             {currentIsLayer ? (
               <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: `1px solid ${C.signal}`, background: C.surface }}>
                 <div style={{ fontSize: 11, letterSpacing: "0.08em", fontWeight: 700, color: C.signal }}>

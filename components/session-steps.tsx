@@ -1,6 +1,13 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
+import {
+  isCoreRecordingTask,
+  isProductionLayerTask,
+  normalizeLayerRole,
+  layerPhraseHint,
+  sectionGroupKey,
+} from "@/lib/layer-model";
 
 export type SessionTask = {
   id: string;
@@ -67,24 +74,11 @@ export function allOpen(tasks: SessionTask[]) {
  * Production layers (double, harmony, adlib, …) are NOT core.
  */
 export function isCoreTask(t: SessionTask): boolean {
-  if (t.required) return true;
-  const ty = (t.type || "").toLowerCase();
-  if (ty.includes("double") || ty.includes("harmony") || ty.includes("adlib") || ty.includes("ad-lib")) {
-    return false;
-  }
-  if (ty.includes("hum") || ty.includes("background") || ty.includes("texture") || ty.includes("whisper")) {
-    return false;
-  }
-  if (ty.includes("call") || ty.includes("response") || ty.includes("chant")) {
-    return false;
-  }
-  // LEAD and unknown required-shaped types
-  if (ty.includes("lead") || ty === "lead_vocal") return true;
-  return Boolean(t.required);
+  return isCoreRecordingTask(t);
 }
 
 export function isProductionLayer(t: SessionTask): boolean {
-  return !isCoreTask(t);
+  return isProductionLayerTask(t);
 }
 
 export function coreTasks(tasks: SessionTask[]): SessionTask[] {
@@ -104,10 +98,7 @@ export function productionLayersAdded(tasks: SessionTask[]): SessionTask[] {
 }
 
 function sectionKey(t: SessionTask): string {
-  const sid = t.section_id || t.metadata?.section_id || null;
-  if (sid) return `s:${sid}`;
-  if (t.start_ms != null) return `ms:${t.start_ms}`;
-  return `id:${t.id}`;
+  return sectionGroupKey(t);
 }
 
 /**

@@ -77,7 +77,7 @@ const ENERGY_BY_TYPE: Record<string, number> = {
 };
 
 const LAYER_BUDGET: Record<string, number> = {
-  intro: 2,
+  intro: 1,
   verse: 2,
   pre_chorus: 3,
   chorus: 5,
@@ -297,6 +297,12 @@ export function planProduction(input: PlannerInput): ProductionBlueprint {
           energy_pct: energyPct,
           genre_family: genre,
           vocal_part: vocalPartLabel(layer.type),
+          /** song_section = core lead; production_layer = stacked vocal on same section */
+          category: layer.type === "LEAD" ? "song_section" : "production_layer",
+          layer_role: layer.type.toLowerCase(),
+          parent_section_label: sec.label,
+          parent_section_type: sec.type,
+          depends_on_lead: layer.type !== "LEAD",
         },
       });
       globalPriority -= 1;
