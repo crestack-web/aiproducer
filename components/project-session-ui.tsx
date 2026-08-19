@@ -2195,6 +2195,10 @@ export default function ProjectDetailPage() {
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.18}
                       playbackSinkId="__speaker__"
+                      debugSectionLabel={sectionLabel(current)}
+                      debugTaskId={current.id}
+                      debugSectionStartMs={current.start_ms ?? 0}
+                      debugRecordingOffsetMs={lastRecordingOffsetMs}
                     />
                     <button
                       type="button"
