@@ -421,7 +421,7 @@ export function CompactAudioPlayer({
   placementRef.current = placementStartMs;
   /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
    * Generated beats are hot vs phone takes — keep linear gain very low. */
-  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.035);
+  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.04);
 
   // Review playback uses normal device output preference (not recording handset monitor).
   useEffect(() => {
@@ -484,50 +484,36 @@ export function CompactAudioPlayer({
   }
 
   /**
-   * Non-blocking beat seek to placement. Must NOT await on the user-gesture path.
-   *
-   * iOS/Safari often ignores currentTime set before/just-as play() starts for
-   * non-zero targets. We:
-   *  - mute the beat until the seek lands (so Verse does not play Intro audio)
-   *  - retry several times after play() without blocking the vocal gesture path
-   *  - never pause the vocal while correcting the beat
+   * Non-blocking beat seek to placement.
+   * Never mutes — mute-until-landed was leaving Review Beat+Voice silent.
+   * Never pauses the vocal while correcting the beat.
    */
   function scheduleBeatSeek(
     el: HTMLAudioElement,
     targetSec: number,
     onResult: (appliedSec: number, ok: boolean) => void,
-    opts?: { muteUntilLanded?: boolean }
+    _opts?: { muteUntilLanded?: boolean }
   ): void {
     const target = Math.max(0, targetSec);
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 12;
     let finished = false;
 
-    // Mute only on the *initial* placement seek — RAF re-seeks must not re-mute
-    // (that made Beat+Voice go silent after volume tweaks).
-    const muteUntilLanded = Boolean(opts?.muteUntilLanded) && target > 0.5;
-    let priorVolume = el.volume;
-    if (muteUntilLanded) {
+    const ensureAudible = () => {
       try {
-        priorVolume = el.volume > 0 ? el.volume : reviewBeatGain(beatVolumeRef.current);
-        el.muted = true;
+        el.muted = false;
+        const g = reviewBeatGain(beatVolumeRef.current);
+        if (el.volume < g * 0.5) el.volume = g;
       } catch {
         /* ignore */
       }
-    }
+    };
 
     const finish = (applied: number, ok: boolean) => {
       if (finished) return;
       finished = true;
       seekPendingRef.current = !ok && Math.abs(applied - target) >= 1.0;
-      if (muteUntilLanded) {
-        try {
-          el.muted = false;
-          el.volume = priorVolume > 0 ? priorVolume : reviewBeatGain(beatVolumeRef.current);
-        } catch {
-          /* ignore */
-        }
-      }
+      ensureAudible();
       onResult(applied, ok);
     };
 
@@ -535,7 +521,6 @@ export function CompactAudioPlayer({
       if (finished) return;
       attempts += 1;
       try {
-        // fastSeek when available (Safari); fall back to currentTime
         const anyEl = el as HTMLAudioElement & { fastSeek?: (t: number) => void };
         if (typeof anyEl.fastSeek === "function") {
           try {
@@ -558,7 +543,7 @@ export function CompactAudioPlayer({
           return;
         }
         if (attempts < maxAttempts) {
-          window.setTimeout(tryOnce, attempts < 3 ? 80 : 180);
+          window.setTimeout(tryOnce, attempts < 4 ? 50 : 100);
         } else {
           finish(applied, Math.abs(applied - target) < 1.5);
         }
@@ -571,224 +556,12 @@ export function CompactAudioPlayer({
       window.setTimeout(() => {
         el.removeEventListener("seeked", onSeeked);
         check();
-      }, 220);
+      }, 200);
     };
 
-    seekPendingRef.current = true;
+    ensureAudible();
+    seekPendingRef.current = target > 0.5;
     tryOnce();
-  }
-
-  function writeReviewDiagnostics(extra: Record<string, unknown> = {}) {
-    try {
-      if (typeof window === "undefined" || localStorage.getItem("studio_debug_audio") !== "1") return;
-      const vocal = vocalRef.current;
-      const beat = beatRef.current;
-      sessionStorage.setItem(
-        "studio_last_review_diagnostics",
-        JSON.stringify({
-          mode: voiceOnlyRef.current ? "voice_only" : "beat_plus_voice",
-          vocalSrcPresent: Boolean(vocal?.src || src),
-          vocalReadyState: vocal?.readyState ?? null,
-          vocalNetworkState: vocal?.networkState ?? null,
-          vocalPaused: vocal?.paused ?? null,
-          vocalMuted: vocal?.muted ?? null,
-          vocalVolume: vocal?.volume ?? null,
-          vocalCurrentTime: vocal?.currentTime ?? null,
-          vocalPlaybackRate: vocal?.playbackRate ?? null,
-          beatSrcPresent: Boolean(beat?.src || beatSrc),
-          beatReadyState: beat?.readyState ?? null,
-          beatPaused: beat?.paused ?? null,
-          beatMuted: beat?.muted ?? null,
-          beatVolume: beat?.volume ?? null,
-          beatCurrentTime: beat?.currentTime ?? null,
-          beatPlaybackRate: beat?.playbackRate ?? null,
-          activeReviewBeatSources:
-            beat && !beat.paused && !voiceOnlyRef.current && (beat.volume ?? 0) > 0.001 ? 1 : 0,
-          placementStartMs: placementRef.current,
-          reviewStartedAt: Date.now(),
-          ...extra,
-        })
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Reset transport when take / placement changes
-  useEffect(() => {
-    stopRaf();
-    setPlaying(false);
-    playingRef.current = false;
-    setProgress(0);
-    setLoadError(null);
-    pausedSongMsRef.current = null;
-    const vocal = vocalRef.current;
-    if (vocal) {
-      try {
-        vocal.pause();
-        vocal.currentTime = 0;
-        vocal.playbackRate = 1;
-        vocal.muted = false;
-        vocal.volume = Math.min(1, Math.max(0, vocalVolumeRef.current));
-      } catch {
-        /* ignore */
-      }
-    }
-    const beat = beatRef.current;
-    if (beat) {
-      try {
-        beat.pause();
-        beat.playbackRate = 1;
-        beat.currentTime = placementStartMs / 1000;
-        if (voiceOnlyRef.current) {
-          beat.volume = 0;
-          beat.muted = true;
-        } else {
-          beat.muted = false;
-          beat.volume = reviewBeatGain(beatVolumeRef.current);
-        }
-        vocalEngagedRef.current = false;
-        vocalStartedAtBeatMsRef.current = null;
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [src, placementStartMs]);
-
-  useEffect(() => {
-    return () => {
-      stopRaf();
-      vocalRef.current?.pause();
-      hardStopBeat();
-    };
-  }, [hardStopBeat]);
-
-  /**
-   * Mode transitions (Voice Only ↔ Beat + Voice).
-   * Must fully reverse hardStopBeat state when leaving Voice Only.
-   * Do NOT call play() here — iOS requires a user gesture; pause so the
-   * next Play tap starts both sources cleanly from that gesture.
-   */
-  useEffect(() => {
-    const beat = beatRef.current;
-    const vocal = vocalRef.current;
-    if (voiceOnly) {
-      hardStopBeat();
-      // Keep vocal state usable for Voice Only play
-      if (vocal) {
-        try {
-          vocal.muted = false;
-          vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-          vocal.playbackRate = 1;
-        } catch {
-          /* ignore */
-        }
-      }
-      return;
-    }
-    // Leaving Voice Only → restore beat element (still paused until Play)
-    if (beat) {
-      try {
-        beat.muted = false;
-        beat.playbackRate = 1;
-        beat.volume = reviewBeatGain(beatVolume);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (vocal) {
-      try {
-        vocal.muted = false;
-        vocal.volume = Math.min(1, Math.max(0, vocalVolume));
-        vocal.playbackRate = 1;
-      } catch {
-        /* ignore */
-      }
-    }
-    vocalEngagedRef.current = false;
-    vocalStartedAtBeatMsRef.current = null;
-    // If we were mid-playback under the other mode, stop so next Play is a fresh gesture
-    if (playingRef.current) {
-      stopRaf();
-      try {
-        vocal?.pause();
-        beat?.pause();
-      } catch {
-        /* ignore */
-      }
-      setPlaying(false);
-      playingRef.current = false;
-    }
-    writeReviewDiagnostics({ event: "mode_to_beat_plus_voice" });
-  }, [voiceOnly, beatVolume, vocalVolume, hardStopBeat]);
-
-  /**
-   * Soft readiness for Review takes (often blob: URLs on iOS).
-   * HAVE_METADATA (1) is enough to attempt play — do NOT require HAVE_CURRENT_DATA (2).
-   * Never call load() on an element that already has a src and is progressing —
-   * load() resets and is a common cause of "Could not load your take" on Safari.
-   */
-  async function ensureReady(el: HTMLAudioElement, ms = 8000): Promise<{
-    ok: boolean;
-    readyState: number;
-    errorCode: number | null;
-    errorMessage: string | null;
-  }> {
-    const snap = () => ({
-      ok: el.readyState >= 1 || (Number.isFinite(el.duration) && el.duration > 0),
-      readyState: el.readyState,
-      errorCode: el.error?.code ?? null,
-      errorMessage: el.error?.message ?? null,
-    });
-
-    // Already have metadata or current data — good to try play()
-    if (el.readyState >= 1) return { ...snap(), ok: true };
-    if (el.error) return { ...snap(), ok: false };
-
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        el.removeEventListener("loadedmetadata", onOk);
-        el.removeEventListener("loadeddata", onOk);
-        el.removeEventListener("canplay", onOk);
-        el.removeEventListener("error", onErr);
-        clearTimeout(timer);
-        const s = snap();
-        // Soft pass: metadata OR non-zero duration OR readyState>=1
-        const ok =
-          !el.error &&
-          (s.readyState >= 1 ||
-            (Number.isFinite(el.duration) && el.duration > 0) ||
-            s.readyState >= 2);
-        resolve({ ...s, ok });
-      };
-      const onOk = () => finish();
-      const onErr = () => finish();
-      const timer = setTimeout(finish, ms);
-      el.addEventListener("loadedmetadata", onOk);
-      el.addEventListener("loadeddata", onOk);
-      el.addEventListener("canplay", onOk);
-      el.addEventListener("error", onErr);
-      // Do NOT call el.load() here — React already set src with preload="auto".
-      // Calling load() on iOS blob URLs frequently clears buffered state mid-Review.
-    });
-  }
-
-  function mediaErrorLabel(code: number | null | undefined): string {
-    switch (code) {
-      case 1:
-        return "MEDIA_ERR_ABORTED";
-      case 2:
-        return "MEDIA_ERR_NETWORK";
-      case 3:
-        return "MEDIA_ERR_DECODE";
-      case 4:
-        return "MEDIA_ERR_SRC_NOT_SUPPORTED";
-      default:
-        return code != null ? `MEDIA_ERR_${code}` : "none";
-    }
   }
 
   async function toggle() {
@@ -940,20 +713,9 @@ export function CompactAudioPlayer({
     }
 
     if (wantBeat && !beatPlaySucceeded) {
-      setLoadError(
-        beatPlayError
-          ? `Could not play reference beat (${beatPlayError})`
-          : "Could not play reference beat — tap Play again"
-      );
-      try {
-        vocal.pause();
-      } catch {
-        /* ignore */
-      }
-      writeReviewDiagnostics({ event: "BEAT_PLAY_ERROR", beatPlayError });
-      setPlaying(false);
-      playingRef.current = false;
-      return;
+      // Keep the vocal playing — do not abort the whole Review session.
+      hardStopBeat();
+      writeReviewDiagnostics({ event: "BEAT_PLAY_ERROR_CONTINUE_VOCAL", beatPlayError });
     }
 
     // Transport is live from the user gesture — do not wait on seek
@@ -965,11 +727,25 @@ export function CompactAudioPlayer({
     let beatSeekOk = false;
 
     if (wantBeat && beat && beatPlaySucceeded) {
+      try {
+        beat.muted = false;
+        beat.volume = reviewBeatGain(beatVolumeRef.current);
+      } catch {
+        /* ignore */
+      }
       seekPendingRef.current = true;
       scheduleBeatSeek(beat, beatSeekTargetSec, (appliedSec, ok) => {
         beatSeekAppliedMs = appliedSec * 1000;
         beatSeekOk = ok;
         seekPendingRef.current = !ok && Math.abs(appliedSec - beatSeekTargetSec) >= 1.5;
+        try {
+          if (beatRef.current) {
+            beatRef.current.muted = false;
+            beatRef.current.volume = reviewBeatGain(beatVolumeRef.current);
+          }
+        } catch {
+          /* ignore */
+        }
         writeReviewDiagnostics({
           event: "beat_seek_result",
           placementStartMs: place,
@@ -981,7 +757,7 @@ export function CompactAudioPlayer({
           beatPaused: beatRef.current?.paused ?? null,
           playing: playingRef.current,
         });
-      }, { muteUntilLanded: true });
+      });
     } else {
       seekPendingRef.current = false;
     }
@@ -1061,11 +837,21 @@ export function CompactAudioPlayer({
         const seekPending = seekPendingRef.current;
         const beatOffBy = Math.abs(b.currentTime - placeSecNow);
 
-        // Keep vocal alive — never pause because beat seek is late
+        // Keep both elements audible — never pause vocal because beat seek is late
+        try {
+          if (v.muted) v.muted = false;
+          if (v.volume !== 1) v.volume = 1;
+          if (!voiceOnlyRef.current && !b.paused) {
+            if (b.muted) b.muted = false;
+            const g = reviewBeatGain(beatVolumeRef.current);
+            if (b.volume < g * 0.5) b.volume = g;
+          }
+        } catch {
+          /* ignore */
+        }
         if (vocalEngagedRef.current || startAtPlacement) {
           try {
-            if (v.muted) v.muted = false;
-            if (v.volume !== 1) v.volume = 1;
+            /* vocal already forced above */
           } catch {
             /* ignore */
           }
