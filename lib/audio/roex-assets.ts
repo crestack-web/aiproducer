@@ -11,7 +11,7 @@
 
 import { createServiceClient } from "@/lib/supabase/server";
 import { getStorageBucket, isStoragePath } from "@/lib/storage";
-import { isWavBuffer } from "@/lib/audio/wav";
+import { ensureStereoWavForRoex, isWavBuffer } from "@/lib/audio/wav";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";
 
 export type DetectedAudio = {
@@ -115,36 +115,56 @@ export async function prepareRoexTrack(opts: {
     );
   }
 
-  if (!ROEX_PREFERRED_EXTENSIONS.has(detected.extension) && detected.format !== "wav") {
-    // Still try upload with correct extension; RoEx may accept after clean URL.
-    // Hard-fail only for clearly unsupported browser containers that mix engines reject.
-    if (detected.format === "webm" || detected.format === "ogg") {
-      throw new Error(
-        `${kind} format (${detected.format}) is not compatible with RoEx. ` +
-          `Use WAV or MP3. Your recordings are safe — re-export or re-record this part as WAV/MP3.`
-      );
-    }
+  if (detected.format === "webm" || detected.format === "ogg" || detected.format === "m4a") {
+    throw new Error(
+      `${kind} format (${detected.format}) is not compatible with RoEx mix. ` +
+        `RoEx requires stereo WAV. Re-record this part so it saves as WAV. Your recordings are safe.`
+    );
   }
 
-  // RoEx classifies by filename extension + content-type on their upload PUT
-  const ext = detected.format === "wav" ? "wav" : detected.extension;
-  const contentType =
-    detected.format === "wav"
-      ? "audio/wav"
-      : detected.format === "mp3"
-        ? "audio/mpeg"
-        : detected.format === "m4a"
-          ? "audio/mp4"
-          : detected.contentType;
-  const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${ext}`;
+  // RoEx mix requires stereo WAV (44.1/48k, 16-bit). Our timeline stems are mono — dual to L/R.
+  let uploadBuffer = buffer;
+  let uploadFormat = detected.format;
+  let uploadContentType = detected.contentType;
+  let uploadExt = detected.extension;
+
+  if (detected.format === "wav" || isWavBuffer(buffer)) {
+    try {
+      uploadBuffer = ensureStereoWavForRoex(buffer);
+      uploadFormat = "wav";
+      uploadContentType = "audio/wav";
+      uploadExt = "wav";
+      console.info(
+        "[produce]",
+        JSON.stringify({
+          event: "roex_wav_stereo_prepared",
+          kind,
+          inBytes: buffer.length,
+          outBytes: uploadBuffer.length,
+        })
+      );
+    } catch (e) {
+      console.warn("[produce] stereo WAV convert failed", kind, e);
+      // still try original
+    }
+  } else if (detected.format === "mp3") {
+    // Tonn API accepts MP3; Automix product prefers WAV — keep mp3 for instrumental beats
+    uploadContentType = "audio/mpeg";
+    uploadExt = "mp3";
+  } else if (detected.format === "flac") {
+    uploadContentType = "audio/flac";
+    uploadExt = "flac";
+  }
+
+  const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${uploadExt}`;
   let readableUrl: string;
   try {
-    const up = await provider.uploadStem(buffer, safeName, contentType);
+    const up = await provider.uploadStem(uploadBuffer, safeName, uploadContentType);
     readableUrl = up.readableUrl;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `RoEx upload failed for ${kind} (${detected.format}, ${detected.bytes} bytes): ${msg}`
+      `RoEx upload failed for ${kind} (${uploadFormat}, ${uploadBuffer.length} bytes): ${msg}`
     );
   }
 
@@ -160,8 +180,8 @@ export async function prepareRoexTrack(opts: {
       projectId,
       jobId,
       kind,
-      format: detected.format,
-      bytes: detected.bytes,
+      format: uploadFormat,
+      bytes: uploadBuffer.length,
       filename: safeName,
       // host only, no query
       provider_host: (() => {

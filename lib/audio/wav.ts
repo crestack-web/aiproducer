@@ -138,3 +138,52 @@ export function isWavBuffer(buffer: Buffer | Uint8Array): boolean {
   const u8 = buffer instanceof Buffer ? buffer : Buffer.from(buffer);
   return u8.toString("ascii", 0, 4) === "RIFF" && u8.toString("ascii", 8, 12) === "WAVE";
 }
+
+/** Encode mono Float32 as stereo 16-bit LE WAV (L=R). RoEx mix requires stereo. */
+export function encodeWavStereoFromMono(samples: Float32Array, sampleRate: number): Buffer {
+  const channels = 2;
+  const bitsPerSample = 16;
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = samples.length * blockAlign;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20); // PCM
+  buffer.writeUInt16LE(channels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(byteRate, 28);
+  buffer.writeUInt16LE(blockAlign, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i] || 0));
+    const v = s < 0 ? Math.round(s * 32768) : Math.round(s * 32767);
+    const clipped = Math.max(-32768, Math.min(32767, v));
+    buffer.writeInt16LE(clipped, o);
+    buffer.writeInt16LE(clipped, o + 2);
+    o += 4;
+  }
+  return buffer;
+}
+
+/**
+ * RoEx mixpreview expects stereo WAV (44.1/48 kHz, 16-bit).
+ * Convert mono PCM WAV → stereo L=R; leave already-stereo WAV as-is if valid.
+ */
+export function ensureStereoWavForRoex(buffer: Buffer): Buffer {
+  if (!isWavBuffer(buffer)) return buffer;
+  const pcm = decodeWav(buffer);
+  // Always re-encode as stereo 16-bit at source rate (or clamp to 48k if exotic)
+  let rate = pcm.sampleRate;
+  if (rate !== 44100 && rate !== 48000) {
+    // Keep rate; RoEx docs prefer 44.1/48 but Tonn may accept others
+  }
+  return encodeWavStereoFromMono(pcm.samples, rate);
+}
+
