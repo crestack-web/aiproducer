@@ -371,6 +371,10 @@ export function CompactAudioPlayer({
   vocalVolume = 1,
   /** Review/preview output preference — not the recording-monitor route. */
   playbackSinkId,
+  debugSectionLabel,
+  debugTaskId,
+  debugSectionStartMs,
+  debugRecordingOffsetMs,
 }: {
   src: string;
   label?: string;
@@ -381,6 +385,10 @@ export function CompactAudioPlayer({
   beatVolume?: number;
   vocalVolume?: number;
   playbackSinkId?: string | null;
+  debugSectionLabel?: string | null;
+  debugTaskId?: string | null;
+  debugSectionStartMs?: number | null;
+  debugRecordingOffsetMs?: number | null;
 }) {
   const C = usePlayerColors();
   const vocalRef = useRef<HTMLAudioElement | null>(null);
@@ -388,6 +396,8 @@ export function CompactAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reviewDiag, setReviewDiag] = useState<Record<string, unknown> | null>(null);
+  const diagSamplesRef = useRef<Record<string, unknown>[]>([]);
   const bars = useMemo(() => makeWave(seed, 40), [seed]);
   const rafRef = useRef<number | null>(null);
   const voiceOnly = beatVolume <= 0.001;
@@ -562,6 +572,66 @@ export function CompactAudioPlayer({
     ensureAudible();
     seekPendingRef.current = target > 0.5;
     tryOnce();
+  }
+
+  function writeReviewDiagnostics(extra: Record<string, unknown> = {}) {
+    try {
+      if (typeof window === "undefined") return;
+      const vocal = vocalRef.current;
+      const beat = beatRef.current;
+      const place = placementRef.current;
+      const payload: Record<string, unknown> = {
+        event: (extra.event as string) || "snapshot",
+        at: new Date().toISOString(),
+        mode: voiceOnlyRef.current ? "voice_only" : "beat_plus_voice",
+        sectionLabel: debugSectionLabel ?? null,
+        taskId: debugTaskId ?? null,
+        sectionStartMs: debugSectionStartMs ?? null,
+        recordingOffsetMs: debugRecordingOffsetMs ?? null,
+        placementStartMs: place,
+        beatStartMsProp: beatStartMs,
+        beatEndMsProp: beatEndMs ?? null,
+        beatSrcPresent: Boolean(beat?.src || beatSrc),
+        vocalSrcPresent: Boolean(vocal?.src || src),
+        vocalSrcKind: /^blob:/i.test(String(vocal?.src || src || ""))
+          ? "blob"
+          : String(vocal?.src || src || "").startsWith("http")
+            ? "http"
+            : "other",
+        playing: playingRef.current,
+        seekPending: seekPendingRef.current,
+        vocalPaused: vocal?.paused ?? null,
+        vocalMuted: vocal?.muted ?? null,
+        vocalVolume: vocal?.volume ?? null,
+        vocalCurrentTimeMs: vocal != null ? Math.round(vocal.currentTime * 1000) : null,
+        vocalDurationMs:
+          vocal?.duration && Number.isFinite(vocal.duration)
+            ? Math.round(vocal.duration * 1000)
+            : null,
+        vocalReadyState: vocal?.readyState ?? null,
+        beatPaused: beat?.paused ?? null,
+        beatMuted: beat?.muted ?? null,
+        beatVolume: beat?.volume ?? null,
+        beatCurrentTimeMs: beat != null ? Math.round(beat.currentTime * 1000) : null,
+        beatDurationMs:
+          beat?.duration && Number.isFinite(beat.duration)
+            ? Math.round(beat.duration * 1000)
+            : null,
+        beatReadyState: beat?.readyState ?? null,
+        placementDeltaMs:
+          beat != null ? Math.round(beat.currentTime * 1000 - place) : null,
+        ...extra,
+      };
+      diagSamplesRef.current = [...diagSamplesRef.current.slice(-30), payload];
+      sessionStorage.setItem(
+        "studio_last_review_diagnostics",
+        JSON.stringify({ latest: payload, samples: diagSamplesRef.current })
+      );
+      setReviewDiag(payload);
+      console.info("[section-review DIAG]", payload);
+    } catch {
+      /* ignore */
+    }
   }
 
   async function toggle() {
@@ -847,6 +917,10 @@ export function CompactAudioPlayer({
         } catch {
           /* ignore */
         }
+        if (Date.now() - lastReseekAtRef.current > 500) {
+          lastReseekAtRef.current = Date.now();
+          writeReviewDiagnostics({ event: "playing_sample" });
+        }
 
         const beatMs = b.currentTime * 1000;
         if (beatEndMs != null && beatMs >= beatEndMs) {
@@ -968,7 +1042,93 @@ export function CompactAudioPlayer({
         </button>
       </div>
 
-
+      {reviewDiag && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 10,
+            borderRadius: 10,
+            border: `1px solid ${C.border}`,
+            background: C.inputFill,
+            fontSize: 10,
+            color: C.textMuted,
+            textAlign: "left",
+            wordBreak: "break-word",
+          }}
+        >
+          <div style={{ fontWeight: 700, color: C.brass, marginBottom: 6, fontSize: 11 }}>
+            Section Review diagnostics (temporary)
+          </div>
+          <div>
+            event: {String(reviewDiag.event)} · mode: {String(reviewDiag.mode)} · playing:{" "}
+            {String(reviewDiag.playing)}
+          </div>
+          <div>
+            section: {String(reviewDiag.sectionLabel ?? "—")} · task:{" "}
+            {String(reviewDiag.taskId ?? "—").slice(0, 8)}
+          </div>
+          <div>
+            sectionStartMs: {String(reviewDiag.sectionStartMs)} · offsetMs:{" "}
+            {String(reviewDiag.recordingOffsetMs)} · placementStartMs:{" "}
+            {String(reviewDiag.placementStartMs)}
+          </div>
+          <div>
+            beat t={String(reviewDiag.beatCurrentTimeMs)}ms · paused={String(reviewDiag.beatPaused)} ·
+            muted={String(reviewDiag.beatMuted)} · vol={String(reviewDiag.beatVolume)} · Δplacement=
+            {String(reviewDiag.placementDeltaMs)}ms
+          </div>
+          <div>
+            vocal t={String(reviewDiag.vocalCurrentTimeMs)}ms · paused={String(reviewDiag.vocalPaused)} ·
+            muted={String(reviewDiag.vocalMuted)} · vol={String(reviewDiag.vocalVolume)} · ready=
+            {String(reviewDiag.vocalReadyState)} · src={String(reviewDiag.vocalSrcKind)}
+          </div>
+          {reviewDiag.beatSeekOk != null && (
+            <div>
+              beatSeekOk: {String(reviewDiag.beatSeekOk)} · appliedMs:{" "}
+              {String(reviewDiag.beatSeekAppliedMs)} · requestedMs:{" "}
+              {String(reviewDiag.beatSeekRequestedMs)}
+            </div>
+          )}
+          {reviewDiag.beatPlayError != null && (
+            <div style={{ color: C.danger }}>beatPlayError: {String(reviewDiag.beatPlayError)}</div>
+          )}
+          {reviewDiag.vocalPlayError != null && (
+            <div style={{ color: C.danger }}>vocalPlayError: {String(reviewDiag.vocalPlayError)}</div>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                void navigator.clipboard.writeText(
+                  JSON.stringify(
+                    { latest: reviewDiag, samples: diagSamplesRef.current },
+                    null,
+                    2
+                  )
+                );
+              } catch {
+                /* ignore */
+              }
+            }}
+            style={{
+              marginTop: 8,
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: "transparent",
+              color: C.textMuted,
+              fontSize: 11,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Copy review diagnostic JSON
+          </button>
+          <div style={{ marginTop: 6, opacity: 0.75 }}>
+            Console: [section-review DIAG] · sessionStorage: studio_last_review_diagnostics
+          </div>
+        </div>
+      )}
     </div>
   );
 }
