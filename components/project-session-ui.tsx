@@ -1314,64 +1314,142 @@ export default function ProjectDetailPage() {
   }
 
   /**
-   * Recording monitor for production layers: play beat (already handled) +
-   * existing selected vocals in the same section so the artist can sing against Lead.
-   * New mic take is never mixed into these elements.
+   * Recording monitor for production layers (harmony / double / ad-lib / …):
+   * play existing selected vocals in the same section with the beat so the
+   * artist can double/harmonize against the Lead — not beat alone.
+   * Mic path is separate; these Audio elements never go into MediaRecorder.
    */
   async function startLayerMonitors(task: Task) {
     stopLayerMonitors();
     if (!isProductionLayer(task)) return;
-    const sectionStart = task.start_ms ?? 0;
 
-    let layers = previewLayers;
-    if (!layers.length) {
+    const sectionStart = task.start_ms ?? 0;
+    const sectionId =
+      task.section_id ||
+      (task.metadata as { section_id?: string } | null | undefined)?.section_id ||
+      null;
+    const label = (sectionLabel(task) || "").toLowerCase().trim();
+
+    type MonitorSrc = { url: string; isLead: boolean; startMs: number };
+    const sources: MonitorSrc[] = [];
+
+    // Prefer live plan tasks → selected take URLs (works even when previewLayers is empty)
+    const peers = tasks.filter((t) => {
+      if (t.id === task.id) return false;
+      if ((t.status || "").toLowerCase() !== "completed") return false;
+      const tid =
+        t.section_id ||
+        (t.metadata as { section_id?: string } | null | undefined)?.section_id ||
+        null;
+      if (sectionId && tid && sectionId === tid) return true;
+      const tl = (sectionLabel(t) || "").toLowerCase().trim();
+      if (label && tl && label === tl) return true;
+      const s = t.start_ms ?? 0;
+      if (Math.abs(s - sectionStart) < 10000) return true;
+      if (task.end_ms != null && s >= sectionStart - 200 && s < task.end_ms + 500) return true;
+      return false;
+    });
+    peers.sort((a, b) => {
+      const ca = isCoreTask(a) ? 0 : 1;
+      const cb = isCoreTask(b) ? 0 : 1;
+      return ca - cb;
+    });
+
+    for (const p of peers.slice(0, 6)) {
       try {
-        const res = await fetch(`/api/projects/${id}/session-preview`);
-        if (res.ok) {
-          const j = await res.json();
-          layers = Array.isArray(j.layers) ? j.layers : [];
+        const res = await fetch(`/api/recording-tasks/${p.id}/recordings`);
+        if (!res.ok) continue;
+        const j = await res.json();
+        const list = (Array.isArray(j.recordings) ? j.recordings : []) as {
+          id: string;
+          is_selected?: boolean | null;
+          audio_url?: string | null;
+        }[];
+        const selected =
+          list.find((r) => r.is_selected) || list[list.length - 1] || list[0];
+        if (selected?.audio_url) {
+          sources.push({
+            url: selected.audio_url,
+            isLead: isCoreTask(p),
+            startMs: p.start_ms ?? sectionStart,
+          });
         }
       } catch {
-        /* non-fatal */
+        /* skip */
       }
     }
 
-    const sameSection = layers.filter((l) => {
-      if (l.task_id === task.id) return false;
-      if (!l.audio_url) return false;
-      if (task.section_id && l.section_id) return l.section_id === task.section_id;
-      const s = l.start_ms || 0;
-      return Math.abs(s - sectionStart) < 8000 || (task.end_ms != null && s >= sectionStart - 100 && s < task.end_ms);
-    });
+    // Fallback: session-preview layers
+    if (!sources.length) {
+      let layers = previewLayers;
+      if (!layers.length) {
+        try {
+          const res = await fetch(`/api/projects/${id}/session-preview`);
+          if (res.ok) {
+            const j = await res.json();
+            layers = Array.isArray(j.layers) ? j.layers : [];
+            if (layers.length) setPreviewLayers(layers);
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
+      const sameSection = layers.filter((l) => {
+        if (l.task_id === task.id) return false;
+        if (!l.audio_url) return false;
+        if (sectionId && l.section_id && sectionId === l.section_id) return true;
+        const s = l.start_ms || 0;
+        return Math.abs(s - sectionStart) < 10000;
+      });
+      sameSection.sort((a, b) => {
+        const ra = (a.type || "").toLowerCase().includes("lead") ? 0 : 1;
+        const rb = (b.type || "").toLowerCase().includes("lead") ? 0 : 1;
+        return ra - rb;
+      });
+      for (const l of sameSection.slice(0, 4)) {
+        sources.push({
+          url: l.audio_url,
+          isLead: (l.type || "").toLowerCase().includes("lead"),
+          startMs: l.start_ms || sectionStart,
+        });
+      }
+    }
 
-    sameSection.sort((a, b) => {
-      const ra = (a.type || "").toLowerCase().includes("lead") ? 0 : 1;
-      const rb = (b.type || "").toLowerCase().includes("lead") ? 0 : 1;
-      return ra - rb;
-    });
+    if (!sources.length) {
+      console.warn("[layer-monitor] no existing section vocals to monitor", {
+        taskId: task.id,
+        sectionId,
+        sectionStart,
+        peerCount: peers.length,
+      });
+      return;
+    }
 
     const sink = selectedSpeakerIdRef.current || undefined;
-    for (const layer of sameSection.slice(0, 4)) {
+    const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
+    // Keep monitors usable but below typical mic bleed risk on speaker
+    const leadVol = mode === "PHONE_SPEAKER" ? 0.35 : 0.75;
+    const otherVol = mode === "PHONE_SPEAKER" ? 0.2 : 0.4;
+
+    for (const src of sources.slice(0, 4)) {
       try {
         const el = new Audio();
         el.preload = "auto";
         el.crossOrigin = "anonymous";
-        el.src = layer.audio_url;
-        const isLead = (layer.type || "").toLowerCase().includes("lead");
-        el.volume = isLead ? 0.85 : 0.45;
-        el.currentTime = 0;
-        const place = layer.start_ms || sectionStart;
-        const fileOffsetSec = Math.max(0, (sectionStart - place) / 1000);
-        if (fileOffsetSec > 0.05) {
-          try {
-            el.currentTime = fileOffsetSec;
-          } catch {
-            /* ignore */
-          }
+        el.src = src.url;
+        el.volume = src.isLead ? leadVol : otherVol;
+        el.muted = false;
+        const fileOffsetSec = Math.max(0, (sectionStart - src.startMs) / 1000);
+        try {
+          el.currentTime = fileOffsetSec > 0.05 ? fileOffsetSec : 0;
+        } catch {
+          /* ignore */
         }
         await routePlaybackToPreferredOutput(el, sink);
         layerMonitorAudiosRef.current.push(el);
-        void el.play().catch(() => undefined);
+        await el.play().catch((e) => {
+          console.warn("[layer-monitor] play failed", e);
+        });
       } catch {
         /* skip broken layer */
       }
