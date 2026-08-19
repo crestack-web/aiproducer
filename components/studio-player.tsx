@@ -737,7 +737,8 @@ export function CompactAudioPlayer({
       scheduleBeatSeek(beat, beatSeekTargetSec, (appliedSec, ok) => {
         beatSeekAppliedMs = appliedSec * 1000;
         beatSeekOk = ok;
-        seekPendingRef.current = !ok && Math.abs(appliedSec - beatSeekTargetSec) >= 1.5;
+        // One-shot seek only — do not keep seeking or snapping the vocal
+        seekPendingRef.current = false;
         try {
           if (beatRef.current) {
             beatRef.current.muted = false;
@@ -752,7 +753,7 @@ export function CompactAudioPlayer({
           beatSeekRequestedMs: songMs,
           beatSeekAppliedMs,
           beatSeekOk: ok,
-          seekPending: seekPendingRef.current,
+          seekPending: false,
           vocalPaused: vocalRef.current?.paused ?? null,
           beatPaused: beatRef.current?.paused ?? null,
           playing: playingRef.current,
@@ -823,92 +824,31 @@ export function CompactAudioPlayer({
         return;
       }
 
-      // Beat + Voice
+      // Beat + Voice — free-run after initial seek (no re-seek / no vocal snap loop)
       if (want && b) {
         try {
           if (b.muted) b.muted = false;
           const g = reviewBeatGain(bv);
-          if (Math.abs(b.volume - g) > 0.01) b.volume = g;
+          if (b.volume < g * 0.5) b.volume = g;
+          if (v.muted) v.muted = false;
+          if (v.volume !== 1) v.volume = 1;
+        } catch {
+          /* ignore */
+        }
+
+        // Progress from the take only — never rewrite vocal.currentTime from the beat
+        // (that caused 3–4s play → snap to 0 → loop when beat placement was off).
+        try {
+          const dur =
+            v.duration && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null;
+          if (dur && !v.paused) {
+            setProgress(Math.min(1, v.currentTime / dur));
+          }
         } catch {
           /* ignore */
         }
 
         const beatMs = b.currentTime * 1000;
-        const seekPending = seekPendingRef.current;
-        const beatOffBy = Math.abs(b.currentTime - placeSecNow);
-
-        // Keep both elements audible — never pause vocal because beat seek is late
-        try {
-          if (v.muted) v.muted = false;
-          if (v.volume !== 1) v.volume = 1;
-          if (!voiceOnlyRef.current && !b.paused) {
-            if (b.muted) b.muted = false;
-            const g = reviewBeatGain(beatVolumeRef.current);
-            if (b.volume < g * 0.5) b.volume = g;
-          }
-        } catch {
-          /* ignore */
-        }
-        if (vocalEngagedRef.current || startAtPlacement) {
-          try {
-            /* vocal already forced above */
-          } catch {
-            /* ignore */
-          }
-          // Do not call play() every frame — only if unexpectedly paused
-          // (may fail outside gesture; better than forcing pause)
-        }
-
-        // If beat drifted far from placement (common on iOS for non-zero sections),
-        // re-seek without pausing the vocal. At most once per 1.5s.
-        if (
-          !seekPending &&
-          placeSecNow > 0.5 &&
-          beatOffBy > 2.5 &&
-          !b.paused &&
-          playingRef.current &&
-          Date.now() - lastReseekAtRef.current > 1500
-        ) {
-          lastReseekAtRef.current = Date.now();
-          seekPendingRef.current = true;
-          scheduleBeatSeek(
-            b,
-            placeSecNow,
-            () => {
-              /* result applied; next RAF uses updated currentTime */
-            },
-            { muteUntilLanded: false }
-          );
-        }
-
-        // Progress: while seek pending, use vocal clock so UI moves; after seek, use beat master
-        try {
-          const dur =
-            v.duration && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null;
-          if (seekPending || beatOffBy > 2.5) {
-            // Beat not at placement yet — show take progress from vocal if playing
-            if (dur && !v.paused) {
-              setProgress(Math.min(1, v.currentTime / dur));
-            } else if (!b.paused) {
-              // Indeterminate motion so UI is not frozen while beat is correcting
-              setProgress(Math.min(0.95, (b.currentTime % 8) / 8));
-            }
-          } else if (dur) {
-            const vocalTime = Math.max(0, b.currentTime - placeSecNow);
-            setProgress(Math.min(1, vocalTime / dur));
-            // Light drift correction only after seek is good — not every frame
-            if (!v.paused && Math.abs(v.currentTime - vocalTime) > DRIFT_TOLERANCE_SEC) {
-              try {
-                v.currentTime = vocalTime;
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-
         if (beatEndMs != null && beatMs >= beatEndMs) {
           try {
             b.pause();
