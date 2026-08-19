@@ -249,15 +249,24 @@ export async function GET(_req: Request, ctx: Ctx) {
           ? task.end_ms
           : start_ms + (rec.duration_ms || 0);
 
+    const taskMeta = (task.metadata || {}) as {
+      section_label?: string;
+      start_bar?: number | null;
+      end_bar?: number | null;
+      production_type?: string;
+    };
     layers.push({
       task_id: task.id,
       recording_id: rec.id,
       type: task.type,
       title: task.title,
       section_id: (task as { section_id?: string | null }).section_id ?? null,
-      section_label: task.metadata?.section_label ?? null,
+      section_label: taskMeta.section_label ?? task.metadata?.section_label ?? null,
       start_ms,
       end_ms,
+      start_bar: taskMeta.start_bar ?? null,
+      end_bar: taskMeta.end_bar ?? null,
+      layer_role: taskMeta.production_type || task.type || null,
       take_number: rec.take_number,
       duration_ms: rec.duration_ms,
       audio_url,
