@@ -126,8 +126,27 @@ export async function prepareRoexTrack(opts: {
     }
   }
 
-  const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${detected.extension}`;
-  const { readableUrl } = await provider.uploadStem(buffer, safeName, detected.contentType);
+  // RoEx classifies by filename extension + content-type on their upload PUT
+  const ext = detected.format === "wav" ? "wav" : detected.extension;
+  const contentType =
+    detected.format === "wav"
+      ? "audio/wav"
+      : detected.format === "mp3"
+        ? "audio/mpeg"
+        : detected.format === "m4a"
+          ? "audio/mp4"
+          : detected.contentType;
+  const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${ext}`;
+  let readableUrl: string;
+  try {
+    const up = await provider.uploadStem(buffer, safeName, contentType);
+    readableUrl = up.readableUrl;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `RoEx upload failed for ${kind} (${detected.format}, ${detected.bytes} bytes): ${msg}`
+    );
+  }
 
   if (!readableUrl || !readableUrl.startsWith("http")) {
     throw new Error(`RoEx did not return a readable URL for ${kind}`);
@@ -216,8 +235,23 @@ export async function validateTracksForRoex(
 /** Map provider errors to user-facing copy; keep detail in logs. */
 export function userFacingProduceError(raw: string): string {
   const m = (raw || "").toLowerCase();
+  if (
+    m.includes("not wav") ||
+    m.includes("is not wav") ||
+    m.includes("webm") ||
+    m.includes("re-record") ||
+    (m.includes("format") && (m.includes("compatible") || m.includes("unknown")))
+  ) {
+    return (
+      "One or more takes are still in a phone format the mixer can't use. " +
+      "Open those sections, record again (they save as WAV), then Produce. Your earlier takes stay saved."
+    );
+  }
   if (m.includes("file type not accepted") || m.includes("not accepted")) {
-    return "We couldn't send one of your audio files to the mixer. Your recordings are safe. Try production again.";
+    return (
+      "We couldn't send one of your audio files to the mixer (format rejected). " +
+      "Your recordings are safe. Try Produce again; if it keeps failing, re-record the affected section so it saves as WAV."
+    );
   }
   if (m.includes("compatible") || m.includes("format")) {
     return raw.includes("Your recordings")
@@ -229,6 +263,9 @@ export function userFacingProduceError(raw: string): string {
   }
   if (m.includes("instrumental") && m.includes("missing")) {
     return "Instrumental/beat is missing. Add a beat before Produce. Your vocal takes are still saved.";
+  }
+  if (m.includes("roex upload failed") || m.includes("upload url failed") || m.includes("signed put failed")) {
+    return "We couldn't send one of your audio files to the mixer. Your recordings are safe. Try production again.";
   }
   return "Production couldn't be completed. Your recordings are safe. You can try again or go back to recording.";
 }

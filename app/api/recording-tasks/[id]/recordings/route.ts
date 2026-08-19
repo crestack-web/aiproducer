@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
+import { isWavBuffer } from "@/lib/audio/wav";
+import { detectAudioFormat } from "@/lib/audio/roex-assets";
 import {
   createSignedDownloadUrl,
   createSignedUploadUrl,
@@ -271,22 +273,44 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     const source = String(form.get("source") || "record");
-    const ext = (file.type || "").includes("wav")
-      ? "wav"
-      : (file.type || "").includes("mpeg") || (file.type || "").includes("mp3")
-        ? "mp3"
-        : (file.type || "").includes("mp4")
-          ? "mp4"
-          : "webm";
-
-    const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
     const buf = Buffer.from(await file.arrayBuffer());
     if (!buf.length) {
       return NextResponse.json({ error: "Empty audio file" }, { status: 400 });
     }
 
+    // Prefer magic-byte format over browser MIME (iOS often sends empty/wrong type).
+    const detected = detectAudioFormat(buf, (file as File).name || file.type || "");
+    const ext =
+      detected.format === "wav"
+        ? "wav"
+        : detected.format === "mp3"
+          ? "mp3"
+          : detected.format === "m4a"
+            ? "m4a"
+            : detected.format === "webm"
+              ? "webm"
+              : (file.type || "").includes("wav")
+                ? "wav"
+                : "webm";
+    const contentType =
+      detected.format !== "unknown"
+        ? detected.contentType
+        : file.type || "application/octet-stream";
+
+    // Produce requires WAV stems — soft-warn in logs when client conversion missed
+    if (source === "record" && !isWavBuffer(buf)) {
+      console.warn("[recordings] non-WAV upload for record source", {
+        taskId,
+        format: detected.format,
+        bytes: buf.length,
+        clientType: file.type,
+      });
+    }
+
+    const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
+
     const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-      contentType: file.type || "audio/webm",
+      contentType,
       upsert: true,
     });
     if (upErr) {

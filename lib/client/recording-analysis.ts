@@ -94,8 +94,15 @@ export async function attachAnalysisToForm(
     form.set("source_duration_sec", String(wav.sourceDurationSec));
     form.set("output_duration_sec", String(wav.outputDurationSec));
     form.set("duration_delta_ms", String(wav.durationDeltaMs));
-  } catch {
-    /* keep original file field if already set by caller */
+    form.set("wav_conversion", "ok");
+  } catch (e) {
+    // Produce needs WAV — mark failure so we don't silently store WebM as the produce source
+    form.set("wav_conversion", "failed");
+    form.set(
+      "wav_conversion_error",
+      e instanceof Error ? e.message.slice(0, 200) : "wav_conversion_failed"
+    );
+    console.warn("[attachAnalysisToForm] WAV conversion failed", e);
   }
 
   try {
