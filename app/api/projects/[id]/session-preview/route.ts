@@ -78,17 +78,62 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
   }
 
-  const { data: tasksRaw, error: tErr } = await supabase
-    .from("recording_tasks")
-    .select(
-      "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan, section_id"
-    )
-    .eq("project_id", projectId)
-    .order("start_ms", { ascending: true });
+  // Resilient task load: older DBs may lack section_id / plan flags.
+  // Explicit select of a missing column caused HTTP 500 "Could not load tasks"
+  // and empty Preview (layer_count 0) even when the session UI had 7/7 completed.
+  const service = createServiceClient();
+  const taskSelects = [
+    "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan, section_id",
+    "id, type, title, instruction, status, start_ms, end_ms, required, metadata, active, selected_in_plan",
+    "id, type, title, instruction, status, start_ms, end_ms, required, metadata",
+    "id, type, title, instruction, status, start_ms, end_ms, required",
+    "id, type, title, status, start_ms, end_ms, metadata",
+    "id, type, status, start_ms, end_ms",
+  ];
 
-  if (tErr) {
-    console.error("session-preview tasks", tErr);
-    return NextResponse.json({ error: "Could not load tasks" }, { status: 500 });
+  let tasksRaw: unknown[] | null = null;
+  let taskLoadDiag = "";
+  for (const cols of taskSelects) {
+    // Prefer service after ownership check (same as recordings) so RLS cannot empty the plan.
+    const { data, error: tErr } = await service
+      .from("recording_tasks")
+      .select(cols)
+      .eq("project_id", projectId)
+      .order("start_ms", { ascending: true });
+    if (!tErr) {
+      tasksRaw = (data as unknown[]) ?? [];
+      taskLoadDiag = `tasks_cols=${cols.split(",").length} count=${tasksRaw.length}`;
+      break;
+    }
+    taskLoadDiag = `tasks_select_failed: ${tErr.message}`;
+    // Retry same cols with user client in case service key misconfigured
+    const { data: dataUser, error: tErrUser } = await supabase
+      .from("recording_tasks")
+      .select(cols)
+      .eq("project_id", projectId)
+      .order("start_ms", { ascending: true });
+    if (!tErrUser) {
+      tasksRaw = (dataUser as unknown[]) ?? [];
+      taskLoadDiag = `tasks_user_cols=${cols.split(",").length} count=${tasksRaw.length}`;
+      break;
+    }
+    taskLoadDiag = `tasks_select_failed: ${tErr.message}; user: ${tErrUser.message}`;
+  }
+
+  if (tasksRaw == null) {
+    console.error("session-preview tasks", taskLoadDiag);
+    return NextResponse.json(
+      {
+        error: "Could not load tasks",
+        diagnostics: [taskLoadDiag],
+        layer_count: 0,
+        selected_task_ids: [],
+        matched_task_ids: [],
+        unmatched_selected_task_ids: [],
+        layers: [],
+      },
+      { status: 500 }
+    );
   }
 
   const allTasks = (tasksRaw ?? []) as (TaskRow & {
@@ -111,15 +156,14 @@ export async function GET(_req: Request, ctx: Ctx) {
   const tasks = allTasks.filter((t) => selectedTaskIds.includes(t.id));
 
   const diagnostics: string[] = [];
+  if (taskLoadDiag) diagnostics.push(taskLoadDiag);
   diagnostics.push(
     `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length} completed_in_plan=${allTasks.filter((t) => (t.status || "").toLowerCase() === "completed").length}`
   );
 
   let recordings: RecRow[] = [];
 
-  // Use service role for recordings after ownership check — user RLS often hides
-  // rows that produce (service) can see, which left Preview with beat-only.
-  const service = createServiceClient();
+  // service client already created above (tasks + recordings after ownership check)
 
   if (selectedTaskIds.length > 0) {
     const selects = [
