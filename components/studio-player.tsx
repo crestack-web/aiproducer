@@ -412,6 +412,8 @@ export function CompactAudioPlayer({
   const vocalStartedAtBeatMsRef = useRef<number | null>(null);
   /** True until beat.currentTime is confirmed near placementStartMs */
   const seekPendingRef = useRef(false);
+  /** Throttle RAF-driven re-seek so we don't loop mute/unmute */
+  const lastReseekAtRef = useRef(0);
   voiceOnlyRef.current = voiceOnly;
   beatVolumeRef.current = beatVolume;
   vocalVolumeRef.current = vocalVolume;
@@ -483,7 +485,12 @@ export function CompactAudioPlayer({
 
   /**
    * Non-blocking beat seek to placement. Must NOT await on the user-gesture path.
-   * A few async corrections only — not a continuous RAF seek loop.
+   *
+   * iOS/Safari often ignores currentTime set before/just-as play() starts for
+   * non-zero targets. We:
+   *  - mute the beat until the seek lands (so Verse does not play Intro audio)
+   *  - retry several times after play() without blocking the vocal gesture path
+   *  - never pause the vocal while correcting the beat
    */
   function scheduleBeatSeek(
     el: HTMLAudioElement,
@@ -492,29 +499,66 @@ export function CompactAudioPlayer({
   ): void {
     const target = Math.max(0, targetSec);
     let attempts = 0;
-    const maxAttempts = 4;
+    const maxAttempts = 10;
+    let finished = false;
+
+    // Hide wrong-timeline audio until seek confirms (Intro was fine because target≈0).
+    const muteUntilLanded = target > 0.5;
+    let priorVolume = el.volume;
+    if (muteUntilLanded) {
+      try {
+        priorVolume = el.volume;
+        el.muted = true;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const finish = (applied: number, ok: boolean) => {
+      if (finished) return;
+      finished = true;
+      seekPendingRef.current = !ok && Math.abs(applied - target) >= 1.0;
+      if (muteUntilLanded) {
+        try {
+          el.muted = false;
+          el.volume = priorVolume > 0 ? priorVolume : reviewBeatGain(beatVolumeRef.current);
+        } catch {
+          /* ignore */
+        }
+      }
+      onResult(applied, ok);
+    };
 
     const tryOnce = () => {
+      if (finished) return;
       attempts += 1;
       try {
-        el.currentTime = target;
+        // fastSeek when available (Safari); fall back to currentTime
+        const anyEl = el as HTMLAudioElement & { fastSeek?: (t: number) => void };
+        if (typeof anyEl.fastSeek === "function") {
+          try {
+            anyEl.fastSeek(target);
+          } catch {
+            el.currentTime = target;
+          }
+        } else {
+          el.currentTime = target;
+        }
       } catch {
         /* ignore */
       }
       const check = () => {
+        if (finished) return;
         const applied = el.currentTime;
         const ok = Math.abs(applied - target) < 0.85;
         if (ok) {
-          seekPendingRef.current = false;
-          onResult(applied, true);
+          finish(applied, true);
           return;
         }
         if (attempts < maxAttempts) {
-          window.setTimeout(tryOnce, 120);
+          window.setTimeout(tryOnce, attempts < 3 ? 80 : 180);
         } else {
-          // Last attempt still not exact — clear pending so UI can use best effort
-          seekPendingRef.current = Math.abs(applied - target) >= 1.5;
-          onResult(applied, !seekPendingRef.current);
+          finish(applied, Math.abs(applied - target) < 1.5);
         }
       };
       const onSeeked = () => {
@@ -525,7 +569,7 @@ export function CompactAudioPlayer({
       window.setTimeout(() => {
         el.removeEventListener("seeked", onSeeked);
         check();
-      }, 200);
+      }, 220);
     };
 
     seekPendingRef.current = true;
@@ -1013,6 +1057,7 @@ export function CompactAudioPlayer({
 
         const beatMs = b.currentTime * 1000;
         const seekPending = seekPendingRef.current;
+        const beatOffBy = Math.abs(b.currentTime - placeSecNow);
 
         // Keep vocal alive — never pause because beat seek is late
         if (vocalEngagedRef.current || startAtPlacement) {
@@ -1026,16 +1071,33 @@ export function CompactAudioPlayer({
           // (may fail outside gesture; better than forcing pause)
         }
 
+        // If beat drifted far from placement (common on iOS for non-zero sections),
+        // re-seek without pausing the vocal. At most once per 1.5s.
+        if (
+          !seekPending &&
+          placeSecNow > 0.5 &&
+          beatOffBy > 2.5 &&
+          !b.paused &&
+          playingRef.current &&
+          Date.now() - lastReseekAtRef.current > 1500
+        ) {
+          lastReseekAtRef.current = Date.now();
+          seekPendingRef.current = true;
+          scheduleBeatSeek(b, placeSecNow, () => {
+            /* result applied; next RAF uses updated currentTime */
+          });
+        }
+
         // Progress: while seek pending, use vocal clock so UI moves; after seek, use beat master
         try {
           const dur =
             v.duration && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null;
-          if (seekPending || Math.abs(b.currentTime - placeSecNow) > 2.5) {
+          if (seekPending || beatOffBy > 2.5) {
             // Beat not at placement yet — show take progress from vocal if playing
             if (dur && !v.paused) {
               setProgress(Math.min(1, v.currentTime / dur));
             } else if (!b.paused) {
-              // Indeterminate motion so UI is not frozen while beat is audible from 0
+              // Indeterminate motion so UI is not frozen while beat is correcting
               setProgress(Math.min(0.95, (b.currentTime % 8) / 8));
             }
           } else if (dur) {

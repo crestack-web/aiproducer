@@ -204,10 +204,26 @@ export function SongPreviewPlayer({
     }
 
     try {
+      // Full-song preview starts at 0. Section-scoped preview starts at the
+      // section's song-timeline position so later sections do not play from Intro.
+      const previewOriginMs = (() => {
+        if (sectionFilterStartMs != null && sectionFilterStartMs > 0) {
+          return Math.max(0, sectionFilterStartMs);
+        }
+        if (sectionFilterSectionId && layers.length) {
+          return Math.max(0, Math.min(...layers.map((l) => l.start_ms || 0)));
+        }
+        return 0;
+      })();
+
       if (beat) {
         await ensureReady(beat, "beat");
         beat.volume = PREVIEW_BEAT_VOLUME;
-        beat.currentTime = 0;
+        try {
+          beat.currentTime = previewOriginMs / 1000;
+        } catch {
+          beat.currentTime = 0;
+        }
       }
       const failedVocals: string[] = [];
       for (const layer of layers) {
@@ -242,6 +258,14 @@ export function SongPreviewPlayer({
             await routePlaybackToPreferredOutput(beat, playbackSinkId);
           }
           await beat.play();
+          // iOS may ignore pre-play seek for non-zero section origins — correct after play.
+          if (previewOriginMs > 80) {
+            try {
+              beat.currentTime = previewOriginMs / 1000;
+            } catch {
+              /* ignore */
+            }
+          }
         } catch (pe) {
           throw new Error(
             pe instanceof Error
@@ -252,9 +276,16 @@ export function SongPreviewPlayer({
       }
 
       for (const layer of layers) {
-        if ((layer.start_ms || 0) > 80) continue;
+        // Start vocals that belong at/near the preview origin (gesture-safe).
+        if ((layer.start_ms || 0) > previewOriginMs + 80) continue;
         const el = vocalRefs.current.get(layer.task_id);
         if (el) {
+          try {
+            const offsetSec = Math.max(0, (previewOriginMs - (layer.start_ms || 0)) / 1000);
+            if (offsetSec > 0.05) el.currentTime = offsetSec;
+          } catch {
+            /* ignore */
+          }
           void el.play().catch((e) => {
             console.warn("[song-preview] early vocal play failed", layer.task_id, e);
           });
@@ -273,7 +304,7 @@ export function SongPreviewPlayer({
 
       setPlaying(true);
       const wallStart = performance.now();
-      const clockOriginMs = beat ? beat.currentTime * 1000 : 0;
+      const clockOriginMs = beat ? beat.currentTime * 1000 : previewOriginMs;
 
       const tick = () => {
         let now: number;

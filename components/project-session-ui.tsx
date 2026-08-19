@@ -319,19 +319,23 @@ export default function ProjectDetailPage() {
     try {
       const res = await fetch(`/api/projects/${id}/session-preview`);
       const j = await res.json().catch(() => ({}));
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.warn("[session-preview] request failed", res.status, j?.error || j);
+        return;
+      }
       setPreviewBeatUrl(j.beat_url || beatUrl || null);
       setPreviewBeatDurationMs(
         typeof j.beat_duration_ms === "number" ? j.beat_duration_ms : null
       );
       const layers = Array.isArray(j.layers) ? j.layers : [];
       setPreviewLayers(layers);
-      // Diagnostics behind studio_debug_audio
+      // Always log empty-preview cases so device tests can diagnose membership gaps.
       try {
-        if (
+        const empty = layers.length === 0;
+        const debug =
           typeof window !== "undefined" &&
-          localStorage.getItem("studio_debug_audio") === "1"
-        ) {
+          localStorage.getItem("studio_debug_audio") === "1";
+        if (empty || debug) {
           console.info("[session-preview diagnostics]", {
             vocalLayerCount: j.vocal_layer_count ?? layers.length,
             selectedTaskIds: j.selected_task_ids,
@@ -344,8 +348,8 @@ export default function ProjectDetailPage() {
       } catch {
         /* ignore */
       }
-    } catch {
-      /* non-fatal */
+    } catch (e) {
+      console.warn("[session-preview] load error", e);
     } finally {
       setPreviewLoading(false);
     }
@@ -2192,7 +2196,9 @@ export default function ProjectDetailPage() {
                     disabled={uploading}
                     onClick={() => {
                       if (savedRecordingId) keepAndContinue();
+                      setSectionPreviewOnly(false);
                       setScreen("assemble");
+                      void loadSongPreview();
                     }}
                   >
                     I'm done — preview song

@@ -4,7 +4,6 @@ import { createSignedDownloadUrl } from "@/lib/storage";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 import {
   activePlanTaskIds,
-  matchRecordingsToActivePlan,
   oneTakePerTask,
   type PlanTaskFlags,
 } from "@/lib/audio/active-plan-membership";
@@ -91,13 +90,28 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not load tasks" }, { status: 500 });
   }
 
-  const allTasks = (tasksRaw ?? []) as TaskRow[];
-  const selectedTaskIds = [...activePlanTaskIds(allTasks)];
+  const allTasks = (tasksRaw ?? []) as (TaskRow & {
+    status?: string | null;
+    section_id?: string | null;
+  })[];
+
+  // Active plan is authoritative. Also keep completed plan tasks that still
+  // belong to the artist plan (same rule as coreDone / progress UI) so Preview
+  // Recorded cannot go empty while the progress indicator shows N/M recorded.
+  const activeIds = activePlanTaskIds(allTasks);
+  for (const t of allTasks) {
+    const status = (t.status || "").toLowerCase();
+    if (status !== "completed") continue;
+    if (t.active === false) continue;
+    if (t.selected_in_plan === false) continue;
+    activeIds.add(t.id);
+  }
+  const selectedTaskIds = [...activeIds];
   const tasks = allTasks.filter((t) => selectedTaskIds.includes(t.id));
 
   const diagnostics: string[] = [];
   diagnostics.push(
-    `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length}`
+    `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length} completed_in_plan=${allTasks.filter((t) => (t.status || "").toLowerCase() === "completed").length}`
   );
 
   let recordings: RecRow[] = [];
@@ -154,16 +168,13 @@ export async function GET(_req: Request, ctx: Ctx) {
     diagnostics.push("No active/selected plan tasks");
   }
 
-  const matched = matchRecordingsToActivePlan(
-    allTasks as PlanTaskFlags[],
-    recordings.map((r) => ({
-      id: r.id,
-      task_id: r.task_id,
-      is_selected: r.is_selected,
-    }))
+  // Match against the expanded selectedTaskIds set (active plan + completed plan tasks),
+  // not a second recomputation of activePlanTaskIds that could drop completed rows.
+  const selectedIdSet = new Set(selectedTaskIds);
+  const planRecordings = recordings.filter(
+    (r) => Boolean(r.task_id) && selectedIdSet.has(r.task_id as string)
   );
-  const matchedIds = new Set(matched.map((m) => m.id));
-  const planRecordings = recordings.filter((r) => matchedIds.has(r.id));
+  diagnostics.push(`plan_recordings_matched=${planRecordings.length}`);
   const onePerTask = oneTakePerTask(
     planRecordings.map((r) => ({
       ...r,
@@ -177,11 +188,35 @@ export async function GET(_req: Request, ctx: Ctx) {
     if (r.task_id) byTask.set(r.task_id, r);
   }
 
+  // Recovery: if active-plan matching produced zero takes but the project has
+  // recordings linked to known tasks, index those so completed sections appear.
+  if (byTask.size === 0 && recordings.length > 0) {
+    const knownTaskIds = new Set(allTasks.map((t) => t.id));
+    const recovered = oneTakePerTask(
+      recordings
+        .filter((r) => r.task_id && knownTaskIds.has(r.task_id))
+        .map((r) => ({ ...r, task_id: r.task_id, is_selected: r.is_selected }))
+    ) as RecRow[];
+    for (const r of recovered) {
+      if (r.task_id) byTask.set(r.task_id, r);
+    }
+    diagnostics.push(`recovery_by_task_id=${byTask.size}`);
+  }
+
   const matchedTaskIds: string[] = [];
   const unmatchedSelectedTaskIds: string[] = [];
   const layers: Array<Record<string, unknown>> = [];
 
-  for (const task of tasks) {
+  // Prefer selected plan tasks; if still no matches, walk completed tasks with recordings.
+  const tasksToRender =
+    tasks.length > 0
+      ? tasks
+      : allTasks.filter((t) => {
+          const st = (t.status || "").toLowerCase();
+          return st === "completed" && t.selected_in_plan !== false && t.active !== false;
+        });
+
+  for (const task of tasksToRender) {
     const rec = byTask.get(task.id);
     if (!rec) {
       unmatchedSelectedTaskIds.push(task.id);
