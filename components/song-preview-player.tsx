@@ -310,24 +310,6 @@ export function SongPreviewPlayer({
       }
 
       setPlaying(true);
-      try {
-        if (typeof window !== "undefined" && localStorage.getItem("studio_debug_audio") === "1") {
-          console.info("[song-preview play]", {
-            layerCount: layers.length,
-            previewOriginMs,
-            beatCurrent: beat?.currentTime ?? null,
-            layers: layers.map((l) => ({
-              task_id: l.task_id,
-              section_id: l.section_id,
-              start_ms: l.start_ms,
-              audio_url: (l.audio_url || "").slice(0, 80),
-              hasEl: vocalRefs.current.has(l.task_id),
-            })),
-          });
-        }
-      } catch {
-        /* ignore */
-      }
       const wallStart = performance.now();
       const clockOriginMs = beat ? beat.currentTime * 1000 : previewOriginMs;
 

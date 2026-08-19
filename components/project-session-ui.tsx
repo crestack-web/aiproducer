@@ -221,17 +221,6 @@ export default function ProjectDetailPage() {
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  /** Temporary: full session-preview payload for old-song regression diagnosis. */
-  const [previewDiag, setPreviewDiag] = useState<{
-    httpStatus: number | null;
-    layer_count: number;
-    selected_task_ids: string[];
-    matched_task_ids: string[];
-    unmatched_selected_task_ids: string[];
-    diagnostics: string[];
-    layers: { task_id?: string; recording_id?: string; section_id?: string | null; start_ms?: number; audio_url?: string; type?: string; title?: string | null }[];
-    error?: string | null;
-  } | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -332,47 +321,6 @@ export default function ProjectDetailPage() {
     try {
       const res = await fetch(`/api/projects/${id}/session-preview`);
       const j = await res.json().catch(() => ({}));
-      const layers = Array.isArray(j.layers) ? j.layers : [];
-      const diagPayload = {
-        httpStatus: res.status,
-        layer_count: typeof j.layer_count === "number" ? j.layer_count : layers.length,
-        selected_task_ids: Array.isArray(j.selected_task_ids) ? j.selected_task_ids : [],
-        matched_task_ids: Array.isArray(j.matched_task_ids) ? j.matched_task_ids : [],
-        unmatched_selected_task_ids: Array.isArray(j.unmatched_selected_task_ids)
-          ? j.unmatched_selected_task_ids
-          : [],
-        diagnostics: Array.isArray(j.diagnostics) ? j.diagnostics : [],
-        layers: layers.map(
-          (l: {
-            task_id?: string;
-            recording_id?: string;
-            section_id?: string | null;
-            start_ms?: number;
-            audio_url?: string;
-            type?: string;
-            title?: string | null;
-          }) => ({
-            task_id: l.task_id,
-            recording_id: l.recording_id,
-            section_id: l.section_id ?? null,
-            start_ms: l.start_ms,
-            type: l.type,
-            title: l.title,
-            audio_url: l.audio_url ? String(l.audio_url).slice(0, 96) : undefined,
-          })
-        ),
-        error: res.ok ? null : String(j?.error || res.status),
-      };
-      setPreviewDiag(diagPayload);
-      // Always log full diagnostic object for copy from Safari Web Inspector
-      try {
-        console.info("[session-preview FULL DIAG]", diagPayload);
-        if (typeof sessionStorage !== "undefined") {
-          sessionStorage.setItem("studio_session_preview_diag", JSON.stringify(diagPayload));
-        }
-      } catch {
-        /* ignore */
-      }
       if (!res.ok) {
         console.warn("[session-preview] request failed", res.status, j?.error || j);
         return;
@@ -381,19 +329,10 @@ export default function ProjectDetailPage() {
       setPreviewBeatDurationMs(
         typeof j.beat_duration_ms === "number" ? j.beat_duration_ms : null
       );
+      const layers = Array.isArray(j.layers) ? j.layers : [];
       setPreviewLayers(layers);
     } catch (e) {
       console.warn("[session-preview] load error", e);
-      setPreviewDiag({
-        httpStatus: null,
-        layer_count: 0,
-        selected_task_ids: [],
-        matched_task_ids: [],
-        unmatched_selected_task_ids: [],
-        diagnostics: [e instanceof Error ? e.message : "load error"],
-        layers: [],
-        error: e instanceof Error ? e.message : "load error",
-      });
     } finally {
       setPreviewLoading(false);
     }
@@ -2195,10 +2134,6 @@ export default function ProjectDetailPage() {
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.18}
                       playbackSinkId="__speaker__"
-                      debugSectionLabel={sectionLabel(current)}
-                      debugTaskId={current.id}
-                      debugSectionStartMs={current.start_ms ?? 0}
-                      debugRecordingOffsetMs={lastRecordingOffsetMs}
                     />
                     <button
                       type="button"
@@ -2461,101 +2396,6 @@ export default function ProjectDetailPage() {
                 >
                   Refresh preview (all recorded)
                 </button>
-
-                {/* TEMPORARY: old-song session-preview diagnosis — remove after root cause known */}
-                {previewDiag && (
-                  <div
-                    style={{
-                      marginTop: 16,
-                      padding: 12,
-                      borderRadius: 12,
-                      border: `1px solid ${C.border}`,
-                      background: C.inputFill || C.surface,
-                      fontSize: 11,
-                      color: C.textMuted,
-                      textAlign: "left",
-                      maxWidth: 520,
-                      marginLeft: "auto",
-                      marginRight: "auto",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, color: C.brass, marginBottom: 8, fontSize: 12 }}>
-                      Preview diagnostics (temporary)
-                    </div>
-                    <div>http: {String(previewDiag.httpStatus)} · layer_count: {previewDiag.layer_count}</div>
-                    <div>selected_task_ids: {previewDiag.selected_task_ids.length}</div>
-                    <div>matched_task_ids: {previewDiag.matched_task_ids.length}</div>
-                    <div>
-                      unmatched_selected_task_ids: {previewDiag.unmatched_selected_task_ids.length}
-                    </div>
-                    {previewDiag.error && (
-                      <div style={{ color: C.danger, marginTop: 4 }}>error: {previewDiag.error}</div>
-                    )}
-                    <div style={{ marginTop: 8, fontWeight: 600 }}>diagnostics:</div>
-                    <pre
-                      style={{
-                        margin: "4px 0 0",
-                        whiteSpace: "pre-wrap",
-                        fontSize: 10,
-                        maxHeight: 120,
-                        overflow: "auto",
-                      }}
-                    >
-                      {(previewDiag.diagnostics || []).join("\n") || "(none)"}
-                    </pre>
-                    <div style={{ marginTop: 8, fontWeight: 600 }}>
-                      layers ({previewDiag.layers.length}):
-                    </div>
-                    <pre
-                      style={{
-                        margin: "4px 0 0",
-                        whiteSpace: "pre-wrap",
-                        fontSize: 10,
-                        maxHeight: 140,
-                        overflow: "auto",
-                      }}
-                    >
-                      {previewDiag.layers.length
-                        ? previewDiag.layers
-                            .map(
-                              (l, i) =>
-                                `${i + 1}. task=${l.task_id?.slice(0, 8)}… rec=${l.recording_id?.slice(0, 8) || "?"} type=${l.type || "?"} sec=${l.section_id?.slice(0, 8) || "null"} start_ms=${l.start_ms ?? "?"} url=${l.audio_url ? "yes" : "NO"}`
-                            )
-                            .join("\n")
-                        : "(empty)"}
-                    </pre>
-                    <div style={{ marginTop: 8, fontWeight: 600 }}>unmatched task ids:</div>
-                    <pre
-                      style={{
-                        margin: "4px 0 0",
-                        whiteSpace: "pre-wrap",
-                        fontSize: 10,
-                        maxHeight: 80,
-                        overflow: "auto",
-                      }}
-                    >
-                      {(previewDiag.unmatched_selected_task_ids || []).join("\n") || "(none)"}
-                    </pre>
-                    <button
-                      type="button"
-                      style={{ ...btn2, marginTop: 10, fontSize: 12, padding: "6px 10px" }}
-                      onClick={() => {
-                        try {
-                          void navigator.clipboard.writeText(JSON.stringify(previewDiag, null, 2));
-                        } catch {
-                          /* ignore */
-                        }
-                      }}
-                    >
-                      Copy full diagnostic JSON
-                    </button>
-                    <p style={{ margin: "8px 0 0", fontSize: 10, opacity: 0.8 }}>
-                      Also in console as [session-preview FULL DIAG] and sessionStorage
-                      studio_session_preview_diag
-                    </p>
-                  </div>
-                )}
 
                 <ProjectSamplesPanel projectId={id} />
                 <button
