@@ -2132,7 +2132,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.18}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.03}
                       playbackSinkId="__speaker__"
                     />
                     <button

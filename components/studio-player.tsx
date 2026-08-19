@@ -367,7 +367,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.10,
+  beatVolume = 0.03,
   vocalVolume = 1,
   /** Review/preview output preference — not the recording-monitor route. */
   playbackSinkId,
@@ -419,9 +419,9 @@ export function CompactAudioPlayer({
   vocalVolumeRef.current = vocalVolume;
   playingRef.current = playing;
   placementRef.current = placementStartMs;
-  /** Review mix: vocal at 1.0; reference beat ≈0.10 so vocal is clearly dominant. */
-  /** Reference beat under the vocal — audible context, never dominant. */
-  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.06);
+  /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
+   * Generated beats are hot vs phone takes — keep linear gain very low. */
+  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.022);
 
   // Review playback uses normal device output preference (not recording handset monitor).
   useEffect(() => {

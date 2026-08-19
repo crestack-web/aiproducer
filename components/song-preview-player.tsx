@@ -73,8 +73,9 @@ export function SongPreviewPlayer({
   const startedRef = useRef(false);
   const bars = useMemo(() => makeWave(seed, 56), [seed]);
   /** Quiet reference bed under vocals (native element volume only).
-   * Generated beats are often much hotter than phone mic takes — keep this low. */
-  const PREVIEW_BEAT_VOLUME = 0.012;
+   * Generated beats are often much hotter than phone mic takes — keep this low
+   * so the artist hears their voice clearly (not a final mix). */
+  const PREVIEW_BEAT_VOLUME = 0.006;
   const layers = useMemo(() => {
     const hasSectionId = Boolean(sectionFilterSectionId);
     const hasMs =
