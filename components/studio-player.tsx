@@ -934,32 +934,28 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // One soft alignment in the first ~1.2s of playback if start lag is clear.
-        // Does not rewrite the vocal — only nudges the beat to match take time.
-        if (
-          !syncNudgedRef.current &&
-          !v.paused &&
-          !b.paused &&
-          v.currentTime > 0.08 &&
-          v.currentTime < 1.25
-        ) {
+        // Soft lock: keep beat on placement + vocal playhead.
+        // Telemetry showed a stable ~120–170ms start lag that free-running clocks
+        // never recovered from after a single early nudge window.
+        if (!v.paused && !b.paused && v.currentTime > 0.05) {
           const expectedBeatSec = placeSecNow + v.currentTime;
           const lag = b.currentTime - expectedBeatSec; // >0 → beat ahead of vocal
-          if (Math.abs(lag) > 0.08 && Math.abs(lag) < 0.45) {
+          // Correct medium start lag and ongoing drift; avoid tiny seeks (audible glitches)
+          if (Math.abs(lag) > 0.07 && Math.abs(lag) < 0.6) {
             try {
               b.currentTime = Math.max(0, expectedBeatSec);
-              syncNudgedRef.current = true;
-              writeReviewDiagnostics({
-                event: "sync_nudge",
-                lagMs: Math.round(lag * 1000),
-                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
-                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
-              });
+              if (!syncNudgedRef.current) {
+                syncNudgedRef.current = true;
+                writeReviewDiagnostics({
+                  event: "sync_nudge",
+                  lagMs: Math.round(lag * 1000),
+                  vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
+                  beatCurrentTimeMs: Math.round(b.currentTime * 1000),
+                });
+              }
             } catch {
               /* ignore */
             }
-          } else if (v.currentTime > 0.6) {
-            syncNudgedRef.current = true; // lock out further nudges
           }
         }
 

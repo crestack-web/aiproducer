@@ -1038,11 +1038,6 @@ export default function ProjectDetailPage() {
 
     chunksRef.current = [];
     autoStoppedRef.current = false;
-    // Mark actual MediaRecorder start on the session timeline (musical offset)
-    if (sessionTimelineRef.current) {
-      sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
-      setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
-    }
     // Vocal-only MediaRecorder — stream must be mic path, never beat mix
     const { recorder: rec, mimeType: mime } = createVocalRecorder(stream);
     mimeRef.current = mime;
@@ -1294,6 +1289,12 @@ export default function ProjectDetailPage() {
       }, limitMs);
     }
 
+    // Mark recorder start at the true capture instant (after beat seek / setup).
+    // Measuring earlier under-counted offset and made Review vocals sound late.
+    if (sessionTimelineRef.current) {
+      sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
+      setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
+    }
     rec.start(250);
     setPhase("recording");
     // Phone speaker only: VAD duck on monitor — MediaRecorder graph unchanged
