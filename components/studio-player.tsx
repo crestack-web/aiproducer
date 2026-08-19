@@ -33,6 +33,22 @@ function seededRandom(seed: string) {
   };
 }
 
+
+function mediaErrorLabel(code: number | undefined | null): string {
+  switch (code) {
+    case 1:
+      return "MEDIA_ERR_ABORTED";
+    case 2:
+      return "MEDIA_ERR_NETWORK";
+    case 3:
+      return "MEDIA_ERR_DECODE";
+    case 4:
+      return "MEDIA_ERR_SRC_NOT_SUPPORTED";
+    default:
+      return code != null ? `MEDIA_ERR_${code}` : "unknown";
+  }
+}
+
 export function makeWave(seed: string, n = 48) {
   const rnd = seededRandom(seed || "studio");
   const out: number[] = [];
