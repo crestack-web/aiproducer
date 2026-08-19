@@ -283,20 +283,44 @@ export function SongPreviewPlayer({
         }
       }
 
+      // iOS: unlock EVERY vocal under this user gesture, then schedule by timeline.
+      // Calling play() only later in RAF is blocked → later sections never audible / wrong time.
       for (const layer of layers) {
-        // Start vocals that belong at/near the preview origin (gesture-safe).
-        if ((layer.start_ms || 0) > previewOriginMs + 80) continue;
         const el = vocalRefs.current.get(layer.task_id);
-        if (el) {
-          try {
-            const offsetSec = Math.max(0, (previewOriginMs - (layer.start_ms || 0)) / 1000);
-            if (offsetSec > 0.05) el.currentTime = offsetSec;
-          } catch {
-            /* ignore */
+        if (!el) continue;
+        try {
+          el.muted = true;
+          el.volume = 0;
+          const start = layer.start_ms || 0;
+          if (start <= previewOriginMs + 80) {
+            const offsetSec = Math.max(0, (previewOriginMs - start) / 1000);
+            el.currentTime = offsetSec;
+            el.muted = false;
+            el.volume = defaultLinearGainForTaskType(layer.type);
+            void el.play().catch((e) => {
+              console.warn("[song-preview] early vocal play failed", layer.task_id, e);
+            });
+          } else {
+            el.currentTime = 0;
+            // Prime the element under the gesture so later RAF play() is allowed.
+            void el
+              .play()
+              .then(() => {
+                try {
+                  el.pause();
+                  el.currentTime = 0;
+                  el.muted = true;
+                  el.volume = 0;
+                } catch {
+                  /* ignore */
+                }
+              })
+              .catch((e) => {
+                console.warn("[song-preview] vocal unlock failed", layer.task_id, e);
+              });
           }
-          void el.play().catch((e) => {
-            console.warn("[song-preview] early vocal play failed", layer.task_id, e);
-          });
+        } catch {
+          /* ignore */
         }
       }
       if (failedVocals.length) {

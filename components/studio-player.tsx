@@ -421,7 +421,7 @@ export function CompactAudioPlayer({
   placementRef.current = placementStartMs;
   /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
    * Generated beats are hot vs phone takes — keep linear gain very low. */
-  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.022);
+  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.035);
 
   // Review playback uses normal device output preference (not recording handset monitor).
   useEffect(() => {
@@ -495,19 +495,21 @@ export function CompactAudioPlayer({
   function scheduleBeatSeek(
     el: HTMLAudioElement,
     targetSec: number,
-    onResult: (appliedSec: number, ok: boolean) => void
+    onResult: (appliedSec: number, ok: boolean) => void,
+    opts?: { muteUntilLanded?: boolean }
   ): void {
     const target = Math.max(0, targetSec);
     let attempts = 0;
     const maxAttempts = 10;
     let finished = false;
 
-    // Hide wrong-timeline audio until seek confirms (Intro was fine because target≈0).
-    const muteUntilLanded = target > 0.5;
+    // Mute only on the *initial* placement seek — RAF re-seeks must not re-mute
+    // (that made Beat+Voice go silent after volume tweaks).
+    const muteUntilLanded = Boolean(opts?.muteUntilLanded) && target > 0.5;
     let priorVolume = el.volume;
     if (muteUntilLanded) {
       try {
-        priorVolume = el.volume;
+        priorVolume = el.volume > 0 ? el.volume : reviewBeatGain(beatVolumeRef.current);
         el.muted = true;
       } catch {
         /* ignore */
@@ -979,7 +981,7 @@ export function CompactAudioPlayer({
           beatPaused: beatRef.current?.paused ?? null,
           playing: playingRef.current,
         });
-      });
+      }, { muteUntilLanded: true });
     } else {
       seekPendingRef.current = false;
     }
@@ -1083,9 +1085,14 @@ export function CompactAudioPlayer({
         ) {
           lastReseekAtRef.current = Date.now();
           seekPendingRef.current = true;
-          scheduleBeatSeek(b, placeSecNow, () => {
-            /* result applied; next RAF uses updated currentTime */
-          });
+          scheduleBeatSeek(
+            b,
+            placeSecNow,
+            () => {
+              /* result applied; next RAF uses updated currentTime */
+            },
+            { muteUntilLanded: false }
+          );
         }
 
         // Progress: while seek pending, use vocal clock so UI moves; after seek, use beat master

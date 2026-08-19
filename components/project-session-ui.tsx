@@ -2076,49 +2076,6 @@ export default function ProjectDetailPage() {
                 <p style={{ textAlign: "center", color: C.textMuted }}>
                   {uploading ? "Saving & analyzing take…" : savedRecordingId ? "Saved ✓" : "Review"}
                 </p>
-                {rawCaptureMeta && (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      marginBottom: 12,
-                      padding: 12,
-                      borderRadius: 12,
-                      border: `1px dashed ${C.border}`,
-                      background: C.surface,
-                    }}
-                  >
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textMuted }}>
-                      DIAGNOSTIC · PLAY RAW TAKE
-                    </div>
-                    <p style={{ fontSize: 12.5, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
-                      Exact MediaRecorder Blob — no beat, no placement, no processing.
-                      {` · ${rawCaptureMeta.mimeType || "?"} · ${Math.round(rawCaptureMeta.sizeBytes / 1024)}KB`}
-                      {rawCaptureMeta.durationSec != null
-                        ? ` · ${rawCaptureMeta.durationSec.toFixed(1)}s`
-                        : ""}
-                      {` · ${rawCaptureStatus}`}
-                    </p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                      <button type="button" style={{ ...btn2, marginTop: 0 }} onClick={playRawTakeDiagnostic}>
-                        Play Raw Take
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn2, marginTop: 0 }}
-                        onClick={() => markRawCaptureByEar("RAW_CAPTURE_CLEAN")}
-                      >
-                        Sounds clean
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn2, marginTop: 0 }}
-                        onClick={() => markRawCaptureByEar("RAW_CAPTURE_DISTORTED")}
-                      >
-                        Sounds distorted
-                      </button>
-                    </div>
-                  </div>
-                )}
                 {localBlobUrl && (
                   <>
                     <CompactAudioPlayer
