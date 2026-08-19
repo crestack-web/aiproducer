@@ -72,8 +72,9 @@ export function SongPreviewPlayer({
   const rafRef = useRef<number | null>(null);
   const startedRef = useRef(false);
   const bars = useMemo(() => makeWave(seed, 56), [seed]);
-  /** Quiet reference bed under vocals (native element volume only). */
-  const PREVIEW_BEAT_VOLUME = 0.04;
+  /** Quiet reference bed under vocals (native element volume only).
+   * Generated beats are often much hotter than phone mic takes — keep this low. */
+  const PREVIEW_BEAT_VOLUME = 0.012;
   const layers = useMemo(() => {
     const hasSectionId = Boolean(sectionFilterSectionId);
     const hasMs =
@@ -258,6 +259,12 @@ export function SongPreviewPlayer({
             await routePlaybackToPreferredOutput(beat, playbackSinkId);
           }
           await beat.play();
+          try {
+            beat.muted = false;
+            beat.volume = PREVIEW_BEAT_VOLUME;
+          } catch {
+            /* ignore */
+          }
           // iOS may ignore pre-play seek for non-zero section origins — correct after play.
           if (previewOriginMs > 80) {
             try {
@@ -325,6 +332,17 @@ export function SongPreviewPlayer({
       const clockOriginMs = beat ? beat.currentTime * 1000 : previewOriginMs;
 
       const tick = () => {
+        // Keep beat bed quiet — some mobile paths reset volume after play/sink change
+        if (beat && !beat.paused) {
+          try {
+            if (beat.muted) beat.muted = false;
+            if (Math.abs(beat.volume - PREVIEW_BEAT_VOLUME) > 0.005) {
+              beat.volume = PREVIEW_BEAT_VOLUME;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         let now: number;
         if (beat && !beat.paused) {
           now = beat.currentTime * 1000;
