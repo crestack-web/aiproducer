@@ -528,8 +528,7 @@ export function CompactAudioPlayer({
     const ensureAudible = () => {
       try {
         el.muted = false;
-        const g = reviewBeatGain(beatVolumeRef.current);
-        if (el.volume < g * 0.5) el.volume = g;
+        el.volume = reviewBeatGain(beatVolumeRef.current);
       } catch {
         /* ignore */
       }
@@ -913,9 +912,11 @@ export function CompactAudioPlayer({
       // Beat + Voice — free-run after initial seek (no re-seek / no vocal snap loop)
       if (want && b) {
         try {
-          if (b.muted) b.muted = false;
+          // ALWAYS clamp beat to guide gain. Diagnostics showed beatVolume stuck at 1.0
+          // (only raising when too quiet left full-blast beat drowning the take).
           const g = reviewBeatGain(bv);
-          if (b.volume < g * 0.5) b.volume = g;
+          b.muted = false;
+          b.volume = g;
           if (v.muted) v.muted = false;
           if (v.volume !== 1) v.volume = 1;
         } catch {
