@@ -430,6 +430,27 @@ export function CompactAudioPlayer({
     void routePlaybackToPreferredOutput(beat, playbackSinkId);
   }, [playbackSinkId, src, beatSrc]);
 
+  // Take switch: reload vocal element when Review src changes (no duplicate elements).
+  useEffect(() => {
+    const vocal = vocalRef.current;
+    if (!vocal || !src) return;
+    try {
+      vocal.pause();
+      // Ensure the element picks up the new blob/signed URL immediately.
+      if (vocal.src !== src && !vocal.src.endsWith(src) && vocal.getAttribute("src") !== src) {
+        vocal.src = src;
+      }
+      vocal.load();
+      setPlaying(false);
+      setProgress(0);
+      setLoadError(null);
+      vocalEngagedRef.current = false;
+      alignedRef.current = false;
+    } catch {
+      /* ignore */
+    }
+  }, [src]);
+
   // Optional diagnostic: localStorage studio_review_nosync=1 disables continuous vocal seeks
   const noSyncCorrections = () => {
     try {

@@ -197,7 +197,13 @@ export default function ProjectDetailPage() {
   } | null>(null);
   const [reviewVoiceOnly, setReviewVoiceOnly] = useState(false);
   const [taskTakes, setTaskTakes] = useState<
-    { id: string; take_number?: number | null; is_selected?: boolean | null; duration_ms?: number | null }[]
+    {
+      id: string;
+      take_number?: number | null;
+      is_selected?: boolean | null;
+      duration_ms?: number | null;
+      audio_url?: string | null;
+    }[]
   >([]);
   const [sectionPreviewOnly, setSectionPreviewOnly] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -345,12 +351,34 @@ export default function ProjectDetailPage() {
     }
   }, [id, beatUrl]);
 
+  const applySelectedTakeToReview = useCallback(
+    (
+      list: {
+        id: string;
+        take_number?: number | null;
+        is_selected?: boolean | null;
+        duration_ms?: number | null;
+        audio_url?: string | null;
+      }[]
+    ) => {
+      if (!list.length) return;
+      const selected =
+        list.find((t) => t.is_selected) ||
+        list[list.length - 1];
+      if (selected?.audio_url) {
+        setLocalBlobUrl(selected.audio_url);
+        setSavedRecordingId(selected.id);
+      }
+    },
+    []
+  );
+
   const loadTaskTakes = useCallback(async (taskId: string) => {
     try {
       const res = await fetch(`/api/recording-tasks/${taskId}/recordings`);
       if (!res.ok) {
         setTaskTakes([]);
-        return;
+        return [];
       }
       const j = await res.json();
       const list = (j.recordings || []) as {
@@ -358,10 +386,14 @@ export default function ProjectDetailPage() {
         take_number?: number | null;
         is_selected?: boolean | null;
         duration_ms?: number | null;
+        audio_url?: string | null;
       }[];
-      setTaskTakes(Array.isArray(list) ? list : []);
+      const safe = Array.isArray(list) ? list : [];
+      setTaskTakes(safe);
+      return safe;
     } catch {
       setTaskTakes([]);
+      return [];
     }
   }, []);
 
@@ -371,20 +403,39 @@ export default function ProjectDetailPage() {
         await fetch(`/api/recording-tasks/${taskId}/recordings/${recordingId}/select`, {
           method: "POST",
         });
-        await loadTaskTakes(taskId);
+        const list = await loadTaskTakes(taskId);
+        // Optimistically mark selection client-side if API flags lag
+        const marked = list.map((t) => ({
+          ...t,
+          is_selected: t.id === recordingId,
+        }));
+        setTaskTakes(marked);
+        const chosen = marked.find((t) => t.id === recordingId) || marked.find((t) => t.is_selected);
+        if (chosen?.audio_url) {
+          setLocalBlobUrl(chosen.audio_url);
+          setSavedRecordingId(chosen.id);
+        } else {
+          applySelectedTakeToReview(marked);
+        }
         void loadSongPreview();
       } catch {
         /* non-fatal */
       }
     },
-    [loadTaskTakes, loadSongPreview]
+    [loadTaskTakes, loadSongPreview, applySelectedTakeToReview]
   );
 
   useEffect(() => {
     if (phase === "review" && current?.id) {
-      void loadTaskTakes(current.id);
+      void loadTaskTakes(current.id).then((list) => {
+        // Only replace Review source when we have a server take with URL
+        // (keep local blob for the just-recorded take until URLs are ready).
+        if (list.some((t) => t.audio_url)) {
+          applySelectedTakeToReview(list);
+        }
+      });
     }
-  }, [phase, current?.id, loadTaskTakes]);
+  }, [phase, current?.id, loadTaskTakes, applySelectedTakeToReview]);
 
 
   async function markRecordingStatus() {
@@ -2245,6 +2296,13 @@ export default function ProjectDetailPage() {
                         : `Recorded · ${coreDone(tasks).length}/${coreTasks(tasks).length} sections`
                     }
                     seed={project?.title || id}
+                    sectionFilterSectionId={
+                      sectionPreviewOnly
+                        ? current?.section_id ||
+                          current?.metadata?.section_id ||
+                          null
+                        : null
+                    }
                     sectionFilterStartMs={
                       sectionPreviewOnly && current?.start_ms != null ? current.start_ms : null
                     }
