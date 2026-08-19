@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/server";
 import { createSignedDownloadUrl } from "@/lib/storage";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 import {
@@ -116,6 +117,10 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   let recordings: RecRow[] = [];
 
+  // Use service role for recordings after ownership check — user RLS often hides
+  // rows that produce (service) can see, which left Preview with beat-only.
+  const service = createServiceClient();
+
   if (selectedTaskIds.length > 0) {
     const selects = [
       "id, task_id, project_id, audio_path, original_audio_path, duration_ms, take_number, is_selected, timeline_start_ms, timeline_end_ms, recording_offset_ms, metadata",
@@ -128,7 +133,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
     let loaded = false;
     for (const cols of selects) {
-      const { data: recs, error: rErr } = await supabase
+      const { data: recs, error: rErr } = await service
         .from("recordings")
         .select(cols)
         .eq("project_id", projectId)
@@ -144,20 +149,50 @@ export async function GET(_req: Request, ctx: Ctx) {
     }
 
     if (!loaded || recordings.length === 0) {
+      const idChunks: string[][] = [];
+      for (let i = 0; i < selectedTaskIds.length; i += 80) {
+        idChunks.push(selectedTaskIds.slice(i, i + 80));
+      }
       for (const cols of selects) {
-        const { data: recs, error: rErr } = await supabase
+        const collected: RecRow[] = [];
+        let anyOk = false;
+        for (const chunk of idChunks) {
+          const { data: recs, error: rErr } = await service
+            .from("recordings")
+            .select(cols)
+            .in("task_id", chunk)
+            .order("take_number", { ascending: false });
+          if (rErr) {
+            diagnostics.push(`recordings by task_id failed: ${rErr.message}`);
+            continue;
+          }
+          anyOk = true;
+          collected.push(...(((recs as unknown) as RecRow[]) ?? []));
+        }
+        if (anyOk) {
+          recordings = collected;
+          loaded = true;
+          diagnostics.push(`recordings_by_task_id=${recordings.length}`);
+          break;
+        }
+      }
+    }
+
+    if ((!loaded || recordings.length === 0) && allTasks.length > 0) {
+      const allIds = allTasks.map((t) => t.id);
+      for (const cols of selects) {
+        const { data: recs, error: rErr } = await service
           .from("recordings")
           .select(cols)
-          .in("task_id", selectedTaskIds)
+          .in("task_id", allIds.slice(0, 100))
           .order("take_number", { ascending: false });
-        if (rErr) {
-          diagnostics.push(`recordings by task_id failed: ${rErr.message}`);
-          continue;
+        if (!rErr && recs) {
+          recordings = (recs as unknown as RecRow[]) ?? [];
+          loaded = true;
+          diagnostics.push(`recordings_by_all_task_ids=${recordings.length}`);
+          break;
         }
-        recordings = ((recs as unknown) as RecRow[]) ?? [];
-        loaded = true;
-        diagnostics.push(`recordings_by_task_id=${recordings.length}`);
-        break;
+        if (rErr) diagnostics.push(`recordings all-task fallback: ${rErr.message}`);
       }
     }
 
@@ -188,19 +223,25 @@ export async function GET(_req: Request, ctx: Ctx) {
     if (r.task_id) byTask.set(r.task_id, r);
   }
 
-  // Recovery: if active-plan matching produced zero takes but the project has
-  // recordings linked to known tasks, index those so completed sections appear.
-  if (byTask.size === 0 && recordings.length > 0) {
+  // Recovery: fill any missing task → recording links from the full project set
+  // so completed Leads always appear even when active-plan filters under-match.
+  if (recordings.length > 0) {
     const knownTaskIds = new Set(allTasks.map((t) => t.id));
     const recovered = oneTakePerTask(
       recordings
         .filter((r) => r.task_id && knownTaskIds.has(r.task_id))
         .map((r) => ({ ...r, task_id: r.task_id, is_selected: r.is_selected }))
     ) as RecRow[];
+    let filled = 0;
     for (const r of recovered) {
-      if (r.task_id) byTask.set(r.task_id, r);
+      if (r.task_id && !byTask.has(r.task_id)) {
+        byTask.set(r.task_id, r);
+        filled += 1;
+      }
     }
-    diagnostics.push(`recovery_by_task_id=${byTask.size}`);
+    if (filled > 0 || byTask.size === 0) {
+      diagnostics.push(`recovery_by_task_id=${byTask.size} filled=${filled}`);
+    }
   }
 
   const matchedTaskIds: string[] = [];
@@ -295,7 +336,9 @@ export async function GET(_req: Request, ctx: Ctx) {
       recording_id: rec.id,
       type: task.type,
       title: task.title,
-      section_id: (task as { section_id?: string | null }).section_id ?? null,
+      section_id:
+        (task as { section_id?: string | null }).section_id ??
+        ((task.metadata as { section_id?: string } | null | undefined)?.section_id ?? null),
       section_label: taskMeta.section_label ?? task.metadata?.section_label ?? null,
       start_ms,
       end_ms,

@@ -85,6 +85,11 @@ export function coreTasks(tasks: SessionTask[]): SessionTask[] {
   return tasks.filter(isCoreTask);
 }
 
+/** Authoritative core (Lead) tasks for progress, cards, and preview membership. */
+export function getCorePlanTasks(tasks: SessionTask[]): SessionTask[] {
+  return coreTasks(tasks);
+}
+
 export function coreOpen(tasks: SessionTask[]): SessionTask[] {
   return tasks.filter((t) => isCoreTask(t) && isTaskOpen(t));
 }
@@ -241,11 +246,18 @@ export function SessionSteps({
   }
 
   if (!tasks.length) return null;
-  const requiredTasks = tasks.filter((t) => t.required);
-  const requiredDoneCount = requiredTasks.filter(isTaskDone).length;
-  const reqLeft = requiredOpen(tasks);
+  // Authoritative progress for whatever task list the parent passed.
+  // When parent passes coreTasks(tasks), do NOT re-filter by t.required
+  // (leads may be core by type while required flag is null/false → was showing 0/0).
+  const progressTasks = tasks;
+  const progressDoneCount = progressTasks.filter(isTaskDone).length;
+  const progressOpenCount = progressTasks.filter(isTaskOpen).length;
+  const totalDone = progressDoneCount;
+  // Legacy labels: "required" here means "core slots in this list", not DB required flag.
+  const requiredTasks = progressTasks;
+  const requiredDoneCount = progressDoneCount;
+  const reqLeft = progressTasks.filter(isTaskOpen);
   const optLeft = optionalOpen(tasks);
-  const totalDone = tasks.filter(isTaskDone).length;
 
   const trackBg = isLight ? "rgba(55,40,22,0.10)" : "rgba(255,255,255,0.06)";
   const edgeFade = isLight ? "rgba(250,246,240,0.98)" : "rgba(11,10,15,0.92)";
@@ -268,11 +280,11 @@ export function SessionSteps({
           <span style={{ color: C.brass, fontWeight: 700 }}>
             {requiredDoneCount}/{requiredTasks.length || 0}
           </span>{" "}
-          required done
+          core done
           {reqLeft.length > 0 ? (
             <span style={{ color: C.textFaint }}> · {reqLeft.length} left</span>
           ) : (
-            <span style={{ color: C.signal, fontWeight: 600 }}> · required complete</span>
+            <span style={{ color: C.signal, fontWeight: 600 }}> · core complete</span>
           )}
         </div>
         <div style={{ fontSize: 11, color: C.textMuted, letterSpacing: 0.3, fontWeight: 500 }}>

@@ -228,6 +228,8 @@ export default function ProjectDetailPage() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
+  /** Existing section vocals played only during layer recording (not into MediaRecorder). */
+  const layerMonitorAudiosRef = useRef<HTMLAudioElement[]>([]);
   const startedAtRef = useRef(0);
   /** Canonical musical placement for the active take (session timeline). */
   const sessionTimelineRef = useRef<SessionTimeline | null>(null);
@@ -1058,6 +1060,7 @@ export default function ProjectDetailPage() {
       streamRef.current = null;
       setMicStream(null);
       beatAudioRef.current?.pause();
+      stopLayerMonitors();
       const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
       const wallClockMs = Date.now() - startedAtRef.current;
       setLocalBlobUrl(URL.createObjectURL(blob));
@@ -1264,6 +1267,8 @@ export default function ProjectDetailPage() {
         mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
       beatAudioRef.current.play().catch(() => undefined);
     }
+    // Production layers: hear existing Lead (+ other selected layers) for this section.
+    void startLayerMonitors(task);
     setRecordSeconds(0);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
@@ -1272,6 +1277,7 @@ export default function ProjectDetailPage() {
         autoStoppedRef.current = true;
         clearRecordTimers();
         beatAudioRef.current?.pause();
+        stopLayerMonitors();
         if (mediaRecorderRef.current?.state === "recording") {
           mediaRecorderRef.current.stop();
         }
@@ -1284,6 +1290,7 @@ export default function ProjectDetailPage() {
         autoStoppedRef.current = true;
         clearRecordTimers();
         beatAudioRef.current?.pause();
+        stopLayerMonitors();
         if (mediaRecorderRef.current?.state === "recording") {
           mediaRecorderRef.current.stop();
         }
@@ -1296,7 +1303,85 @@ export default function ProjectDetailPage() {
     startSpeakerDuckIfNeeded(stream);
   }
 
-  async function startRecording() {
+  function stopLayerMonitors() {
+    for (const el of layerMonitorAudiosRef.current) {
+      try {
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
+      } catch {
+        /* ignore */
+      }
+    }
+    layerMonitorAudiosRef.current = [];
+  }
+
+  /**
+   * Recording monitor for production layers: play beat (already handled) +
+   * existing selected vocals in the same section so the artist can sing against Lead.
+   * New mic take is never mixed into these elements.
+   */
+  async function startLayerMonitors(task: Task) {
+    stopLayerMonitors();
+    if (!isProductionLayer(task)) return;
+    const sectionStart = task.start_ms ?? 0;
+
+    let layers = previewLayers;
+    if (!layers.length) {
+      try {
+        const res = await fetch(`/api/projects/${id}/session-preview`);
+        if (res.ok) {
+          const j = await res.json();
+          layers = Array.isArray(j.layers) ? j.layers : [];
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    const sameSection = layers.filter((l) => {
+      if (l.task_id === task.id) return false;
+      if (!l.audio_url) return false;
+      if (task.section_id && l.section_id) return l.section_id === task.section_id;
+      const s = l.start_ms || 0;
+      return Math.abs(s - sectionStart) < 8000 || (task.end_ms != null && s >= sectionStart - 100 && s < task.end_ms);
+    });
+
+    sameSection.sort((a, b) => {
+      const ra = (a.type || "").toLowerCase().includes("lead") ? 0 : 1;
+      const rb = (b.type || "").toLowerCase().includes("lead") ? 0 : 1;
+      return ra - rb;
+    });
+
+    const sink = selectedSpeakerIdRef.current || undefined;
+    for (const layer of sameSection.slice(0, 4)) {
+      try {
+        const el = new Audio();
+        el.preload = "auto";
+        el.crossOrigin = "anonymous";
+        el.src = layer.audio_url;
+        const isLead = (layer.type || "").toLowerCase().includes("lead");
+        el.volume = isLead ? 0.85 : 0.45;
+        el.currentTime = 0;
+        const place = layer.start_ms || sectionStart;
+        const fileOffsetSec = Math.max(0, (sectionStart - place) / 1000);
+        if (fileOffsetSec > 0.05) {
+          try {
+            el.currentTime = fileOffsetSec;
+          } catch {
+            /* ignore */
+          }
+        }
+        await routePlaybackToPreferredOutput(el, sink);
+        layerMonitorAudiosRef.current.push(el);
+        void el.play().catch(() => undefined);
+      } catch {
+        /* skip broken layer */
+      }
+    }
+  }
+
+    async function startRecording() {
     if (!current) return;
     setError(null);
     setProducerTip(null);
