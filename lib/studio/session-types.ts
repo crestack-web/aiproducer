@@ -10,7 +10,15 @@ export type Task = {
   start_ms: number | null;
   end_ms: number | null;
   section_id?: string | null;
-  metadata?: { section_label?: string; vocal_part?: string; section_id?: string };
+  metadata?: {
+    section_label?: string;
+    vocal_part?: string;
+    section_id?: string;
+    /** Bar window for this layer when known (layered on top of ms placement). */
+    start_bar?: number | null;
+    end_bar?: number | null;
+    layer_role?: string;
+  };
 };
 
 export type ProjectMeta = {
