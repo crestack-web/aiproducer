@@ -442,6 +442,7 @@ export function CompactAudioPlayer({
   const lastReseekAtRef = useRef(0);
   /** One soft beat nudge per play to cancel start lag (HTTP takes often ~100–200ms late). */
   const syncNudgedRef = useRef(false);
+  const syncLastNudgeAtRef = useRef(0);
   voiceOnlyRef.current = voiceOnly;
   beatVolumeRef.current = beatVolume;
   vocalVolumeRef.current = vocalVolume;
@@ -676,6 +677,8 @@ export function CompactAudioPlayer({
       hardStopBeat();
       stopRaf();
       seekPendingRef.current = false;
+      syncNudgedRef.current = false;
+      syncLastNudgeAtRef.current = 0;
       setPlaying(false);
       playingRef.current = false;
       writeReviewDiagnostics({ event: "pause" });
@@ -770,14 +773,26 @@ export function CompactAudioPlayer({
       } catch {
         /* ignore */
       }
-    } else if (!wantBeat) {
-      vocalEngagedRef.current = true;
     } else {
-      // Intentional pre-roll before section (resume mid-song before placement)
-      vocalEngagedRef.current = false;
+      // Always keep the take engaged — pausing for "pre-roll" left Review silent on mobile
+      vocalEngagedRef.current = true;
+    }
+
+    // Recover if the browser accepted play() then immediately paused (common with dual <audio>)
+    if (vocalPlaySucceeded && vocal.paused) {
       try {
-        vocal.pause();
-        vocal.currentTime = 0;
+        vocal.muted = false;
+        vocal.volume = 1;
+        await vocal.play().catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (wantBeat && beat && beatPlaySucceeded && beat.paused) {
+      try {
+        beat.muted = false;
+        beat.volume = reviewBeatGain(beatVolumeRef.current);
+        await beat.play().catch(() => undefined);
       } catch {
         /* ignore */
       }
@@ -934,25 +949,28 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // Soft lock: keep beat on placement + vocal playhead.
-        // Telemetry showed a stable ~120–170ms start lag that free-running clocks
-        // never recovered from after a single early nudge window.
-        if (!v.paused && !b.paused && v.currentTime > 0.05) {
+        // Soft lock — at most ONE seek in the first 1.5s, then at most every 2.5s.
+        // Seeking on every RAF stalls / silences dual <audio> on mobile Safari/Chrome.
+        if (!v.paused && !b.paused && v.currentTime > 0.08) {
           const expectedBeatSec = placeSecNow + v.currentTime;
-          const lag = b.currentTime - expectedBeatSec; // >0 → beat ahead of vocal
-          // Correct medium start lag and ongoing drift; avoid tiny seeks (audible glitches)
-          if (Math.abs(lag) > 0.07 && Math.abs(lag) < 0.6) {
+          const lag = b.currentTime - expectedBeatSec;
+          const nowPerf = performance.now();
+          const lastAt = syncLastNudgeAtRef.current || 0;
+          const allow =
+            Math.abs(lag) > 0.09 &&
+            Math.abs(lag) < 0.55 &&
+            (v.currentTime < 1.5 ? !syncNudgedRef.current : nowPerf - lastAt > 2500);
+          if (allow) {
             try {
               b.currentTime = Math.max(0, expectedBeatSec);
-              if (!syncNudgedRef.current) {
-                syncNudgedRef.current = true;
-                writeReviewDiagnostics({
-                  event: "sync_nudge",
-                  lagMs: Math.round(lag * 1000),
-                  vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
-                  beatCurrentTimeMs: Math.round(b.currentTime * 1000),
-                });
-              }
+              syncNudgedRef.current = true;
+              syncLastNudgeAtRef.current = nowPerf;
+              writeReviewDiagnostics({
+                event: "sync_nudge",
+                lagMs: Math.round(lag * 1000),
+                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
+                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
+              });
             } catch {
               /* ignore */
             }
