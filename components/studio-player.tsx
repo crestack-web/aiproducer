@@ -440,6 +440,8 @@ export function CompactAudioPlayer({
   const seekPendingRef = useRef(false);
   /** Throttle RAF-driven re-seek so we don't loop mute/unmute */
   const lastReseekAtRef = useRef(0);
+  /** One soft beat nudge per play to cancel start lag (HTTP takes often ~100–200ms late). */
+  const syncNudgedRef = useRef(false);
   voiceOnlyRef.current = voiceOnly;
   beatVolumeRef.current = beatVolume;
   vocalVolumeRef.current = vocalVolume;
@@ -803,14 +805,17 @@ export function CompactAudioPlayer({
       writeReviewDiagnostics({ event: "BEAT_PLAY_ERROR_CONTINUE_VOCAL", beatPlayError });
     }
 
-    // Transport is live from the user gesture — do not wait on seek
+    // Transport is live from the user gesture
     setPlaying(true);
     playingRef.current = true;
     pausedSongMsRef.current = null;
+    syncNudgedRef.current = false;
 
     let beatSeekAppliedMs: number | null = null;
     let beatSeekOk = false;
 
+    // Avoid post-play seek when already near target — re-seeking a playing element
+    // was introducing ~150–200ms start lag between beat and take (see PRE-CHORUS diag).
     if (wantBeat && beat && beatPlaySucceeded) {
       try {
         beat.muted = false;
@@ -818,32 +823,38 @@ export function CompactAudioPlayer({
       } catch {
         /* ignore */
       }
-      seekPendingRef.current = true;
-      scheduleBeatSeek(beat, beatSeekTargetSec, (appliedSec, ok) => {
-        beatSeekAppliedMs = appliedSec * 1000;
-        beatSeekOk = ok;
-        // One-shot seek only — do not keep seeking or snapping the vocal
-        seekPendingRef.current = false;
-        try {
-          if (beatRef.current) {
-            beatRef.current.muted = false;
-            beatRef.current.volume = reviewBeatGain(beatVolumeRef.current);
+      const off = Math.abs(beat.currentTime - beatSeekTargetSec);
+      if (off > 1.0) {
+        seekPendingRef.current = true;
+        scheduleBeatSeek(beat, beatSeekTargetSec, (appliedSec, ok) => {
+          beatSeekAppliedMs = appliedSec * 1000;
+          beatSeekOk = ok;
+          seekPendingRef.current = false;
+          try {
+            if (beatRef.current) {
+              beatRef.current.muted = false;
+              beatRef.current.volume = reviewBeatGain(beatVolumeRef.current);
+            }
+          } catch {
+            /* ignore */
           }
-        } catch {
-          /* ignore */
-        }
-        writeReviewDiagnostics({
-          event: "beat_seek_result",
-          placementStartMs: place,
-          beatSeekRequestedMs: songMs,
-          beatSeekAppliedMs,
-          beatSeekOk: ok,
-          seekPending: false,
-          vocalPaused: vocalRef.current?.paused ?? null,
-          beatPaused: beatRef.current?.paused ?? null,
-          playing: playingRef.current,
+          writeReviewDiagnostics({
+            event: "beat_seek_result",
+            placementStartMs: place,
+            beatSeekRequestedMs: songMs,
+            beatSeekAppliedMs,
+            beatSeekOk: ok,
+            seekPending: false,
+            vocalPaused: vocalRef.current?.paused ?? null,
+            beatPaused: beatRef.current?.paused ?? null,
+            playing: playingRef.current,
+          });
         });
-      });
+      } else {
+        seekPendingRef.current = false;
+        beatSeekOk = true;
+        beatSeekAppliedMs = beat.currentTime * 1000;
+      }
     } else {
       seekPendingRef.current = false;
     }
@@ -923,8 +934,36 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
+        // One soft alignment in the first ~1.2s of playback if start lag is clear.
+        // Does not rewrite the vocal — only nudges the beat to match take time.
+        if (
+          !syncNudgedRef.current &&
+          !v.paused &&
+          !b.paused &&
+          v.currentTime > 0.08 &&
+          v.currentTime < 1.25
+        ) {
+          const expectedBeatSec = placeSecNow + v.currentTime;
+          const lag = b.currentTime - expectedBeatSec; // >0 → beat ahead of vocal
+          if (Math.abs(lag) > 0.08 && Math.abs(lag) < 0.45) {
+            try {
+              b.currentTime = Math.max(0, expectedBeatSec);
+              syncNudgedRef.current = true;
+              writeReviewDiagnostics({
+                event: "sync_nudge",
+                lagMs: Math.round(lag * 1000),
+                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
+                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
+              });
+            } catch {
+              /* ignore */
+            }
+          } else if (v.currentTime > 0.6) {
+            syncNudgedRef.current = true; // lock out further nudges
+          }
+        }
+
         // Progress from the take only — never rewrite vocal.currentTime from the beat
-        // (that caused 3–4s play → snap to 0 → loop when beat placement was off).
         try {
           const dur =
             v.duration && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : null;
