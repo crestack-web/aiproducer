@@ -447,10 +447,26 @@ export default function ProjectDetailPage() {
     setProducerTip(null);
     setLocalBlobUrl(null);
     setSavedRecordingId(null);
+    setTaskTakes([]);
     setActiveTaskId(taskId);
-    setPhase("ready");
     setScreen("session");
     void markRecordingStatus();
+
+    const task = tasks.find((t) => t.id === taskId);
+    // Revisit a completed section: open Review with the selected take so the
+    // artist can listen without recording again.
+    if (task && task.status === "completed") {
+      setPhase("review");
+      void loadTaskTakes(taskId).then((list) => {
+        if (list.some((t) => t.audio_url)) {
+          applySelectedTakeToReview(list);
+        } else {
+          setPhase("ready");
+        }
+      });
+      return;
+    }
+    setPhase("ready");
   }
 
   const pollProduceOnce = useCallback(async (): Promise<
@@ -2000,7 +2016,23 @@ export default function ProjectDetailPage() {
                     near your ear. Keep the bottom microphone unobstructed.
                   </p>
                 )}
-                <button type="button" style={{ ...btn, marginTop: 14 }} onClick={startRecording}>
+                {isRetake && (
+                  <button
+                    type="button"
+                    style={{ ...btn2, marginTop: 14 }}
+                    onClick={() => {
+                      setPhase("review");
+                      void loadTaskTakes(current.id).then((list) => {
+                        if (list.some((t) => t.audio_url)) {
+                          applySelectedTakeToReview(list);
+                        }
+                      });
+                    }}
+                  >
+                    Listen to take
+                  </button>
+                )}
+                <button type="button" style={{ ...btn, marginTop: isRetake ? 10 : 14 }} onClick={startRecording}>
                   {isRetake
                     ? "Retake"
                     : currentIsLayer
@@ -2074,7 +2106,11 @@ export default function ProjectDetailPage() {
             {phase === "review" && (
               <div style={{ marginTop: 16 }}>
                 <p style={{ textAlign: "center", color: C.textMuted }}>
-                  {uploading ? "Saving & analyzing take…" : savedRecordingId ? "Saved ✓" : "Review"}
+                  {uploading
+                    ? "Saving & analyzing take…"
+                    : localBlobUrl
+                      ? "Your take · play to review"
+                      : "Loading take…"}
                 </p>
                 {localBlobUrl && (
                   <>
