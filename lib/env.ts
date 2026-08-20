@@ -39,3 +39,9 @@ export function assertRoexPreviewOnly(operation: string): void {
     }
   }
 }
+
+/** Optional callback URL for RoEx completion notifications. */
+export function getRoexWebhookUrl(): string | undefined {
+  const value = process.env.ROEX_WEBHOOK_URL?.trim();
+  return value || undefined;
+}
