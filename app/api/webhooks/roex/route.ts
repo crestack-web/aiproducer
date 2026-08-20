@@ -47,9 +47,8 @@ export async function POST(req: Request) {
         ...(typeof job.output_data === "object" && job.output_data ? job.output_data : {}),
         webhook: body,
       },
-      stage: "webhook_received",
     })
     .eq("id", job.id);
 
-  return NextResponse.json({ ok: true, matched: true, job_id: job.id });
+  return NextResponse.json({ ok: true, matched: true, job_id: job.id, stage: job.stage || null });
 }
