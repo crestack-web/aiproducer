@@ -11,7 +11,7 @@ import {
   type TakeRow,
   type StemRow,
 } from "@/lib/audio/produce-job";
-import { getRoexEnv, isRoexFullAllowed } from "@/lib/env";
+import { getRoexEnv, getRoexWebhookUrl, isRoexFullAllowed } from "@/lib/env";
 import { mapMusicalStyle, stemToInstrumentGroup } from "@/lib/providers/roex";
 import type { ArrangementPlacement, StemKind } from "@/lib/audio/types";
 import {
@@ -371,7 +371,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
               panPreference: "CENTRE" as const,
               reverbPreference: (t.kind === "LEAD" ? "LOW" : "NONE") as "LOW" | "NONE",
             })),
-            { musicalStyle: style, preview: true }
+            { musicalStyle: style, preview: true, webhookUrl: getRoexWebhookUrl() }
           );
           out = { ...out, mix_provider_task_id: mixStart.provider_task_id, mix_poll_attempts: 0 };
           stage = "mix_poll";
@@ -470,6 +470,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           musicalStyle: style,
           desiredLoudness: "MEDIUM",
           preview: true,
+          webhookUrl: getRoexWebhookUrl(),
         });
         out = { ...out, master_provider_task_id: masterStart.provider_task_id, master_poll_attempts: 0 };
         stage = "master_poll";
