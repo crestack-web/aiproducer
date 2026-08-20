@@ -304,38 +304,15 @@ export default function ProjectDetailPage() {
     }
   }, [phase, localBlobUrl, reviewVoiceOnly]);
 
-  // When reviewing a production layer (harmony / ad-lib / double), keep other
-  // section vocals (Lead, etc.) under the take so the artist hears the stack —
-  // not only beat + this take. Booth beat element stays muted; CompactAudioPlayer owns beat.
+  // Review: CompactAudioPlayer owns beat + take only.
+  // Do NOT auto-play section layer monitors here — extra <audio> elements on mobile
+  // steal the session and leave the take stuck at currentTime=0 / readyState=3 while
+  // the beat runs alone (see Review diagnostics). Layers still monitor while RECORDING.
   useEffect(() => {
-    if (phase !== "review" || !current) {
-      return;
-    }
-    if (!isProductionLayer(current) || reviewVoiceOnly) {
+    if (phase === "review") {
       stopLayerMonitors();
-      return;
     }
-    let cancelled = false;
-    void (async () => {
-      await startLayerMonitors(current);
-      if (cancelled) return;
-      seekLayerMonitorsToSectionStart(current.start_ms ?? 0);
-      // Quiet under the take review (CompactAudioPlayer is primary)
-      for (const el of layerMonitorAudiosRef.current) {
-        try {
-          el.volume = Math.min(el.volume, 0.35);
-        } catch {
-          /* ignore */
-        }
-      }
-      playLayerMonitors();
-    })();
-    return () => {
-      cancelled = true;
-      stopLayerMonitors();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, current?.id, localBlobUrl, reviewVoiceOnly]);
+  }, [phase]);
 
   // Apply speaker choice whenever it changes (and when beat element is ready)
   useEffect(() => {
@@ -2293,7 +2270,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.03}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.12}
                       playbackSinkId={selectedSpeakerId || "__headphones__"}
                       debugSectionLabel={sectionLabel(current)}
                       debugTaskId={current.id}

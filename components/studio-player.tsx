@@ -450,7 +450,7 @@ export function CompactAudioPlayer({
   placementRef.current = placementStartMs;
   /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
    * Generated beats are hot vs phone takes — keep linear gain very low. */
-  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.04);
+  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.1);
 
   // Review playback uses normal device output preference (not recording handset monitor).
   useEffect(() => {
@@ -738,60 +738,57 @@ export function CompactAudioPlayer({
     let vocalPlayError: string | null = null;
     let beatPlayError: string | null = null;
 
-    // Fire both play() immediately — same user gesture, no intervening await
-    const vocalPlayPromise = vocal.play().then(
-      () => {
-        vocalPlaySucceeded = true;
-      },
-      (e: unknown) => {
-        vocalPlayError =
-          e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      }
-    );
-
-    let beatPlayPromise: Promise<void> = Promise.resolve();
-    if (wantBeat && beat) {
-      beatPlayPromise = beat.play().then(
-        () => {
-          beatPlaySucceeded = true;
-        },
-        (e: unknown) => {
-          beatPlayError =
-            e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-        }
-      );
+    // Vocal-first: on mobile, dual play() + extra layer <audio> left the take at
+    // currentTime=0 / readyState=3 while the beat ran alone. Start the take, wait
+    // until it actually advances, then start the beat in the same gesture chain.
+    try {
+      await vocal.play();
+      vocalPlaySucceeded = true;
+    } catch (e: unknown) {
+      vocalPlayError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
     }
 
-    await Promise.all([vocalPlayPromise, beatPlayPromise]);
-
-    // Post-start snap (two rAFs so currentTime is real). Still only once via syncNudgedRef.
-    if (wantBeat && beat && beatPlaySucceeded && vocalPlaySucceeded) {
-      const placeSec = place / 1000;
-      const snap = () => {
-        try {
-          if (syncNudgedRef.current) return;
-          const vEl = vocalRef.current;
-          const bEl = beatRef.current;
-          if (!vEl || !bEl || vEl.paused || bEl.paused) return;
-          if (vEl.currentTime < 0.05) return;
-          const expected = placeSec + vEl.currentTime;
-          const lag = bEl.currentTime - expected;
-          if (Math.abs(lag) >= 0.04 && Math.abs(lag) <= 0.35) {
-            bEl.currentTime = Math.max(0, expected);
-            writeReviewDiagnostics({
-              event: "sync_nudge_once",
-              lagMs: Math.round(lag * 1000),
-              phase: "post_play_raf",
-              vocalCurrentTimeMs: Math.round(vEl.currentTime * 1000),
-              beatCurrentTimeMs: Math.round(bEl.currentTime * 1000),
-            });
+    // Wait briefly for the take clock to move (max ~400ms)
+    if (vocalPlaySucceeded) {
+      const t0 = performance.now();
+      while (vocal.currentTime < 0.02 && performance.now() - t0 < 400) {
+        await new Promise((r) => setTimeout(r, 40));
+        if (vocal.paused) {
+          try {
+            await vocal.play();
+          } catch {
+            /* ignore */
           }
-          syncNudgedRef.current = true;
+        }
+      }
+      if (vocal.currentTime < 0.01 && vocal.readyState < 3) {
+        try {
+          vocal.load();
+          await vocal.play();
         } catch {
           /* ignore */
         }
-      };
-      requestAnimationFrame(() => requestAnimationFrame(snap));
+      }
+    }
+
+    if (wantBeat && beat) {
+      try {
+        beat.muted = false;
+        beat.volume = reviewBeatGain(beatVolumeRef.current);
+        beat.playbackRate = 1;
+        // Align to placement + current vocal time
+        const aligned =
+          Math.max(0, place / 1000 + Math.max(0, vocal.currentTime));
+        try {
+          beat.currentTime = aligned;
+        } catch {
+          /* ignore */
+        }
+        await beat.play();
+        beatPlaySucceeded = true;
+      } catch (e: unknown) {
+        beatPlayError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      }
     }
 
     // Vocal must stay alive when Review starts at placement — do NOT pause for late beat seek
@@ -984,47 +981,7 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // Keep beat locked to the take without mid-play seeks (those caused on/off).
-        // 1) One currentTime snap in the first ~2s if lag is clear.
-        // 2) After that, gentle playbackRate only (inaudible micro-correction).
-        if (!v.paused && !b.paused && v.currentTime > 0.12) {
-          const expectedBeatSec = placeSecNow + v.currentTime;
-          const lag = b.currentTime - expectedBeatSec; // >0 beat ahead of vocal
-          const lagMs = Math.round(lag * 1000);
-
-          if (
-            !syncNudgedRef.current &&
-            v.currentTime <= 2.2 &&
-            Math.abs(lag) >= 0.04 &&
-            Math.abs(lag) <= 0.45
-          ) {
-            try {
-              b.currentTime = Math.max(0, expectedBeatSec);
-              b.playbackRate = 1;
-              syncNudgedRef.current = true;
-              writeReviewDiagnostics({
-                event: "sync_nudge_once",
-                lagMs,
-                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
-                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
-              });
-            } catch {
-              /* ignore */
-            }
-          } else {
-            // Rate-only lock: speed up if behind, slow if ahead; settle near zero lag.
-            try {
-              let rate = 1;
-              if (lag < -0.035) rate = 1.018; // beat behind → catch up
-              else if (lag > 0.035) rate = 0.982; // beat ahead → ease back
-              if (Math.abs((b.playbackRate || 1) - rate) > 0.002) {
-                b.playbackRate = rate;
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-        }
+        // Free-run after start. No mid-play seeks or playbackRate (both caused stalls).
 
         // Progress from the take only — never rewrite vocal.currentTime from the beat
         try {
