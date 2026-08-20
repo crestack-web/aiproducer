@@ -5,6 +5,7 @@ import { createSignedDownloadUrl } from "@/lib/storage";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 import {
   activePlanTaskIds,
+  isCompletedTaskStatus,
   oneTakePerTask,
   type PlanTaskFlags,
 } from "@/lib/audio/active-plan-membership";
@@ -147,7 +148,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const activeIds = activePlanTaskIds(allTasks);
   for (const t of allTasks) {
     const status = (t.status || "").toLowerCase();
-    if (status !== "completed") continue;
+    if (!isCompletedTaskStatus(status)) continue;
     if (t.active === false) continue;
     if (t.selected_in_plan === false) continue;
     activeIds.add(t.id);
@@ -158,7 +159,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const diagnostics: string[] = [];
   if (taskLoadDiag) diagnostics.push(taskLoadDiag);
   diagnostics.push(
-    `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length} completed_in_plan=${allTasks.filter((t) => (t.status || "").toLowerCase() === "completed").length}`
+    `active_plan_tasks=${selectedTaskIds.length} total_tasks=${allTasks.length} completed_in_plan=${allTasks.filter((t) => isCompletedTaskStatus(t.status)).length}`
   );
 
   let recordings: RecRow[] = [];
