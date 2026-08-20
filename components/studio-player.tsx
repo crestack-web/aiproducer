@@ -759,6 +759,36 @@ export function CompactAudioPlayer({
 
     await Promise.all([vocalPlayPromise, beatPlayPromise]);
 
+    // Post-start snap (two rAFs so currentTime is real). Still only once via syncNudgedRef.
+    if (wantBeat && beat && beatPlaySucceeded && vocalPlaySucceeded) {
+      const placeSec = place / 1000;
+      const snap = () => {
+        try {
+          if (syncNudgedRef.current) return;
+          const vEl = vocalRef.current;
+          const bEl = beatRef.current;
+          if (!vEl || !bEl || vEl.paused || bEl.paused) return;
+          if (vEl.currentTime < 0.05) return;
+          const expected = placeSec + vEl.currentTime;
+          const lag = bEl.currentTime - expected;
+          if (Math.abs(lag) >= 0.04 && Math.abs(lag) <= 0.35) {
+            bEl.currentTime = Math.max(0, expected);
+            writeReviewDiagnostics({
+              event: "sync_nudge_once",
+              lagMs: Math.round(lag * 1000),
+              phase: "post_play_raf",
+              vocalCurrentTimeMs: Math.round(vEl.currentTime * 1000),
+              beatCurrentTimeMs: Math.round(bEl.currentTime * 1000),
+            });
+          }
+          syncNudgedRef.current = true;
+        } catch {
+          /* ignore */
+        }
+      };
+      requestAnimationFrame(() => requestAnimationFrame(snap));
+    }
+
     // Vocal must stay alive when Review starts at placement — do NOT pause for late beat seek
     if (wantBeat && startAtPlacement) {
       vocalEngagedRef.current = true;
@@ -949,10 +979,33 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // FREE-RUN after initial play seek. Mid-playback currentTime seeks cause the
-        // beat to drop out / stutter ("on and off") on mobile. Diagnostics showed
-        // sync_nudge every ~2.5s with lagMs ≈ -400 — each seek was audible.
-        // Alignment is established once at play_attempt; do not re-seek here.
+        // ONE start-only alignment when the take has real clock samples.
+        // Telemetry: free-run drifts ~80–300ms (voice feels off-beat). Periodic
+        // seeks caused on/off — so correct at most once, never again this play.
+        if (
+          !syncNudgedRef.current &&
+          !v.paused &&
+          !b.paused &&
+          v.currentTime >= 0.22 &&
+          v.currentTime <= 1.1
+        ) {
+          const expectedBeatSec = placeSecNow + v.currentTime;
+          const lag = b.currentTime - expectedBeatSec;
+          if (Math.abs(lag) >= 0.045 && Math.abs(lag) <= 0.4) {
+            try {
+              b.currentTime = Math.max(0, expectedBeatSec);
+              writeReviewDiagnostics({
+                event: "sync_nudge_once",
+                lagMs: Math.round(lag * 1000),
+                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
+                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
+              });
+            } catch {
+              /* ignore */
+            }
+          }
+          syncNudgedRef.current = true; // lock — no further seeks this session
+        }
 
         // Progress from the take only — never rewrite vocal.currentTime from the beat
         try {
