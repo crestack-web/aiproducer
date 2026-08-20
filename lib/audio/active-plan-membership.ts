@@ -19,6 +19,15 @@ export type RecordingTaskRef = {
   is_selected?: boolean | null;
 };
 
+/**
+ * Legacy sessions used several equivalent terminal statuses.
+ * Keep Preview/progress behavior consistent across schema generations.
+ */
+export function isCompletedTaskStatus(status?: string | null): boolean {
+  const normalized = (status || "").trim().toLowerCase();
+  return ["completed", "complete", "done", "recorded", "produced"].includes(normalized);
+}
+
 export function isActivePlanTask(t: PlanTaskFlags): boolean {
   if (t.active === false) return false;
   if (t.selected_in_plan === false) return false;
