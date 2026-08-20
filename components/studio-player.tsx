@@ -503,6 +503,11 @@ export function CompactAudioPlayer({
       beat.pause();
       beat.volume = 0;
       beat.muted = true;
+      try {
+        beat.playbackRate = 1;
+      } catch {
+        /* ignore */
+      }
     } catch {
       /* ignore */
     }
@@ -979,32 +984,46 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // ONE start-only alignment when the take has real clock samples.
-        // Telemetry: free-run drifts ~80–300ms (voice feels off-beat). Periodic
-        // seeks caused on/off — so correct at most once, never again this play.
-        if (
-          !syncNudgedRef.current &&
-          !v.paused &&
-          !b.paused &&
-          v.currentTime >= 0.22 &&
-          v.currentTime <= 1.1
-        ) {
+        // Keep beat locked to the take without mid-play seeks (those caused on/off).
+        // 1) One currentTime snap in the first ~2s if lag is clear.
+        // 2) After that, gentle playbackRate only (inaudible micro-correction).
+        if (!v.paused && !b.paused && v.currentTime > 0.12) {
           const expectedBeatSec = placeSecNow + v.currentTime;
-          const lag = b.currentTime - expectedBeatSec;
-          if (Math.abs(lag) >= 0.045 && Math.abs(lag) <= 0.4) {
+          const lag = b.currentTime - expectedBeatSec; // >0 beat ahead of vocal
+          const lagMs = Math.round(lag * 1000);
+
+          if (
+            !syncNudgedRef.current &&
+            v.currentTime <= 2.2 &&
+            Math.abs(lag) >= 0.04 &&
+            Math.abs(lag) <= 0.45
+          ) {
             try {
               b.currentTime = Math.max(0, expectedBeatSec);
+              b.playbackRate = 1;
+              syncNudgedRef.current = true;
               writeReviewDiagnostics({
                 event: "sync_nudge_once",
-                lagMs: Math.round(lag * 1000),
+                lagMs,
                 vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
                 beatCurrentTimeMs: Math.round(b.currentTime * 1000),
               });
             } catch {
               /* ignore */
             }
+          } else {
+            // Rate-only lock: speed up if behind, slow if ahead; settle near zero lag.
+            try {
+              let rate = 1;
+              if (lag < -0.035) rate = 1.018; // beat behind → catch up
+              else if (lag > 0.035) rate = 0.982; // beat ahead → ease back
+              if (Math.abs((b.playbackRate || 1) - rate) > 0.002) {
+                b.playbackRate = rate;
+              }
+            } catch {
+              /* ignore */
+            }
           }
-          syncNudgedRef.current = true; // lock — no further seeks this session
         }
 
         // Progress from the take only — never rewrite vocal.currentTime from the beat
