@@ -949,33 +949,10 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // Soft lock — at most ONE seek in the first 1.5s, then at most every 2.5s.
-        // Seeking on every RAF stalls / silences dual <audio> on mobile Safari/Chrome.
-        if (!v.paused && !b.paused && v.currentTime > 0.08) {
-          const expectedBeatSec = placeSecNow + v.currentTime;
-          const lag = b.currentTime - expectedBeatSec;
-          const nowPerf = performance.now();
-          const lastAt = syncLastNudgeAtRef.current || 0;
-          const allow =
-            Math.abs(lag) > 0.09 &&
-            Math.abs(lag) < 0.55 &&
-            (v.currentTime < 1.5 ? !syncNudgedRef.current : nowPerf - lastAt > 2500);
-          if (allow) {
-            try {
-              b.currentTime = Math.max(0, expectedBeatSec);
-              syncNudgedRef.current = true;
-              syncLastNudgeAtRef.current = nowPerf;
-              writeReviewDiagnostics({
-                event: "sync_nudge",
-                lagMs: Math.round(lag * 1000),
-                vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
-                beatCurrentTimeMs: Math.round(b.currentTime * 1000),
-              });
-            } catch {
-              /* ignore */
-            }
-          }
-        }
+        // FREE-RUN after initial play seek. Mid-playback currentTime seeks cause the
+        // beat to drop out / stutter ("on and off") on mobile. Diagnostics showed
+        // sync_nudge every ~2.5s with lagMs ≈ -400 — each seek was audible.
+        // Alignment is established once at play_attempt; do not re-seek here.
 
         // Progress from the take only — never rewrite vocal.currentTime from the beat
         try {
