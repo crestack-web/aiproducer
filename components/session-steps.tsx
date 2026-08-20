@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
+import { isCompletedTaskStatus } from "@/lib/audio/active-plan-membership";
 import {
   isCoreRecordingTask,
   isProductionLayerTask,
@@ -42,7 +43,7 @@ export function isTaskOpen(t: SessionTask) {
 }
 
 export function isTaskDone(t: SessionTask) {
-  return t.status === "completed" || t.status === "skipped";
+  return isCompletedTaskStatus(t.status) || t.status === "skipped";
 }
 
 /** @deprecated AI recommended ≠ required. Prefer activePlanOpen from plan helpers. */
@@ -99,7 +100,7 @@ export function coreDone(tasks: SessionTask[]): SessionTask[] {
 }
 
 export function productionLayersAdded(tasks: SessionTask[]): SessionTask[] {
-  return tasks.filter((t) => isProductionLayer(t) && t.status === "completed");
+  return tasks.filter((t) => isProductionLayer(t) && isCompletedTaskStatus(t.status));
 }
 
 function sectionKey(t: SessionTask): string {
