@@ -48,6 +48,22 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
   let out = asOutput(job);
   const userId = (out.user_id as string) || "";
   let stage = (job.stage as string) || "queued";
+  // Jobs stuck by the old webhook (stage forced to webhook_received) cannot enter
+  // mix_poll/master_poll. Recover without treating the webhook as authoritative.
+  if (stage === "webhook_received") {
+    const hasMasterTask = Boolean(out.master_provider_task_id);
+    const hasMixTask = Boolean(out.mix_provider_task_id);
+    if (hasMasterTask && !out.master_storage_path) stage = "master_poll";
+    else if (hasMixTask && out.mix_storage_path && !out.master_storage_path) stage = "master_submit";
+    else if (hasMixTask && !out.mix_storage_path) stage = "mix_poll";
+    else stage = "mix_poll";
+    logProduce({
+      event: "recover_webhook_received_stage",
+      jobId,
+      projectId,
+      recovered_stage: stage,
+    });
+  }
   const budgetOk = () => Date.now() - startedAt < maxWorkMs;
 
   await patchJob(supabase, jobId, {

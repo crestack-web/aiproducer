@@ -36,19 +36,32 @@ export async function POST(req: Request) {
     console.warn("roex webhook: unknown task", providerTaskId);
     return NextResponse.json({ ok: true, matched: false });
   }
-  if (job.status === "complete") {
-    return NextResponse.json({ ok: true, matched: true, already_complete: true });
+  if (job.status === "complete" || job.status === "failed") {
+    return NextResponse.json({
+      ok: true,
+      matched: true,
+      already_terminal: true,
+      status: job.status,
+    });
   }
 
+  // Advisory only: attach payload. Never overwrite stage — tickProduceJob / poller owns lifecycle.
   await supabase
     .from("jobs")
     .update({
       output_data: {
         ...(typeof job.output_data === "object" && job.output_data ? job.output_data : {}),
         webhook: body,
+        webhook_received_at: new Date().toISOString(),
+        webhook_observed_stage: job.stage,
       },
     })
     .eq("id", job.id);
 
-  return NextResponse.json({ ok: true, matched: true, job_id: job.id, stage: job.stage || null });
+  return NextResponse.json({
+    ok: true,
+    matched: true,
+    job_id: job.id,
+    stage_unchanged: job.stage || null,
+  });
 }
