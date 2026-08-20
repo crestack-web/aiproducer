@@ -64,7 +64,8 @@ import {
   nextProductionRecommendation,
   layerRecommendationCopy,
 } from "@/components/session-steps";
-import { layerPhraseHint, normalizeLayerRole } from "@/lib/layer-model";
+import { layerPhraseHint, normalizeLayerRole, sectionGroupKey } from "@/lib/layer-model";
+import { isCompletedTaskStatus } from "@/lib/audio/active-plan-membership";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
 import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
@@ -302,6 +303,39 @@ export default function ProjectDetailPage() {
       /* ignore */
     }
   }, [phase, localBlobUrl, reviewVoiceOnly]);
+
+  // When reviewing a production layer (harmony / ad-lib / double), keep other
+  // section vocals (Lead, etc.) under the take so the artist hears the stack —
+  // not only beat + this take. Booth beat element stays muted; CompactAudioPlayer owns beat.
+  useEffect(() => {
+    if (phase !== "review" || !current) {
+      return;
+    }
+    if (!isProductionLayer(current) || reviewVoiceOnly) {
+      stopLayerMonitors();
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      await startLayerMonitors(current);
+      if (cancelled) return;
+      seekLayerMonitorsToSectionStart(current.start_ms ?? 0);
+      // Quiet under the take review (CompactAudioPlayer is primary)
+      for (const el of layerMonitorAudiosRef.current) {
+        try {
+          el.volume = Math.min(el.volume, 0.35);
+        } catch {
+          /* ignore */
+        }
+      }
+      playLayerMonitors();
+    })();
+    return () => {
+      cancelled = true;
+      stopLayerMonitors();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, current?.id, localBlobUrl, reviewVoiceOnly]);
 
   // Apply speaker choice whenever it changes (and when beat element is ready)
   useEffect(() => {
@@ -1260,7 +1294,14 @@ export default function ProjectDetailPage() {
       beatAudioRef.current.play().catch(() => undefined);
     }
     // Production layers: hear existing Lead (+ other selected layers) for this section.
-    void startLayerMonitors(task);
+    // Re-load / keep section peers under the beat at section start (not beat alone)
+    void (async () => {
+      if (!layerMonitorAudiosRef.current.length) {
+        await startLayerMonitors(task);
+      }
+      seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
+      playLayerMonitors();
+    })();
     setRecordSeconds(0);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
@@ -1314,6 +1355,30 @@ export default function ProjectDetailPage() {
     layerMonitorAudiosRef.current = [];
   }
 
+  /** Align existing section vocals to the same musical clock as the beat monitor. */
+  function seekLayerMonitorsToSectionStart(sectionStartMs: number) {
+    for (const el of layerMonitorAudiosRef.current) {
+      try {
+        el.currentTime = 0;
+        // If element carried a data-offset from a different start_ms, prefer 0 for same-section takes
+        void sectionStartMs;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function playLayerMonitors() {
+    for (const el of layerMonitorAudiosRef.current) {
+      try {
+        el.muted = false;
+        void el.play().catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   /**
    * Recording monitor for production layers (harmony / double / ad-lib / …):
    * play existing selected vocals in the same section with the beat so the
@@ -1335,9 +1400,12 @@ export default function ProjectDetailPage() {
     const sources: MonitorSrc[] = [];
 
     // Prefer live plan tasks → selected take URLs (works even when previewLayers is empty)
+    const taskKey = sectionGroupKey(task);
     const peers = tasks.filter((t) => {
       if (t.id === task.id) return false;
-      if ((t.status || "").toLowerCase() !== "completed") return false;
+      // Accept all terminal statuses (completed/complete/done/recorded/…)
+      if (!isCompletedTaskStatus(t.status)) return false;
+      if (sectionGroupKey(t) === taskKey) return true;
       const tid =
         t.section_id ||
         (t.metadata as { section_id?: string } | null | undefined)?.section_id ||
@@ -1346,8 +1414,15 @@ export default function ProjectDetailPage() {
       const tl = (sectionLabel(t) || "").toLowerCase().trim();
       if (label && tl && label === tl) return true;
       const s = t.start_ms ?? 0;
-      if (Math.abs(s - sectionStart) < 10000) return true;
-      if (task.end_ms != null && s >= sectionStart - 200 && s < task.end_ms + 500) return true;
+      // Same musical window (±2s) — avoid 10s window matching adjacent sections
+      if (Math.abs(s - sectionStart) < 2000) return true;
+      if (
+        task.end_ms != null &&
+        s >= sectionStart - 200 &&
+        s < (task.end_ms as number) + 200
+      ) {
+        return true;
+      }
       return false;
     });
     peers.sort((a, b) => {
@@ -1534,6 +1609,20 @@ export default function ProjectDetailPage() {
           mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
         beatAudioRef.current.play().catch(() => undefined);
       }
+      // Production layers (harmony / ad-lib / double): hear existing section vocals with beat
+      void (async () => {
+        await startLayerMonitors(current);
+        // Pre-roll: start layers ~3s before section (same as beat) when possible
+        for (const el of layerMonitorAudiosRef.current) {
+          try {
+            el.currentTime = Math.max(0, el.currentTime); // takes usually start at section
+            // If take is section-length only, stay at 0 during countdown silence then real content at record
+          } catch {
+            /* ignore */
+          }
+        }
+        playLayerMonitors();
+      })();
       const captureStream = opened.recordStream;
       let n = 3;
       if (countdownRef.current) clearInterval(countdownRef.current);
