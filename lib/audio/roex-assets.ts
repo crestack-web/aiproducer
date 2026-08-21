@@ -139,19 +139,11 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Last resort: pass mp3/flac through if conversion unavailable
-      if (detected.format === "mp3" || detected.format === "flac") {
-        uploadBuffer = buffer;
-        uploadFormat = detected.format;
-        uploadContentType = detected.contentType;
-        uploadExt = detected.extension;
-        console.warn("[produce] convert failed, passing original", kind, detected.format, msg);
-      } else {
-        throw new Error(
-          `${kind} format (${detected.format}) could not be converted for RoEx (${msg}). ` +
-            `Your recordings are safe. Re-record that section so it saves as WAV, then Produce again.`
-        );
-      }
+      // RoEx mixpreview needs WAV (Automix: mixing = WAV only). Never pass webm/mp3 through.
+      throw new Error(
+        `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
+          `Your recordings are safe. Re-upload the beat as WAV or re-record the vocal section.`
+      );
     }
   }
 

@@ -1,11 +1,10 @@
 /**
- * Server-side: convert phone capture formats to stereo 16-bit WAV for RoEx.
- * Resolves ffmpeg from: FFMPEG_PATH → ffmpeg-static → PATH → /usr/bin/ffmpeg.
+ * Server-side: convert phone/beat formats to stereo 16-bit WAV for RoEx.
+ * Mixing (Automix/Tonn mixpreview) effectively needs WAV — MP3 is not reliable.
  */
 import { spawn } from "child_process";
 import { randomBytes } from "crypto";
-import { access } from "fs/promises";
-import { readFile, unlink, writeFile } from "fs/promises";
+import { access, readFile, unlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { isWavBuffer } from "@/lib/audio/wav";
@@ -34,20 +33,22 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-/** Resolve an ffmpeg binary path, or null if none. */
+/** Only return a binary that actually runs `-version`. */
 export async function resolveFfmpegBin(): Promise<string | null> {
-  if (process.env.FFMPEG_PATH && (await pathExists(process.env.FFMPEG_PATH))) {
-    return process.env.FFMPEG_PATH;
-  }
+  const candidates: string[] = [];
+  if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
+  candidates.push("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg");
   try {
-    // Optional dependency — present when npm install ffmpeg-static succeeds
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const staticPath = require("ffmpeg-static") as string | null;
-    if (staticPath && (await pathExists(staticPath))) return staticPath;
+    if (staticPath) candidates.push(staticPath);
   } catch {
-    /* not installed */
+    /* optional */
   }
-  for (const candidate of ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (candidate.includes("/") && !(await pathExists(candidate))) continue;
     try {
       await runFfmpeg(candidate, ["-version"]);
       return candidate;
@@ -62,10 +63,6 @@ export async function ffmpegAvailable(): Promise<boolean> {
   return Boolean(await resolveFfmpegBin());
 }
 
-/**
- * Convert arbitrary audio bytes to stereo 44.1kHz 16-bit PCM WAV.
- * If input is already WAV, returns as-is.
- */
 export async function convertBufferToWav(
   input: Buffer,
   pathHint?: string
@@ -77,8 +74,8 @@ export async function convertBufferToWav(
   const bin = await resolveFfmpegBin();
   if (!bin) {
     throw new Error(
-      "This take is not WAV and the server cannot convert it (no ffmpeg). " +
-        "Re-record the section so the app saves WAV, then Produce again."
+      "Server has no working ffmpeg — cannot convert this file to WAV for the mixer. " +
+        "Re-record vocals (app saves WAV) or re-upload the beat as WAV."
     );
   }
 
@@ -87,8 +84,9 @@ export async function convertBufferToWav(
   if (hint.endsWith(".webm") || (input.length >= 4 && input[0] === 0x1a)) ext = "webm";
   else if (hint.endsWith(".ogg") || input.toString("ascii", 0, 4) === "OggS") ext = "ogg";
   else if (hint.endsWith(".m4a") || hint.endsWith(".mp4")) ext = "m4a";
-  else if (hint.endsWith(".mp3")) ext = "mp3";
-  else if (hint.endsWith(".flac")) ext = "flac";
+  else if (hint.endsWith(".mp3") || (input[0] === 0xff && (input[1] & 0xe0) === 0xe0))
+    ext = "mp3";
+  else if (hint.endsWith(".flac") || input.toString("ascii", 0, 4) === "fLaC") ext = "flac";
 
   const id = randomBytes(8).toString("hex");
   const inPath = join(tmpdir(), `aiproducer-in-${id}.${ext}`);

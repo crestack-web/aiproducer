@@ -201,10 +201,42 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       await supabase.from("audio_stems").delete().eq("project_id", projectId);
 
       const stemRows: Record<string, unknown>[] = [];
+      let instrumentalPath = beat.audio_path as string;
+      // RoEx mixpreview is WAV-oriented; convert beat (often mp3) → stereo WAV first.
+      if (mode === "roex" && userId) {
+        try {
+          const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
+          const { downloadStorageOrUrl } = await import("@/lib/audio/roex-assets");
+          const { isWavBuffer, ensureStereoWavForRoex } = await import("@/lib/audio/wav");
+          const { uploadBuffer } = await import("@/lib/storage");
+          let buf = await downloadStorageOrUrl(instrumentalPath);
+          if (!isWavBuffer(buf)) {
+            const conv = await convertBufferToWav(buf, instrumentalPath);
+            buf = conv.buffer;
+          }
+          buf = ensureStereoWavForRoex(buf);
+          const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
+          await uploadBuffer(dest, buf, "audio/wav");
+          instrumentalPath = dest;
+          logProduce({
+            event: "instrumental_wav_prepared",
+            jobId,
+            projectId,
+            bytes: buf.length,
+          });
+        } catch (e) {
+          logProduce({
+            event: "instrumental_wav_prepare_failed",
+            jobId,
+            projectId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
       stemRows.push({
         project_id: projectId,
         kind: "INSTRUMENTAL",
-        audio_path: beat.audio_path,
+        audio_path: instrumentalPath,
         duration_ms: beat.duration_ms || songDurationMs,
         order_index: 0,
         source_recording_ids: [],
