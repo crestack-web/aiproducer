@@ -451,6 +451,13 @@ export function CompactAudioPlayer({
   /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
    * Generated beats are hot vs phone takes — keep linear gain very low. */
   const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.1);
+  /**
+   * Review-only: delay the guide beat so the take sits earlier on the grid.
+   * Artists report voice "feels late"; telemetry free-run lag was ~-200ms.
+   * Positive = push beat later (voice earlier relative to beat hits).
+   */
+  const REVIEW_BEAT_DELAY_SEC = 0.2;
+
 
   // Review playback uses normal device output preference (not recording handset monitor).
   useEffect(() => {
@@ -696,7 +703,8 @@ export function CompactAudioPlayer({
     const wantBeat = Boolean(beatSrc && !voiceOnlyRef.current);
     const beat = beatRef.current;
     const startAtPlacement = songMs + 50 >= place;
-    const beatSeekTargetSec = Math.max(0, songMs / 1000);
+    // Delay beat so take does not feel late against the instrumental
+    const beatSeekTargetSec = Math.max(0, songMs / 1000 + REVIEW_BEAT_DELAY_SEC);
 
     const vocalSrc = (vocal.currentSrc || vocal.src || src || "").slice(0, 96);
     const isBlobUrl = /^blob:/i.test(vocal.currentSrc || vocal.src || src || "");
@@ -776,9 +784,11 @@ export function CompactAudioPlayer({
         beat.muted = false;
         beat.volume = reviewBeatGain(beatVolumeRef.current);
         beat.playbackRate = 1;
-        // Align to placement + current vocal time
-        const aligned =
-          Math.max(0, place / 1000 + Math.max(0, vocal.currentTime));
+        // Align to placement + vocal time + review delay (voice sits earlier on grid)
+        const aligned = Math.max(
+          0,
+          place / 1000 + Math.max(0, vocal.currentTime) + REVIEW_BEAT_DELAY_SEC
+        );
         try {
           beat.currentTime = aligned;
         } catch {
