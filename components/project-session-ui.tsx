@@ -1099,9 +1099,9 @@ export default function ProjectDetailPage() {
         const recordedMs = tl?.recordedDurationMs ?? wallClockMs;
         setLastRecordingOffsetMs(offsetMs);
 
-        // Convert MediaRecorder blob → WAV so Produce/RoEx never see webm/m4a
-        let uploadBlob: Blob = blob;
-        let uploadName = "take.webm";
+        // REQUIRED: MediaRecorder blob → WAV. Never store webm/m4a for produce.
+        let uploadBlob: Blob;
+        let uploadName: string;
         try {
           const wav = await audioBlobToWavDetailed(blob);
           uploadBlob = wav.blob;
@@ -1121,7 +1121,10 @@ export default function ProjectDetailPage() {
             /* ignore */
           }
         } catch (convErr) {
-          console.warn("[upload] WAV conversion failed — uploading original", convErr);
+          console.error("[upload] WAV conversion failed", convErr);
+          throw new Error(
+            "Could not prepare this take as WAV. Try again, or use a different browser/device."
+          );
         }
 
         const form = new FormData();
@@ -1814,6 +1817,77 @@ export default function ProjectDetailPage() {
     }
   }
 
+  /**
+   * Existing phone takes may still be webm. Convert selected takes to WAV in the
+   * browser and re-upload so Produce never hits server-side webm without ffmpeg.
+   */
+  async function repairTakesToWavForProduce(): Promise<void> {
+    const completed = tasks.filter(
+      (t) =>
+        (t.status || "").toLowerCase() === "completed" ||
+        (t.status || "").toLowerCase() === "complete" ||
+        (t.status || "").toLowerCase() === "done"
+    );
+    for (const task of completed) {
+      try {
+        const res = await fetch(`/api/recording-tasks/${task.id}/recordings`);
+        if (!res.ok) continue;
+        const j = await res.json();
+        const list = (Array.isArray(j.recordings) ? j.recordings : []) as {
+          id: string;
+          is_selected?: boolean | null;
+          audio_url?: string | null;
+          audio_path?: string | null;
+        }[];
+        const selected =
+          list.find((r) => r.is_selected) || list[list.length - 1] || list[0];
+        if (!selected?.audio_url && !selected?.audio_path) continue;
+        const pathHint = (selected.audio_path || selected.audio_url || "").toLowerCase();
+        const looksWav =
+          pathHint.includes(".wav") && !pathHint.includes(".webm");
+        if (looksWav) continue;
+
+        const src = selected.audio_url;
+        if (!src) continue;
+        const audioRes = await fetch(src);
+        if (!audioRes.ok) continue;
+        const rawBlob = await audioRes.blob();
+        // Already WAV by magic? skip
+        const head = new Uint8Array(await rawBlob.slice(0, 12).arrayBuffer());
+        const isWav =
+          head.length >= 12 &&
+          String.fromCharCode(head[0], head[1], head[2], head[3]) === "RIFF" &&
+          String.fromCharCode(head[8], head[9], head[10], head[11]) === "WAVE";
+        if (isWav) continue;
+
+        setProduceStage("preparing takes");
+        const wav = await audioBlobToWavDetailed(rawBlob);
+        const form = new FormData();
+        form.append("file", wav.blob, "take.wav");
+        form.append("source", "repair_wav");
+        form.append("task_id", task.id);
+        const up = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
+          method: "POST",
+          body: form,
+        });
+        if (!up.ok) {
+          const uj = await up.json().catch(() => ({}));
+          console.warn("[produce-repair] upload failed", task.id, uj);
+          continue;
+        }
+        const uj = await up.json().catch(() => ({}));
+        const newId = uj?.recording?.id as string | undefined;
+        if (newId) {
+          await fetch(`/api/recording-tasks/${task.id}/recordings/${newId}/select`, {
+            method: "POST",
+          }).catch(() => undefined);
+        }
+      } catch (e) {
+        console.warn("[produce-repair] task failed", task.id, e);
+      }
+    }
+  }
+
   async function startProduce() {
     const gate = canProduce(
       tasks.map((t) => ({
@@ -1834,9 +1908,11 @@ export default function ProjectDetailPage() {
     }
     setProducing(true);
     setError(null);
-    setProduceStage("queued");
+    setProduceStage("preparing takes");
     setScreen("assemble");
     try {
+      await repairTakesToWavForProduce();
+      setProduceStage("queued");
       const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
