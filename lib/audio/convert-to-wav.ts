@@ -1,17 +1,18 @@
 /**
- * Server-side: convert phone capture formats (webm/ogg/m4a) to stereo 16-bit WAV
- * for RoEx / timeline alignment. Uses ffmpeg when available on the host.
+ * Server-side: convert phone capture formats to stereo 16-bit WAV for RoEx.
+ * Resolves ffmpeg from: FFMPEG_PATH → ffmpeg-static → PATH → /usr/bin/ffmpeg.
  */
 import { spawn } from "child_process";
 import { randomBytes } from "crypto";
+import { access } from "fs/promises";
 import { readFile, unlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { isWavBuffer } from "@/lib/audio/wav";
 
-function runFfmpeg(args: string[]): Promise<void> {
+function runFfmpeg(bin: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const proc = spawn(bin, args, { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";
     proc.stderr?.on("data", (d) => {
       err += String(d);
@@ -19,22 +20,51 @@ function runFfmpeg(args: string[]): Promise<void> {
     proc.on("error", (e) => reject(e));
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(err.slice(-400) || `ffmpeg exit ${code}`));
+      else reject(new Error(err.slice(-500) || `ffmpeg exit ${code}`));
     });
   });
 }
 
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve an ffmpeg binary path, or null if none. */
+export async function resolveFfmpegBin(): Promise<string | null> {
+  if (process.env.FFMPEG_PATH && (await pathExists(process.env.FFMPEG_PATH))) {
+    return process.env.FFMPEG_PATH;
+  }
+  try {
+    // Optional dependency — present when npm install ffmpeg-static succeeds
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const staticPath = require("ffmpeg-static") as string | null;
+    if (staticPath && (await pathExists(staticPath))) return staticPath;
+  } catch {
+    /* not installed */
+  }
+  for (const candidate of ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
+    try {
+      await runFfmpeg(candidate, ["-version"]);
+      return candidate;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
 export async function ffmpegAvailable(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn("ffmpeg", ["-version"], { stdio: "ignore" });
-    proc.on("error", () => resolve(false));
-    proc.on("close", (code) => resolve(code === 0));
-  });
+  return Boolean(await resolveFfmpegBin());
 }
 
 /**
  * Convert arbitrary audio bytes to stereo 44.1kHz 16-bit PCM WAV.
- * If input is already WAV, returns as-is (caller may still stereo-normalize).
+ * If input is already WAV, returns as-is.
  */
 export async function convertBufferToWav(
   input: Buffer,
@@ -44,20 +74,21 @@ export async function convertBufferToWav(
     return { buffer: input, converted: false, method: "already_wav" };
   }
 
-  if (!(await ffmpegAvailable())) {
+  const bin = await resolveFfmpegBin();
+  if (!bin) {
     throw new Error(
-      "This take is not WAV and the server cannot convert it (ffmpeg unavailable). " +
-        "Re-record so the app saves WAV, or try Produce after a fresh take."
+      "This take is not WAV and the server cannot convert it (no ffmpeg). " +
+        "Re-record the section so the app saves WAV, then Produce again."
     );
   }
 
   const hint = (pathHint || "").toLowerCase().split("?")[0];
-  let ext = "bin";
-  if (hint.endsWith(".webm") || input[0] === 0x1a) ext = "webm";
+  let ext = "webm";
+  if (hint.endsWith(".webm") || (input.length >= 4 && input[0] === 0x1a)) ext = "webm";
   else if (hint.endsWith(".ogg") || input.toString("ascii", 0, 4) === "OggS") ext = "ogg";
   else if (hint.endsWith(".m4a") || hint.endsWith(".mp4")) ext = "m4a";
   else if (hint.endsWith(".mp3")) ext = "mp3";
-  else ext = "webm"; // MediaRecorder default
+  else if (hint.endsWith(".flac")) ext = "flac";
 
   const id = randomBytes(8).toString("hex");
   const inPath = join(tmpdir(), `aiproducer-in-${id}.${ext}`);
@@ -65,7 +96,7 @@ export async function convertBufferToWav(
 
   try {
     await writeFile(inPath, input);
-    await runFfmpeg([
+    await runFfmpeg(bin, [
       "-y",
       "-i",
       inPath,
@@ -81,7 +112,7 @@ export async function convertBufferToWav(
     if (!isWavBuffer(out) || out.length < 100) {
       throw new Error("ffmpeg produced invalid WAV");
     }
-    return { buffer: out, converted: true, method: "ffmpeg" };
+    return { buffer: out, converted: true, method: `ffmpeg:${bin}` };
   } finally {
     await unlink(inPath).catch(() => undefined);
     await unlink(outPath).catch(() => undefined);

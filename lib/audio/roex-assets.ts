@@ -116,19 +116,17 @@ export async function prepareRoexTrack(opts: {
     );
   }
 
-  // RoEx mix requires stereo WAV (44.1/48k, 16-bit). Convert phone formats when needed.
+  // RoEx mix is most reliable with stereo 16-bit WAV. Convert any non-WAV (webm/m4a/ogg/mp3/flac).
   let uploadBuffer = buffer;
-  let uploadFormat = detected.format;
-  let uploadContentType = detected.contentType;
-  let uploadExt = detected.extension;
+  let uploadFormat: DetectedAudio["format"] = detected.format;
+  let uploadContentType = "audio/wav";
+  let uploadExt = "wav";
 
-  if (detected.format === "webm" || detected.format === "ogg" || detected.format === "m4a") {
+  if (!(detected.format === "wav" || isWavBuffer(buffer))) {
     try {
       const conv = await convertBufferToWav(buffer, storagePath);
       uploadBuffer = conv.buffer;
       uploadFormat = "wav";
-      uploadContentType = "audio/wav";
-      uploadExt = "wav";
       console.info(
         "[produce]",
         JSON.stringify({
@@ -141,10 +139,19 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `${kind} format (${detected.format}) could not be converted for RoEx (${msg}). ` +
-          `Your recordings are safe. Try Produce again or re-record that section as WAV.`
-      );
+      // Last resort: pass mp3/flac through if conversion unavailable
+      if (detected.format === "mp3" || detected.format === "flac") {
+        uploadBuffer = buffer;
+        uploadFormat = detected.format;
+        uploadContentType = detected.contentType;
+        uploadExt = detected.extension;
+        console.warn("[produce] convert failed, passing original", kind, detected.format, msg);
+      } else {
+        throw new Error(
+          `${kind} format (${detected.format}) could not be converted for RoEx (${msg}). ` +
+            `Your recordings are safe. Re-record that section so it saves as WAV, then Produce again.`
+        );
+      }
     }
   }
 
@@ -165,15 +172,7 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       console.warn("[produce] stereo WAV convert failed", kind, e);
-      // still try original
     }
-  } else if (detected.format === "mp3") {
-    // Tonn API accepts MP3; Automix product prefers WAV — keep mp3 for instrumental beats
-    uploadContentType = "audio/mpeg";
-    uploadExt = "mp3";
-  } else if (detected.format === "flac") {
-    uploadContentType = "audio/flac";
-    uploadExt = "flac";
   }
 
   const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${uploadExt}`;
@@ -183,9 +182,48 @@ export async function prepareRoexTrack(opts: {
     readableUrl = up.readableUrl;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `RoEx upload failed for ${kind} (${uploadFormat}, ${uploadBuffer.length} bytes): ${msg}`
-    );
+    const reject =
+      /file type not accepted|not accepted|unsupported|invalid format/i.test(msg);
+    if (reject && uploadExt !== "wav") {
+      try {
+        const conv = await convertBufferToWav(uploadBuffer, safeName);
+        uploadBuffer = ensureStereoWavForRoex(conv.buffer);
+        const retryName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.wav`;
+        const up2 = await provider.uploadStem(uploadBuffer, retryName, "audio/wav");
+        readableUrl = up2.readableUrl;
+        uploadFormat = "wav";
+        uploadExt = "wav";
+        console.info(
+          "[produce]",
+          JSON.stringify({ event: "roex_upload_retry_wav", kind, bytes: uploadBuffer.length })
+        );
+      } catch (e2) {
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        throw new Error(
+          `RoEx upload failed for ${kind} after WAV retry (${uploadBuffer.length} bytes): ${msg}; retry: ${msg2}`
+        );
+      }
+    } else if (reject) {
+      // Already wav — try stereo normalize once more
+      try {
+        uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
+        const up2 = await provider.uploadStem(
+          uploadBuffer,
+          `${kind.toLowerCase()}_${jobId.slice(0, 8)}_stereo.wav`,
+          "audio/wav"
+        );
+        readableUrl = up2.readableUrl;
+      } catch (e2) {
+        const msg2 = e2 instanceof Error ? e2.message : String(e2);
+        throw new Error(
+          `RoEx rejected ${kind} WAV (${uploadBuffer.length} bytes): ${msg}; stereo retry: ${msg2}`
+        );
+      }
+    } else {
+      throw new Error(
+        `RoEx upload failed for ${kind} (${uploadFormat}, ${uploadBuffer.length} bytes): ${msg}`
+      );
+    }
   }
 
   if (!readableUrl || !readableUrl.startsWith("http")) {
