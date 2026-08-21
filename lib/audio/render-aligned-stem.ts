@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getStorageBucket, uploadBuffer } from "@/lib/storage";
 import { renderTimelineAlignedStem, type AlignmentStatus } from "@/lib/audio/timeline-stem";
 import { isWavBuffer } from "@/lib/audio/wav";
+import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 
 export function alignedStemPath(
   userId: string,
@@ -43,11 +44,18 @@ export async function buildAndStoreTimelineAlignedStem(opts: {
   timelineEndMs?: number | null;
   songDurationMs: number;
 }): Promise<AlignedStemResult> {
-  const source = await downloadStorageBytes(opts.sourcePath);
+  let source = await downloadStorageBytes(opts.sourcePath);
   if (!isWavBuffer(source)) {
-    throw new Error(
-      `Recording ${opts.recordingId} is not WAV (${opts.sourcePath}). Re-record/upload this take so it is stored as WAV before Produce.`
-    );
+    try {
+      const conv = await convertBufferToWav(source, opts.sourcePath);
+      source = conv.buffer;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `Recording ${opts.recordingId} is not WAV and could not be converted (${msg}). ` +
+          `Re-record this section so it saves as WAV. Your other recordings are safe.`
+      );
+    }
   }
 
   const rendered = renderTimelineAlignedStem({

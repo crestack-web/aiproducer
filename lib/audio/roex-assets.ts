@@ -12,6 +12,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { getStorageBucket, isStoragePath } from "@/lib/storage";
 import { ensureStereoWavForRoex, isWavBuffer } from "@/lib/audio/wav";
+import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";
 
 export type DetectedAudio = {
@@ -115,22 +116,41 @@ export async function prepareRoexTrack(opts: {
     );
   }
 
-  if (detected.format === "webm" || detected.format === "ogg" || detected.format === "m4a") {
-    throw new Error(
-      `${kind} format (${detected.format}) is not compatible with RoEx mix. ` +
-        `RoEx requires stereo WAV. Re-record this part so it saves as WAV. Your recordings are safe.`
-    );
-  }
-
-  // RoEx mix requires stereo WAV (44.1/48k, 16-bit). Our timeline stems are mono — dual to L/R.
+  // RoEx mix requires stereo WAV (44.1/48k, 16-bit). Convert phone formats when needed.
   let uploadBuffer = buffer;
   let uploadFormat = detected.format;
   let uploadContentType = detected.contentType;
   let uploadExt = detected.extension;
 
-  if (detected.format === "wav" || isWavBuffer(buffer)) {
+  if (detected.format === "webm" || detected.format === "ogg" || detected.format === "m4a") {
     try {
-      uploadBuffer = ensureStereoWavForRoex(buffer);
+      const conv = await convertBufferToWav(buffer, storagePath);
+      uploadBuffer = conv.buffer;
+      uploadFormat = "wav";
+      uploadContentType = "audio/wav";
+      uploadExt = "wav";
+      console.info(
+        "[produce]",
+        JSON.stringify({
+          event: "roex_format_converted",
+          kind,
+          from: detected.format,
+          method: conv.method,
+          outBytes: uploadBuffer.length,
+        })
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `${kind} format (${detected.format}) could not be converted for RoEx (${msg}). ` +
+          `Your recordings are safe. Try Produce again or re-record that section as WAV.`
+      );
+    }
+  }
+
+  if (uploadFormat === "wav" || isWavBuffer(uploadBuffer)) {
+    try {
+      uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
       uploadFormat = "wav";
       uploadContentType = "audio/wav";
       uploadExt = "wav";

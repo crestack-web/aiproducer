@@ -69,6 +69,7 @@ import { isCompletedTaskStatus } from "@/lib/audio/active-plan-membership";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
 import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
+import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
 import { canProduce, type PlanMode } from "@/lib/plan";
 
@@ -1098,8 +1099,33 @@ export default function ProjectDetailPage() {
         const recordedMs = tl?.recordedDurationMs ?? wallClockMs;
         setLastRecordingOffsetMs(offsetMs);
 
+        // Convert MediaRecorder blob → WAV so Produce/RoEx never see webm/m4a
+        let uploadBlob: Blob = blob;
+        let uploadName = "take.webm";
+        try {
+          const wav = await audioBlobToWavDetailed(blob);
+          uploadBlob = wav.blob;
+          uploadName = "take.wav";
+          try {
+            sessionStorage.setItem(
+              "studio_last_wav_export",
+              JSON.stringify({
+                method: wav.method,
+                sampleRate: wav.sampleRate,
+                sourceDurationSec: wav.sourceDurationSec,
+                outputDurationSec: wav.outputDurationSec,
+                durationDeltaMs: wav.durationDeltaMs,
+              })
+            );
+          } catch {
+            /* ignore */
+          }
+        } catch (convErr) {
+          console.warn("[upload] WAV conversion failed — uploading original", convErr);
+        }
+
         const form = new FormData();
-        form.append("file", blob, "take.webm");
+        form.append("file", uploadBlob, uploadName);
         form.append("source", "record");
         form.append("duration_ms", String(recordedMs));
         form.append("recording_offset_ms", String(offsetMs));
