@@ -438,6 +438,8 @@ export function CompactAudioPlayer({
   const vocalStartedAtBeatMsRef = useRef<number | null>(null);
   /** True until beat.currentTime is confirmed near placementStartMs */
   const seekPendingRef = useRef(false);
+  /** Detect frozen beat (currentTime not advancing while unpaused). */
+  const lastBeatClockRef = useRef<{ t: number; at: number }>({ t: -1, at: 0 });
   /** Throttle RAF-driven re-seek so we don't loop mute/unmute */
   const lastReseekAtRef = useRef(0);
   /** One soft beat nudge per play to cancel start lag (HTTP takes often ~100–200ms late). */
@@ -457,8 +459,7 @@ export function CompactAudioPlayer({
    */
   const reviewBeatGain = (v: number) => {
     if (v <= 0.001) return 0;
-    // Target: vocal clearly dominant; beat still audible as reference
-    return Math.min(0.03, Math.max(0.02, v > 0.03 ? 0.03 : v));
+    return 0.012;
   };
   /**
    * Review-only: delay the guide beat so the take sits earlier on the grid.
@@ -889,10 +890,12 @@ export function CompactAudioPlayer({
       } catch {
         /* ignore */
       }
-      const off = Math.abs(beat.currentTime - beatSeekTargetSec);
-      if (off > 1.0) {
+      // Prefer free-run: only one short seek if still far from placement
+      const alignedTarget = Math.max(0, place / 1000 + REVIEW_BEAT_DELAY_SEC);
+      const off = Math.abs(beat.currentTime - alignedTarget);
+      if (off > 1.5) {
         seekPendingRef.current = true;
-        scheduleBeatSeek(beat, beatSeekTargetSec, (appliedSec, ok) => {
+        scheduleBeatSeek(beat, alignedTarget, (appliedSec, ok) => {
           beatSeekAppliedMs = appliedSec * 1000;
           beatSeekOk = ok;
           seekPendingRef.current = false;
@@ -900,14 +903,19 @@ export function CompactAudioPlayer({
             if (beatRef.current) {
               beatRef.current.muted = false;
               beatRef.current.volume = reviewBeatGain(beatVolumeRef.current);
+              beatRef.current.playbackRate = 1;
             }
           } catch {
             /* ignore */
           }
+          lastBeatClockRef.current = {
+            t: beatRef.current?.currentTime ?? appliedSec,
+            at: Date.now(),
+          };
           writeReviewDiagnostics({
             event: "beat_seek_result",
             placementStartMs: place,
-            beatSeekRequestedMs: songMs,
+            beatSeekRequestedMs: Math.round(alignedTarget * 1000),
             beatSeekAppliedMs,
             beatSeekOk: ok,
             seekPending: false,
@@ -920,6 +928,7 @@ export function CompactAudioPlayer({
         seekPendingRef.current = false;
         beatSeekOk = true;
         beatSeekAppliedMs = beat.currentTime * 1000;
+        lastBeatClockRef.current = { t: beat.currentTime, at: Date.now() };
       }
     } else {
       seekPendingRef.current = false;
@@ -1000,7 +1009,37 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // Free-run after start. No mid-play seeks or playbackRate (both caused stalls).
+        // Free-run after start — NEVER seek beat here (device logs: currentTime froze at placement).
+        try {
+          if (b.playbackRate !== 1) b.playbackRate = 1;
+        } catch {
+          /* ignore */
+        }
+
+        // If beat claims to play but clock does not advance, restart play without seeking
+        const now = Date.now();
+        const bt = b.currentTime;
+        const clock = lastBeatClockRef.current;
+        if (!b.paused) {
+          if (clock.t >= 0 && Math.abs(bt - clock.t) < 0.03 && now - clock.at > 600) {
+            try {
+              void b.play().catch(() => undefined);
+              b.playbackRate = 1;
+            } catch {
+              /* ignore */
+            }
+            lastBeatClockRef.current = { t: b.currentTime, at: now };
+            writeReviewDiagnostics({
+              event: "beat_freeze_recovery",
+              beatCurrentTimeMs: Math.round(b.currentTime * 1000),
+              vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
+            });
+          } else if (bt > clock.t + 0.05) {
+            lastBeatClockRef.current = { t: bt, at: now };
+          } else if (clock.t < 0) {
+            lastBeatClockRef.current = { t: bt, at: now };
+          }
+        }
 
         // Progress from the take only — never rewrite vocal.currentTime from the beat
         try {
@@ -1012,8 +1051,8 @@ export function CompactAudioPlayer({
         } catch {
           /* ignore */
         }
-        if (Date.now() - lastReseekAtRef.current > 500) {
-          lastReseekAtRef.current = Date.now();
+        if (now - lastReseekAtRef.current > 500) {
+          lastReseekAtRef.current = now;
           writeReviewDiagnostics({ event: "playing_sample" });
         }
 
