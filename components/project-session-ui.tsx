@@ -73,6 +73,32 @@ import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
 import { canProduce, type PlanMode } from "@/lib/plan";
 
+/** User-facing produce progress — never show raw pipeline tokens alone. */
+function humanProduceStage(stage: string | null | undefined): string {
+  if (!stage) return "Starting…";
+  const s = stage.toLowerCase().trim();
+  const map: Record<string, string> = {
+    queued: "Queued — getting ready",
+    prepare_vocals: "Preparing your vocals",
+    arrange: "Arranging sections",
+    render_stems: "Building mix stems",
+    mix: "Mixing",
+    mix_submit: "Sending to mixer",
+    mix_poll: "Mixing in progress",
+    mix_store: "Saving mix",
+    master: "Mastering",
+    master_submit: "Sending to mastering",
+    master_poll: "Mastering in progress",
+    webhook_received: "Finishing your song",
+    complete: "Done",
+    failed: "Something went wrong",
+  };
+  if (map[s]) return map[s];
+  if (s.includes("mix")) return "Mixing";
+  if (s.includes("master")) return "Mastering";
+  return stage.replace(/_/g, " ");
+}
+
 /** Marker: real recording booth UI. Survives minify. Never null page. */
 export const FULL_SESSION_UI = true as const;
 
@@ -208,6 +234,8 @@ export default function ProjectDetailPage() {
     }[]
   >([]);
   const [sectionPreviewOnly, setSectionPreviewOnly] = useState(false);
+  const [selectingTakeId, setSelectingTakeId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
@@ -330,6 +358,7 @@ export default function ProjectDetailPage() {
 
   const loadSongPreview = useCallback(async () => {
     setPreviewLoading(true);
+    setPreviewError(null);
     try {
       const res = await fetch(`/api/projects/${id}/session-preview`);
       const j = await res.json().catch(() => ({}));
@@ -345,6 +374,10 @@ export default function ProjectDetailPage() {
       setPreviewLayers(layers);
     } catch (e) {
       console.warn("[session-preview] load error", e);
+      setPreviewError(
+        e instanceof Error ? e.message : "Could not load song preview. Try Refresh."
+      );
+      setPreviewLayers([]);
     } finally {
       setPreviewLoading(false);
     }
@@ -398,31 +431,45 @@ export default function ProjectDetailPage() {
 
   const selectTake = useCallback(
     async (taskId: string, recordingId: string) => {
+      setSelectingTakeId(recordingId);
+      setError(null);
       try {
-        await fetch(`/api/recording-tasks/${taskId}/recordings/${recordingId}/select`, {
-          method: "POST",
-        });
+        const res = await fetch(
+          `/api/recording-tasks/${taskId}/recordings/${recordingId}/select`,
+          { method: "POST" }
+        );
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(
+            (j as { error?: string }).error || "Could not select take — try again"
+          );
+        }
         const list = await loadTaskTakes(taskId);
-        // Optimistically mark selection client-side if API flags lag
-        const marked = list.map((t) => ({
-          ...t,
-          is_selected: t.id === recordingId,
+        const marked = list.map((tk) => ({
+          ...tk,
+          is_selected: tk.id === recordingId,
         }));
         setTaskTakes(marked);
-        const chosen = marked.find((t) => t.id === recordingId) || marked.find((t) => t.is_selected);
+        const chosen =
+          marked.find((tk) => tk.id === recordingId) ||
+          marked.find((tk) => tk.is_selected);
         if (chosen?.audio_url) {
           setLocalBlobUrl(chosen.audio_url);
           setSavedRecordingId(chosen.id);
         } else {
           applySelectedTakeToReview(marked);
+          setError("Take selected but audio URL missing — refresh and try again");
         }
         void loadSongPreview();
-      } catch {
-        /* non-fatal */
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not switch take");
+      } finally {
+        setSelectingTakeId(null);
       }
     },
     [loadTaskTakes, loadSongPreview, applySelectedTakeToReview]
   );
+
 
   useEffect(() => {
     if (phase === "review" && current?.id) {
@@ -533,7 +580,7 @@ export default function ProjectDetailPage() {
       if (!produceActiveRef.current) return;
       if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
         setProducing(false);
-        setError("Produce timed out. Refresh the page — if the job is still running it will resume.");
+        setError("Produce is taking longer than expected. Refresh — if the job is still running it will resume.");
         produceActiveRef.current = false;
         return;
       }
@@ -1538,7 +1585,7 @@ export default function ProjectDetailPage() {
     }
   }
 
-    async function startRecording() {
+  async function startRecording() {
     if (!current) return;
     setError(null);
     setProducerTip(null);
@@ -2418,10 +2465,15 @@ export default function ProjectDetailPage() {
                               color: C.text,
                               cursor: "pointer",
                             }}
+                            disabled={selectingTakeId === tk.id}
                             onClick={() => void selectTake(current.id, tk.id)}
                           >
                             Take {tk.take_number ?? i + 1}
-                            {tk.is_selected ? " · selected for preview" : ""}
+                            {selectingTakeId === tk.id
+                              ? " · switching…"
+                              : tk.is_selected
+                                ? " · selected for Review & Preview"
+                                : ""}
                           </button>
                         ))}
                       </div>
@@ -2560,13 +2612,19 @@ export default function ProjectDetailPage() {
             {producing ? (
               <>
                 <PlayerLoadingState
-                  title="Producing"
-                  subtitle={produceStage ? `Stage: ${produceStage}` : "RoEx preview mix & master…"}
+                  title="Producing your song"
+                  subtitle={humanProduceStage(produceStage)}
                   seed={`produce-${id}`}
                 />
-                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12 }}>
-                  This can take a few minutes. You can refresh — progress will resume.
+                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12, lineHeight: 1.45 }}>
+                  Mixing and mastering usually take 1–4 minutes. Safe to leave this screen —
+                  refresh later and we will pick up progress.
                 </p>
+                {produceStage ? (
+                  <p style={{ textAlign: "center", fontSize: 11.5, color: C.textMuted, marginTop: 6 }}>
+                    Technical stage: {produceStage}
+                  </p>
+                ) : null}
               </>
             ) : (
               <>
@@ -2629,6 +2687,11 @@ export default function ProjectDetailPage() {
                   />
                 )}
 
+                {previewError && (
+                  <p style={{ color: C.danger, textAlign: "center", fontSize: 13, marginTop: 10 }}>
+                    {previewError}
+                  </p>
+                )}
                 <button
                   type="button"
                   style={{ ...btn2, marginTop: 12 }}
@@ -2638,7 +2701,7 @@ export default function ProjectDetailPage() {
                   }}
                   disabled={previewLoading}
                 >
-                  Refresh preview (all recorded)
+                  {previewLoading ? "Loading preview…" : "Refresh preview (all recorded)"}
                 </button>
 
                 <ProjectSamplesPanel projectId={id} />
