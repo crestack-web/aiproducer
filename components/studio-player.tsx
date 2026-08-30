@@ -450,7 +450,16 @@ export function CompactAudioPlayer({
   placementRef.current = placementStartMs;
   /** Review mix: vocal at 1.0; beat is a quiet guide only (not final mix).
    * Generated beats are hot vs phone takes — keep linear gain very low. */
-  const reviewBeatGain = (v: number) => (v <= 0.001 ? 0 : 0.1);
+  /**
+   * Review guide bed only — not a full mix.
+   * Mastered instrumentals at 0.10 still mask quiet phone vocals (confirmed in device diagnostics).
+   * Cap hard so prop mistakes cannot restore a loud beat.
+   */
+  const reviewBeatGain = (v: number) => {
+    if (v <= 0.001) return 0;
+    // Target: vocal clearly dominant; beat still audible as reference
+    return Math.min(0.03, Math.max(0.02, v > 0.03 ? 0.03 : v));
+  };
   /**
    * Review-only: delay the guide beat so the take sits earlier on the grid.
    * Artists report voice "feels late"; telemetry free-run lag was ~-200ms.
@@ -980,7 +989,7 @@ export function CompactAudioPlayer({
       // Beat + Voice — free-run after initial seek (no re-seek / no vocal snap loop)
       if (want && b) {
         try {
-          // ALWAYS clamp beat to guide gain. Diagnostics showed beatVolume stuck at 1.0
+          // ALWAYS clamp beat to quiet guide gain (never leave mastered beat near 1.0)
           // (only raising when too quiet left full-blast beat drowning the take).
           const g = reviewBeatGain(bv);
           b.muted = false;
