@@ -425,10 +425,16 @@ export function CompactAudioPlayer({
   const vocalVolumeRef = useRef(vocalVolume);
   const playingRef = useRef(playing);
   const placementRef = useRef(placementStartMs);
-  /** iOS ignores element.volume — route beat through GainNode for real attenuation. */
-  const beatCtxRef = useRef<AudioContext | null>(null);
+  /**
+   * Single AudioContext for review: both vocal + beat go through GainNodes.
+   * Routing only the beat through Web Audio left the take silent on iOS (HTML
+   * media is ducked/stopped when an AudioContext graph is active).
+   */
+  const reviewCtxRef = useRef<AudioContext | null>(null);
   const beatGainNodeRef = useRef<GainNode | null>(null);
   const beatMediaSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const vocalGainNodeRef = useRef<GainNode | null>(null);
+  const vocalMediaSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
   const beatFreezeRecoveriesRef = useRef(0);
   // Sync-loop forensics (Beat + Voice)
   const vocalPauseCountRef = useRef(0);
@@ -554,59 +560,105 @@ export function CompactAudioPlayer({
    * system volume). MediaElementSource + GainNode is the reliable path.
    * Element.volume is set to 1 when Web Audio is active so the graph gets full signal.
    */
-  const ensureBeatGuideGain = useCallback(async (beat: HTMLAudioElement, linear: number) => {
-    const g = Math.max(0, Math.min(1, linear));
-    try {
-      if (typeof window === "undefined") {
-        beat.volume = g;
-        beat.muted = g <= 0;
-        return;
-      }
-      let ctx = beatCtxRef.current;
-      if (!ctx) {
-        const AC =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AC) {
-          beat.volume = g;
-          beat.muted = g <= 0;
-          return;
-        }
-        ctx = new AC();
-        beatCtxRef.current = ctx;
-      }
-      // Must resume under the user-gesture play path or iOS stays silent
-      if (ctx.state === "suspended") {
+  /**
+   * Wire vocal + beat through one AudioContext so iOS keeps both audible.
+   * Beat gain = quiet guide; vocal gain = 1. Element.volume stays 1 (graph attenuates).
+   */
+  const ensureReviewWebAudio = useCallback(
+    async (opts: {
+      vocal?: HTMLAudioElement | null;
+      beat?: HTMLAudioElement | null;
+      beatLinear?: number;
+      vocalLinear?: number;
+    }) => {
+      const beatG = Math.max(0, Math.min(1, opts.beatLinear ?? 0.002));
+      const vocalG = Math.max(0, Math.min(1, opts.vocalLinear ?? 1));
+      const vocal = opts.vocal ?? null;
+      const beat = opts.beat ?? null;
+
+      const fallback = () => {
         try {
-          await ctx.resume();
+          if (beat) {
+            beat.volume = beatG;
+            beat.muted = beatG <= 0;
+          }
+          if (vocal) {
+            vocal.volume = vocalG;
+            vocal.muted = vocalG <= 0;
+          }
         } catch {
           /* ignore */
         }
-      }
-      if (!beatMediaSrcRef.current) {
-        // createMediaElementSource may only be called once per element
-        const srcNode = ctx.createMediaElementSource(beat);
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = g;
-        srcNode.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        beatMediaSrcRef.current = srcNode;
-        beatGainNodeRef.current = gainNode;
-      } else if (beatGainNodeRef.current) {
-        beatGainNodeRef.current.gain.value = g;
-      }
-      // Full element level into the graph; GainNode does the quieting
-      beat.volume = 1;
-      beat.muted = false;
-    } catch {
+      };
+
       try {
-        beat.volume = g;
-        beat.muted = g <= 0;
+        if (typeof window === "undefined") {
+          fallback();
+          return;
+        }
+        let ctx = reviewCtxRef.current;
+        if (!ctx) {
+          const AC =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+          if (!AC) {
+            fallback();
+            return;
+          }
+          ctx = new AC();
+          reviewCtxRef.current = ctx;
+        }
+        if (ctx.state === "suspended") {
+          try {
+            await ctx.resume();
+          } catch {
+            /* ignore */
+          }
+        }
+
+        const wire = (
+          el: HTMLAudioElement,
+          mediaRef: { current: MediaElementAudioSourceNode | null },
+          gainRef: { current: GainNode | null },
+          gainValue: number
+        ) => {
+          if (!mediaRef.current) {
+            const srcNode = ctx!.createMediaElementSource(el);
+            const gainNode = ctx!.createGain();
+            gainNode.gain.value = gainValue;
+            srcNode.connect(gainNode);
+            gainNode.connect(ctx!.destination);
+            mediaRef.current = srcNode;
+            gainRef.current = gainNode;
+          } else if (gainRef.current) {
+            gainRef.current.gain.value = gainValue;
+          }
+          el.volume = 1;
+          el.muted = gainValue <= 0;
+        };
+
+        // Vocal first so take is never left off the graph when beat connects
+        if (vocal) wire(vocal, vocalMediaSrcRef, vocalGainNodeRef, vocalG);
+        if (beat) wire(beat, beatMediaSrcRef, beatGainNodeRef, beatG);
       } catch {
-        /* ignore */
+        fallback();
       }
-    }
-  }, []);
+    },
+    []
+  );
+
+  /** @deprecated name kept for call-site patches — routes both when vocal ref available */
+  const ensureBeatGuideGain = useCallback(
+    async (beat: HTMLAudioElement, linear: number) => {
+      await ensureReviewWebAudio({
+        beat,
+        vocal: vocalRef.current,
+        beatLinear: linear,
+        vocalLinear: 1,
+      });
+    },
+    [ensureReviewWebAudio]
+  );
 
   function vocalFileTimeFromSongMs(songMs: number, placeMs: number): number {
     return (songMs - placeMs) / 1000;
@@ -798,7 +850,7 @@ export function CompactAudioPlayer({
     const vocalSrc = (vocal.currentSrc || vocal.src || src || "").slice(0, 96);
     const isBlobUrl = /^blob:/i.test(vocal.currentSrc || vocal.src || src || "");
 
-    // Prepare elements — no long awaits before play()
+    // Prepare elements — wire BOTH through Web Audio before any play() (iOS dual-media)
     try {
       vocal.muted = false;
       vocal.volume = 1;
@@ -808,6 +860,17 @@ export function CompactAudioPlayer({
       } catch {
         /* ignore */
       }
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      await ensureReviewWebAudio({
+        vocal,
+        beat: wantBeat && beat ? beat : null,
+        beatLinear: reviewBeatGain(beatVolumeRef.current),
+        vocalLinear: 1,
+      });
     } catch {
       /* ignore */
     }
@@ -890,27 +953,34 @@ export function CompactAudioPlayer({
       }
     }
 
-    // Vocal must stay alive when Review starts at placement — do NOT pause for late beat seek
+    // Always keep the take engaged — dual play on mobile often pauses the vocal when beat starts
+    vocalEngagedRef.current = true;
     if (wantBeat && startAtPlacement) {
-      vocalEngagedRef.current = true;
       vocalStartedAtBeatMsRef.current = place;
-      try {
-        vocal.muted = false;
-        vocal.volume = 1;
-        // Only re-call play if still paused AND still inside this turn (promise just settled)
-        if (vocal.paused && vocalPlaySucceeded) {
-          // Already played successfully then paused — rare; do not await long recovery
-        }
-      } catch {
-        /* ignore */
+    }
+
+    // Re-assert vocal AFTER beat graph/play (iOS frequently ducks/pauses the other element)
+    try {
+      await ensureReviewWebAudio({
+        vocal,
+        beat: wantBeat ? beat : null,
+        beatLinear: reviewBeatGain(beatVolumeRef.current),
+        vocalLinear: 1,
+      });
+      vocal.muted = false;
+      vocal.volume = 1;
+      if (vocalGainNodeRef.current) {
+        vocalGainNodeRef.current.gain.value = 1;
       }
-    } else {
-      // Always keep the take engaged — pausing for "pre-roll" left Review silent on mobile
-      vocalEngagedRef.current = true;
+      if (vocal.paused) {
+        await vocal.play().catch(() => undefined);
+      }
+    } catch {
+      /* ignore */
     }
 
     // Recover if the browser accepted play() then immediately paused (common with dual <audio>)
-    if (vocalPlaySucceeded && vocal.paused) {
+    if (vocal.paused) {
       try {
         vocal.muted = false;
         vocal.volume = 1;
@@ -1079,9 +1149,19 @@ export function CompactAudioPlayer({
         try {
           // ALWAYS clamp beat via Web Audio GainNode (iOS ignores element.volume)
           const g = reviewBeatGain(bv);
-          void ensureBeatGuideGain(b, g);
+          void ensureReviewWebAudio({
+            vocal: v,
+            beat: b,
+            beatLinear: g,
+            vocalLinear: 1,
+          });
           if (v.muted) v.muted = false;
           if (v.volume !== 1) v.volume = 1;
+          if (vocalGainNodeRef.current) vocalGainNodeRef.current.gain.value = 1;
+          // If vocal was ducked when beat connected, nudge it back
+          if (v.paused && playingRef.current) {
+            void v.play().catch(() => undefined);
+          }
         } catch {
           /* ignore */
         }
@@ -1236,25 +1316,29 @@ export function CompactAudioPlayer({
   }, [hardStopBeat, src]);
 
 
-  // Tear down Web Audio graph when review player unmounts or beat src changes
+  // Tear down Web Audio graph when review player unmounts or sources change
   useEffect(() => {
     return () => {
       try {
         beatGainNodeRef.current?.disconnect();
         beatMediaSrcRef.current?.disconnect();
+        vocalGainNodeRef.current?.disconnect();
+        vocalMediaSrcRef.current?.disconnect();
       } catch {
         /* ignore */
       }
       beatGainNodeRef.current = null;
       beatMediaSrcRef.current = null;
+      vocalGainNodeRef.current = null;
+      vocalMediaSrcRef.current = null;
       try {
-        void beatCtxRef.current?.close();
+        void reviewCtxRef.current?.close();
       } catch {
         /* ignore */
       }
-      beatCtxRef.current = null;
+      reviewCtxRef.current = null;
     };
-  }, [beatSrc]);
+  }, [beatSrc, src]);
 
   const modeHint = voiceOnly ? "voice only" : "beat + voice";
 
