@@ -15,16 +15,16 @@ export type LayerRole =
   | "doubler"
   | "other";
 
-/** Linear HTMLMediaElement volumes (not dB). Lead dominates. */
+/** Linear HTMLMediaElement volumes — DAW-style: lead is focus, stacks sit under. */
 export const DEFAULT_LAYER_LINEAR_GAIN: Record<LayerRole, number> = {
   lead: 1.0,
-  double: 0.55,
-  doubler: 0.5,
-  harmony: 0.5,
-  harmony2: 0.45,
-  adlib: 0.45,
-  background: 0.4,
-  other: 0.65,
+  double: 0.62,
+  doubler: 0.55,
+  harmony: 0.48,
+  harmony2: 0.42,
+  adlib: 0.42,
+  background: 0.35,
+  other: 0.7,
 };
 
 export function normalizeLayerRole(type: string | null | undefined): LayerRole {
@@ -59,7 +59,6 @@ export function isCoreRecordingTask(task: {
 }): boolean {
   const role = normalizeLayerRole(task.type);
   if (isCoreLayerRole(role)) return true;
-  // Legacy: required LEAD-shaped rows without type keywords
   if (task.required && role === "other") return true;
   return false;
 }
@@ -89,11 +88,9 @@ export function sectionGroupKey(task: {
 export type BarRangeHint = {
   startBar?: number | null;
   endBar?: number | null;
-  /** Human-readable, e.g. "the last phrase" */
   phraseHint?: string | null;
 };
 
-/** Attach bar-range style hints for supporting layers (UI copy only; placement still uses ms). */
 export function layerPhraseHint(role: LayerRole, sectionLabel: string): string {
   switch (role) {
     case "double":
