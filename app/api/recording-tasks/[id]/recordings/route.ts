@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isWavBuffer } from "@/lib/audio/wav";
+import { isWavBuffer, ensureStereoWavForRoex } from "@/lib/audio/wav";
+import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 import { detectAudioFormat } from "@/lib/audio/roex-assets";
 import {
   createSignedDownloadUrl,
@@ -297,20 +298,38 @@ export async function POST(req: Request, ctx: Ctx) {
         ? detected.contentType
         : file.type || "application/octet-stream";
 
-    // Produce requires WAV stems — soft-warn in logs when client conversion missed
+    // Produce requires WAV stems — convert server-side when client sent phone format
+    let uploadBuf = buf;
+    let uploadExt = ext;
+    let uploadContentType = contentType;
     if (source === "record" && !isWavBuffer(buf)) {
-      console.warn("[recordings] non-WAV upload for record source", {
+      console.warn("[recordings] non-WAV upload for record source — converting", {
         taskId,
         format: detected.format,
         bytes: buf.length,
         clientType: file.type,
       });
+      try {
+        const conv = await convertBufferToWav(buf, (file as File).name || ext);
+        uploadBuf = ensureStereoWavForRoex(conv.buffer);
+        uploadExt = "wav";
+        uploadContentType = "audio/wav";
+        console.info("[recordings] converted to WAV", {
+          taskId,
+          method: conv.method,
+          outBytes: uploadBuf.length,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[recordings] WAV convert failed", taskId, msg);
+        // Still store original so take is not lost; produce will try again / fail clearly
+      }
     }
 
-    const path = recordingPath(user.id, task.project_id, taskId, takeNumber, ext);
+    const path = recordingPath(user.id, task.project_id, taskId, takeNumber, uploadExt);
 
-    const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-      contentType,
+    const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, uploadBuf, {
+      contentType: uploadContentType,
       upsert: true,
     });
     if (upErr) {

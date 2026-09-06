@@ -2419,7 +2419,7 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.012}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.004}
                       playbackSinkId={selectedSpeakerId || "__headphones__"}
                       debugSectionLabel={sectionLabel(current)}
                       debugTaskId={current.id}

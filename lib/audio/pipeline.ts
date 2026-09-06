@@ -214,12 +214,18 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           instrumentalPath = dest;
           logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
         } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
           logProduce({
             event: "instrumental_wav_prepare_failed",
             jobId,
             projectId,
-            error: e instanceof Error ? e.message : String(e),
+            error: msg,
           });
+          throw new Error(
+            "Instrumental/beat could not be converted to WAV for the mixer. " +
+              "Re-upload the beat as WAV (or MP3 we can convert). Your vocal takes are still saved. " +
+              msg
+          );
         }
       }
       stemRows.push({
