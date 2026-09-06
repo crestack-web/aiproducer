@@ -383,7 +383,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.0015,
+  beatVolume = 0.002,
   vocalVolume = 1,
   /** Review/preview output preference — not the recording-monitor route. */
   playbackSinkId,
@@ -470,7 +470,7 @@ export function CompactAudioPlayer({
    */
   const reviewBeatGain = (v: number) => {
     if (v <= 0.0005) return 0;
-    return 0.0015;
+    return 0.002;
   };
   /**
    * Review-only: delay the guide beat so the take sits earlier on the grid.
@@ -554,7 +554,7 @@ export function CompactAudioPlayer({
    * system volume). MediaElementSource + GainNode is the reliable path.
    * Element.volume is set to 1 when Web Audio is active so the graph gets full signal.
    */
-  const ensureBeatGuideGain = useCallback((beat: HTMLAudioElement, linear: number) => {
+  const ensureBeatGuideGain = useCallback(async (beat: HTMLAudioElement, linear: number) => {
     const g = Math.max(0, Math.min(1, linear));
     try {
       if (typeof window === "undefined") {
@@ -575,8 +575,13 @@ export function CompactAudioPlayer({
         ctx = new AC();
         beatCtxRef.current = ctx;
       }
+      // Must resume under the user-gesture play path or iOS stays silent
       if (ctx.state === "suspended") {
-        void ctx.resume().catch(() => undefined);
+        try {
+          await ctx.resume();
+        } catch {
+          /* ignore */
+        }
       }
       if (!beatMediaSrcRef.current) {
         // createMediaElementSource may only be called once per element
@@ -592,7 +597,7 @@ export function CompactAudioPlayer({
       }
       // Full element level into the graph; GainNode does the quieting
       beat.volume = 1;
-      beat.muted = g <= 0;
+      beat.muted = false;
     } catch {
       try {
         beat.volume = g;
@@ -626,7 +631,7 @@ export function CompactAudioPlayer({
     const ensureAudible = () => {
       try {
         el.muted = false;
-        ensureBeatGuideGain(el, reviewBeatGain(beatVolumeRef.current));
+        void ensureBeatGuideGain(el, reviewBeatGain(beatVolumeRef.current));
       } catch {
         /* ignore */
       }
@@ -810,7 +815,7 @@ export function CompactAudioPlayer({
     if (wantBeat && beat) {
       try {
         beat.muted = false;
-        ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
+        await ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
         beat.playbackRate = 1;
         // Best-effort pre-seek (may not stick on iOS until after play)
         try {
@@ -866,7 +871,7 @@ export function CompactAudioPlayer({
     if (wantBeat && beat) {
       try {
         beat.muted = false;
-        ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
+        await ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
         beat.playbackRate = 1;
         // Align to placement + vocal time + review delay (voice sits earlier on grid)
         const aligned = Math.max(
@@ -917,7 +922,7 @@ export function CompactAudioPlayer({
     if (wantBeat && beat && beatPlaySucceeded && beat.paused) {
       try {
         beat.muted = false;
-        ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
+        await ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
         await beat.play().catch(() => undefined);
       } catch {
         /* ignore */
@@ -960,7 +965,7 @@ export function CompactAudioPlayer({
     if (wantBeat && beat && beatPlaySucceeded) {
       try {
         beat.muted = false;
-        ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
+        void ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
       } catch {
         /* ignore */
       }
@@ -976,7 +981,7 @@ export function CompactAudioPlayer({
           try {
             if (beatRef.current) {
               beatRef.current.muted = false;
-              ensureBeatGuideGain(beatRef.current, reviewBeatGain(beatVolumeRef.current));
+              void ensureBeatGuideGain(beatRef.current, reviewBeatGain(beatVolumeRef.current));
               beatRef.current.playbackRate = 1;
             }
           } catch {
@@ -1074,7 +1079,7 @@ export function CompactAudioPlayer({
         try {
           // ALWAYS clamp beat via Web Audio GainNode (iOS ignores element.volume)
           const g = reviewBeatGain(bv);
-          ensureBeatGuideGain(b, g);
+          void ensureBeatGuideGain(b, g);
           if (v.muted) v.muted = false;
           if (v.volume !== 1) v.volume = 1;
         } catch {
@@ -1088,19 +1093,19 @@ export function CompactAudioPlayer({
           /* ignore */
         }
 
-        // If beat claims to play but clock does not advance: one soft recovery, then mute bed
-        // (spam play() was keeping a loud stuck frame in the output pipeline on device).
+        // Soft freeze recovery only — never hardStop the guide bed (that left Review silent).
+        // Mobile often reports a stuck currentTime after mid-track seek while audio still flows.
         const now = Date.now();
         const bt = b.currentTime;
         const clock = lastBeatClockRef.current;
         if (!b.paused) {
-          if (clock.t >= 0 && Math.abs(bt - clock.t) < 0.03 && now - clock.at > 800) {
-            if (beatFreezeRecoveriesRef.current < 1) {
+          if (clock.t >= 0 && Math.abs(bt - clock.t) < 0.03 && now - clock.at > 1200) {
+            if (beatFreezeRecoveriesRef.current < 2) {
               beatFreezeRecoveriesRef.current += 1;
               try {
                 void b.play().catch(() => undefined);
                 b.playbackRate = 1;
-                ensureBeatGuideGain(b, reviewBeatGain(bv));
+                void ensureBeatGuideGain(b, reviewBeatGain(bv));
               } catch {
                 /* ignore */
               }
@@ -1112,14 +1117,10 @@ export function CompactAudioPlayer({
                 recoveryAttempt: beatFreezeRecoveriesRef.current,
               });
             } else {
-              // Still frozen after one recovery — drop the bed so vocal stays clear
-              try {
-                hardStopBeat();
-              } catch {
-                /* ignore */
-              }
+              // Leave bed running; just stop spamming play()
+              lastBeatClockRef.current = { t: bt, at: now };
               writeReviewDiagnostics({
-                event: "beat_freeze_give_up",
+                event: "beat_freeze_observed",
                 beatCurrentTimeMs: Math.round(bt * 1000),
                 vocalCurrentTimeMs: Math.round(v.currentTime * 1000),
               });
@@ -1128,6 +1129,21 @@ export function CompactAudioPlayer({
             lastBeatClockRef.current = { t: bt, at: now };
           } else if (clock.t < 0) {
             lastBeatClockRef.current = { t: bt, at: now };
+          }
+        } else if (playingRef.current && !v.paused) {
+          // Beat paused while vocal still running — nudge play once (do not mute)
+          if (beatFreezeRecoveriesRef.current < 2) {
+            beatFreezeRecoveriesRef.current += 1;
+            try {
+              void ensureBeatGuideGain(b, reviewBeatGain(bv));
+              void b.play().catch(() => undefined);
+            } catch {
+              /* ignore */
+            }
+            writeReviewDiagnostics({
+              event: "beat_paused_nudge",
+              recoveryAttempt: beatFreezeRecoveriesRef.current,
+            });
           }
         }
 
