@@ -305,6 +305,12 @@ export async function validateTracksForRoex(
 /** Map provider errors to user-facing copy; keep detail in logs. */
 export function userFacingProduceError(raw: string): string {
   const m = (raw || "").toLowerCase();
+  if (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("beat"))) {
+    return (
+      "The beat/instrumental could not be prepared as WAV for the mixer. " +
+      "Re-upload the beat as WAV (or a clean MP3). Your vocal takes are safe."
+    );
+  }
   if (
     m.includes("not wav") ||
     m.includes("is not wav") ||
