@@ -299,7 +299,8 @@ export async function POST(req: Request, ctx: Ctx) {
         : file.type || "application/octet-stream";
 
     // Produce requires WAV stems — convert server-side when client sent phone format
-    let uploadBuf = buf;
+    // Buffer.from normalizes Node Buffer generic ArrayBuffer vs ArrayBufferLike for TS 5.x
+    let uploadBuf: Buffer = Buffer.from(buf);
     let uploadExt = ext;
     let uploadContentType = contentType;
     if (source === "record" && !isWavBuffer(buf)) {
@@ -310,8 +311,8 @@ export async function POST(req: Request, ctx: Ctx) {
         clientType: file.type,
       });
       try {
-        const conv = await convertBufferToWav(buf, (file as File).name || ext);
-        uploadBuf = ensureStereoWavForRoex(conv.buffer);
+        const conv = await convertBufferToWav(Buffer.from(buf), (file as File).name || ext);
+        uploadBuf = Buffer.from(ensureStereoWavForRoex(Buffer.from(conv.buffer)));
         uploadExt = "wav";
         uploadContentType = "audio/wav";
         console.info("[recordings] converted to WAV", {
