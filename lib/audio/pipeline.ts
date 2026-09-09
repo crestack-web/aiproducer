@@ -198,70 +198,44 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       const stemRows: Record<string, unknown>[] = [];
       let instrumentalPath = beat.audio_path as string;
       if (mode === "roex" && userId) {
-        // Best-effort only: never block Produce on beat conversion.
-        // MP3/FLAC beats are valid for RoEx as-is; prepareRoexTrack uploads them.
+        // RoEx mix requires stereo WAV — convert beat early when possible.
+        // prepareRoexTrack will convert again if this step is skipped.
         try {
-          const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
+          const { convertBufferToWav, ffmpegAvailable } = await import("@/lib/audio/convert-to-wav");
           const { downloadStorageOrUrl, detectAudioFormat } = await import("@/lib/audio/roex-assets");
           const { isWavBuffer, ensureStereoWavForRoex } = await import("@/lib/audio/wav");
           const { uploadBuffer } = await import("@/lib/storage");
+          const hasFf = await ffmpegAvailable();
+          logProduce({ event: "instrumental_ffmpeg_status", jobId, projectId, available: hasFf });
           let buf = await downloadStorageOrUrl(instrumentalPath);
           const det = detectAudioFormat(buf, instrumentalPath);
-          const pathLower = (instrumentalPath || "").toLowerCase();
-          const looksMp3 =
-            det.format === "mp3" ||
-            pathLower.includes(".mp3") ||
-            pathLower.endsWith("mp3");
-          const looksFlac = det.format === "flac" || pathLower.includes(".flac");
-
-          if (looksMp3 || looksFlac) {
+          try {
+            if (!(isWavBuffer(buf) || det.format === "wav")) {
+              const conv = await convertBufferToWav(buf, instrumentalPath);
+              buf = conv.buffer;
+              logProduce({
+                event: "instrumental_converted",
+                jobId,
+                projectId,
+                from: det.format,
+                method: conv.method,
+                bytes: buf.length,
+              });
+            }
+            buf = ensureStereoWavForRoex(buf);
+            const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
+            await uploadBuffer(dest, buf, "audio/wav");
+            instrumentalPath = dest;
+            logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
+          } catch (convErr) {
             logProduce({
-              event: "instrumental_native_passthrough",
+              event: "instrumental_convert_deferred",
               jobId,
               projectId,
-              format: looksFlac ? "flac" : "mp3",
-              bytes: buf.length,
+              format: det.format,
+              error: convErr instanceof Error ? convErr.message : String(convErr),
             });
-            // Keep original storage path — RoEx upload uses native format
-          } else if (isWavBuffer(buf) || det.format === "wav") {
-            try {
-              buf = ensureStereoWavForRoex(buf);
-              const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
-              await uploadBuffer(dest, buf, "audio/wav");
-              instrumentalPath = dest;
-              logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
-            } catch (wavErr) {
-              logProduce({
-                event: "instrumental_wav_normalize_skipped",
-                jobId,
-                projectId,
-                error: wavErr instanceof Error ? wavErr.message : String(wavErr),
-              });
-            }
-          } else {
-            try {
-              const conv = await convertBufferToWav(buf, instrumentalPath);
-              buf = ensureStereoWavForRoex(conv.buffer);
-              const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
-              await uploadBuffer(dest, buf, "audio/wav");
-              instrumentalPath = dest;
-              logProduce({
-                event: "instrumental_wav_prepared",
-                jobId,
-                projectId,
-                bytes: buf.length,
-                from: det.format,
-              });
-            } catch (convErr) {
-              logProduce({
-                event: "instrumental_convert_skipped_use_original",
-                jobId,
-                projectId,
-                format: det.format,
-                error: convErr instanceof Error ? convErr.message : String(convErr),
-              });
-              // Keep original path; prepareRoexTrack will try again or passthrough
-            }
+            // prepareRoexTrack will convert at upload time
           }
         } catch (e) {
           logProduce({
@@ -270,7 +244,6 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
             projectId,
             error: e instanceof Error ? e.message : String(e),
           });
-          // Do not throw — original beat path remains for RoEx
         }
       }
       stemRows.push({

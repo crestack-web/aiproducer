@@ -90,13 +90,34 @@ export async function convertBufferToWav(
   }
 
   const hint = (pathHint || "").toLowerCase().split("?")[0];
-  let ext = "webm";
-  if (hint.endsWith(".webm") || (input.length >= 4 && input[0] === 0x1a)) ext = "webm";
+  let ext = "bin";
+  const isMpegSync = (i: number) =>
+    i + 1 < input.length && input[i] === 0xff && (input[i + 1] & 0xe0) === 0xe0;
+  if (hint.endsWith(".webm") || (input.length >= 4 && input[0] === 0x1a && input[1] === 0x45))
+    ext = "webm";
   else if (hint.endsWith(".ogg") || input.toString("ascii", 0, 4) === "OggS") ext = "ogg";
-  else if (hint.endsWith(".m4a") || hint.endsWith(".mp4")) ext = "m4a";
-  else if (hint.endsWith(".mp3") || (input[0] === 0xff && (input[1] & 0xe0) === 0xe0))
+  else if (hint.endsWith(".m4a") || hint.endsWith(".mp4") || (input.length >= 8 && input.toString("ascii", 4, 8) === "ftyp"))
+    ext = "m4a";
+  else if (
+    hint.endsWith(".mp3") ||
+    hint.includes(".mp3") ||
+    (input.length >= 3 && input[0] === 0x49 && input[1] === 0x44 && input[2] === 0x33) ||
+    isMpegSync(0)
+  )
     ext = "mp3";
   else if (hint.endsWith(".flac") || input.toString("ascii", 0, 4) === "fLaC") ext = "flac";
+  else if (hint.endsWith(".wav") || (input.length >= 12 && input.toString("ascii", 0, 4) === "RIFF"))
+    ext = "wav";
+  else {
+    // Scan short window for MPEG frame (junk-prefixed mp3)
+    for (let i = 1; i < Math.min(input.length - 1, 4096); i++) {
+      if (isMpegSync(i)) {
+        ext = "mp3";
+        break;
+      }
+    }
+    if (ext === "bin") ext = "mp3"; // last resort: many beats are mpeg
+  }
 
   const id = randomBytes(8).toString("hex");
   const inPath = join(tmpdir(), `aiproducer-in-${id}.${ext}`);

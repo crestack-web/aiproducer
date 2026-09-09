@@ -146,6 +146,10 @@ export async function prepareRoexTrack(opts: {
       detected = { ...detected, format: "flac", contentType: "audio/flac", extension: "flac" };
     } else if (pathLower.includes(".wav")) {
       detected = { ...detected, format: "wav", contentType: "audio/wav", extension: "wav" };
+    } else if (pathLower.includes(".webm")) {
+      detected = { ...detected, format: "webm", contentType: "audio/webm", extension: "webm" };
+    } else if (pathLower.includes(".m4a") || pathLower.includes(".mp4")) {
+      detected = { ...detected, format: "m4a", contentType: "audio/mp4", extension: "m4a" };
     }
   }
 
@@ -155,46 +159,15 @@ export async function prepareRoexTrack(opts: {
     );
   }
 
-  // Vocals must be a known format or convertible; beats may passthrough.
-  if (detected.format === "unknown" && kind !== "INSTRUMENTAL") {
-    throw new Error(
-      `Vocal format is not compatible with RoEx. Detected unknown audio. ` +
-        `Re-record the section so it saves as WAV. Your other takes are safe.`
-    );
-  }
-
-  // Prefer WAV for vocals; MP3/FLAC instrumentals can go to RoEx without conversion.
+  // RoEx Automix / mixpreview: WAV only (stereo, 44.1/48 kHz, 16- or 24-bit).
+  // MP3 is for mastering only — always convert stems to stereo WAV before upload.
   let uploadBuffer = buffer;
-  let uploadFormat: DetectedAudio["format"] = detected.format;
-  let uploadContentType = detected.contentType;
-  let uploadExt = detected.extension;
-
-  const roexNative = detected.format === "mp3" || detected.format === "flac";
   const alreadyWav = detected.format === "wav" || isWavBuffer(buffer);
-  const isInstrumental = kind === "INSTRUMENTAL";
 
-  if (alreadyWav) {
-    uploadFormat = "wav";
-    uploadContentType = "audio/wav";
-    uploadExt = "wav";
-  } else if (roexNative && isInstrumental) {
-    // Skip ffmpeg for beats that RoEx already accepts
-    console.info(
-      "[produce]",
-      JSON.stringify({
-        event: "roex_format_passthrough",
-        kind,
-        format: detected.format,
-        reason: "instrumental_native",
-      })
-    );
-  } else if (!alreadyWav) {
+  if (!alreadyWav) {
     try {
       const conv = await convertBufferToWav(buffer, storagePath);
       uploadBuffer = conv.buffer;
-      uploadFormat = "wav";
-      uploadContentType = "audio/wav";
-      uploadExt = "wav";
       console.info(
         "[produce]",
         JSON.stringify({
@@ -207,117 +180,67 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // Instrumental: never hard-fail — upload original as mp3/flac/bin
-      if (isInstrumental || roexNative || detected.format === "mp3" || detected.format === "flac") {
-        uploadBuffer = buffer;
-        if (detected.format === "flac" || pathLower.includes(".flac")) {
-          uploadFormat = "flac";
-          uploadContentType = "audio/flac";
-          uploadExt = "flac";
-        } else {
-          // Default instrumental upload to mp3 (common for uploaded + generated beats)
-          uploadFormat = detected.format === "mp3" ? "mp3" : "mp3";
-          uploadContentType = "audio/mpeg";
-          uploadExt = "mp3";
-        }
-        console.info(
-          "[produce]",
-          JSON.stringify({
-            event: "roex_format_passthrough",
-            kind,
-            format: uploadFormat,
-            from: detected.format,
-            reason: msg.slice(0, 160),
-          })
-        );
-      } else {
-        throw new Error(
-          `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
-            `Re-record the section so it saves as WAV. Your other takes are safe.`
-        );
-      }
-    }
-  }
-
-  // Last resort: instrumental still unknown after convert path — treat as mp3 bytes
-  if (isInstrumental && uploadFormat === "unknown") {
-    uploadFormat = "mp3";
-    uploadContentType = "audio/mpeg";
-    uploadExt = "mp3";
-    uploadBuffer = buffer;
-    console.info(
-      "[produce]",
-      JSON.stringify({ event: "roex_format_forced_mp3", kind, bytes: buffer.length })
-    );
-  }
-
-  if (uploadFormat === "wav" || isWavBuffer(uploadBuffer)) {
-    try {
-      uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
-      uploadFormat = "wav";
-      uploadContentType = "audio/wav";
-      uploadExt = "wav";
-      console.info(
-        "[produce]",
-        JSON.stringify({
-          event: "roex_wav_stereo_prepared",
-          kind,
-          inBytes: buffer.length,
-          outBytes: uploadBuffer.length,
-        })
+      throw new Error(
+        `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
+          (kind === "INSTRUMENTAL"
+            ? "Re-upload the beat as WAV (44.1/48 kHz stereo). Your vocal takes are safe."
+            : "Re-record the section so it saves as WAV. Your other takes are safe.")
       );
-    } catch (e) {
-      console.warn("[produce] stereo WAV convert failed", kind, e);
     }
   }
 
-  const safeName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.${uploadExt}`;
+  try {
+    uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
+  } catch (e) {
+    console.warn("[produce] stereo WAV convert failed", kind, e);
+    if (!isWavBuffer(uploadBuffer)) {
+      throw new Error(
+        `${kind} could not be prepared as stereo WAV for the mixer. ` +
+          (kind === "INSTRUMENTAL"
+            ? "Re-upload the beat as WAV. Your vocal takes are safe."
+            : "Re-record the section as WAV. Your other takes are safe.")
+      );
+    }
+  }
+
+  const uploadFormat: DetectedAudio["format"] = "wav";
+  const uploadContentType = "audio/wav";
+  const uploadExt = "wav";
+
+  console.info(
+    "[produce]",
+    JSON.stringify({
+      event: "roex_wav_stereo_prepared",
+      kind,
+      from: detected.format,
+      inBytes: buffer.length,
+      outBytes: uploadBuffer.length,
+    })
+  );
+
+  // Clean filename — RoEx rejects odd characters and non-.wav for mixing
+  const safeName = `${kind.toLowerCase()}_${jobId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12)}.wav`;
   let readableUrl: string;
   try {
     const up = await provider.uploadStem(uploadBuffer, safeName, uploadContentType);
     readableUrl = up.readableUrl;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const reject =
-      /file type not accepted|not accepted|unsupported|invalid format/i.test(msg);
-    if (reject && uploadExt !== "wav") {
-      try {
-        const conv = await convertBufferToWav(uploadBuffer, safeName);
-        uploadBuffer = ensureStereoWavForRoex(conv.buffer);
-        const retryName = `${kind.toLowerCase()}_${jobId.slice(0, 8)}.wav`;
-        const up2 = await provider.uploadStem(uploadBuffer, retryName, "audio/wav");
-        readableUrl = up2.readableUrl;
-        uploadFormat = "wav";
-        uploadExt = "wav";
-        console.info(
-          "[produce]",
-          JSON.stringify({ event: "roex_upload_retry_wav", kind, bytes: uploadBuffer.length })
-        );
-      } catch (e2) {
-        const msg2 = e2 instanceof Error ? e2.message : String(e2);
-        throw new Error(
-          `RoEx upload failed for ${kind} after WAV retry (${uploadBuffer.length} bytes): ${msg}; retry: ${msg2}`
-        );
-      }
-    } else if (reject) {
-      // Already wav — try stereo normalize once more
-      try {
-        uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
-        const up2 = await provider.uploadStem(
-          uploadBuffer,
-          `${kind.toLowerCase()}_${jobId.slice(0, 8)}_stereo.wav`,
-          "audio/wav"
-        );
-        readableUrl = up2.readableUrl;
-      } catch (e2) {
-        const msg2 = e2 instanceof Error ? e2.message : String(e2);
-        throw new Error(
-          `RoEx rejected ${kind} WAV (${uploadBuffer.length} bytes): ${msg}; stereo retry: ${msg2}`
-        );
-      }
-    } else {
+    // One more stereo re-encode + rename attempt
+    try {
+      uploadBuffer = ensureStereoWavForRoex(uploadBuffer);
+      const retryName = `track_${jobId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10)}.wav`;
+      const up2 = await provider.uploadStem(uploadBuffer, retryName, "audio/wav");
+      readableUrl = up2.readableUrl;
+      console.info(
+        "[produce]",
+        JSON.stringify({ event: "roex_upload_retry_ok", kind, bytes: uploadBuffer.length })
+      );
+    } catch (e2) {
+      const msg2 = e2 instanceof Error ? e2.message : String(e2);
       throw new Error(
-        `RoEx upload failed for ${kind} (${uploadFormat}, ${uploadBuffer.length} bytes): ${msg}`
+        `RoEx rejected ${kind} audio file (format not accepted). ` +
+          `Tried stereo WAV ${uploadBuffer.length} bytes. ${msg}; retry: ${msg2}`
       );
     }
   }
@@ -326,7 +249,6 @@ export async function prepareRoexTrack(opts: {
     throw new Error(`RoEx did not return a readable URL for ${kind}`);
   }
 
-  // Safe metadata only — no tokens
   console.info(
     "[produce]",
     JSON.stringify({
@@ -337,7 +259,6 @@ export async function prepareRoexTrack(opts: {
       format: uploadFormat,
       bytes: uploadBuffer.length,
       filename: safeName,
-      // host only, no query
       provider_host: (() => {
         try {
           return new URL(readableUrl).host;
@@ -352,15 +273,16 @@ export async function prepareRoexTrack(opts: {
     kind,
     storagePath,
     providerUrl: readableUrl,
-    detected,
+    detected: {
+      format: uploadFormat,
+      contentType: uploadContentType,
+      extension: uploadExt,
+      bytes: uploadBuffer.length,
+    },
     role: kind === "INSTRUMENTAL" ? "instrumental" : "vocal",
   };
 }
 
-/**
- * Validate every stem before contacting RoEx mix API.
- * Throws a user-facing message if invalid; logs safe metadata only.
- */
 export async function validateTracksForRoex(
   stems: { audio_path: string; kind: string; metadata?: Record<string, unknown> | null }[]
 ): Promise<void> {
@@ -435,10 +357,16 @@ export function userFacingProduceError(raw: string): string {
       "Open those sections, record again (they save as WAV), then Produce. Your earlier takes stay saved."
     );
   }
-  if (m.includes("file type not accepted") || m.includes("not accepted")) {
+  if (
+    m.includes("file type not accepted") ||
+    m.includes("not accepted") ||
+    m.includes("format rejected") ||
+    m.includes("rejected") && m.includes("wav")
+  ) {
     return (
-      "We couldn't send one of your audio files to the mixer (format rejected). " +
-      "Your recordings are safe. Try Produce again; if it keeps failing, re-record the affected section so it saves as WAV."
+      "The mixer rejected an audio file (it needs stereo WAV). " +
+      "Vocals recorded in the app are usually fine — if the beat is MP3, re-upload it as WAV, or try Produce again so we can convert it. " +
+      "Your vocal takes are safe."
     );
   }
   if (m.includes("compatible") || m.includes("format")) {
