@@ -1362,12 +1362,11 @@ export default function ProjectDetailPage() {
         mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
       beatAudioRef.current.play().catch(() => undefined);
     }
-    // Production layers: hear existing Lead (+ other selected layers) for this section.
-    // Re-load / keep section peers under the beat at section start (not beat alone)
+    // Any layer: hear existing section takes (Lead / harmony / ad-lib) under the beat.
+    // Re-load peers if needed so multi-layer sections always monitor previous takes
     void (async () => {
-      if (!layerMonitorAudiosRef.current.length) {
-        await startLayerMonitors(task);
-      }
+      // Always (re)load section peers so harmony/ad-lib hears Lead every take
+      await startLayerMonitors(task);
       seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
       playLayerMonitors();
     })();
@@ -1449,14 +1448,12 @@ export default function ProjectDetailPage() {
   }
 
   /**
-   * Recording monitor for production layers (harmony / double / ad-lib / …):
-   * play existing selected vocals in the same section with the beat so the
-   * artist can double/harmonize against the Lead — not beat alone.
+   * While recording any layer, play existing selected takes in the same section
+   * (Lead under harmony/ad-lib, or any prior layers under a retake).
    * Mic path is separate; these Audio elements never go into MediaRecorder.
    */
   async function startLayerMonitors(task: Task) {
     stopLayerMonitors();
-    if (!isProductionLayer(task)) return;
 
     const sectionStart = task.start_ms ?? 0;
     const sectionId =
@@ -1483,12 +1480,12 @@ export default function ProjectDetailPage() {
       const tl = (sectionLabel(t) || "").toLowerCase().trim();
       if (label && tl && label === tl) return true;
       const s = t.start_ms ?? 0;
-      // Same musical window (±2s) — avoid 10s window matching adjacent sections
-      if (Math.abs(s - sectionStart) < 2000) return true;
+      // Same musical window (±3s) for section peers
+      if (Math.abs(s - sectionStart) < 3000) return true;
       if (
         task.end_ms != null &&
-        s >= sectionStart - 200 &&
-        s < (task.end_ms as number) + 200
+        s >= sectionStart - 500 &&
+        s < (task.end_ms as number) + 500
       ) {
         return true;
       }
@@ -1573,8 +1570,9 @@ export default function ProjectDetailPage() {
     const sink = selectedSpeakerIdRef.current || undefined;
     const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
     // Keep monitors usable but below typical mic bleed risk on speaker
-    const leadVol = mode === "PHONE_SPEAKER" ? 0.35 : 0.75;
-    const otherVol = mode === "PHONE_SPEAKER" ? 0.2 : 0.4;
+    // Hearable under the new take; still below typical speaker feedback risk
+    const leadVol = mode === "PHONE_SPEAKER" ? 0.4 : 0.85;
+    const otherVol = mode === "PHONE_SPEAKER" ? 0.28 : 0.55;
 
     for (const src of sources.slice(0, 4)) {
       try {
@@ -1678,7 +1676,7 @@ export default function ProjectDetailPage() {
           mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
         beatAudioRef.current.play().catch(() => undefined);
       }
-      // Production layers (harmony / ad-lib / double): hear existing section vocals with beat
+      // Always monitor prior takes in this section (harmony under Lead, etc.)
       void (async () => {
         await startLayerMonitors(current);
         // Pre-roll: start layers ~3s before section (same as beat) when possible
