@@ -25,17 +25,33 @@ export type DetectedAudio = {
 /** Detect format from magic bytes first, then filename hint. */
 export function detectAudioFormat(buffer: Buffer, pathHint?: string): DetectedAudio {
   const bytes = buffer.length;
+  const hint = (pathHint || "").toLowerCase().split("?")[0];
+
   if (bytes >= 12 && isWavBuffer(buffer)) {
     return { format: "wav", contentType: "audio/wav", extension: "wav", bytes };
   }
-  // ID3 or MPEG frame sync
-  if (
-    bytes >= 3 &&
-    ((buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) ||
-      (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0))
-  ) {
+
+  // Path extension is authoritative for common upload names (beats often *.mp3)
+  if (hint.endsWith(".mp3") || hint.endsWith(".mpga") || hint.endsWith(".mpeg")) {
     return { format: "mp3", contentType: "audio/mpeg", extension: "mp3", bytes };
   }
+  if (hint.endsWith(".flac")) {
+    return { format: "flac", contentType: "audio/flac", extension: "flac", bytes };
+  }
+  if (hint.endsWith(".m4a") || hint.endsWith(".mp4")) {
+    return { format: "m4a", contentType: "audio/mp4", extension: "m4a", bytes };
+  }
+  if (hint.endsWith(".wav")) {
+    return { format: "wav", contentType: "audio/wav", extension: "wav", bytes };
+  }
+  if (hint.endsWith(".webm")) {
+    return { format: "webm", contentType: "audio/webm", extension: "webm", bytes };
+  }
+  if (hint.endsWith(".ogg")) {
+    return { format: "ogg", contentType: "audio/ogg", extension: "ogg", bytes };
+  }
+
+  // Container magic before MP3 frame scan (avoid false positives inside m4a/etc.)
   if (bytes >= 8 && buffer.toString("ascii", 4, 8) === "ftyp") {
     return { format: "m4a", contentType: "audio/mp4", extension: "m4a", bytes };
   }
@@ -45,14 +61,26 @@ export function detectAudioFormat(buffer: Buffer, pathHint?: string): DetectedAu
   if (bytes >= 4 && buffer.toString("ascii", 0, 4) === "fLaC") {
     return { format: "flac", contentType: "audio/flac", extension: "flac", bytes };
   }
-  // EBML (webm/matroska)
   if (bytes >= 4 && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) {
     return { format: "webm", contentType: "audio/webm", extension: "webm", bytes };
   }
 
-  const hint = (pathHint || "").toLowerCase().split("?")[0];
-  if (hint.endsWith(".wav")) return { format: "wav", contentType: "audio/wav", extension: "wav", bytes };
-  if (hint.endsWith(".mp3")) return { format: "mp3", contentType: "audio/mpeg", extension: "mp3", bytes };
+  // ID3 or MPEG frame sync (scan a short window for junk-prefixed MP3s)
+  const isMpegSync = (i: number) =>
+    i + 1 < bytes && buffer[i] === 0xff && (buffer[i + 1] & 0xe0) === 0xe0;
+  if (bytes >= 3 && buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) {
+    return { format: "mp3", contentType: "audio/mpeg", extension: "mp3", bytes };
+  }
+  if (isMpegSync(0)) {
+    return { format: "mp3", contentType: "audio/mpeg", extension: "mp3", bytes };
+  }
+  const scanLimit = Math.min(bytes - 1, 8192);
+  for (let i = 1; i < scanLimit; i++) {
+    if (isMpegSync(i)) {
+      return { format: "mp3", contentType: "audio/mpeg", extension: "mp3", bytes };
+    }
+  }
+
   if (hint.endsWith(".m4a") || hint.endsWith(".mp4"))
     return { format: "m4a", contentType: "audio/mp4", extension: "m4a", bytes };
   if (hint.endsWith(".ogg")) return { format: "ogg", contentType: "audio/ogg", extension: "ogg", bytes };
@@ -116,14 +144,37 @@ export async function prepareRoexTrack(opts: {
     );
   }
 
-  // RoEx mix is most reliable with stereo 16-bit WAV. Convert any non-WAV (webm/m4a/ogg/mp3/flac).
+  // Prefer WAV for vocals; MP3/FLAC instrumentals can go to RoEx without conversion.
   let uploadBuffer = buffer;
   let uploadFormat: DetectedAudio["format"] = detected.format;
-  let uploadContentType = "audio/wav";
-  let uploadExt = "wav";
+  let uploadContentType = detected.contentType;
+  let uploadExt = detected.extension;
 
-  if (!(detected.format === "wav" || isWavBuffer(buffer))) {
-    const mustBeWav = detected.format === "webm" || detected.format === "m4a" || detected.format === "ogg" || detected.format === "unknown";
+  const roexNative = detected.format === "mp3" || detected.format === "flac";
+  const alreadyWav = detected.format === "wav" || isWavBuffer(buffer);
+
+  if (alreadyWav) {
+    uploadFormat = "wav";
+    uploadContentType = "audio/wav";
+    uploadExt = "wav";
+  } else if (roexNative && kind === "INSTRUMENTAL") {
+    // Skip ffmpeg for beats that RoEx already accepts
+    console.info(
+      "[produce]",
+      JSON.stringify({
+        event: "roex_format_passthrough",
+        kind,
+        format: detected.format,
+        reason: "instrumental_native",
+      })
+    );
+  } else if (!alreadyWav) {
+    const mustConvert =
+      detected.format === "webm" ||
+      detected.format === "m4a" ||
+      detected.format === "ogg" ||
+      detected.format === "unknown" ||
+      kind !== "INSTRUMENTAL";
     try {
       const conv = await convertBufferToWav(buffer, storagePath);
       uploadBuffer = conv.buffer;
@@ -142,21 +193,22 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // RoEx accepts mp3/flac on readable URLs when conversion is unavailable
-      if (!mustBeWav && (detected.format === "mp3" || detected.format === "flac")) {
+      if (roexNative || detected.format === "mp3" || detected.format === "flac") {
         uploadBuffer = buffer;
-        uploadFormat = detected.format;
-        uploadContentType = detected.contentType;
-        uploadExt = detected.extension;
+        uploadFormat = detected.format === "unknown" ? "mp3" : detected.format;
+        uploadContentType = detected.format === "flac" ? "audio/flac" : "audio/mpeg";
+        uploadExt = detected.format === "flac" ? "flac" : "mp3";
         console.info(
           "[produce]",
           JSON.stringify({
             event: "roex_format_passthrough",
             kind,
-            format: detected.format,
+            format: uploadFormat,
             reason: msg.slice(0, 160),
           })
         );
+      } else if (!mustConvert) {
+        uploadBuffer = buffer;
       } else {
         throw new Error(
           `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
@@ -324,10 +376,13 @@ export async function validateTracksForRoex(
 /** Map provider errors to user-facing copy; keep detail in logs. */
 export function userFacingProduceError(raw: string): string {
   const m = (raw || "").toLowerCase();
-  if (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("beat"))) {
+  if (m.includes("instrumental") && (m.includes("missing") || m.includes("not found"))) {
+    return "Instrumental/beat is missing. Add a beat before Produce. Your vocal takes are still saved.";
+  }
+  if (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("prepared"))) {
     return (
-      "The beat/instrumental could not be prepared as WAV for the mixer. " +
-      "Re-upload the beat as WAV (or a clean MP3). Your vocal takes are safe."
+      "The beat could not be sent to the mixer. " +
+      "If it is already MP3 or WAV, try Produce again. Otherwise re-upload the beat as MP3 or WAV. Your vocal takes are safe."
     );
   }
   if (

@@ -198,6 +198,8 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       const stemRows: Record<string, unknown>[] = [];
       let instrumentalPath = beat.audio_path as string;
       if (mode === "roex" && userId) {
+        // Best-effort only: never block Produce on beat conversion.
+        // MP3/FLAC beats are valid for RoEx as-is; prepareRoexTrack uploads them.
         try {
           const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
           const { downloadStorageOrUrl, detectAudioFormat } = await import("@/lib/audio/roex-assets");
@@ -205,8 +207,38 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
           const { uploadBuffer } = await import("@/lib/storage");
           let buf = await downloadStorageOrUrl(instrumentalPath);
           const det = detectAudioFormat(buf, instrumentalPath);
-          // Prefer stereo WAV when we can convert; RoEx also accepts mp3/flac without convert.
-          if (!isWavBuffer(buf)) {
+          const pathLower = (instrumentalPath || "").toLowerCase();
+          const looksMp3 =
+            det.format === "mp3" ||
+            pathLower.includes(".mp3") ||
+            pathLower.endsWith("mp3");
+          const looksFlac = det.format === "flac" || pathLower.includes(".flac");
+
+          if (looksMp3 || looksFlac) {
+            logProduce({
+              event: "instrumental_native_passthrough",
+              jobId,
+              projectId,
+              format: looksFlac ? "flac" : "mp3",
+              bytes: buf.length,
+            });
+            // Keep original storage path — RoEx upload uses native format
+          } else if (isWavBuffer(buf) || det.format === "wav") {
+            try {
+              buf = ensureStereoWavForRoex(buf);
+              const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
+              await uploadBuffer(dest, buf, "audio/wav");
+              instrumentalPath = dest;
+              logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
+            } catch (wavErr) {
+              logProduce({
+                event: "instrumental_wav_normalize_skipped",
+                jobId,
+                projectId,
+                error: wavErr instanceof Error ? wavErr.message : String(wavErr),
+              });
+            }
+          } else {
             try {
               const conv = await convertBufferToWav(buf, instrumentalPath);
               buf = ensureStereoWavForRoex(conv.buffer);
@@ -221,52 +253,24 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
                 from: det.format,
               });
             } catch (convErr) {
-              const msg = convErr instanceof Error ? convErr.message : String(convErr);
-              // MP3/FLAC can go to RoEx as-is when ffmpeg is unavailable on the server
-              if (det.format === "mp3" || det.format === "flac" || det.format === "wav") {
-                logProduce({
-                  event: "instrumental_convert_skipped_roex_ok",
-                  jobId,
-                  projectId,
-                  format: det.format,
-                  error: msg,
-                });
-              } else {
-                logProduce({
-                  event: "instrumental_wav_prepare_failed",
-                  jobId,
-                  projectId,
-                  format: det.format,
-                  error: msg,
-                });
-                throw new Error(
-                  "Instrumental/beat could not be converted to WAV for the mixer. " +
-                    "Re-upload the beat as WAV or MP3. Your vocal takes are still saved. " +
-                    msg
-                );
-              }
+              logProduce({
+                event: "instrumental_convert_skipped_use_original",
+                jobId,
+                projectId,
+                format: det.format,
+                error: convErr instanceof Error ? convErr.message : String(convErr),
+              });
+              // Keep original path; prepareRoexTrack will try again or passthrough
             }
-          } else {
-            buf = ensureStereoWavForRoex(buf);
-            const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
-            await uploadBuffer(dest, buf, "audio/wav");
-            instrumentalPath = dest;
-            logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
           }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes("could not be converted") || msg.includes("Re-upload the beat")) throw e;
           logProduce({
-            event: "instrumental_wav_prepare_failed",
+            event: "instrumental_prepare_best_effort_failed",
             jobId,
             projectId,
-            error: msg,
+            error: e instanceof Error ? e.message : String(e),
           });
-          throw new Error(
-            "Instrumental/beat could not be prepared for the mixer. " +
-              "Re-upload the beat as WAV or MP3. Your vocal takes are still saved. " +
-              msg
-          );
+          // Do not throw — original beat path remains for RoEx
         }
       }
       stemRows.push({
