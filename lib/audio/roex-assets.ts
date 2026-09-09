@@ -135,12 +135,31 @@ export async function prepareRoexTrack(opts: {
 }): Promise<PreparedTrack> {
   const { provider, storagePath, kind, jobId, projectId } = opts;
   const buffer = await downloadStorageOrUrl(storagePath);
-  const detected = detectAudioFormat(buffer, storagePath);
+  let detected = detectAudioFormat(buffer, storagePath);
+  const pathLower = (storagePath || "").toLowerCase();
 
-  if (detected.format === "unknown" || detected.bytes < 100) {
+  // Path / name hints when magic bytes are ambiguous
+  if (detected.format === "unknown") {
+    if (pathLower.includes(".mp3") || pathLower.includes("mpeg")) {
+      detected = { ...detected, format: "mp3", contentType: "audio/mpeg", extension: "mp3" };
+    } else if (pathLower.includes(".flac")) {
+      detected = { ...detected, format: "flac", contentType: "audio/flac", extension: "flac" };
+    } else if (pathLower.includes(".wav")) {
+      detected = { ...detected, format: "wav", contentType: "audio/wav", extension: "wav" };
+    }
+  }
+
+  if (detected.bytes < 100) {
     throw new Error(
-      `${kind === "INSTRUMENTAL" ? "Instrumental" : "Vocal"} format is not compatible with RoEx. ` +
-        `Detected unknown/empty audio for ${kind}. Preparing a compatible audio asset is required.`
+      `${kind === "INSTRUMENTAL" ? "Instrumental" : "Vocal"} audio is empty or too small. Your recordings are safe.`
+    );
+  }
+
+  // Vocals must be a known format or convertible; beats may passthrough.
+  if (detected.format === "unknown" && kind !== "INSTRUMENTAL") {
+    throw new Error(
+      `Vocal format is not compatible with RoEx. Detected unknown audio. ` +
+        `Re-record the section so it saves as WAV. Your other takes are safe.`
     );
   }
 
@@ -152,12 +171,13 @@ export async function prepareRoexTrack(opts: {
 
   const roexNative = detected.format === "mp3" || detected.format === "flac";
   const alreadyWav = detected.format === "wav" || isWavBuffer(buffer);
+  const isInstrumental = kind === "INSTRUMENTAL";
 
   if (alreadyWav) {
     uploadFormat = "wav";
     uploadContentType = "audio/wav";
     uploadExt = "wav";
-  } else if (roexNative && kind === "INSTRUMENTAL") {
+  } else if (roexNative && isInstrumental) {
     // Skip ffmpeg for beats that RoEx already accepts
     console.info(
       "[produce]",
@@ -169,12 +189,6 @@ export async function prepareRoexTrack(opts: {
       })
     );
   } else if (!alreadyWav) {
-    const mustConvert =
-      detected.format === "webm" ||
-      detected.format === "m4a" ||
-      detected.format === "ogg" ||
-      detected.format === "unknown" ||
-      kind !== "INSTRUMENTAL";
     try {
       const conv = await convertBufferToWav(buffer, storagePath);
       uploadBuffer = conv.buffer;
@@ -193,29 +207,48 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (roexNative || detected.format === "mp3" || detected.format === "flac") {
+      // Instrumental: never hard-fail — upload original as mp3/flac/bin
+      if (isInstrumental || roexNative || detected.format === "mp3" || detected.format === "flac") {
         uploadBuffer = buffer;
-        uploadFormat = detected.format === "unknown" ? "mp3" : detected.format;
-        uploadContentType = detected.format === "flac" ? "audio/flac" : "audio/mpeg";
-        uploadExt = detected.format === "flac" ? "flac" : "mp3";
+        if (detected.format === "flac" || pathLower.includes(".flac")) {
+          uploadFormat = "flac";
+          uploadContentType = "audio/flac";
+          uploadExt = "flac";
+        } else {
+          // Default instrumental upload to mp3 (common for uploaded + generated beats)
+          uploadFormat = detected.format === "mp3" ? "mp3" : "mp3";
+          uploadContentType = "audio/mpeg";
+          uploadExt = "mp3";
+        }
         console.info(
           "[produce]",
           JSON.stringify({
             event: "roex_format_passthrough",
             kind,
             format: uploadFormat,
+            from: detected.format,
             reason: msg.slice(0, 160),
           })
         );
-      } else if (!mustConvert) {
-        uploadBuffer = buffer;
       } else {
         throw new Error(
           `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
-            `Your recordings are safe. Re-upload the beat as WAV/MP3 or re-record the vocal section.`
+            `Re-record the section so it saves as WAV. Your other takes are safe.`
         );
       }
     }
+  }
+
+  // Last resort: instrumental still unknown after convert path — treat as mp3 bytes
+  if (isInstrumental && uploadFormat === "unknown") {
+    uploadFormat = "mp3";
+    uploadContentType = "audio/mpeg";
+    uploadExt = "mp3";
+    uploadBuffer = buffer;
+    console.info(
+      "[produce]",
+      JSON.stringify({ event: "roex_format_forced_mp3", kind, bytes: buffer.length })
+    );
   }
 
   if (uploadFormat === "wav" || isWavBuffer(uploadBuffer)) {
@@ -358,12 +391,12 @@ export async function validateTracksForRoex(
           role: kind === "INSTRUMENTAL" ? "instrumental" : "vocal",
         })
       );
-      if (det.format === "unknown") {
+      if (det.format === "unknown" && kind !== "INSTRUMENTAL") {
         throw new Error(
-          `${kind === "INSTRUMENTAL" ? "Instrumental" : "Vocal"} format is not compatible with RoEx. ` +
-            `Preparing a compatible audio asset.`
+          `Vocal format is not compatible with RoEx. Re-record the section so it saves as WAV. Your other takes are safe.`
         );
       }
+      // Instrumental unknown is OK — prepareRoexTrack will convert or passthrough as MP3
     } catch (e) {
       if (e instanceof Error && e.message.includes("compatible")) throw e;
       throw new Error(
@@ -379,10 +412,15 @@ export function userFacingProduceError(raw: string): string {
   if (m.includes("instrumental") && (m.includes("missing") || m.includes("not found"))) {
     return "Instrumental/beat is missing. Add a beat before Produce. Your vocal takes are still saved.";
   }
-  if (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("prepared"))) {
+  if (
+    m.includes("beat/instrumental") ||
+    m.includes("prepared as wav") ||
+    (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("prepared")))
+  ) {
     return (
-      "The beat could not be sent to the mixer. " +
-      "If it is already MP3 or WAV, try Produce again. Otherwise re-upload the beat as MP3 or WAV. Your vocal takes are safe."
+      "The beat could not be sent to the mixer yet. " +
+      "If your beat is already MP3 or WAV, tap Produce again (a new job will retry). " +
+      "If it keeps failing, re-upload the beat as MP3 or WAV. Your vocal takes are safe."
     );
   }
   if (
