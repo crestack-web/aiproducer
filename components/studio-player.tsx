@@ -383,7 +383,7 @@ export function CompactAudioPlayer({
   beatSrc,
   beatStartMs = 0,
   beatEndMs,
-  beatVolume = 0.002,
+  beatVolume = 0.03,
   vocalVolume = 1,
   /** Review/preview output preference — not the recording-monitor route. */
   playbackSinkId,
@@ -425,16 +425,6 @@ export function CompactAudioPlayer({
   const vocalVolumeRef = useRef(vocalVolume);
   const playingRef = useRef(playing);
   const placementRef = useRef(placementStartMs);
-  /**
-   * Single AudioContext for review: both vocal + beat go through GainNodes.
-   * Routing only the beat through Web Audio left the take silent on iOS (HTML
-   * media is ducked/stopped when an AudioContext graph is active).
-   */
-  const reviewCtxRef = useRef<AudioContext | null>(null);
-  const beatGainNodeRef = useRef<GainNode | null>(null);
-  const beatMediaSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const vocalGainNodeRef = useRef<GainNode | null>(null);
-  const vocalMediaSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
   const beatFreezeRecoveriesRef = useRef(0);
   // Sync-loop forensics (Beat + Voice)
   const vocalPauseCountRef = useRef(0);
@@ -470,13 +460,12 @@ export function CompactAudioPlayer({
    */
   /**
    * Review guide bed linear gain.
-   * iOS Safari often ignores HTMLMediaElement.volume — real attenuation is via
-   * Web Audio GainNode (see ensureBeatGuideGain). This value is the GainNode target.
-   * Mastered instrumentals are ~20–30 dB hotter than phone takes; keep whisper-quiet.
+   * Native element volume (Web Audio dual-graph was killing one stream on device).
+   * 0.03 keeps the bed present as a guide without fully masking phone takes on desktop.
    */
   const reviewBeatGain = (v: number) => {
     if (v <= 0.0005) return 0;
-    return 0.002;
+    return 0.03;
   };
   /**
    * Review-only: delay the guide beat so the take sits earlier on the grid.
@@ -545,25 +534,39 @@ export function CompactAudioPlayer({
     } catch {
       /* ignore */
     }
-    try {
-      if (beatGainNodeRef.current) {
-        beatGainNodeRef.current.gain.value = 0;
-      }
-    } catch {
-      /* ignore */
-    }
   }, []);
 
   /**
-   * Apply real attenuation to the review beat.
-   * On iOS, HTMLAudioElement.volume is effectively ignored (always ~1 relative to
-   * system volume). MediaElementSource + GainNode is the reliable path.
-   * Element.volume is set to 1 when Web Audio is active so the graph gets full signal.
+   * Review volumes via native element only (no Web Audio).
+   * Dual MediaElementSource broke Beat+Voice on device (one stream died).
+   * Desktop respects beat volume; iOS may play beat hotter — still both audible.
    */
-  /**
-   * Wire vocal + beat through one AudioContext so iOS keeps both audible.
-   * Beat gain = quiet guide; vocal gain = 1. Element.volume stays 1 (graph attenuates).
-   */
+  const applyReviewVolumes = useCallback(
+    (beat: HTMLAudioElement | null | undefined, vocal: HTMLAudioElement | null | undefined, beatLinear: number) => {
+      const g = Math.max(0, Math.min(1, beatLinear));
+      try {
+        if (beat) {
+          beat.muted = g <= 0;
+          beat.volume = g <= 0 ? 0 : g;
+        }
+        if (vocal) {
+          vocal.muted = false;
+          vocal.volume = 1;
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    []
+  );
+
+  const ensureBeatGuideGain = useCallback(
+    async (beat: HTMLAudioElement, linear: number) => {
+      applyReviewVolumes(beat, vocalRef.current, linear);
+    },
+    [applyReviewVolumes]
+  );
+
   const ensureReviewWebAudio = useCallback(
     async (opts: {
       vocal?: HTMLAudioElement | null;
@@ -571,93 +574,9 @@ export function CompactAudioPlayer({
       beatLinear?: number;
       vocalLinear?: number;
     }) => {
-      const beatG = Math.max(0, Math.min(1, opts.beatLinear ?? 0.002));
-      const vocalG = Math.max(0, Math.min(1, opts.vocalLinear ?? 1));
-      const vocal = opts.vocal ?? null;
-      const beat = opts.beat ?? null;
-
-      const fallback = () => {
-        try {
-          if (beat) {
-            beat.volume = beatG;
-            beat.muted = beatG <= 0;
-          }
-          if (vocal) {
-            vocal.volume = vocalG;
-            vocal.muted = vocalG <= 0;
-          }
-        } catch {
-          /* ignore */
-        }
-      };
-
-      try {
-        if (typeof window === "undefined") {
-          fallback();
-          return;
-        }
-        let ctx = reviewCtxRef.current;
-        if (!ctx) {
-          const AC =
-            window.AudioContext ||
-            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-          if (!AC) {
-            fallback();
-            return;
-          }
-          ctx = new AC();
-          reviewCtxRef.current = ctx;
-        }
-        if (ctx.state === "suspended") {
-          try {
-            await ctx.resume();
-          } catch {
-            /* ignore */
-          }
-        }
-
-        const wire = (
-          el: HTMLAudioElement,
-          mediaRef: { current: MediaElementAudioSourceNode | null },
-          gainRef: { current: GainNode | null },
-          gainValue: number
-        ) => {
-          if (!mediaRef.current) {
-            const srcNode = ctx!.createMediaElementSource(el);
-            const gainNode = ctx!.createGain();
-            gainNode.gain.value = gainValue;
-            srcNode.connect(gainNode);
-            gainNode.connect(ctx!.destination);
-            mediaRef.current = srcNode;
-            gainRef.current = gainNode;
-          } else if (gainRef.current) {
-            gainRef.current.gain.value = gainValue;
-          }
-          el.volume = 1;
-          el.muted = gainValue <= 0;
-        };
-
-        // Vocal first so take is never left off the graph when beat connects
-        if (vocal) wire(vocal, vocalMediaSrcRef, vocalGainNodeRef, vocalG);
-        if (beat) wire(beat, beatMediaSrcRef, beatGainNodeRef, beatG);
-      } catch {
-        fallback();
-      }
+      applyReviewVolumes(opts.beat, opts.vocal, opts.beatLinear ?? 0.03);
     },
-    []
-  );
-
-  /** @deprecated name kept for call-site patches — routes both when vocal ref available */
-  const ensureBeatGuideGain = useCallback(
-    async (beat: HTMLAudioElement, linear: number) => {
-      await ensureReviewWebAudio({
-        beat,
-        vocal: vocalRef.current,
-        beatLinear: linear,
-        vocalLinear: 1,
-      });
-    },
-    [ensureReviewWebAudio]
+    [applyReviewVolumes]
   );
 
   function vocalFileTimeFromSongMs(songMs: number, placeMs: number): number {
@@ -969,9 +888,6 @@ export function CompactAudioPlayer({
       });
       vocal.muted = false;
       vocal.volume = 1;
-      if (vocalGainNodeRef.current) {
-        vocalGainNodeRef.current.gain.value = 1;
-      }
       if (vocal.paused) {
         await vocal.play().catch(() => undefined);
       }
@@ -1157,7 +1073,6 @@ export function CompactAudioPlayer({
           });
           if (v.muted) v.muted = false;
           if (v.volume !== 1) v.volume = 1;
-          if (vocalGainNodeRef.current) vocalGainNodeRef.current.gain.value = 1;
           // If vocal was ducked when beat connected, nudge it back
           if (v.paused && playingRef.current) {
             void v.play().catch(() => undefined);
@@ -1316,29 +1231,6 @@ export function CompactAudioPlayer({
   }, [hardStopBeat, src]);
 
 
-  // Tear down Web Audio graph when review player unmounts or sources change
-  useEffect(() => {
-    return () => {
-      try {
-        beatGainNodeRef.current?.disconnect();
-        beatMediaSrcRef.current?.disconnect();
-        vocalGainNodeRef.current?.disconnect();
-        vocalMediaSrcRef.current?.disconnect();
-      } catch {
-        /* ignore */
-      }
-      beatGainNodeRef.current = null;
-      beatMediaSrcRef.current = null;
-      vocalGainNodeRef.current = null;
-      vocalMediaSrcRef.current = null;
-      try {
-        void reviewCtxRef.current?.close();
-      } catch {
-        /* ignore */
-      }
-      reviewCtxRef.current = null;
-    };
-  }, [beatSrc, src]);
 
   const modeHint = voiceOnly ? "voice only" : "beat + voice";
 

@@ -200,21 +200,62 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
       if (mode === "roex" && userId) {
         try {
           const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
-          const { downloadStorageOrUrl } = await import("@/lib/audio/roex-assets");
+          const { downloadStorageOrUrl, detectAudioFormat } = await import("@/lib/audio/roex-assets");
           const { isWavBuffer, ensureStereoWavForRoex } = await import("@/lib/audio/wav");
           const { uploadBuffer } = await import("@/lib/storage");
           let buf = await downloadStorageOrUrl(instrumentalPath);
+          const det = detectAudioFormat(buf, instrumentalPath);
+          // Prefer stereo WAV when we can convert; RoEx also accepts mp3/flac without convert.
           if (!isWavBuffer(buf)) {
-            const conv = await convertBufferToWav(buf, instrumentalPath);
-            buf = conv.buffer;
+            try {
+              const conv = await convertBufferToWav(buf, instrumentalPath);
+              buf = ensureStereoWavForRoex(conv.buffer);
+              const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
+              await uploadBuffer(dest, buf, "audio/wav");
+              instrumentalPath = dest;
+              logProduce({
+                event: "instrumental_wav_prepared",
+                jobId,
+                projectId,
+                bytes: buf.length,
+                from: det.format,
+              });
+            } catch (convErr) {
+              const msg = convErr instanceof Error ? convErr.message : String(convErr);
+              // MP3/FLAC can go to RoEx as-is when ffmpeg is unavailable on the server
+              if (det.format === "mp3" || det.format === "flac" || det.format === "wav") {
+                logProduce({
+                  event: "instrumental_convert_skipped_roex_ok",
+                  jobId,
+                  projectId,
+                  format: det.format,
+                  error: msg,
+                });
+              } else {
+                logProduce({
+                  event: "instrumental_wav_prepare_failed",
+                  jobId,
+                  projectId,
+                  format: det.format,
+                  error: msg,
+                });
+                throw new Error(
+                  "Instrumental/beat could not be converted to WAV for the mixer. " +
+                    "Re-upload the beat as WAV or MP3. Your vocal takes are still saved. " +
+                    msg
+                );
+              }
+            }
+          } else {
+            buf = ensureStereoWavForRoex(buf);
+            const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
+            await uploadBuffer(dest, buf, "audio/wav");
+            instrumentalPath = dest;
+            logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
           }
-          buf = ensureStereoWavForRoex(buf);
-          const dest = `users/${userId}/projects/${projectId}/production/${jobId}/stems/instrumental.wav`;
-          await uploadBuffer(dest, buf, "audio/wav");
-          instrumentalPath = dest;
-          logProduce({ event: "instrumental_wav_prepared", jobId, projectId, bytes: buf.length });
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("could not be converted") || msg.includes("Re-upload the beat")) throw e;
           logProduce({
             event: "instrumental_wav_prepare_failed",
             jobId,
@@ -222,8 +263,8 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
             error: msg,
           });
           throw new Error(
-            "Instrumental/beat could not be converted to WAV for the mixer. " +
-              "Re-upload the beat as WAV (or MP3 we can convert). Your vocal takes are still saved. " +
+            "Instrumental/beat could not be prepared for the mixer. " +
+              "Re-upload the beat as WAV or MP3. Your vocal takes are still saved. " +
               msg
           );
         }

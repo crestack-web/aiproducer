@@ -37,19 +37,29 @@ async function pathExists(p: string): Promise<boolean> {
 export async function resolveFfmpegBin(): Promise<string | null> {
   const candidates: string[] = [];
   if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
-  candidates.push("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg");
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const staticPath = require("ffmpeg-static") as string | null;
+    // Prefer packaged binary first on serverless (Vercel)
     if (staticPath) candidates.push(staticPath);
   } catch {
     /* optional */
   }
+  candidates.push("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg");
 
   for (const candidate of candidates) {
     if (!candidate) continue;
     if (candidate.includes("/") && !(await pathExists(candidate))) continue;
     try {
+      // Serverless images sometimes ship ffmpeg-static without +x
+      if (candidate.includes("node_modules") || candidate.includes("ffmpeg-static")) {
+        try {
+          const { chmod } = await import("fs/promises");
+          await chmod(candidate, 0o755);
+        } catch {
+          /* ignore */
+        }
+      }
       await runFfmpeg(candidate, ["-version"]);
       return candidate;
     } catch {

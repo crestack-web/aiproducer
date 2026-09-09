@@ -123,10 +123,13 @@ export async function prepareRoexTrack(opts: {
   let uploadExt = "wav";
 
   if (!(detected.format === "wav" || isWavBuffer(buffer))) {
+    const mustBeWav = detected.format === "webm" || detected.format === "m4a" || detected.format === "ogg" || detected.format === "unknown";
     try {
       const conv = await convertBufferToWav(buffer, storagePath);
       uploadBuffer = conv.buffer;
       uploadFormat = "wav";
+      uploadContentType = "audio/wav";
+      uploadExt = "wav";
       console.info(
         "[produce]",
         JSON.stringify({
@@ -139,11 +142,27 @@ export async function prepareRoexTrack(opts: {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // RoEx mixpreview needs WAV (Automix: mixing = WAV only). Never pass webm/mp3 through.
-      throw new Error(
-        `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
-          `Your recordings are safe. Re-upload the beat as WAV or re-record the vocal section.`
-      );
+      // RoEx accepts mp3/flac on readable URLs when conversion is unavailable
+      if (!mustBeWav && (detected.format === "mp3" || detected.format === "flac")) {
+        uploadBuffer = buffer;
+        uploadFormat = detected.format;
+        uploadContentType = detected.contentType;
+        uploadExt = detected.extension;
+        console.info(
+          "[produce]",
+          JSON.stringify({
+            event: "roex_format_passthrough",
+            kind,
+            format: detected.format,
+            reason: msg.slice(0, 160),
+          })
+        );
+      } else {
+        throw new Error(
+          `${kind} (${detected.format}) could not be converted to WAV for the mixer (${msg}). ` +
+            `Your recordings are safe. Re-upload the beat as WAV/MP3 or re-record the vocal section.`
+        );
+      }
     }
   }
 
