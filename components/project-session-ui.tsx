@@ -2420,7 +2420,13 @@ export default function ProjectDetailPage() {
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.03}
-                      playbackSinkId={selectedSpeakerId || "__headphones__"}
+                      playbackSinkId={
+                        !selectedSpeakerId ||
+                        selectedSpeakerId === "__handset__" ||
+                        selectedSpeakerId === "__headphones__"
+                          ? "__speaker__"
+                          : selectedSpeakerId
+                      }
                       debugSectionLabel={sectionLabel(current)}
                       debugTaskId={current.id}
                       debugSectionStartMs={current.start_ms ?? 0}

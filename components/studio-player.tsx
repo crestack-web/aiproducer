@@ -475,13 +475,13 @@ export function CompactAudioPlayer({
   const REVIEW_BEAT_DELAY_SEC = 0.2;
 
 
-  // Review playback uses normal device output preference (not recording handset monitor).
+  // Review listening output (speaker). Never block play if setSinkId fails.
   useEffect(() => {
     if (!playbackSinkId) return;
     const vocal = vocalRef.current;
     const beat = beatRef.current;
-    void routePlaybackToPreferredOutput(vocal, playbackSinkId);
-    void routePlaybackToPreferredOutput(beat, playbackSinkId);
+    void routePlaybackToPreferredOutput(vocal, playbackSinkId).catch(() => undefined);
+    void routePlaybackToPreferredOutput(beat, playbackSinkId).catch(() => undefined);
   }, [playbackSinkId, src, beatSrc]);
 
   // Take switch: reload vocal element when Review src changes (no duplicate elements).
@@ -759,7 +759,22 @@ export function CompactAudioPlayer({
 
     setLoadError(null);
     const place = placementRef.current;
-    const songMs = pausedSongMsRef.current != null ? pausedSongMsRef.current : place;
+    let songMs = pausedSongMsRef.current != null ? pausedSongMsRef.current : place;
+    // If a prior pause left us past the take, restart from section placement
+    try {
+      const v = vocalRef.current;
+      const takeDur = v?.duration;
+      if (
+        Number.isFinite(takeDur) &&
+        (takeDur as number) > 0 &&
+        songMs - place >= (takeDur as number) * 1000 - 80
+      ) {
+        songMs = place;
+        pausedSongMsRef.current = null;
+      }
+    } catch {
+      /* ignore */
+    }
     const wantBeat = Boolean(beatSrc && !voiceOnlyRef.current);
     const beat = beatRef.current;
     const startAtPlacement = songMs + 50 >= place;
@@ -775,9 +790,20 @@ export function CompactAudioPlayer({
       vocal.volume = 1;
       vocal.playbackRate = 1;
       try {
-        vocal.currentTime = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
+        // Take file is always 0-based. Never seek past duration (that yields total silence).
+        const target = Math.max(0, vocalFileTimeFromSongMs(songMs, place));
+        const dur = vocal.duration;
+        if (Number.isFinite(dur) && dur > 0) {
+          vocal.currentTime = Math.min(target, Math.max(0, dur - 0.05));
+        } else {
+          vocal.currentTime = target;
+        }
       } catch {
-        /* ignore */
+        try {
+          vocal.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
       }
     } catch {
       /* ignore */
@@ -900,10 +926,15 @@ export function CompactAudioPlayer({
       try {
         vocal.muted = false;
         vocal.volume = 1;
-        await vocal.play().catch(() => undefined);
-      } catch {
-        /* ignore */
+        await vocal.play();
+      } catch (ve) {
+        const msg = ve instanceof Error ? ve.message : String(ve);
+        writeReviewDiagnostics({ event: "vocal_replay_failed", error: msg });
       }
+    }
+    // Last resort: if still silent, try voice-only so the artist hears the take
+    if (vocal.paused && vocalPlaySucceeded === false) {
+      setLoadError("Could not play this take. Tap play again, or switch Voice only.");
     }
     if (wantBeat && beat && beatPlaySucceeded && beat.paused) {
       try {
