@@ -1168,10 +1168,18 @@ export default function ProjectDetailPage() {
             /* ignore */
           }
         } catch (convErr) {
-          console.error("[upload] WAV conversion failed", convErr);
-          throw new Error(
-            "Could not prepare this take as WAV. Try again, or use a different browser/device."
-          );
+          // Still save the original take so the section is not lost; server may convert later.
+          console.error("[upload] WAV conversion failed — uploading original", convErr);
+          uploadBlob = blob;
+          const mime = (blob.type || mimeRef.current || "audio/webm").split(";")[0];
+          uploadName =
+            mime.includes("wav")
+              ? "take.wav"
+              : mime.includes("mp4") || mime.includes("m4a")
+                ? "take.m4a"
+                : mime.includes("mpeg") || mime.includes("mp3")
+                  ? "take.mp3"
+                  : "take.webm";
         }
 
         const form = new FormData();
@@ -1315,15 +1323,23 @@ export default function ProjectDetailPage() {
         if (!res.ok) throw new Error(j.error || "Upload failed");
         if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
         setSavedRecordingId(j.recording.id);
+        // Server already marks the task completed — mirror that in local plan state
+        // so the section shows as saved without requiring an extra "Keep" tap.
+        setTasks((prev) =>
+          prev.map((row) => (row.id === task.id ? { ...row, status: "completed" } : row))
+        );
         await fetch(`/api/recording-tasks/${task.id}/recordings/${j.recording.id}/select`, {
           method: "POST",
         }).catch(() => undefined);
+        void loadTaskTakes(task.id);
         const tip = await fetchProducerRecommendation(task.id, j.recording.id);
         if (tip) setProducerTip(tip);
         void markRecordingStatus();
+        setError(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Save failed");
+        setError(e instanceof Error ? e.message : "Save failed — tap Retake or try again");
         setSavedRecordingId(null);
+        // Keep localBlobUrl so the artist can still hear the take and retake
       } finally {
         setUploading(false);
       }
@@ -1742,15 +1758,20 @@ export default function ProjectDetailPage() {
       if (!res.ok) throw new Error(j.error || "Upload failed");
       if (!j.recording?.id) throw new Error("Upload succeeded but no recording id returned");
       setSavedRecordingId(j.recording.id);
+      setTasks((prev) =>
+        prev.map((row) => (row.id === current.id ? { ...row, status: "completed" } : row))
+      );
       if (j.recording.audio_url) setLocalBlobUrl(j.recording.audio_url);
       await fetch(`/api/recording-tasks/${current.id}/recordings/${j.recording.id}/select`, {
         method: "POST",
       }).catch(() => undefined);
+      void loadTaskTakes(current.id);
       const tip = await fetchProducerRecommendation(current.id, j.recording.id);
       if (tip) setProducerTip(tip);
       void markRecordingStatus();
+      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(e instanceof Error ? e.message : "Upload failed — tap Retake or try again");
       setSavedRecordingId(null);
       setPhase("ready");
     } finally {
@@ -1790,11 +1811,12 @@ export default function ProjectDetailPage() {
   function keepAndContinue() {
     if (!current) return;
     if (!savedRecordingId) {
-      setError("Take is not saved yet. Wait for Saved, or record again.");
+      setError("Take is not saved yet. Wait until it says Saved, or press Retake.");
       return;
     }
     const wasRetake = isRetake;
     const completedSnapshot = current;
+    setError(null);
     setSavedRecordingId(null);
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
@@ -1803,8 +1825,13 @@ export default function ProjectDetailPage() {
         setLocalBlobUrl(null);
         setPhase("ready");
         setScreen("session");
-        if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
-      } else clearFocusAndAdvance(next, completedSnapshot);
+        if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) {
+          setScreen("assemble");
+          void loadSongPreview();
+        }
+      } else {
+        clearFocusAndAdvance(next, completedSnapshot);
+      }
       return next;
     });
   }
@@ -2401,11 +2428,18 @@ export default function ProjectDetailPage() {
               <div style={{ marginTop: 16 }}>
                 <p style={{ textAlign: "center", color: C.textMuted }}>
                   {uploading
-                    ? "Saving & analyzing take…"
-                    : localBlobUrl
-                      ? "Your take · play to review"
-                      : "Loading take…"}
+                    ? "Saving take…"
+                    : savedRecordingId
+                      ? "Saved · play to review, keep, or retake"
+                      : localBlobUrl
+                        ? "Play to review · saving may still be in progress"
+                        : "Loading take…"}
                 </p>
+                {error && phase === "review" && (
+                  <p style={{ textAlign: "center", color: C.danger, fontSize: 13, marginTop: 8 }}>
+                    {error}
+                  </p>
+                )}
                 {localBlobUrl && (
                   <>
                     <CompactAudioPlayer
@@ -2505,7 +2539,7 @@ export default function ProjectDetailPage() {
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
                 )}
                 <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId} onClick={keepAndContinue}>
-                  {uploading ? "Saving…" : "Keep take"}
+                  {uploading ? "Saving…" : isRetake ? "Keep retake & continue" : "Keep take & continue"}
                 </button>
                 {savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (
                   <button
@@ -2548,14 +2582,16 @@ export default function ProjectDetailPage() {
                   style={{ ...btn2, marginTop: 8 }}
                   disabled={uploading}
                   onClick={() => {
+                    setError(null);
                     setLocalBlobUrl(null);
                     setSavedRecordingId(null);
                     setProducerTip(null);
                     setReviewVoiceOnly(false);
+                    setTaskTakes([]);
                     setPhase("ready");
                   }}
                 >
-                  Record again
+                  Retake
                 </button>
                 {savedRecordingId && (
                   <button
