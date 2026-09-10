@@ -586,6 +586,32 @@ export default function ProjectDetailPage() {
     }
   }, [id]);
 
+
+  // When opening a finished song, resolve master URL for full playback + download
+  useEffect(() => {
+    if (screen !== "done") return;
+    if (masterUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sr = await fetch(`/api/projects/${id}/status`);
+        const st = await sr.json().catch(() => ({}));
+        if (cancelled) return;
+        if (st.master_url) setMasterUrl(st.master_url);
+        else {
+          const dr = await fetch(`/api/projects/${id}/download?kind=master&format=wav`);
+          const dj = await dr.json().catch(() => ({}));
+          if (dj.download_url) setMasterUrl(dj.download_url);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, masterUrl, id]);
+
   const scheduleProducePoll = useCallback(() => {
     clearProducePoll();
     produceActiveRef.current = true;
@@ -1973,7 +1999,28 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function downloadMaster(format: "wav" | "mp3") {
+    try {
+      const res = await fetch(`/api/projects/${id}/download?kind=master&format=${format}`);
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.download_url) {
+        throw new Error(j.error || "Download not available");
+      }
+      const a = document.createElement("a");
+      a.href = j.download_url;
+      a.download = j.filename || `song.${format}`;
+      a.rel = "noopener";
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Download failed");
+    }
+  }
+
   async function startProduce() {
+
     const gate = canProduce(
       tasks.map((t) => ({
         id: t.id,
@@ -2780,8 +2827,13 @@ export default function ProjectDetailPage() {
         {screen === "done" && (
           <div style={wrap}>
             <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song is ready</h1>
+            <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
+              Full produced master — play below or download WAV / MP3.
+            </p>
             {masterUrl && (
-              <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed="master" accent="signal" />
+              <div style={{ marginTop: 20 }}>
+                <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed={project?.title || "master"} accent="signal" />
+              </div>
             )}
             {!masterUrl && (
               <>
@@ -2791,6 +2843,45 @@ export default function ProjectDetailPage() {
                 </button>
               </>
             )}
+            {masterUrl && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  justifyContent: "center",
+                  marginTop: 20,
+                }}
+              >
+                <button type="button" style={btn} onClick={() => void downloadMaster("wav")}>
+                  Download WAV
+                </button>
+                <button type="button" style={btn2} onClick={() => void downloadMaster("mp3")}>
+                  Download MP3
+                </button>
+                <button
+                  type="button"
+                  style={btn2}
+                  onClick={() => {
+                    setScreen("assemble");
+                    setSectionPreviewOnly(false);
+                    void loadSongPreview();
+                  }}
+                >
+                  Arrangement preview
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              style={{ ...btn2, marginTop: 16 }}
+              onClick={() => {
+                setScreen("session");
+                setPhase("ready");
+              }}
+            >
+              Back to session
+            </button>
           </div>
         )}
       </div>

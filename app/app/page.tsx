@@ -191,7 +191,29 @@ function AppInner() {
     textDecoration: "none",
   };
 
+  async function downloadSong(projectId: string, title: string, format: "wav" | "mp3") {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/download?kind=master&format=${format}`);
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.download_url) {
+        window.alert(j.error || "Download not available yet.");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = j.download_url;
+      a.download = j.filename || `${title || "song"}.${format}`;
+      a.rel = "noopener";
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      window.alert("Download failed. Try again.");
+    }
+  }
+
   function ProjectRow({ p, meta }: { p: Project; meta: string }) {
+    const isReady = p.status === "complete";
     return (
       <div style={rowStyle}>
         <Link
@@ -212,9 +234,47 @@ function AppInner() {
             <div style={rowMeta}>{meta}</div>
           </div>
         </Link>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {isReady && (
+            <>
+              <button
+                type="button"
+                onClick={() => void downloadSong(p.id, p.title, "wav")}
+                style={{
+                  background: "none",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  color: C.brass,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  padding: "4px 8px",
+                }}
+              >
+                WAV
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadSong(p.id, p.title, "mp3")}
+                style={{
+                  background: "none",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  color: C.brass,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  padding: "4px 8px",
+                }}
+              >
+                MP3
+              </button>
+            </>
+          )}
           <Link href={`/app/studio/${p.id}`} style={{ ...rowAction, textDecoration: "none" }}>
-            Open
+            {isReady ? "Play" : "Open"}
           </Link>
           <button
             type="button"
