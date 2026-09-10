@@ -177,13 +177,11 @@ export function encodeWavStereoFromMono(samples: Float32Array, sampleRate: numbe
  * Convert mono PCM WAV → stereo L=R; leave already-stereo WAV as-is if valid.
  */
 export function ensureStereoWavForRoex(buffer: Buffer): Buffer {
-  if (!isWavBuffer(buffer)) return buffer;
+  if (!isWavBuffer(buffer)) return Buffer.from(buffer);
   const pcm = decodeWav(buffer);
   // Always re-encode as stereo 16-bit at source rate (or clamp to 48k if exotic)
-  let rate = pcm.sampleRate;
-  if (rate !== 44100 && rate !== 48000) {
-    // Keep rate; RoEx docs prefer 44.1/48 but Tonn may accept others
-  }
-  return encodeWavStereoFromMono(pcm.samples, rate);
+  const rate = pcm.sampleRate;
+  // Buffer.from normalizes Node Buffer typing (ArrayBuffer vs ArrayBufferLike)
+  return Buffer.from(encodeWavStereoFromMono(pcm.samples, rate));
 }
 

@@ -143,9 +143,9 @@ export async function POST(req: Request, ctx: Ctx) {
             let buf = Buffer.from(await fileData.arrayBuffer());
             if (!isWavBuffer(buf)) {
               const conv = await convertBufferToWav(buf, path);
-              buf = ensureStereoWavForRoex(conv.buffer);
+              buf = Buffer.from(ensureStereoWavForRoex(Buffer.from(conv.buffer)));
             } else {
-              buf = ensureStereoWavForRoex(buf);
+              buf = Buffer.from(ensureStereoWavForRoex(buf));
             }
             const wavPath = path.replace(/\.[^./]+$/, "") + ".wav";
             const { error: upErr } = await service.storage.from(getStorageBucket()).upload(wavPath, buf, {
@@ -265,9 +265,9 @@ export async function POST(req: Request, ctx: Ctx) {
     const { ensureStereoWavForRoex, isWavBuffer } = await import("@/lib/audio/wav");
     if (!isWavBuffer(buf)) {
       const conv = await convertBufferToWav(buf, filename);
-      buf = ensureStereoWavForRoex(conv.buffer);
+      buf = Buffer.from(ensureStereoWavForRoex(Buffer.from(conv.buffer)));
     } else {
-      buf = ensureStereoWavForRoex(buf);
+      buf = Buffer.from(ensureStereoWavForRoex(buf));
     }
     ext = "wav";
     uploadContentType = "audio/wav";
