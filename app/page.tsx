@@ -259,14 +259,126 @@ export default function WelcomePage() {
 }
 
 const css = `
-  :root{--bg:#050508;--surface:rgba(255,255,255,.045);--border:rgba(255,255,255,.09);--border-hi:rgba(255,255,255,.16);--text:#F4F1EC;--muted:#9B96A3;--faint:#5C5866;--signal:#7BEBD4;--brass:#E7A961}
-  html[data-theme="light"]{--bg:#F0E9DF;--surface:#FFFFFF;--border:rgba(55,40,22,.10);--border-hi:rgba(55,40,22,.16);--text:#1C1916;--muted:#5E574F;--faint:#8C847A;--signal:#0A8A76;--brass:#A86B1F}
+  :root{--bg:#050508;--surface:rgba(255,255,255,.045);--border:rgba(255,255,255,.09);--border-hi:rgba(255,255,255,.16);--text:#F4F1EC;--muted:#9B96A3;--faint:#5C5866;--signal:#7BEBD4;--brass:#E7A961;--brass-soft:rgba(231,169,97,.15);--shadow:none;--header-bg:transparent}
+  /* Warm paper studio — higher contrast muted text, soft ivory cards */
+  html[data-theme="light"]{
+    --bg:#F7F1E8;
+    --surface:#FFFFFF;
+    --border:rgba(48,36,22,.11);
+    --border-hi:rgba(48,36,22,.18);
+    --text:#171411;
+    --muted:#4A433C;
+    --faint:#7A7268;
+    --signal:#0B7F6E;
+    --brass:#9A6218;
+    --brass-soft:rgba(154,98,24,.12);
+    --shadow:0 1px 2px rgba(40,28,12,.04),0 10px 28px rgba(40,28,12,.07);
+    --header-bg:rgba(247,241,232,.82);
+  }
   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}
   .theme-slot{display:inline-flex;align-items:center;margin:0 4px}
-  html[data-theme="light"] .ambient{opacity:.35;filter:saturate(.7)}
-  html[data-theme="light"] .showcase,html[data-theme="light"] .panel,html[data-theme="light"] .price-card,html[data-theme="light"] .compare-card,html[data-theme="light"] .bottom-cta{background:#fff;box-shadow:0 8px 28px rgba(40,28,12,.06)}
-  html[data-theme="light"] .primary{color:#1A1208!important}
-  html[data-theme="light"] h1 em{background:linear-gradient(120deg,var(--signal),#3aa89a 40%,var(--brass));-webkit-background-clip:text;background-clip:text}
+  html[data-theme="light"] .ambient{
+    opacity:1;
+    filter:none;
+    background:
+      radial-gradient(ellipse at 50% -8%,rgba(11,127,110,.10),transparent 52%),
+      radial-gradient(ellipse at 95% 85%,rgba(154,98,24,.09),transparent 48%),
+      radial-gradient(ellipse at 8% 60%,rgba(154,98,24,.05),transparent 42%);
+  }
+  html[data-theme="light"] .header{
+    position:sticky;top:0;z-index:20;
+    margin:0 -8px;padding-left:8px;padding-right:8px;
+    background:var(--header-bg);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+  }
+  html[data-theme="light"] .nav a:not(.primary):not(.ghost){color:var(--muted)}
+  html[data-theme="light"] .nav a:not(.primary):not(.ghost):hover{color:var(--text);background:rgba(48,36,22,.05)}
+  html[data-theme="light"] .showcase,
+  html[data-theme="light"] .panel,
+  html[data-theme="light"] .price-card,
+  html[data-theme="light"] .compare-card,
+  html[data-theme="light"] .cost-card,
+  html[data-theme="light"] .bottom-cta,
+  html[data-theme="light"] .pipeline{
+    background:#fff;
+    box-shadow:var(--shadow);
+    border-color:var(--border);
+  }
+  html[data-theme="light"] .showcase{border:1px solid var(--border)}
+  html[data-theme="light"] .showcase-bar{
+    background:linear-gradient(180deg,#FBF8F3,#F3EDE4);
+    border-bottom:1px solid var(--border);
+  }
+  html[data-theme="light"] .showcase-title{color:var(--muted)}
+  html[data-theme="light"] .dot{background:rgba(48,36,22,.18)}
+  html[data-theme="light"] .task{
+    background:#FBF8F3;
+    border-color:var(--border);
+  }
+  html[data-theme="light"] .task-num,
+  html[data-theme="light"] .pipe-num{
+    background:var(--brass-soft);
+    color:var(--brass);
+    border-color:rgba(154,98,24,.28);
+  }
+  html[data-theme="light"] .pipe-row{background:transparent}
+  html[data-theme="light"] .secondary,
+  html[data-theme="light"] .ghost{
+    background:#fff;
+    border-color:var(--border-hi);
+    color:var(--text)!important;
+    box-shadow:0 1px 2px rgba(40,28,12,.04);
+  }
+  html[data-theme="light"] .secondary:hover,
+  html[data-theme="light"] .ghost:hover{
+    background:#FBF8F3;
+    border-color:rgba(48,36,22,.22);
+  }
+  html[data-theme="light"] .primary{
+    color:#1A1208!important;
+    box-shadow:0 2px 8px rgba(154,98,24,.28);
+  }
+  html[data-theme="light"] .primary:hover{filter:brightness(1.03)}
+  html[data-theme="light"] h1{color:var(--text);letter-spacing:-0.02em}
+  html[data-theme="light"] h1 em{
+    background:linear-gradient(120deg,var(--signal),#1a9a88 45%,var(--brass));
+    -webkit-background-clip:text;background-clip:text;
+    color:transparent;
+  }
+  html[data-theme="light"] .hero-sub{color:var(--muted)}
+  html[data-theme="light"] .hero-sub strong{color:var(--text);font-weight:600}
+  html[data-theme="light"] .trust{color:var(--faint)}
+  html[data-theme="light"] .eyebrow{color:var(--brass)}
+  html[data-theme="light"] .section-head h2{color:var(--text)}
+  html[data-theme="light"] .section-head p{color:var(--muted)}
+  html[data-theme="light"] .price-card.featured{
+    border-color:rgba(154,98,24,.38);
+    background:linear-gradient(180deg,#FFFCF8 0%,#FFFFFF 48%);
+    box-shadow:0 12px 36px rgba(154,98,24,.12),var(--shadow);
+  }
+  html[data-theme="light"] .price-badge{
+    background:var(--brass);
+    color:#fff;
+  }
+  html[data-theme="light"] .price-amount span,
+  html[data-theme="light"] .price-desc,
+  html[data-theme="light"] .price-list,
+  html[data-theme="light"] .price-note{color:var(--muted)}
+  html[data-theme="light"] .compare-card.yes{
+    border-color:rgba(11,127,110,.28);
+    background:linear-gradient(180deg,rgba(11,127,110,.06),#fff);
+  }
+  html[data-theme="light"] .bottom-cta{
+    background:linear-gradient(180deg,#FFFCF7,#FFFFFF);
+    border:1px solid var(--border);
+  }
+  html[data-theme="light"] .bottom-cta h2{color:var(--text)}
+  html[data-theme="light"] .bottom-cta p{color:var(--muted)}
+  html[data-theme="light"] footer{color:var(--faint);border-top:1px solid var(--border)}
+  html[data-theme="light"] .panel-label{color:var(--brass)}
+  html[data-theme="light"] .panel h3{color:var(--text)}
+  html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
   .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 24px 80px;width:100%}
   .header{display:flex;align-items:center;justify-content:space-between;padding:22px 0;gap:12px}
