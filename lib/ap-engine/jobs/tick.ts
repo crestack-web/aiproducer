@@ -1,5 +1,6 @@
 /**
  * Integrate AP arrangement engine with existing produce jobs.
+ * Assembles ALL recorded sections onto the beat timeline (full song).
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -84,27 +85,55 @@ export async function runInternalApProduceJob(opts: {
     const { data: tasks } = await supabase
       .from("recording_tasks")
       .select("id, type, title, start_ms, end_ms, status, active, selected_in_plan, section_id, metadata")
-      .eq("project_id", projectId);
+      .eq("project_id", projectId)
+      .order("start_ms", { ascending: true });
 
-    const activeTasks = (tasks || []).filter((t) => t.active !== false && t.selected_in_plan !== false);
+    // Include every task that still belongs to the plan (or any task with a take).
+    // Do NOT require status === completed — artists may produce mid-session.
+    const candidateTasks = (tasks || []).filter((t) => {
+      if (t.active === false) return false;
+      if (t.selected_in_plan === false) return false;
+      if ((t.status || "").toLowerCase() === "skipped") return false;
+      return true;
+    });
 
     const vocals: ApVocalLayerInput[] = [];
-    for (const t of activeTasks) {
+    const placementLog: { taskId: string; type: string; startMs: number; path: string }[] = [];
+
+    for (const t of candidateTasks) {
       const { data: recs } = await supabase
         .from("recordings")
-        .select("id, audio_path, original_path, is_selected, timeline_start_ms")
+        .select("id, audio_path, original_path, is_selected, timeline_start_ms, created_at")
         .eq("task_id", t.id)
         .order("created_at", { ascending: false });
+
+      // Prefer selected take, else newest with a storage path
+      const withPath = (recs || []).filter(
+        (r) =>
+          (r.original_path && isStoragePath(r.original_path)) ||
+          (r.audio_path && isStoragePath(r.audio_path))
+      );
+      if (!withPath.length) continue;
+
       const selected =
-        (recs || []).find((r) => r.is_selected) || (recs || []).find((r) => r.audio_path) || null;
-      const path = selected?.original_path || selected?.audio_path;
-      if (!path || !isStoragePath(path)) continue;
+        withPath.find((r) => r.is_selected) || withPath[0];
+
+      const path = (selected.original_path && isStoragePath(selected.original_path)
+        ? selected.original_path
+        : selected.audio_path) as string;
+
+      // Canonical placement = section start on the beat (task.start_ms).
+      // timeline_start_ms should match; never default everything to 0 when start_ms exists.
+      const sectionStart =
+        t.start_ms != null && Number.isFinite(Number(t.start_ms))
+          ? Number(t.start_ms)
+          : selected.timeline_start_ms != null && Number.isFinite(Number(selected.timeline_start_ms))
+            ? Number(selected.timeline_start_ms)
+            : 0;
 
       const meta = (t.metadata || {}) as { section_label?: string };
       const sectionLabel =
-        meta.section_label ||
-        t.title ||
-        (typeof t.type === "string" ? t.type : null);
+        meta.section_label || t.title || (typeof t.type === "string" ? t.type : null);
 
       try {
         const buffer = await downloadStorageOrUrl(path);
@@ -113,16 +142,36 @@ export async function runInternalApProduceJob(opts: {
           pathHint: path,
           taskType: t.type,
           sectionLabel,
-          startMs: selected?.timeline_start_ms ?? t.start_ms ?? 0,
+          startMs: sectionStart,
+        });
+        placementLog.push({
+          taskId: t.id,
+          type: String(t.type || ""),
+          startMs: sectionStart,
+          path,
         });
       } catch (e) {
         console.warn("[ap-tick] skip vocal download", t.id, e);
       }
     }
 
+    console.info(
+      "[ap-tick] arrangement layers",
+      JSON.stringify({
+        jobId,
+        projectId,
+        layerCount: vocals.length,
+        placements: placementLog.map((p) => ({
+          type: p.type,
+          startMs: p.startMs,
+          taskId: p.taskId,
+        })),
+      })
+    );
+
     if (!vocals.length) {
       await patch("failed", 100, {
-        error: "No saved vocal take found. Record a section, then Produce.",
+        error: "No saved vocal take found. Record each section, then Produce.",
       });
       await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
       return { complete: false, error: "No vocal take" };
@@ -149,6 +198,7 @@ export async function runInternalApProduceJob(opts: {
         error: result.error,
         detail: result.detail,
         engineVersion: result.engineVersion,
+        placementLog,
       });
       await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
       return { complete: false, error: result.error };
@@ -187,14 +237,13 @@ export async function runInternalApProduceJob(opts: {
         restored_vocal_path: restoredVocalPath,
         decision: result.decision,
         vocal_layers: vocals.length,
+        placements: placementLog,
         roles: roleNote || null,
         qc: result.qc,
         retryCount: result.retryCount,
       },
     });
 
-
-    // Keep audio_versions in sync so status/download UIs find the master
     try {
       const { count } = await supabase
         .from("audio_versions")
@@ -213,6 +262,8 @@ export async function runInternalApProduceJob(opts: {
           engineVersion: result.engineVersion,
           mix_storage_path: mixPath,
           master_mp3_path: mp3Path,
+          vocal_layers: vocals.length,
+          placements: placementLog,
         },
       });
     } catch (avErr) {
@@ -236,6 +287,7 @@ export async function runInternalApProduceJob(opts: {
           processed_vocal_path: processedVocalPath,
           restored_vocal_path: restoredVocalPath,
           vocal_layers: vocals.length,
+          placements: placementLog,
           decision_notes: result.decision.notes,
           qc: result.qc,
           retryCount: result.retryCount,

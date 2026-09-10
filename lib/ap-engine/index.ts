@@ -143,9 +143,12 @@ export async function runApArrangement(
       layers: normalizedLayers.map((l) => ({
         role: l.role,
         section: l.section,
+        startMs: l.startMs,
+        durationMs: l.analysis.durationMs,
         rms: +l.analysis.rms.toFixed(4),
       })),
       beatRms: +beatA.rms.toFixed(4),
+      beatDurationMs: beatA.durationMs,
     });
 
     // Decisions per layer

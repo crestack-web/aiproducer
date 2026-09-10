@@ -67,28 +67,33 @@ export async function normalizeToInternalPcm(
   return { pcm, originalFormat, durationMs, bytesIn: buffer.length };
 }
 
+/**
+ * Place a section take onto the full song timeline at startMs (beat position).
+ * Output vocal buffer is always at least as long as the beat so multi-section
+ * mixes span the whole song, not just the first take.
+ */
 export function placeOnTimeline(
   vocal: PcmStereo,
   beat: PcmStereo,
   startMs: number
 ): { vocal: PcmStereo; beat: PcmStereo; length: number } {
-  const start = Math.max(0, Math.floor((startMs / 1000) * vocal.sampleRate));
-  const total = Math.max(beat.left.length, start + vocal.left.length);
+  const sr = vocal.sampleRate || beat.sampleRate || 44100;
+  const start = Math.max(0, Math.floor((Math.max(0, startMs) / 1000) * sr));
+  const total = Math.max(beat.left.length, start + vocal.left.length, 1);
   const vL = new Float32Array(total);
   const vR = new Float32Array(total);
   const bL = new Float32Array(total);
   const bR = new Float32Array(total);
   bL.set(beat.left.subarray(0, Math.min(beat.left.length, total)));
   bR.set(beat.right.subarray(0, Math.min(beat.right.length, total)));
-  for (let i = 0; i < vocal.left.length; i++) {
-    const d = start + i;
-    if (d >= total) break;
-    vL[d] = vocal.left[i] || 0;
-    vR[d] = vocal.right[i] || 0;
+  const n = Math.min(vocal.left.length, Math.max(0, total - start));
+  for (let i = 0; i < n; i++) {
+    vL[start + i] = vocal.left[i] || 0;
+    vR[start + i] = vocal.right[i] || 0;
   }
   return {
-    vocal: { left: vL, right: vR, sampleRate: vocal.sampleRate },
-    beat: { left: bL, right: bR, sampleRate: beat.sampleRate },
+    vocal: { left: vL, right: vR, sampleRate: sr },
+    beat: { left: bL, right: bR, sampleRate: sr },
     length: total,
   };
 }
