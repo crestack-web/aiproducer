@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.1.0-pitch-polish";
+export const AP_ENGINE_VERSION = "1.2.0-performance-polish";
 
 export type ApStage =
   | "queued"

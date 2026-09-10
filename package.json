@@ -11,8 +11,9 @@
     "db:push": "supabase db push",
     "test:unit": "node scripts/test-placement.mjs && node scripts/test-session-preview-membership.mjs && node scripts/test-speaker-duck-state.mjs",
     "test:pitch": "node scripts/test-pitch-polish.mjs",
+    "test:performance": "node scripts/test-performance-polish.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run build"
+    "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run test:performance && npm run build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

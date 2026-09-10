@@ -1,16 +1,19 @@
 /**
  * Multi-vocal stack mixer — lead establishes reference; others support.
- * Order: restore → pitch polish → stabilize → vocal chain → place.
+ * Order: restore → mouth-noise → pitch polish → vocal ride → stabilize → vocal chain → place.
  */
 import { cloneStereo } from "../dsp";
 import type { PcmStereo } from "../types";
 import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
 import { restoreVocal } from "../restoration/denoise";
+import { treatMouthNoise, type MouthNoiseQC } from "../restoration/mouth-noise";
+import { rideVocalLevel, type VocalRideQC } from "../restoration/vocal-ride";
 import { stabilizeLevel } from "../restoration/dynamics-fix";
-import { processVocalChain } from "../production/vocal-chain";
+import { processVocalChainDetailed } from "../production/vocal-chain";
 import { placeOnTimeline } from "../ingestion/normalize";
 import { polishVocalLayer, type PolishResult } from "../pitch";
+import type { SmartDeessQC } from "../restoration/smart-deess";
 
 export type StackLayerInput = {
   pcm: PcmStereo;
@@ -20,11 +23,18 @@ export type StackLayerInput = {
   leadReference?: PcmStereo | null;
 };
 
+export type PerformanceQc = {
+  mouth: MouthNoiseQC | null;
+  ride: VocalRideQC | null;
+  deess: SmartDeessQC | null;
+};
+
 export type StackLayerResult = {
   placed: PcmStereo;
   polished: PolishResult | null;
   restored: PcmStereo;
   processed: PcmStereo;
+  performanceQc: PerformanceQc;
 };
 
 export function processAndPlaceLayer(
@@ -38,15 +48,32 @@ export function processAndPlaceLayerDetailed(
   beatLengthPcm: PcmStereo,
   layer: StackLayerInput
 ): StackLayerResult {
+  const role = layer.decision.role;
   let v = cloneStereo(layer.pcm);
+
+  // 1. Basic restore (edge fade, HPF, gate)
   v = restoreVocal(v, layer.decision.vocal);
   const restored = cloneStereo(v);
 
+  // 2. Selective mouth-noise (plosives / clicks / excess breaths)
+  let mouthQc: MouthNoiseQC | null = null;
+  try {
+    const mouth = treatMouthNoise({ pcm: v, role, intensity: 0.55 });
+    if (mouth.qc.applied) v = mouth.pcm;
+    mouthQc = mouth.qc;
+  } catch (e) {
+    console.warn(
+      "[ap-engine] mouth-noise failed — continuing without",
+      e instanceof Error ? e.message : e
+    );
+  }
+
+  // 3. Pitch polish + timing
   let polished: PolishResult | null = null;
   try {
     polished = polishVocalLayer({
       pcm: v,
-      role: layer.decision.role,
+      role,
       genre: layer.genre,
       leadReference: layer.leadReference || null,
     });
@@ -59,11 +86,26 @@ export function processAndPlaceLayerDetailed(
     polished = null;
   }
 
-  v = stabilizeLevel(v, layer.decision.role === "lead" ? 0.11 : 0.08);
-  v = processVocalChain(v, layer.decision.vocal);
+  // 4. Phrase-level vocal ride (before compressor)
+  let rideQc: VocalRideQC | null = null;
+  try {
+    const ride = rideVocalLevel({ pcm: v, role });
+    if (ride.qc.applied) v = ride.pcm;
+    rideQc = ride.qc;
+  } catch (e) {
+    console.warn(
+      "[ap-engine] vocal ride failed — continuing without",
+      e instanceof Error ? e.message : e
+    );
+  }
+
+  // 5. Light global stabilize, then production chain (EQ/comp/smart-deess/sat/FX)
+  v = stabilizeLevel(v, role === "lead" ? 0.11 : 0.08);
+  const chain = processVocalChainDetailed(v, layer.decision.vocal, role);
+  v = chain.pcm;
   const processed = cloneStereo(v);
 
-  const role = layer.decision.role;
+  // 6. Stereo image by role
   let pan = 0;
   if (role === "double") pan = -0.18;
   else if (role === "harmony_high") pan = 0.42;
@@ -75,7 +117,17 @@ export function processAndPlaceLayerDetailed(
   applyWidth(v, layer.decision.width, pan);
 
   const placed = placeOnTimeline(v, beatLengthPcm, layer.startMs);
-  return { placed: placed.vocal, polished, restored, processed };
+  return {
+    placed: placed.vocal,
+    polished,
+    restored,
+    processed,
+    performanceQc: {
+      mouth: mouthQc,
+      ride: rideQc,
+      deess: chain.deessQc,
+    },
+  };
 }
 
 export function sumVocalBus(layers: PcmStereo[]): PcmStereo {

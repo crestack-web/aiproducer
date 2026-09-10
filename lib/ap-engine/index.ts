@@ -181,6 +181,7 @@ export async function runApArrangement(
       let restoredLead: PcmStereo | null = null;
       let leadPolishedRef: PcmStereo | null = null;
       const pitchQcAll: PitchQC[] = [];
+      const performanceNotes: string[] = [];
 
       // Lead first so support layers can time-align to polished lead
       const order = normalizedLayers.map((_, i) => i);
@@ -205,6 +206,23 @@ export async function runApArrangement(
         placedByIndex[i] = detailed.placed;
         if (detailed.polished) pitchQcAll.push(detailed.polished.qc);
 
+        const pq = detailed.performanceQc;
+        if (pq?.mouth?.applied) {
+          performanceNotes.push(
+            `mouth_l${i}:p=${pq.mouth.plosiveEvents},c=${pq.mouth.clickEvents},b=${pq.mouth.breathEvents}`
+          );
+        }
+        if (pq?.ride?.applied) {
+          performanceNotes.push(
+            `ride_l${i}:ph=${pq.ride.phrases},boost=${pq.ride.maxBoostDb.toFixed(1)},cut=${pq.ride.maxCutDb.toFixed(1)}`
+          );
+        }
+        if (pq?.deess?.applied) {
+          performanceNotes.push(
+            `deess_l${i}:sib=${pq.deess.sibilanceRatio.toFixed(2)},duck=${pq.deess.meanDuck.toFixed(2)}`
+          );
+        }
+
         if (layer.role === "lead" || (!hasLead && i === 0)) {
           restoredLead = detailed.restored;
           leadProcessed = detailed.processed;
@@ -227,6 +245,7 @@ export async function runApArrangement(
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
         pitchQcAll,
+        performanceNotes,
       };
     };
 
@@ -324,13 +343,15 @@ export async function runApArrangement(
       mp3: Boolean(masterMp3),
       retryCount,
       pitch: pitchSummary,
+      performance: rendered.performanceNotes || [],
       notes: [
         ...decision.notes,
         ...pitchSummary.map(
           (p, i) =>
             `pitch_layer${i}:corr=${p.corrected},maxCents=${p.maxCents},fallback=${p.fallback}`
         ),
-      ].slice(0, 30),
+        ...(rendered.performanceNotes || []),
+      ].slice(0, 40),
     });
 
     await stage("completed");
