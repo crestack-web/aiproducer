@@ -193,6 +193,32 @@ export async function runInternalApProduceJob(opts: {
       },
     });
 
+
+    // Keep audio_versions in sync so status/download UIs find the master
+    try {
+      const { count } = await supabase
+        .from("audio_versions")
+        .select("*", { count: "exact", head: true })
+        .eq("project_id", projectId)
+        .eq("kind", "master");
+      const nextVer = (count || 0) + 1;
+      await supabase.from("audio_versions").insert({
+        project_id: projectId,
+        kind: "master",
+        version: nextVer,
+        audio_path: masterPath,
+        metadata: {
+          mode: "ap",
+          provider: "ap-internal",
+          engineVersion: result.engineVersion,
+          mix_storage_path: mixPath,
+          master_mp3_path: mp3Path,
+        },
+      });
+    } catch (avErr) {
+      console.warn("[ap-tick] audio_versions insert skipped", avErr);
+    }
+
     await supabase
       .from("jobs")
       .update({

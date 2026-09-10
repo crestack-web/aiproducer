@@ -574,6 +574,12 @@ export default function ProjectDetailPage() {
         return "complete";
       }
 
+      // Job finished but signed URL not ready yet — treat as complete so UI leaves spinner
+      if (jobStatus === "complete" || projectStatus === "complete") {
+        if (st.master_url) setMasterUrl(st.master_url);
+        return "complete";
+      }
+
       return "pending";
     } catch {
       return "error";

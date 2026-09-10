@@ -55,7 +55,8 @@ export async function GET(_req: Request, ctx: Ctx) {
     .order("created_at", { ascending: false })
     .limit(5);
 
-  const { data: master } = await service
+  // Prefer audio_versions; fall back to songs (AP engine writes here)
+  let { data: master } = await service
     .from("audio_versions")
     .select("*")
     .eq("project_id", id)
@@ -63,6 +64,50 @@ export async function GET(_req: Request, ctx: Ctx) {
     .order("version", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (!master?.audio_path) {
+    const { data: song } = await service
+      .from("songs")
+      .select("id, audio_path, status, version, metadata, created_at")
+      .eq("project_id", id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (song?.audio_path) {
+      master = {
+        id: song.id,
+        project_id: id,
+        kind: "master",
+        version: song.version ?? 1,
+        audio_path: song.audio_path,
+        metadata: song.metadata,
+        created_at: song.created_at,
+      } as typeof master;
+    }
+  }
+
+  // Also resolve from latest complete job output if still missing
+  if (!master?.audio_path && jobs?.length) {
+    const done = jobs.find(
+      (j) =>
+        j.type === "PRODUCE_SONG" &&
+        (j.status === "complete" || j.status === "completed") &&
+        j.output_data &&
+        typeof j.output_data === "object"
+    );
+    const od = (done?.output_data || {}) as { master_storage_path?: string };
+    if (od.master_storage_path && isStoragePath(od.master_storage_path)) {
+      master = {
+        id: done!.id,
+        project_id: id,
+        kind: "master",
+        version: 1,
+        audio_path: od.master_storage_path,
+        metadata: od,
+        created_at: done!.completed_at || done!.created_at,
+      } as typeof master;
+    }
+  }
 
   let master_url: string | null = null;
   if (master?.audio_path && isStoragePath(master.audio_path)) {
