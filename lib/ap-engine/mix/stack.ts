@@ -7,6 +7,7 @@ import type { PcmStereo } from "../types";
 import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
 import { restoreVocal } from "../restoration/denoise";
+import { treatRoomTone, softDeReverb, type RoomToneQC } from "../restoration/room-tone";
 import { treatMouthNoise, type MouthNoiseQC } from "../restoration/mouth-noise";
 import { rideVocalLevel, type VocalRideQC } from "../restoration/vocal-ride";
 import { stabilizeLevel } from "../restoration/dynamics-fix";
@@ -27,6 +28,7 @@ export type PerformanceQc = {
   mouth: MouthNoiseQC | null;
   ride: VocalRideQC | null;
   deess: SmartDeessQC | null;
+  room: RoomToneQC | null;
 };
 
 export type StackLayerResult = {
@@ -53,6 +55,19 @@ export function processAndPlaceLayerDetailed(
 
   // 1. Basic restore (edge fade, HPF, gate)
   v = restoreVocal(v, layer.decision.vocal);
+
+  // 1b. Conservative room/hiss cleanup + soft de-reverb (identity-preserving)
+  let roomQc: RoomToneQC | null = null;
+  try {
+    const room = treatRoomTone({ pcm: v, intensity: role === "lead" ? 0.42 : 0.5 });
+    if (room.qc.applied) v = room.pcm;
+    roomQc = room.qc;
+    const der = softDeReverb({ pcm: v, intensity: role === "lead" ? 0.28 : 0.35 });
+    if (der.applied) v = der.pcm;
+  } catch {
+    roomQc = null;
+  }
+
   const restored = cloneStereo(v);
 
   // 2. Selective mouth-noise (plosives / clicks / excess breaths)
@@ -126,6 +141,7 @@ export function processAndPlaceLayerDetailed(
       mouth: mouthQc,
       ride: rideQc,
       deess: chain.deessQc,
+      room: roomQc,
     },
   };
 }

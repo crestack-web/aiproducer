@@ -4,6 +4,7 @@
  */
 
 import { gainToDb } from "../dsp";
+import { buildBeatMaskBands } from "../mix/masking-lite";
 import { resolveGenreProfile } from "../profiles/genre-profiles";
 import type { VocalRole, SongSectionKind } from "../roles";
 import { DEFAULT_ROLE_GAIN_DB } from "../roles";
@@ -46,6 +47,10 @@ export type ArrangementDecision = {
   layerCount: number;
 };
 
+/**
+ * Section-aware space & energy.
+ * Verse = intimate/dry · Chorus = wider/wetter · Bridge/outro = atmospheric.
+ */
 function sectionAdjust(
   section: SongSectionKind,
   profile: ReturnType<typeof resolveGenreProfile>,
@@ -57,27 +62,35 @@ function sectionAdjust(
   let delayMul = 1;
 
   if (section === "verse") {
-    gainDb += role === "lead" ? profile.verseIntimacyDb : -0.5;
-    widthMul = role === "lead" ? 0.85 : 0.9;
-    reverbMul = 0.85;
+    gainDb += role === "lead" ? profile.verseIntimacyDb : -0.6;
+    widthMul = role === "lead" ? 0.78 : 0.85;
+    reverbMul = 0.55;
+    delayMul = 0.5;
   } else if (section === "pre_chorus") {
-    widthMul = 1.05;
-    reverbMul = 1.1;
-    gainDb += 0.3;
+    widthMul = 1.08;
+    reverbMul = 0.95;
+    delayMul = 0.9;
+    gainDb += 0.4;
   } else if (section === "chorus") {
-    gainDb += role === "lead" ? profile.chorusEnergyBoostDb * 0.4 : profile.chorusEnergyBoostDb * 0.7;
-    widthMul = role === "lead" ? 1 : 1.15;
-    reverbMul = 1.15;
-  } else if (section === "bridge") {
-    reverbMul = 1.2;
-    widthMul = 1.1;
-  } else if (section === "outro") {
+    gainDb += role === "lead" ? profile.chorusEnergyBoostDb * 0.45 : profile.chorusEnergyBoostDb * 0.75;
+    widthMul = role === "lead" ? 1.05 : 1.22;
     reverbMul = 1.35;
-    delayMul = 1.3;
-    if (role !== "lead") gainDb -= 1;
-  } else if (section === "intro") {
-    reverbMul = 1.25;
+    delayMul = 1.15;
+  } else if (section === "bridge") {
+    reverbMul = 1.4;
     delayMul = 1.2;
+    widthMul = 1.15;
+    if (role === "lead") gainDb -= 0.3;
+  } else if (section === "outro") {
+    reverbMul = 1.55;
+    delayMul = 1.45;
+    widthMul = 1.2;
+    if (role !== "lead") gainDb -= 1.2;
+  } else if (section === "intro") {
+    reverbMul = 1.3;
+    delayMul = 1.15;
+    widthMul = 1.1;
+    if (role === "lead") gainDb -= 0.5;
   }
 
   return { gainDb, widthMul, reverbMul, delayMul };
@@ -213,56 +226,68 @@ export function decideArrangementMix(
   const profile = resolveGenreProfile(genre);
   const notes: string[] = [`genre:${profile.id}`, `layers:${layerCount}`];
 
-  let vocalGainDb = 1.5;
-  let beatGainDb = -0.5;
+  let vocalGainDb = 2.0 * profile.leadForwardness;
+  let beatGainDb = -0.8 * profile.beatRespect;
   if (leadAnalysis) {
     const ratio = leadAnalysis.rms / (beatAnalysis.rms + 1e-9);
-    if (ratio < 0.35) {
-      vocalGainDb = 3.2 * profile.leadForwardness;
-      beatGainDb = -1.2 * (1 - profile.beatRespect * 0.3);
+    if (ratio < 0.4) {
+      vocalGainDb = 3.8 * profile.leadForwardness;
+      beatGainDb = -1.6 * (1 - profile.beatRespect * 0.25);
       notes.push("vocal_quiet_vs_beat");
-    } else if (ratio > 1.4) {
-      vocalGainDb = -1.2;
-      beatGainDb = 0.4 * profile.beatRespect;
+    } else if (ratio > 1.3) {
+      vocalGainDb = -0.8;
+      beatGainDb = 0.5 * profile.beatRespect;
       notes.push("vocal_hot_vs_beat");
+    } else {
+      // Center the vocal slightly forward for pop/streaming
+      vocalGainDb = 1.8 * profile.leadForwardness;
+      beatGainDb = -0.6;
+      notes.push("vocal_balanced_forward");
     }
   }
 
-  // Dense stacks: slightly lower lead bus so arrangement fits
   if (layerCount >= 4) {
-    vocalGainDb -= 0.8;
+    vocalGainDb -= 0.6;
     notes.push("dense_stack");
   }
 
-  let beatPresenceCutDb = 0;
-  if (leadAnalysis && leadAnalysis.bands.mid > 0.4 && beatAnalysis.bands.mid > 0.38) {
-    beatPresenceCutDb = 1.8 + (1 - profile.beatRespect);
+  let beatPresenceCutDb = 1.2 + (1 - profile.beatRespect) * 0.8;
+  if (leadAnalysis && leadAnalysis.bands.mid > 0.35 && beatAnalysis.bands.mid > 0.32) {
+    beatPresenceCutDb = 2.0 + (1 - profile.beatRespect) * 1.1;
     notes.push("mid_masking");
   }
+
+  // Multi-band mask from spectral overlap
+  const beatMaskBands = buildBeatMaskBands(leadAnalysis, beatAnalysis, beatPresenceCutDb);
+  if (beatMaskBands.length) notes.push(`mask_bands:${beatMaskBands.length}`);
 
   const mix: MixDecision = {
     vocalGainDb,
     beatGainDb,
     vocalPan: 0,
-    duckDb: 0.8 + (1 - profile.beatRespect) * 0.8,
+    duckDb: 1.1 + (1 - profile.beatRespect) * 1.0,
     beatPresenceCutDb,
+    beatMaskBands,
+    duckMidFocus: 0.72,
   };
 
   const master: MasterDecision = {
     eq: [
-      { type: "highpass", freq: 30, q: 0.7 },
-      { type: "highshelf", freq: 10000, gainDb: profile.leadForwardness > 0.8 ? 1.0 : 0.6, q: 0.7 },
+      { type: "highpass", freq: 28, q: 0.7 },
+      { type: "peak", freq: 120, gainDb: 0.4, q: 0.8 },
+      { type: "highshelf", freq: 10000, gainDb: profile.leadForwardness > 0.8 ? 1.2 : 0.7, q: 0.7 },
     ],
     compressor: {
-      thresholdDb: -12,
-      ratio: 1.5 + (1 - profile.preserveDynamics) * 0.4,
-      attackMs: 25,
-      releaseMs: 180,
-      makeupDb: 0.5,
+      thresholdDb: -11,
+      ratio: 1.6 + (1 - profile.preserveDynamics) * 0.5,
+      attackMs: 22,
+      releaseMs: 160,
+      makeupDb: 0.6,
     },
     limiterCeilingDb: -1.0,
     targetLufs: profile.targetLufs,
-    makeupDb: 1.2,
+    makeupDb: 1.0,
+    truePeakMarginDb: 0.5,
   };
 
   return { mix, master, notes };

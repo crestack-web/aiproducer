@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.2.0-performance-polish";
+export const AP_ENGINE_VERSION = "1.3.0-pro-mix";
 
 export type ApStage =
   | "queued"
@@ -85,7 +85,11 @@ export type MixDecision = {
   beatGainDb: number;
   vocalPan: number; // -1..1
   duckDb: number;
-  beatPresenceCutDb: number; // dip beat under vocal presence
+  beatPresenceCutDb: number; // legacy single presence dip
+  /** Multi-band beat cuts under vocal (Hz → dB cut, positive = cut) */
+  beatMaskBands?: { freq: number; gainDb: number; q: number }[];
+  /** Focus duck in mid band (0 = broadband, 1 = mid-focused) */
+  duckMidFocus?: number;
 };
 
 export type MasterDecision = {
@@ -94,6 +98,8 @@ export type MasterDecision = {
   limiterCeilingDb: number;
   targetLufs: number;
   makeupDb: number;
+  /** True-peak style ceiling headroom (dB below sample peak target) */
+  truePeakMarginDb?: number;
 };
 
 export type ProductionDecision = {

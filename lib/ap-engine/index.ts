@@ -222,6 +222,11 @@ export async function runApArrangement(
             `deess_l${i}:sib=${pq.deess.sibilanceRatio.toFixed(2)},duck=${pq.deess.meanDuck.toFixed(2)}`
           );
         }
+        if (pq?.room?.applied) {
+          performanceNotes.push(
+            `room_l${i}:red=${pq.room.reductionDb.toFixed(1)}dB,gate=${pq.room.gatedRatio.toFixed(2)}`
+          );
+        }
 
         if (layer.role === "lead" || (!hasLead && i === 0)) {
           restoredLead = detailed.restored;

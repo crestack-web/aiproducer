@@ -4,19 +4,24 @@ import {
   cloneStereo,
   compressStereo,
   dbToGain,
-  limitStereo,
 } from "../dsp";
 import type { MasterDecision, PcmStereo } from "../types";
-import { normalizeRmsProxy } from "./loudness";
+import { normalizeRmsProxy, truePeakLimit, estimateLoudnessProxyDb } from "./loudness";
 
 export function masterMix(pcm: PcmStereo, decision: MasterDecision): PcmStereo {
   const out = cloneStereo(pcm);
   applyEqStereo(out, decision.eq);
   if (decision.compressor) compressStereo(out, decision.compressor);
-  // Map target LUFS-ish to RMS proxy (~ -1 LUFS ≈ rough for speech/music hybrid)
-  const targetRmsDb = decision.targetLufs + 3;
+
+  // Streaming-ish target: profile LUFS mapped to RMS proxy
+  const targetRmsDb = decision.targetLufs + 2.5;
   normalizeRmsProxy(out, targetRmsDb);
   applyGainStereo(out, dbToGain(decision.makeupDb));
-  limitStereo(out, decision.limiterCeilingDb);
+
+  const margin = decision.truePeakMarginDb ?? 0.5;
+  truePeakLimit(out, decision.limiterCeilingDb, margin);
+
   return out;
 }
+
+export { estimateLoudnessProxyDb };
