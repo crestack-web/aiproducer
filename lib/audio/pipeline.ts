@@ -31,6 +31,7 @@ import {
   buildPlacementManifest,
   resolvePlacementStartMs,
 } from "@/lib/audio/session-timeline";
+import { runInternalApProduceJob } from "@/lib/ap-engine/jobs/tick";
 
 export { getPipelineMode, getMixProvider } from "@/lib/audio/produce-job";
 export { enqueueProduceSong } from "@/lib/audio/produce-job";
@@ -45,11 +46,57 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
 
   const projectId = job.project_id as string;
   const mode = getPipelineMode();
-  const provider = getMixProvider();
   let out = asOutput(job);
   const userId = (out.user_id as string) || "";
   let stage = (job.stage as string) || "queued";
   const budgetOk = () => Date.now() - startedAt < maxWorkMs;
+
+  // ── Default path: internal AP engine (no RoEx) ──────────────────────────
+  // RoEx only when AUDIO_PIPELINE_MODE=roex AND ROEX_ALLOW_PRODUCE=true.
+  if (mode !== "roex" && mode !== "mock") {
+    logProduce({
+      event: "tick_start_ap",
+      jobId,
+      projectId,
+      stage,
+      mode: "ap",
+      provider: "ap-internal",
+    });
+    await patchJob(supabase, jobId, {
+      status: "processing",
+      started_at: job.started_at || new Date().toISOString(),
+      attempts: (job.attempts || 0) + 1,
+      provider: "ap-internal",
+      output_data: { ...out, mode: "ap", provider: "ap-internal" },
+    });
+    try {
+      const result = await runInternalApProduceJob({
+        jobId,
+        projectId,
+        userId,
+      });
+      const { data: updated } = await supabase.from("jobs").select("*").eq("id", jobId).single();
+      if (result.error && updated?.status !== "complete") {
+        logProduce({ event: "ap_tick_error", jobId, projectId, error: result.error });
+      }
+      return updated || job;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("tickProduceJob AP", jobId, e);
+      await patchJob(supabase, jobId, {
+        status: "failed",
+        stage: "failed",
+        progress: 100,
+        error: msg,
+        completed_at: new Date().toISOString(),
+        output_data: { ...out, mode: "ap", provider: "ap-internal", error: msg },
+      });
+      throw e;
+    }
+  }
+
+  // ── Legacy paths: mock / explicit RoEx only ─────────────────────────────
+  const provider = getMixProvider();
 
   await patchJob(supabase, jobId, {
     status: "processing",

@@ -50,15 +50,17 @@ export type JobOutput = {
 /**
  * Production mode:
  * - ap (default): Internal AP Audio Production Engine — real DSP, no RoEx required
- * - roex: optional external RoEx provider (AUDIO_PIPELINE_MODE=roex)
- * - mock: explicit development only (AUDIO_PIPELINE_MODE=mock) — never silent default
+ * - roex: only when AUDIO_PIPELINE_MODE=roex AND ROEX_ALLOW_PRODUCE=true
+ * - mock: explicit development only (AUDIO_PIPELINE_MODE=mock)
+ *
+ * RoEx is never the default. Leftover AUDIO_PIPELINE_MODE=roex without the
+ * explicit allow flag still runs internal AP (avoids accidental RoEx 400s).
  */
 export function getPipelineMode(): "ap" | "mock" | "roex" {
-  const m = (process.env.AUDIO_PIPELINE_MODE || "").toLowerCase();
+  const m = (process.env.AUDIO_PIPELINE_MODE || "").toLowerCase().trim();
   if (m === "mock") return "mock";
-  if (m === "roex") return "roex";
-  if (m === "ap" || m === "internal") return "ap";
-  // Default: internal AP. RoEx is optional and must be opted in.
+  if (m === "roex" && process.env.ROEX_ALLOW_PRODUCE === "true") return "roex";
+  // ap, internal, empty, roex-without-allow, or anything else → internal AP
   return "ap";
 }
 
