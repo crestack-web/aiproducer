@@ -93,3 +93,14 @@ Genre profiles (`lib/ap-engine/profiles/genre-profiles.ts`) describe production 
 Multi-vocal path: `runApArrangement` processes each layer with a role-specific decision, sums a vocal bus, then mixes with the beat.
 
 No schema migration required. Missing layers are simply omitted — never synthesized.
+
+
+## Edge cleanup (mouth open/close)
+
+Each vocal take runs through `cleanTakeEdges` during restoration:
+
+- Detects where singing energy actually starts/ends (within ~400ms of edges)
+- Zeros leading/trailing mouth noise
+- Cosine fade-in (~50ms) and fade-out (~100ms)
+
+Goal: only the song parts remain in each section take — not a hard cut that clicks.

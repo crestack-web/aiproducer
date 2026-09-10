@@ -1,14 +1,31 @@
-import { applyEqChain, gateInPlace, highPassInPlace } from "../dsp";
+import { gateInPlace, highPassInPlace, cloneStereo } from "../dsp";
 import type { PcmStereo, VocalDecision } from "../types";
-import { cloneStereo } from "../dsp";
+import { cleanTakeEdges } from "./edge-fade";
 
-/** Phase 1 restoration: HPF + gate — prefer natural over aggressive NR. */
+/**
+ * Phase 1 restoration: edge clean (mouth open/close) + HPF + gate.
+ * Prefer natural voice over aggressive noise reduction.
+ */
 export function restoreVocal(pcm: PcmStereo, decision: VocalDecision): PcmStereo {
-  const out = cloneStereo(pcm);
+  // Edge fade first — removes mouth-close clicks before dynamics/EQ
+  let out = cleanTakeEdges(pcm, {
+    fadeInMs: 50,
+    fadeOutMs: 100,
+    maxLeadMs: 400,
+    maxTailMs: 450,
+  });
+  out = cloneStereo(out);
   highPassInPlace(out.left, out.sampleRate, decision.highPassHz);
   highPassInPlace(out.right, out.sampleRate, decision.highPassHz);
   gateInPlace(out.left, out.sampleRate, decision.gateThresholdDb);
   gateInPlace(out.right, out.sampleRate, decision.gateThresholdDb);
-  // Gentle corrective low cut if still muddy — already in decision EQ for production stage
+  // Second gentle edge pass after gate (gate can leave residual tails)
+  out = cleanTakeEdges(out, {
+    fadeInMs: 25,
+    fadeOutMs: 70,
+    maxLeadMs: 120,
+    maxTailMs: 180,
+    contentRatio: 0.05,
+  });
   return out;
 }
