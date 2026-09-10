@@ -515,7 +515,7 @@ function AppInner() {
                 width: "100%",
                 maxWidth: 340,
                 borderRadius: 18,
-                background: C.surfaceElevated || C.surface,
+                background: C.surface,
                 border: `1px solid ${C.border}`,
                 padding: "22px 20px",
                 boxShadow: C.cardShadow,
