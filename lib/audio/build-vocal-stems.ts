@@ -1,4 +1,4 @@
-import type { ArrangementPlacement, StemKind } from "@/lib/audio/types";
+import type { ArrangementPlacement, PipelineMode, StemKind } from "@/lib/audio/types";
 import type { TakeRow } from "@/lib/audio/produce-job";
 import { logProduce } from "@/lib/audio/produce-job";
 import { isStoragePath } from "@/lib/storage";
@@ -13,7 +13,7 @@ import {
  * (so verse+chorus+bridge leads all mix, not only the first).
  */
 export async function buildVocalStemRows(opts: {
-  mode: "mock" | "roex";
+  mode: PipelineMode;
   userId: string;
   projectId: string;
   jobId: string;
