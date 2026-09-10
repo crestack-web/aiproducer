@@ -15,6 +15,8 @@ export type ApStage =
   | "completed"
   | "failed";
 
+export type StageReporter = (stage: ApStage, meta?: Record<string, unknown>) => Promise<void> | void;
+
 export type BandEnergies = {
   low: number; // ~20–250 Hz relative energy 0–1
   mid: number; // ~250–4k

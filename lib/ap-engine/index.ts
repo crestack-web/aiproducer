@@ -32,14 +32,13 @@ import {
   type ApStage,
   type PcmStereo,
   type ProductionDecision,
+  type StageReporter,
 } from "./types";
 import { cloneStereo } from "./dsp";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
 export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
-
-export type StageReporter = (stage: ApStage, meta?: Record<string, unknown>) => Promise<void> | void;
 
 export type ApVocalLayerInput = {
   buffer: Buffer;
