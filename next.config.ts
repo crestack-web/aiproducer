@@ -5,6 +5,17 @@ const STUDIO_LOGO =
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Keep ffmpeg-static out of webpack bundling; load via require at runtime
+  serverExternalPackages: ["ffmpeg-static"],
+  // Ensure the native binary is copied into Vercel serverless function traces
+  outputFileTracingIncludes: {
+    "/api/**/*": [
+      "./node_modules/ffmpeg-static/**/*",
+    ],
+    "/*": [
+      "./node_modules/ffmpeg-static/**/*",
+    ],
+  },
   images: {
     remotePatterns: [
       {

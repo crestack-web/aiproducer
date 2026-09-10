@@ -126,9 +126,40 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     if (mode === "complete") {
-      const path = String(body.path || "");
+      let path = String(body.path || "");
       if (!path.startsWith(`users/${user.id}/projects/${projectId}/`)) {
         return NextResponse.json({ error: "Invalid path" }, { status: 400 });
+      }
+
+      // Convert signed-upload MP3/etc to stereo WAV when possible
+      let registeredContentType = String(body.contentType || "audio/wav");
+      if (!path.toLowerCase().endsWith(".wav")) {
+        try {
+          const service = createServiceClient();
+          const { data: fileData } = await service.storage.from(getStorageBucket()).download(path);
+          if (fileData) {
+            const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
+            const { ensureStereoWavForRoex, isWavBuffer } = await import("@/lib/audio/wav");
+            let buf = Buffer.from(await fileData.arrayBuffer());
+            if (!isWavBuffer(buf)) {
+              const conv = await convertBufferToWav(buf, path);
+              buf = ensureStereoWavForRoex(conv.buffer);
+            } else {
+              buf = ensureStereoWavForRoex(buf);
+            }
+            const wavPath = path.replace(/\.[^./]+$/, "") + ".wav";
+            const { error: upErr } = await service.storage.from(getStorageBucket()).upload(wavPath, buf, {
+              contentType: "audio/wav",
+              upsert: true,
+            });
+            if (!upErr) {
+              path = wavPath;
+              registeredContentType = "audio/wav";
+            }
+          }
+        } catch (convErr) {
+          console.warn("[beat-complete] WAV convert skipped", convErr);
+        }
       }
 
       // Prefer client-measured analysis; fall back to server WAV parse if needed
@@ -169,7 +200,7 @@ export async function POST(req: Request, ctx: Ctx) {
         projectId,
         path,
         filename: String(body.filename || "custom-beat"),
-        contentType: String(body.contentType || "audio/wav"),
+        contentType: registeredContentType,
         size: Number(body.size) || null,
         bpm,
         genre: String(body.genre || project.genre || "R&B"),
@@ -224,13 +255,28 @@ export async function POST(req: Request, ctx: Ctx) {
     typeof (file as File).name === "string" && (file as File).name
       ? (file as File).name
       : "custom-beat.wav";
-  const ext = audioExt(file.type || "", filename);
-  const path = customBeatPath(user.id, projectId, ext);
-
+  let ext = audioExt(file.type || "", filename);
   const service = createServiceClient();
-  const buf = Buffer.from(await file.arrayBuffer());
+  let buf = Buffer.from(await file.arrayBuffer());
+  let contentType = file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`;
+  // Prefer stereo WAV in storage so Produce never depends on runtime ffmpeg
+  try {
+    const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
+    const { ensureStereoWavForRoex, isWavBuffer } = await import("@/lib/audio/wav");
+    if (!isWavBuffer(buf)) {
+      const conv = await convertBufferToWav(buf, filename);
+      buf = ensureStereoWavForRoex(conv.buffer);
+    } else {
+      buf = ensureStereoWavForRoex(buf);
+    }
+    ext = "wav";
+    contentType = "audio/wav";
+  } catch (convErr) {
+    console.warn("[beat-upload] WAV convert skipped", convErr);
+  }
+  const path = customBeatPath(user.id, projectId, ext);
   const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-    contentType: file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`,
+    contentType,
     upsert: true,
   });
   if (upErr) {

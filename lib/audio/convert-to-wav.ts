@@ -37,22 +37,47 @@ async function pathExists(p: string): Promise<boolean> {
 export async function resolveFfmpegBin(): Promise<string | null> {
   const candidates: string[] = [];
   if (process.env.FFMPEG_PATH) candidates.push(process.env.FFMPEG_PATH);
+
+  // Prefer ffmpeg-static package path (works when traced into the serverless bundle)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const staticPath = require("ffmpeg-static") as string | null;
-    // Prefer packaged binary first on serverless (Vercel)
     if (staticPath) candidates.push(staticPath);
   } catch {
     /* optional */
   }
-  candidates.push("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const resolved = require.resolve("ffmpeg-static");
+    // package entry is the binary path string file or index — also try sibling binary names
+    if (resolved) {
+      candidates.push(resolved);
+      const pathMod = await import("path");
+      const dir = pathMod.dirname(resolved);
+      candidates.push(pathMod.join(dir, "ffmpeg"));
+      candidates.push(pathMod.join(dir, "ffmpeg.exe"));
+    }
+  } catch {
+    /* optional */
+  }
 
+  // cwd-relative paths common on Vercel after tracing
+  candidates.push(
+    process.cwd() + "/node_modules/ffmpeg-static/ffmpeg",
+    process.cwd() + "/node_modules/ffmpeg-static/ffmpeg.exe",
+    "/var/task/node_modules/ffmpeg-static/ffmpeg",
+    "/usr/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "ffmpeg"
+  );
+
+  const tried: string[] = [];
   for (const candidate of candidates) {
-    if (!candidate) continue;
+    if (!candidate || tried.includes(candidate)) continue;
+    tried.push(candidate);
     if (candidate.includes("/") && !(await pathExists(candidate))) continue;
     try {
-      // Serverless images sometimes ship ffmpeg-static without +x
-      if (candidate.includes("node_modules") || candidate.includes("ffmpeg-static")) {
+      if (candidate.includes("node_modules") || candidate.includes("ffmpeg-static") || candidate.includes("/var/task")) {
         try {
           const { chmod } = await import("fs/promises");
           await chmod(candidate, 0o755);
@@ -66,6 +91,7 @@ export async function resolveFfmpegBin(): Promise<string | null> {
       /* try next */
     }
   }
+  console.warn("[ffmpeg] no working binary found", { tried: tried.slice(0, 12) });
   return null;
 }
 

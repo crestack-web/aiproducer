@@ -265,8 +265,27 @@ export async function tickMusicGenerationJob(jobId: string) {
 
     await supabase.from("music_generation_jobs").update({ status: "PROCESSING", progress: 85, stage: "store" }).eq("id", jobId);
 
-    const path = beatPath(job.user_id, job.project_id, `generated-${job.kind}-${jobId.slice(0, 8)}.${result.extension}`);
-    await uploadBuffer(path, result.buffer, result.contentType);
+    // RoEx mix requires stereo WAV — convert generated MP3 at store time when ffmpeg is available
+    let storeBuf = result.buffer;
+    let storeExt = result.extension || "mp3";
+    let storeCt = result.contentType || "audio/mpeg";
+    try {
+      const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
+      const { ensureStereoWavForRoex, isWavBuffer } = await import("@/lib/audio/wav");
+      if (!isWavBuffer(storeBuf)) {
+        const conv = await convertBufferToWav(storeBuf, `generated.${storeExt}`);
+        storeBuf = ensureStereoWavForRoex(conv.buffer);
+      } else {
+        storeBuf = ensureStereoWavForRoex(storeBuf);
+      }
+      storeExt = "wav";
+      storeCt = "audio/wav";
+    } catch (convErr) {
+      console.warn("[music-gen] beat WAV convert deferred", convErr);
+      // keep original; produce will try again
+    }
+    const path = beatPath(job.user_id, job.project_id, `generated-${job.kind}-${jobId.slice(0, 8)}.${storeExt}`);
+    await uploadBuffer(path, storeBuf, storeCt);
 
     const beatPayload = {
       project_id: job.project_id,

@@ -337,12 +337,13 @@ export function userFacingProduceError(raw: string): string {
   if (
     m.includes("beat/instrumental") ||
     m.includes("prepared as wav") ||
+    m.includes("no working ffmpeg") ||
     (m.includes("instrumental") && (m.includes("wav") || m.includes("convert") || m.includes("prepared")))
   ) {
     return (
-      "The beat could not be sent to the mixer yet. " +
-      "If your beat is already MP3 or WAV, tap Produce again (a new job will retry). " +
-      "If it keeps failing, re-upload the beat as MP3 or WAV. Your vocal takes are safe."
+      "The beat could not be converted to stereo WAV for the mixer. " +
+      "Re-upload the beat as a WAV file (44.1 or 48 kHz, stereo), then Produce again. " +
+      "Your vocal takes are safe."
     );
   }
   if (
