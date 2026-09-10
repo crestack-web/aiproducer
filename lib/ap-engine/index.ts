@@ -14,11 +14,8 @@ import {
   decideLayer,
   decideProduction,
 } from "./production/decision-engine";
-import { processVocalChain } from "./production/vocal-chain";
-import { restoreVocal } from "./restoration/denoise";
-import { stabilizeLevel } from "./restoration/dynamics-fix";
 import { mixVocalAndBeat } from "./mix/engine";
-import { processAndPlaceLayer, sumVocalBus } from "./mix/stack";
+import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
 import { masterMix } from "./master/engine";
 import { runQc } from "./qc/checks";
 import { shouldRetry } from "./qc/retry";
@@ -34,7 +31,7 @@ import {
   type ProductionDecision,
   type StageReporter,
 } from "./types";
-import { cloneStereo } from "./dsp";
+import type { PitchQC } from "./pitch";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
@@ -174,6 +171,7 @@ export async function runApArrangement(
     });
 
     await stage("restoring");
+    await stage("polishing");
     await stage("producing");
     await stage("mixing");
 
@@ -181,22 +179,45 @@ export async function runApArrangement(
       const placed: PcmStereo[] = [];
       let leadProcessed: PcmStereo | null = null;
       let restoredLead: PcmStereo | null = null;
-      for (let i = 0; i < normalizedLayers.length; i++) {
+      let leadPolishedRef: PcmStereo | null = null;
+      const pitchQcAll: PitchQC[] = [];
+
+      // Lead first so support layers can time-align to polished lead
+      const order = normalizedLayers.map((_, i) => i);
+      order.sort((a, b) => {
+        const ra = normalizedLayers[a].role === "lead" ? 0 : 1;
+        const rb = normalizedLayers[b].role === "lead" ? 0 : 1;
+        return ra - rb;
+      });
+
+      const placedByIndex: (PcmStereo | null)[] = normalizedLayers.map(() => null);
+
+      for (const i of order) {
         const layer = normalizedLayers[i];
         const decision = layerDecisions[i];
-        const out = processAndPlaceLayer(beatNorm.pcm, {
+        const detailed = processAndPlaceLayerDetailed(beatNorm.pcm, {
           pcm: layer.pcm,
           startMs: layer.startMs,
           decision,
+          genre: input.genre,
+          leadReference: leadPolishedRef,
         });
-        placed.push(out);
+        placedByIndex[i] = detailed.placed;
+        if (detailed.polished) pitchQcAll.push(detailed.polished.qc);
+
         if (layer.role === "lead" || (!hasLead && i === 0)) {
-          // capture lead chain for artifacts
-          let v = cloneStereo(layer.pcm);
-          restoredLead = restoreVocal(v, decision.vocal);
-          leadProcessed = processVocalChain(stabilizeLevel(restoredLead, 0.11), decision.vocal);
+          restoredLead = detailed.restored;
+          leadProcessed = detailed.processed;
+          leadPolishedRef = detailed.polished?.applied
+            ? detailed.polished.pcm
+            : detailed.restored;
         }
       }
+
+      for (let i = 0; i < placedByIndex.length; i++) {
+        placed.push(placedByIndex[i]!);
+      }
+
       const vocalBus = sumVocalBus(placed);
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
       const master = masterMix(mix, arrMix.master);
@@ -205,6 +226,7 @@ export async function runApArrangement(
         master,
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
+        pitchQcAll,
       };
     };
 
@@ -286,6 +308,13 @@ export async function runApArrangement(
       ],
     };
 
+    const pitchSummary = (rendered.pitchQcAll || []).map((p) => ({
+      corrected: p.notesCorrected,
+      maxCents: Math.round(p.maxCorrectionCents),
+      fallback: p.usedFallback,
+      artifactRisk: Number(p.artifactRisk.toFixed(2)),
+    }));
+
     logAp("completed", {
       jobId: input.jobId,
       durationMs,
@@ -294,6 +323,14 @@ export async function runApArrangement(
       masterBytes: masterWav.length,
       mp3: Boolean(masterMp3),
       retryCount,
+      pitch: pitchSummary,
+      notes: [
+        ...decision.notes,
+        ...pitchSummary.map(
+          (p, i) =>
+            `pitch_layer${i}:corr=${p.corrected},maxCents=${p.maxCents},fallback=${p.fallback}`
+        ),
+      ].slice(0, 30),
     });
 
     await stage("completed");

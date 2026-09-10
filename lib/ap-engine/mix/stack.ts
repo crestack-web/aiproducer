@@ -1,7 +1,8 @@
 /**
  * Multi-vocal stack mixer — lead establishes reference; others support.
+ * Order: restore → pitch polish → stabilize → vocal chain → place.
  */
-import { applyGainStereo, cloneStereo, dbToGain } from "../dsp";
+import { cloneStereo } from "../dsp";
 import type { PcmStereo } from "../types";
 import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
@@ -9,22 +10,59 @@ import { restoreVocal } from "../restoration/denoise";
 import { stabilizeLevel } from "../restoration/dynamics-fix";
 import { processVocalChain } from "../production/vocal-chain";
 import { placeOnTimeline } from "../ingestion/normalize";
+import { polishVocalLayer, type PolishResult } from "../pitch";
 
 export type StackLayerInput = {
   pcm: PcmStereo;
   startMs: number;
   decision: LayerDecision;
+  genre?: string | null;
+  leadReference?: PcmStereo | null;
+};
+
+export type StackLayerResult = {
+  placed: PcmStereo;
+  polished: PolishResult | null;
+  restored: PcmStereo;
+  processed: PcmStereo;
 };
 
 export function processAndPlaceLayer(
   beatLengthPcm: PcmStereo,
   layer: StackLayerInput
 ): PcmStereo {
+  return processAndPlaceLayerDetailed(beatLengthPcm, layer).placed;
+}
+
+export function processAndPlaceLayerDetailed(
+  beatLengthPcm: PcmStereo,
+  layer: StackLayerInput
+): StackLayerResult {
   let v = cloneStereo(layer.pcm);
   v = restoreVocal(v, layer.decision.vocal);
+  const restored = cloneStereo(v);
+
+  let polished: PolishResult | null = null;
+  try {
+    polished = polishVocalLayer({
+      pcm: v,
+      role: layer.decision.role,
+      genre: layer.genre,
+      leadReference: layer.leadReference || null,
+    });
+    if (polished.applied) v = polished.pcm;
+  } catch (e) {
+    console.warn(
+      "[ap-engine] pitch polish failed — continuing without",
+      e instanceof Error ? e.message : e
+    );
+    polished = null;
+  }
+
   v = stabilizeLevel(v, layer.decision.role === "lead" ? 0.11 : 0.08);
   v = processVocalChain(v, layer.decision.vocal);
-  // Distinct stereo image by role — lead stays center; support spreads
+  const processed = cloneStereo(v);
+
   const role = layer.decision.role;
   let pan = 0;
   if (role === "double") pan = -0.18;
@@ -37,7 +75,7 @@ export function processAndPlaceLayer(
   applyWidth(v, layer.decision.width, pan);
 
   const placed = placeOnTimeline(v, beatLengthPcm, layer.startMs);
-  return placed.vocal;
+  return { placed: placed.vocal, polished, restored, processed };
 }
 
 export function sumVocalBus(layers: PcmStereo[]): PcmStereo {
@@ -52,7 +90,6 @@ export function sumVocalBus(layers: PcmStereo[]): PcmStereo {
       right[i] += layer.right[i] || 0;
     }
   }
-  // Gentle bus gain to avoid automatic clip when many layers
   const busGain = layers.length >= 4 ? 0.85 : layers.length >= 3 ? 0.9 : 1;
   if (busGain !== 1) {
     for (let i = 0; i < n; i++) {

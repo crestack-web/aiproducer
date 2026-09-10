@@ -4,6 +4,7 @@ export const AP_STAGE_ORDER: ApStage[] = [
   "queued",
   "analyzing",
   "restoring",
+  "polishing",
   "producing",
   "mixing",
   "mastering",
@@ -24,6 +25,8 @@ export function humanApStage(stage: string | null | undefined): string {
       return "AP is listening to your recording…";
     case "restoring":
       return "Cleaning up your vocal…";
+    case "polishing":
+      return "AP is polishing your pitch and performance…";
     case "producing":
       return "Building your vocal sound…";
     case "mixing":

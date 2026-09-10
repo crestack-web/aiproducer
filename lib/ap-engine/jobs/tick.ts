@@ -50,6 +50,7 @@ export async function runInternalApProduceJob(opts: {
     const progressMap: Record<string, number> = {
       analyzing: 20,
       restoring: 35,
+      polishing: 42,
       producing: 50,
       mixing: 70,
       mastering: 85,
