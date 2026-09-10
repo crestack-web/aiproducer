@@ -72,7 +72,7 @@ export async function appendSampleStems(opts: {
   projectId: string;
   jobId: string;
   songDurationMs: number;
-  mode: "mock" | "roex";
+  mode: "ap" | "mock" | "roex";
   stemRows: Record<string, unknown>[];
   orderStart: number;
 }): Promise<number> {

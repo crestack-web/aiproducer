@@ -47,16 +47,26 @@ export type JobOutput = {
   [key: string]: unknown;
 };
 
-export function getPipelineMode(): "mock" | "roex" {
+/**
+ * Production mode:
+ * - ap (default): Internal AP Audio Production Engine — real DSP, no RoEx required
+ * - roex: optional external RoEx provider (AUDIO_PIPELINE_MODE=roex)
+ * - mock: explicit development only (AUDIO_PIPELINE_MODE=mock) — never silent default
+ */
+export function getPipelineMode(): "ap" | "mock" | "roex" {
   const m = (process.env.AUDIO_PIPELINE_MODE || "").toLowerCase();
   if (m === "mock") return "mock";
   if (m === "roex") return "roex";
-  if (process.env.ROEX_API_KEY) return "roex";
-  return "mock";
+  if (m === "ap" || m === "internal") return "ap";
+  // Default: internal AP. RoEx is optional and must be opted in.
+  return "ap";
 }
 
 export function getMixProvider(): AudioMixProvider {
-  return getPipelineMode() === "roex" ? new RoExMixProvider() : new MockMixProvider();
+  const mode = getPipelineMode();
+  if (mode === "roex") return new RoExMixProvider();
+  // Mock only when explicitly requested — AP path does not use AudioMixProvider
+  return new MockMixProvider();
 }
 
 export function vocalStemKind(taskType: string): StemKind {

@@ -64,7 +64,7 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
     status: "processing",
     started_at: job.started_at || new Date().toISOString(),
     attempts: (job.attempts || 0) + 1,
-    provider: provider.name,
+    provider: mode === "ap" ? "ap-internal" : provider.name,
   });
 
   logProduce({
@@ -74,10 +74,22 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
     stage,
     attempt: (job.attempts || 0) + 1,
     mode,
-    roex_env: getRoexEnv(),
+    roex_env: mode === "roex" ? getRoexEnv() : "n/a",
   });
 
   try {
+    // Default path: Internal AP Audio Production Engine (no RoEx required)
+    if (mode === "ap") {
+      if (!userId) throw new Error("Missing user_id on produce job");
+      const { runInternalApProduceJob } = await import("@/lib/ap-engine/jobs/tick");
+      const apResult = await runInternalApProduceJob({ jobId, projectId, userId });
+      if (apResult.complete) {
+        logProduce({ event: "complete", jobId, projectId, mode: "ap", provider: "ap-internal" });
+        return { complete: true, mode: "ap" };
+      }
+      throw new Error(apResult.error || "AP production failed");
+    }
+
     if (["queued", "prepare_vocals", "arrange", "render_stems"].includes(stage)) {
       await patchJob(supabase, jobId, { progress: 15, stage: "prepare_vocals" });
       stage = "prepare_vocals";

@@ -1,4 +1,4 @@
-export type PipelineMode = "mock" | "roex";
+export type PipelineMode = "ap" | "mock" | "roex";
 
 export type StemKind =
   | "INSTRUMENTAL"

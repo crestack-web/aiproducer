@@ -75,27 +75,34 @@ import { canProduce, type PlanMode } from "@/lib/plan";
 
 /** User-facing produce progress — never show raw pipeline tokens alone. */
 function humanProduceStage(stage: string | null | undefined): string {
-  if (!stage) return "Starting…";
+  if (!stage) return "AP is getting everything ready…";
   const s = stage.toLowerCase().trim();
   const map: Record<string, string> = {
-    queued: "Queued — getting ready",
-    prepare_vocals: "Preparing your vocals",
-    arrange: "Arranging sections",
-    render_stems: "Building mix stems",
-    mix: "Mixing",
-    mix_submit: "Sending to mixer",
-    mix_poll: "Mixing in progress",
-    mix_store: "Saving mix",
-    master: "Mastering",
-    master_submit: "Sending to mastering",
-    master_poll: "Mastering in progress",
-    webhook_received: "Finishing your song",
-    complete: "Done",
-    failed: "Something went wrong",
+    queued: "AP is getting everything ready…",
+    prepare_vocals: "AP is getting everything ready…",
+    arrange: "AP is getting everything ready…",
+    render_stems: "AP is getting everything ready…",
+    analyzing: "AP is listening to your recording…",
+    restoring: "Cleaning up your vocal…",
+    producing: "Building your vocal sound…",
+    mixing: "Blending your voice with the beat…",
+    mix: "Blending your voice with the beat…",
+    mix_submit: "Blending your voice with the beat…",
+    mix_poll: "Blending your voice with the beat…",
+    mix_store: "Blending your voice with the beat…",
+    mastering: "Adding the final polish…",
+    master: "Adding the final polish…",
+    master_submit: "Adding the final polish…",
+    master_poll: "Adding the final polish…",
+    quality_check: "AP is checking your final mix…",
+    webhook_received: "Adding the final polish…",
+    complete: "Your song is ready.",
+    completed: "Your song is ready.",
+    failed: "Production could not finish.",
   };
   if (map[s]) return map[s];
-  if (s.includes("mix")) return "Mixing";
-  if (s.includes("master")) return "Mastering";
+  if (s.includes("mix")) return "Blending your voice with the beat…";
+  if (s.includes("master")) return "Adding the final polish…";
   return stage.replace(/_/g, " ");
 }
 
