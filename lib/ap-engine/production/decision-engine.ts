@@ -94,6 +94,10 @@ export function decideLayer(
   const sec = sectionAdjust(ctx.section, profile, ctx.role);
 
   let highPassHz = 80 + treatment.highPassHzOffset;
+  // Support layers: more HPF so they don't fight the lead's body
+  if (ctx.role !== "lead") {
+    highPassHz += ctx.role === "background" || ctx.role.startsWith("harmony") ? 35 : 20;
+  }
   if (v.bands.low > 0.42) {
     highPassHz += 12;
     notes.push("mud_control");
@@ -116,7 +120,7 @@ export function decideLayer(
     eq.push({ type: "lowshelf", freq: 200, gainDb: treatment.warmthDb * 0.55, q: 0.7 });
   }
 
-  const presence = treatment.presenceDb * (ctx.role === "lead" ? 1 : 0.7);
+  const presence = treatment.presenceDb * (ctx.role === "lead" ? 1 : ctx.role === "double" ? 0.55 : 0.35);
   eq.push({ type: "peak", freq: ctx.role === "harmony_low" ? 2200 : 2800, gainDb: presence * 0.55, q: 1.1 });
 
   if (v.bands.high > 0.4 && ctx.role === "lead") {
@@ -147,11 +151,22 @@ export function decideLayer(
     gainDb = Math.max(-14, Math.min(16, toward + roleGain));
   }
 
-  let deEsserAmount = ctx.role === "lead" ? 0.28 : 0.2;
-  if (v.bands.high > 0.36) deEsserAmount += 0.12;
+  let deEsserAmount = ctx.role === "lead" ? 0.3 : ctx.role === "double" ? 0.22 : 0.15;
+  if (v.bands.high > 0.36) deEsserAmount += ctx.role === "lead" ? 0.12 : 0.06;
 
-  let saturation = ctx.role === "lead" ? 0.12 : 0.08;
-  if (profile.id === "hiphop" || profile.id === "trap") saturation += 0.04;
+  let saturation = ctx.role === "lead" ? 0.14 : ctx.role === "adlib" ? 0.16 : 0.06;
+  if (profile.id === "hiphop" || profile.id === "trap") saturation += ctx.role === "lead" ? 0.05 : 0.02;
+
+  // Backgrounds: darker, more ambient, never competing presence
+  if (ctx.role === "background") {
+    notes.push("bg_atmosphere");
+  }
+  if (ctx.role === "double") {
+    notes.push("double_size");
+  }
+  if (ctx.role.startsWith("harmony")) {
+    notes.push("harmony_depth");
+  }
 
   const width = Math.min(0.85, treatment.width * sec.widthMul);
   const reverbSend = Math.min(0.4, treatment.reverb * sec.reverbMul);

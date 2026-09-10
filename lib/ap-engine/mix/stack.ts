@@ -24,13 +24,17 @@ export function processAndPlaceLayer(
   v = restoreVocal(v, layer.decision.vocal);
   v = stabilizeLevel(v, layer.decision.role === "lead" ? 0.11 : 0.08);
   v = processVocalChain(v, layer.decision.vocal);
-  applyWidth(v, layer.decision.width, layer.decision.role === "double" ? (layer.decision.width > 0 ? 0.15 : 0) : 0);
-  // Alternate doubles slightly opposite if width set
-  if (layer.decision.role === "double") {
-    applyWidth(v, layer.decision.width, -0.12);
-  }
-  if (layer.decision.role === "harmony_high") applyWidth(v, layer.decision.width, 0.35);
-  if (layer.decision.role === "harmony_low") applyWidth(v, layer.decision.width, -0.3);
+  // Distinct stereo image by role — lead stays center; support spreads
+  const role = layer.decision.role;
+  let pan = 0;
+  if (role === "double") pan = -0.18;
+  else if (role === "harmony_high") pan = 0.42;
+  else if (role === "harmony_mid") pan = 0.22;
+  else if (role === "harmony_low") pan = -0.38;
+  else if (role === "adlib") pan = 0.28;
+  else if (role === "background") pan = -0.15;
+  else if (role === "intro" || role === "outro") pan = 0.1;
+  applyWidth(v, layer.decision.width, pan);
 
   const placed = placeOnTimeline(v, beatLengthPcm, layer.startMs);
   return placed.vocal;

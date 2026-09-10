@@ -65,7 +65,7 @@ export async function collectVocalsForProduce(
       .eq("project_id", projectId)
       .order("start_ms", { ascending: true });
     if (!error && data) {
-      allTasks = data as TaskRow[];
+      allTasks = data as unknown as TaskRow[];
       diagnostics.push(`tasks=${allTasks.length} cols=${cols.split(",").length}`);
       break;
     }
@@ -98,7 +98,7 @@ export async function collectVocalsForProduce(
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
     if (!error && data) {
-      recordings = data as RecRow[];
+      recordings = data as unknown as RecRow[];
       diagnostics.push(`recordings=${recordings.length}`);
       break;
     }
@@ -112,7 +112,7 @@ export async function collectVocalsForProduce(
       .select("id, task_id, audio_path, original_path, is_selected, timeline_start_ms, metadata")
       .in("task_id", selectedTaskIds.slice(0, 80));
     if (data?.length) {
-      recordings = data as RecRow[];
+      recordings = data as unknown as RecRow[];
       diagnostics.push(`recordings_by_task=${recordings.length}`);
     }
   }

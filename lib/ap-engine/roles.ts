@@ -88,39 +88,40 @@ export function resolveSectionKind(label: string | null | undefined, type?: stri
 }
 
 /** Relative gain targets vs lead (dB). Genre may adjust. */
+/** Relative level vs lead — supporting layers sit clearly under. */
 export const DEFAULT_ROLE_GAIN_DB: Record<VocalRole, number> = {
   lead: 0,
-  double: -4.5,
-  harmony_high: -7,
-  harmony_mid: -6.5,
-  harmony_low: -7.5,
-  adlib: -5.5,
-  background: -9,
-  intro: -3,
-  outro: -2,
+  double: -5.5,
+  harmony_high: -8.5,
+  harmony_mid: -8,
+  harmony_low: -9,
+  adlib: -6.5,
+  background: -11,
+  intro: -4,
+  outro: -3,
 };
 
+/** 0 = mono center (lead), higher = wider support. */
 export const DEFAULT_ROLE_WIDTH: Record<VocalRole, number> = {
-  // 0 = mono center, 1 = full L/R split strength
-  lead: 0,
-  double: 0.25,
-  harmony_high: 0.55,
-  harmony_mid: 0.45,
-  harmony_low: 0.4,
-  adlib: 0.5,
-  background: 0.65,
-  intro: 0.35,
-  outro: 0.45,
+  lead: 0.02,
+  double: 0.32,
+  harmony_high: 0.62,
+  harmony_mid: 0.52,
+  harmony_low: 0.48,
+  adlib: 0.58,
+  background: 0.72,
+  intro: 0.4,
+  outro: 0.5,
 };
 
 export const DEFAULT_ROLE_REVERB: Record<VocalRole, number> = {
-  lead: 0.12,
-  double: 0.1,
-  harmony_high: 0.2,
-  harmony_mid: 0.18,
-  harmony_low: 0.16,
-  adlib: 0.22,
-  background: 0.28,
-  intro: 0.3,
-  outro: 0.32,
+  lead: 0.1,
+  double: 0.09,
+  harmony_high: 0.24,
+  harmony_mid: 0.2,
+  harmony_low: 0.18,
+  adlib: 0.26,
+  background: 0.34,
+  intro: 0.32,
+  outro: 0.36,
 };
