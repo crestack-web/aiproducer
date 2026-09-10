@@ -169,7 +169,7 @@ export default function WelcomePage() {
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
                 <li>Guided recording (unlimited takes*) <em>included</em></li>
-                <li>Pro mix & master (RoEx) <em>included</em></li>
+                <li>Pro mix & master <em>included</em></li>
                 <li>WAV / MP3 export <em>included</em></li>
                 <li>Record from home, any time <em>$0 room fee</em></li>
               </ul>
@@ -188,7 +188,7 @@ export default function WelcomePage() {
             <h2>Simple pricing</h2>
             <p>
               Buy a single session or a monthly credit pack. Every finished song includes
-              professional mix & master (powered by RoEx) so every release can sound radio-ready.
+              professional mix & master so every release can sound radio-ready.
             </p>
           </div>
           <div className="pricing">
@@ -200,7 +200,7 @@ export default function WelcomePage() {
                 <li>1 finished song credit</li>
                 <li>AI beat + song plan</li>
                 <li>Guided recording session</li>
-                <li>Professional mix & master (RoEx)</li>
+                <li>Professional mix & master</li>
                 <li>WAV + MP3 export</li>
                 <li>Unlimited takes per song</li>
                 <li>Commercial use license</li>
@@ -215,7 +215,7 @@ export default function WelcomePage() {
               <ul className="price-list">
                 <li>8 finished songs / month</li>
                 <li>Everything in Session</li>
-                <li>Professional mix & master (RoEx)</li>
+                <li>Professional mix & master</li>
                 <li>WAV + MP3 export</li>
                 <li>Unlimited takes per song</li>
                 <li>Commercial use license</li>

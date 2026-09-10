@@ -300,11 +300,17 @@ function AppInner() {
           <>
             <div style={eyebrow}>◆ STUDIO</div>
             <h1 style={h1}>
-              Make music.
-              <br />
-              With your voice.
+              {userName && userName !== "Artist" ? (
+                <>
+                  Welcome back,
+                  <br />
+                  <span style={{ fontStyle: "italic", fontWeight: 400 }}>{userName}</span>
+                </>
+              ) : (
+                <>Welcome back</>
+              )}
             </h1>
-            <p style={sub}>Create a beat, then let your AI producer guide you until you have a finished song.</p>
+            <p style={sub}>Your sessions and songs live here.</p>
             <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
               <button type="button" style={primary} onClick={() => router.push("/app/studio")}>
                 Create a song

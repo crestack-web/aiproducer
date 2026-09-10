@@ -555,7 +555,7 @@ export function SongPreviewPlayer({
       )}
 
       <p style={{ fontSize: 12, color: C.textMuted, marginTop: 10, marginBottom: 0 }}>
-        Rough preview (beat + your takes in place). Produce runs RoEx preview mix/master next.
+        Rough preview (beat + your takes in place). Produce mixes and masters your full song next.
       </p>
     </div>
   );

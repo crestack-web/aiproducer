@@ -22,7 +22,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "welcome",
     title: "Welcome to Studio",
-    body: "Studio helps you turn a beat and your voice into a finished song. An AI producer plans the session, you record section by section, then we mix and master with RoEx. This short tour shows every main area.",
+    body: "Studio helps you turn a beat and your voice into a finished song. An AI producer plans the session, you record section by section, then we mix and master. This short tour shows every main area.",
   },
   {
     id: "home",
@@ -41,7 +41,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "flow",
     title: "How a song is made",
-    body: "1) Beat — generate or upload an instrumental.\n2) AI Producer — maps sections and gives you a recording plan.\n3) Record — mic + headphones recommended; each section auto-stops at its window.\n4) Preview — hear the full song (beat + all takes) before produce.\n5) Produce — RoEx preview mix & master into a playable master.",
+    body: "1) Beat — generate or upload an instrumental.\n2) AI Producer — maps sections and gives you a recording plan.\n3) Record — mic + headphones recommended; each section auto-stops at its window.\n4) Preview — hear the full song (beat + all takes) before produce.\n5) Produce — mix & master into a finished, playable track.",
     nav: "studio",
   },
   {

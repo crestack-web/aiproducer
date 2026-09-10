@@ -239,14 +239,14 @@ export async function prepareRoexTrack(opts: {
     } catch (e2) {
       const msg2 = e2 instanceof Error ? e2.message : String(e2);
       throw new Error(
-        `RoEx rejected ${kind} audio file (format not accepted). ` +
+        `The mixer rejected the ${kind} audio file (format not accepted). ` +
           `Tried stereo WAV ${uploadBuffer.length} bytes. ${msg}; retry: ${msg2}`
       );
     }
   }
 
   if (!readableUrl || !readableUrl.startsWith("http")) {
-    throw new Error(`RoEx did not return a readable URL for ${kind}`);
+    throw new Error(`Could not prepare a readable URL for ${kind}`);
   }
 
   console.info(
@@ -296,7 +296,7 @@ export async function validateTracksForRoex(
     if (kind !== "INSTRUMENTAL") {
       const meta = (s.metadata || {}) as Record<string, unknown>;
       if (meta.timeline_aligned !== true) {
-        throw new Error(`Vocal stem ${kind} is not timeline-aligned — refusing RoEx mix`);
+        throw new Error(`Vocal stem ${kind} is not timeline-aligned — cannot mix`);
       }
     }
     // Existence / downloadability check without logging path tokens
@@ -315,7 +315,7 @@ export async function validateTracksForRoex(
       );
       if (det.format === "unknown" && kind !== "INSTRUMENTAL") {
         throw new Error(
-          `Vocal format is not compatible with RoEx. Re-record the section so it saves as WAV. Your other takes are safe.`
+          `Vocal format is not compatible with the mixer. Re-record the section so it saves as WAV. Your other takes are safe.`
         );
       }
       // Instrumental unknown is OK — prepareRoexTrack will convert or passthrough as MP3
