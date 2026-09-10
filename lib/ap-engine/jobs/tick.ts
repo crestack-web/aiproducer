@@ -9,7 +9,6 @@ import {
   productionMasterPath,
   productionMixPath,
   uploadBuffer,
-  isStoragePath,
 } from "@/lib/storage";
 import { runApArrangement } from "../index";
 import type { ApStage } from "../types";
@@ -69,19 +68,25 @@ export async function runInternalApProduceJob(opts: {
       .eq("id", projectId)
       .single();
 
-    const { data: beat } = await supabase
-      .from("beats")
-      .select("audio_path, duration_ms, tempo")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const { resolveProjectBeat } = await import("@/lib/audio/resolve-project-beat");
+    const { beat: resolvedBeat, diagnostics: beatDiag } = await resolveProjectBeat(
+      supabase,
+      projectId
+    );
+    console.info(
+      "[ap-tick] beat resolve",
+      JSON.stringify({ jobId, projectId, beatDiag, path: resolvedBeat?.audio_path?.slice(0, 80) })
+    );
 
-    if (!beat?.audio_path || !isStoragePath(beat.audio_path)) {
-      await patch("failed", 100, { error: "Beat validation failed — add a beat before Produce." });
+    if (!resolvedBeat?.audio_path) {
+      await patch("failed", 100, {
+        error: "Beat validation failed — add a beat before Produce.",
+        beatDiag,
+      });
       await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
       return { complete: false, error: "Beat validation failed" };
     }
+    const beat = resolvedBeat;
 
     const { vocals, placementLog, diagnostics: vocalDiag } = await collectVocalsForProduce(
       supabase,
