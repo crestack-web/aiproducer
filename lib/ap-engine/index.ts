@@ -251,13 +251,19 @@ export async function runApArrangement(
 
     await stage("mastering");
     let rendered = renderStack();
+    // Soft peak safety before QC so phone mixes rarely hard-fail on CLIPPING
+    const { safetyLimitMaster } = await import("./qc/checks");
+    rendered = {
+      ...rendered,
+      master: safetyLimitMaster(rendered.master, -1),
+    };
     await stage("quality_check");
     let qc = runQc(rendered.master, rendered.mix);
     let retryCount = 0;
 
     if (shouldRetry(qc, retryCount)) {
       retryCount = 1;
-      logAp("qc_retry", { jobId: input.jobId, issues: qc.issues });
+      logAp("qc_retry", { jobId: input.jobId, issues: qc.issues, warnings: qc.warnings });
       arrMix = {
         mix: adjustDecisionForRetry(
           {
@@ -281,8 +287,11 @@ export async function runApArrangement(
         ).master,
         notes: [...arrMix.notes, "retry"],
       };
-      // boost lead on retry if quiet
-      if (qc.issues.includes("VOCAL_TOO_QUIET")) {
+      // boost lead on retry if quiet (legacy issue codes may still appear pre-soft-pass)
+      if (
+        qc.issues.includes("VOCAL_TOO_QUIET") ||
+        qc.warnings.some((w) => w.includes("quiet") || w.includes("low_level"))
+      ) {
         layerDecisions = layerDecisions.map((d) => {
           if (d.role === "lead") {
             return { ...d, vocal: { ...d.vocal, gainDb: d.vocal.gainDb + 1.5 } };
@@ -293,18 +302,37 @@ export async function runApArrangement(
       await stage("mixing", { retry: 1 });
       await stage("mastering", { retry: 1 });
       rendered = renderStack();
+      rendered = {
+        ...rendered,
+        master: safetyLimitMaster(rendered.master, -1),
+      };
       await stage("quality_check", { retry: 1 });
       qc = runQc(rendered.master, rendered.mix);
     }
 
+    // Only fail on truly unusable audio (silence / broken / invalid duration).
+    // Level warnings still deliver the song — product > perfectionist QC block.
     if (!qc.passed) {
+      logAp("qc_failed_fatal", {
+        jobId: input.jobId,
+        issues: qc.issues,
+        warnings: qc.warnings,
+        metrics: qc.metrics,
+      });
       return {
         ok: false,
         stage: "quality_check",
         error: "Production quality check failed",
-        detail: qc.issues.join(","),
+        detail: qc.issues.join(",") || qc.warnings.join(","),
         engineVersion: AP_ENGINE_VERSION,
       };
+    }
+    if (qc.warnings.length) {
+      logAp("qc_passed_with_warnings", {
+        jobId: input.jobId,
+        warnings: qc.warnings,
+        metrics: qc.metrics,
+      });
     }
 
     const masterWav = exportWav(rendered.master);
