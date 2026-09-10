@@ -258,7 +258,7 @@ export async function POST(req: Request, ctx: Ctx) {
   let ext = audioExt(file.type || "", filename);
   const service = createServiceClient();
   let buf = Buffer.from(await file.arrayBuffer());
-  let contentType = file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`;
+  let uploadContentType = file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`;
   // Prefer stereo WAV in storage so Produce never depends on runtime ffmpeg
   try {
     const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
@@ -270,13 +270,13 @@ export async function POST(req: Request, ctx: Ctx) {
       buf = ensureStereoWavForRoex(buf);
     }
     ext = "wav";
-    contentType = "audio/wav";
+    uploadContentType = "audio/wav";
   } catch (convErr) {
     console.warn("[beat-upload] WAV convert skipped", convErr);
   }
   const path = customBeatPath(user.id, projectId, ext);
   const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-    contentType,
+    contentType: uploadContentType,
     upsert: true,
   });
   if (upErr) {
