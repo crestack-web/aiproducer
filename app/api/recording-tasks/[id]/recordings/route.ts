@@ -229,7 +229,23 @@ export async function GET(_req: Request, ctx: Ctx) {
       } catch {
         /* ignore */
       }
-      return { ...r, audio_url };
+      const meta = (r.metadata || {}) as Record<string, unknown>;
+      const recording_offset_ms =
+        typeof r.recording_offset_ms === "number"
+          ? r.recording_offset_ms
+          : typeof meta.recording_offset_ms === "number"
+            ? (meta.recording_offset_ms as number)
+            : 0;
+      const placement_start_ms =
+        typeof meta.placement_start_ms === "number"
+          ? (meta.placement_start_ms as number)
+          : null;
+      return {
+        ...r,
+        audio_url,
+        recording_offset_ms,
+        placement_start_ms,
+      };
     })
   );
 

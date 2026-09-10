@@ -539,11 +539,10 @@ export function CompactAudioPlayer({
     return 0.03;
   };
   /**
-   * Review-only: delay the guide beat so the take sits earlier on the grid.
-   * Artists report voice "feels late"; telemetry free-run lag was ~-200ms.
-   * Positive = push beat later (voice earlier relative to beat hits).
+   * Review must match record timing: vocal t=0 aligns to placementStartMs on the beat.
+   * No artificial delay — delay caused "wrong section of beat" vs what was recorded.
    */
-  const REVIEW_BEAT_DELAY_SEC = 0.2;
+  const REVIEW_BEAT_DELAY_SEC = 0;
 
 
   // Review listening output (speaker). Never block play if setSinkId fails.
@@ -859,45 +858,14 @@ export function CompactAudioPlayer({
     let vocalPlayError: string | null = null;
     let beatPlayError: string | null = null;
 
-    // Vocal-first: on mobile, dual play() + extra layer <audio> left the take at
-    // currentTime=0 / readyState=3 while the beat ran alone. Start the take, wait
-    // until it actually advances, then start the beat in the same gesture chain.
-    try {
-      await vocal.play();
-      vocalPlaySucceeded = true;
-    } catch (e: unknown) {
-      vocalPlayError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    }
-
-    // Wait briefly for the take clock to move (max ~400ms)
-    if (vocalPlaySucceeded) {
-      const t0 = performance.now();
-      while (vocal.currentTime < 0.02 && performance.now() - t0 < 400) {
-        await new Promise((r) => setTimeout(r, 40));
-        if (vocal.paused) {
-          try {
-            await vocal.play();
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-      if (vocal.currentTime < 0.01 && vocal.readyState < 3) {
-        try {
-          vocal.load();
-          await vocal.play();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-
+    // Simultaneous start: same gesture, same clock — matches how the take was recorded.
+    // Do NOT wait for vocal to advance before beat (that injected 100–400ms drift).
     if (wantBeat && beat) {
       try {
         beat.muted = false;
         await ensureBeatGuideGain(beat, reviewBeatGain(beatVolumeRef.current));
         beat.playbackRate = 1;
-        // Align to placement + vocal time + review delay (voice sits earlier on grid)
+        // Beat song time = placement + vocal file time (0 at start) + optional delay (0)
         const aligned = Math.max(
           0,
           place / 1000 + Math.max(0, vocal.currentTime) + REVIEW_BEAT_DELAY_SEC
@@ -907,10 +875,39 @@ export function CompactAudioPlayer({
         } catch {
           /* ignore */
         }
-        await beat.play();
-        beatPlaySucceeded = true;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const playResults = await Promise.allSettled([
+      vocal.play().then(() => "vocal" as const),
+      wantBeat && beat
+        ? beat.play().then(() => "beat" as const)
+        : Promise.resolve("beat_skip" as const),
+    ]);
+    for (const r of playResults) {
+      if (r.status === "fulfilled") {
+        if (r.value === "vocal") vocalPlaySucceeded = true;
+        if (r.value === "beat") beatPlaySucceeded = true;
+      } else {
+        const msg =
+          r.reason instanceof Error
+            ? `${r.reason.name}: ${r.reason.message}`
+            : String(r.reason);
+        // Distinguish which failed when possible
+        if (!vocalPlaySucceeded && !vocalPlayError) vocalPlayError = msg;
+        if (wantBeat && beat && !beatPlaySucceeded && !beatPlayError) beatPlayError = msg;
+      }
+    }
+    // If vocal failed but beat ran, still try vocal again once (iOS dual-media)
+    if (!vocalPlaySucceeded) {
+      try {
+        await vocal.play();
+        vocalPlaySucceeded = true;
+        vocalPlayError = null;
       } catch (e: unknown) {
-        beatPlayError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        vocalPlayError = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       }
     }
 

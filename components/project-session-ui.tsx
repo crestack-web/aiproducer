@@ -391,6 +391,22 @@ export default function ProjectDetailPage() {
     }
   }, [id, beatUrl]);
 
+
+  function offsetFromTake(t: {
+    recording_offset_ms?: number | null;
+    metadata?: Record<string, unknown> | null;
+  } | null | undefined): number {
+    if (!t) return 0;
+    if (typeof t.recording_offset_ms === "number" && Number.isFinite(t.recording_offset_ms)) {
+      return Math.max(0, Math.round(t.recording_offset_ms));
+    }
+    const meta = (t.metadata || {}) as Record<string, unknown>;
+    if (typeof meta.recording_offset_ms === "number" && Number.isFinite(meta.recording_offset_ms)) {
+      return Math.max(0, Math.round(meta.recording_offset_ms as number));
+    }
+    return 0;
+  }
+
   const applySelectedTakeToReview = useCallback(
     (
       list: {
@@ -399,6 +415,8 @@ export default function ProjectDetailPage() {
         is_selected?: boolean | null;
         duration_ms?: number | null;
         audio_url?: string | null;
+        recording_offset_ms?: number | null;
+        metadata?: Record<string, unknown> | null;
       }[]
     ) => {
       if (!list.length) return;
@@ -408,6 +426,7 @@ export default function ProjectDetailPage() {
       if (selected?.audio_url) {
         setLocalBlobUrl(selected.audio_url);
         setSavedRecordingId(selected.id);
+        setLastRecordingOffsetMs(offsetFromTake(selected));
       }
     },
     []
@@ -427,6 +446,8 @@ export default function ProjectDetailPage() {
         is_selected?: boolean | null;
         duration_ms?: number | null;
         audio_url?: string | null;
+        recording_offset_ms?: number | null;
+        metadata?: Record<string, unknown> | null;
       }[];
       const safe = Array.isArray(list) ? list : [];
       setTaskTakes(safe);
@@ -464,6 +485,7 @@ export default function ProjectDetailPage() {
         if (chosen?.audio_url) {
           setLocalBlobUrl(chosen.audio_url);
           setSavedRecordingId(chosen.id);
+          setLastRecordingOffsetMs(offsetFromTake(chosen as { recording_offset_ms?: number | null; metadata?: Record<string, unknown> | null }));
         } else {
           applySelectedTakeToReview(marked);
           setError("Take selected but audio URL missing — refresh and try again");
