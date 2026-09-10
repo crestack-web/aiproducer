@@ -77,3 +77,19 @@ R&B, Afrobeats, Afropop, Hip-hop, Amapiano, Pop, Ballad, Hausa R&B — influence
 ## Version
 
 `AP_ENGINE_VERSION` in `lib/ap-engine/types.ts`.
+
+## Phase 1+ — Vocal roles & arrangement intelligence
+
+AP maps existing `recording_tasks.type` (via `lib/layer-model` + `lib/ap-engine/roles.ts`) to:
+
+- lead, double, harmony_high/mid/low, adlib, background, intro, outro
+
+Hierarchy: Lead establishes the reference; doubles size; harmonies depth/width; ad-libs expression; backgrounds atmosphere.
+
+Section labels (verse/chorus/…) adjust gain, width, and ambience.
+
+Genre profiles (`lib/ap-engine/profiles/genre-profiles.ts`) describe production *philosophy* (Afrobeats, Afro-R&B, R&B, Hip-Hop, Trap, Pop, Amapiano, Ballad) — not single EQ presets.
+
+Multi-vocal path: `runApArrangement` processes each layer with a role-specific decision, sums a vocal bus, then mixes with the beat.
+
+No schema migration required. Missing layers are simply omitted — never synthesized.

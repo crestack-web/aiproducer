@@ -1,57 +1,74 @@
 /**
- * AP Audio Production Engine — Phase 1 entry
+ * AP Audio Production Engine — multi-role arrangement (Phase 1+)
  */
 
 import { analyzeBeat } from "./analysis/beat";
 import { combineAnalysis } from "./analysis/combine";
 import { analyzeVocal } from "./analysis/vocal";
-import { normalizeToInternalPcm, placeOnTimeline } from "./ingestion/normalize";
+import { normalizeToInternalPcm } from "./ingestion/normalize";
 import { validateAudioBuffer } from "./ingestion/validate";
-import { decideProduction } from "./production/decision-engine";
+import {
+  adjustArrangementForRetry,
+  adjustDecisionForRetry,
+  decideArrangementMix,
+  decideLayer,
+  decideProduction,
+} from "./production/decision-engine";
 import { processVocalChain } from "./production/vocal-chain";
 import { restoreVocal } from "./restoration/denoise";
 import { stabilizeLevel } from "./restoration/dynamics-fix";
 import { mixVocalAndBeat } from "./mix/engine";
+import { processAndPlaceLayer, sumVocalBus } from "./mix/stack";
 import { masterMix } from "./master/engine";
 import { runQc } from "./qc/checks";
-import { decisionAfterQc, shouldRetry } from "./qc/retry";
+import { shouldRetry } from "./qc/retry";
 import { exportMp3, exportWav } from "./render/export-wav-mp3";
+import { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
 import {
   AP_ENGINE_VERSION,
   type ApProduceFailure,
   type ApProduceInput,
   type ApProduceResult,
   type ApStage,
+  type PcmStereo,
   type ProductionDecision,
 } from "./types";
+import { cloneStereo } from "./dsp";
 
 export * from "./types";
-export { resolveGenreProfile, listGenreProfiles } from "./production/genre-profiles";
+export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
+export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
 
 export type StageReporter = (stage: ApStage, meta?: Record<string, unknown>) => Promise<void> | void;
+
+export type ApVocalLayerInput = {
+  buffer: Buffer;
+  pathHint?: string;
+  taskType?: string | null;
+  sectionLabel?: string | null;
+  startMs?: number | null;
+};
+
+export type ApArrangementInput = {
+  jobId: string;
+  projectId: string;
+  userId: string;
+  beatBuffer: Buffer;
+  beatPathHint?: string;
+  vocals: ApVocalLayerInput[];
+  genre?: string | null;
+};
 
 function logAp(event: string, data: Record<string, unknown>) {
   console.info("[ap-engine]", JSON.stringify({ event, engine: AP_ENGINE_VERSION, ...data }));
 }
 
-function renderFromDecision(
-  vocalPlaced: ReturnType<typeof placeOnTimeline>["vocal"],
-  beatPlaced: ReturnType<typeof placeOnTimeline>["beat"],
-  decision: ProductionDecision
-) {
-  const restored = restoreVocal(vocalPlaced, decision.vocal);
-  const stabilized = stabilizeLevel(restored, 0.1);
-  const produced = processVocalChain(stabilized, decision.vocal);
-  const mix = mixVocalAndBeat(produced, beatPlaced, decision.mix);
-  const master = masterMix(mix, decision.master);
-  return { restored, produced, mix, master };
-}
-
 /**
- * Full Phase 1 pipeline: analysis → decision → DSP → mix → master → QC (+1 retry).
+ * Multi-vocal arrangement produce.
+ * Lead establishes reference; supporting roles add size/depth/expression.
  */
-export async function runApProduction(
-  input: ApProduceInput,
+export async function runApArrangement(
+  input: ApArrangementInput,
   report?: StageReporter
 ): Promise<ApProduceResult | ApProduceFailure> {
   const t0 = Date.now();
@@ -62,17 +79,7 @@ export async function runApProduction(
 
   try {
     await stage("analyzing");
-    const vVal = validateAudioBuffer(input.vocalBuffer, input.vocalPathHint);
     const bVal = validateAudioBuffer(input.beatBuffer, input.beatPathHint);
-    if (!vVal.ok) {
-      return {
-        ok: false,
-        stage: "analyzing",
-        error: "Vocal validation failed",
-        detail: vVal.errors.join(","),
-        engineVersion: AP_ENGINE_VERSION,
-      };
-    }
     if (!bVal.ok) {
       return {
         ok: false,
@@ -82,41 +89,125 @@ export async function runApProduction(
         engineVersion: AP_ENGINE_VERSION,
       };
     }
+    if (!input.vocals.length) {
+      return {
+        ok: false,
+        stage: "analyzing",
+        error: "No vocal takes provided",
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
 
-    const vocalNorm = await normalizeToInternalPcm(input.vocalBuffer, input.vocalPathHint);
     const beatNorm = await normalizeToInternalPcm(input.beatBuffer, input.beatPathHint);
-
-    const vocalA = analyzeVocal(vocalNorm.pcm);
     const beatA = analyzeBeat(beatNorm.pcm);
-    const analysis = combineAnalysis(vocalA, beatA);
+
+    const normalizedLayers: {
+      pcm: PcmStereo;
+      role: VocalRole;
+      section: ReturnType<typeof resolveSectionKind>;
+      startMs: number;
+      analysis: ReturnType<typeof analyzeVocal>;
+    }[] = [];
+
+    for (const v of input.vocals) {
+      const val = validateAudioBuffer(v.buffer, v.pathHint);
+      if (!val.ok) continue;
+      const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
+      const role = resolveVocalRole(v.taskType, v.sectionLabel);
+      const section = resolveSectionKind(v.sectionLabel, v.taskType);
+      const analysis = analyzeVocal(norm.pcm);
+      normalizedLayers.push({
+        pcm: norm.pcm,
+        role,
+        section,
+        startMs: v.startMs ?? 0,
+        analysis,
+      });
+    }
+
+    if (!normalizedLayers.length) {
+      return {
+        ok: false,
+        stage: "analyzing",
+        error: "Vocal validation failed",
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
+
+    const hasLead = normalizedLayers.some((l) => l.role === "lead");
+    const layerCount = normalizedLayers.length;
+    const leadAnalysis =
+      normalizedLayers.find((l) => l.role === "lead")?.analysis || normalizedLayers[0].analysis;
+
     logAp("analysis", {
       jobId: input.jobId,
-      vocal: {
-        rms: +vocalA.rms.toFixed(4),
-        peak: +vocalA.peak.toFixed(4),
-        silence: +vocalA.silenceRatio.toFixed(3),
-      },
-      beat: { rms: +beatA.rms.toFixed(4), peak: +beatA.peak.toFixed(4) },
+      layers: normalizedLayers.map((l) => ({
+        role: l.role,
+        section: l.section,
+        rms: +l.analysis.rms.toFixed(4),
+      })),
+      beatRms: +beatA.rms.toFixed(4),
     });
 
-    let decision = decideProduction(analysis, input.genre);
+    // Decisions per layer
+    let layerDecisions = normalizedLayers.map((l) =>
+      decideLayer(
+        {
+          role: l.role,
+          section: l.section,
+          analysis: l.analysis,
+          layerCount,
+          hasLead,
+        },
+        input.genre
+      )
+    );
+
+    let arrMix = decideArrangementMix(leadAnalysis, beatA, input.genre, layerCount);
     logAp("decision", {
       jobId: input.jobId,
-      genre: decision.genre,
-      notes: decision.notes,
-      vocalGainDb: decision.mix.vocalGainDb,
-      beatGainDb: decision.mix.beatGainDb,
+      genre: arrMix.notes.find((n) => n.startsWith("genre:")),
+      roles: layerDecisions.map((d) => d.role),
+      notes: [...arrMix.notes, ...layerDecisions.flatMap((d) => d.notes)].slice(0, 20),
     });
-
-    const startMs = input.vocalStartMs ?? 0;
-    const placed = placeOnTimeline(vocalNorm.pcm, beatNorm.pcm, startMs);
 
     await stage("restoring");
     await stage("producing");
     await stage("mixing");
-    await stage("mastering");
 
-    let rendered = renderFromDecision(placed.vocal, placed.beat, decision);
+    const renderStack = () => {
+      const placed: PcmStereo[] = [];
+      let leadProcessed: PcmStereo | null = null;
+      let restoredLead: PcmStereo | null = null;
+      for (let i = 0; i < normalizedLayers.length; i++) {
+        const layer = normalizedLayers[i];
+        const decision = layerDecisions[i];
+        const out = processAndPlaceLayer(beatNorm.pcm, {
+          pcm: layer.pcm,
+          startMs: layer.startMs,
+          decision,
+        });
+        placed.push(out);
+        if (layer.role === "lead" || (!hasLead && i === 0)) {
+          // capture lead chain for artifacts
+          let v = cloneStereo(layer.pcm);
+          restoredLead = restoreVocal(v, decision.vocal);
+          leadProcessed = processVocalChain(stabilizeLevel(restoredLead, 0.11), decision.vocal);
+        }
+      }
+      const vocalBus = sumVocalBus(placed);
+      const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
+      const master = masterMix(mix, arrMix.master);
+      return {
+        mix,
+        master,
+        processedVocal: leadProcessed || placed[0],
+        restoredVocal: restoredLead || placed[0],
+      };
+    };
+
+    await stage("mastering");
+    let rendered = renderStack();
     await stage("quality_check");
     let qc = runQc(rendered.master, rendered.mix);
     let retryCount = 0;
@@ -124,10 +215,41 @@ export async function runApProduction(
     if (shouldRetry(qc, retryCount)) {
       retryCount = 1;
       logAp("qc_retry", { jobId: input.jobId, issues: qc.issues });
-      decision = decisionAfterQc(decision, qc);
+      arrMix = {
+        mix: adjustDecisionForRetry(
+          {
+            genre: "ap",
+            vocal: layerDecisions[0].vocal,
+            mix: arrMix.mix,
+            master: arrMix.master,
+            notes: arrMix.notes,
+          },
+          qc.issues
+        ).mix,
+        master: adjustDecisionForRetry(
+          {
+            genre: "ap",
+            vocal: layerDecisions[0].vocal,
+            mix: arrMix.mix,
+            master: arrMix.master,
+            notes: arrMix.notes,
+          },
+          qc.issues
+        ).master,
+        notes: [...arrMix.notes, "retry"],
+      };
+      // boost lead on retry if quiet
+      if (qc.issues.includes("VOCAL_TOO_QUIET")) {
+        layerDecisions = layerDecisions.map((d) => {
+          if (d.role === "lead") {
+            return { ...d, vocal: { ...d.vocal, gainDb: d.vocal.gainDb + 1.5 } };
+          }
+          return d;
+        });
+      }
       await stage("mixing", { retry: 1 });
       await stage("mastering", { retry: 1 });
-      rendered = renderFromDecision(placed.vocal, placed.beat, decision);
+      rendered = renderStack();
       await stage("quality_check", { retry: 1 });
       qc = runQc(rendered.master, rendered.mix);
     }
@@ -144,18 +266,32 @@ export async function runApProduction(
 
     const masterWav = exportWav(rendered.master);
     const mixWav = exportWav(rendered.mix);
-    const processedVocalWav = exportWav(rendered.produced);
-    const restoredVocalWav = exportWav(rendered.restored);
+    const processedVocalWav = exportWav(rendered.processedVocal);
+    const restoredVocalWav = exportWav(rendered.restoredVocal);
     const masterMp3 = await exportMp3(rendered.master);
 
     const durationMs = Date.now() - t0;
+    const analysis = combineAnalysis(leadAnalysis, beatA);
+    const decision: ProductionDecision = {
+      genre: arrMix.notes.find((n) => n.startsWith("genre:"))?.slice(6) || "rnb",
+      vocal: layerDecisions.find((d) => d.role === "lead")?.vocal || layerDecisions[0].vocal,
+      mix: arrMix.mix,
+      master: arrMix.master,
+      notes: [
+        ...arrMix.notes,
+        ...layerDecisions.flatMap((d) => d.notes),
+        `roles:${layerDecisions.map((d) => d.role).join("+")}`,
+      ],
+    };
+
     logAp("completed", {
       jobId: input.jobId,
       durationMs,
+      layerCount,
+      roles: layerDecisions.map((d) => d.role),
       masterBytes: masterWav.length,
       mp3: Boolean(masterMp3),
       retryCount,
-      qc: qc.metrics,
     });
 
     await stage("completed");
@@ -184,4 +320,30 @@ export async function runApProduction(
       engineVersion: AP_ENGINE_VERSION,
     };
   }
+}
+
+/** Phase 1 single-vocal entry — delegates to arrangement with one layer. */
+export async function runApProduction(
+  input: ApProduceInput,
+  report?: StageReporter
+): Promise<ApProduceResult | ApProduceFailure> {
+  return runApArrangement(
+    {
+      jobId: input.jobId,
+      projectId: input.projectId,
+      userId: input.userId,
+      beatBuffer: input.beatBuffer,
+      beatPathHint: input.beatPathHint,
+      genre: input.genre,
+      vocals: [
+        {
+          buffer: input.vocalBuffer,
+          pathHint: input.vocalPathHint,
+          taskType: "lead",
+          startMs: input.vocalStartMs ?? 0,
+        },
+      ],
+    },
+    report
+  );
 }

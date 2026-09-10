@@ -1,5 +1,5 @@
 /**
- * Integrate AP engine with existing produce jobs table.
+ * Integrate AP arrangement engine with existing produce jobs.
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
@@ -10,9 +10,9 @@ import {
   uploadBuffer,
   isStoragePath,
 } from "@/lib/storage";
-import { runApProduction } from "../index";
+import { runApArrangement } from "../index";
 import type { ApStage } from "../types";
-import { vocalStemKind } from "@/lib/audio/produce-job";
+import type { ApVocalLayerInput } from "../index";
 
 export async function runInternalApProduceJob(opts: {
   jobId: string;
@@ -28,7 +28,12 @@ export async function runInternalApProduceJob(opts: {
     await supabase
       .from("jobs")
       .update({
-        status: stage === "failed" ? "failed" : stage === "completed" || stage === "complete" ? "complete" : "processing",
+        status:
+          stage === "failed"
+            ? "failed"
+            : stage === "completed" || stage === "complete"
+              ? "complete"
+              : "processing",
         stage,
         progress,
         output_data: out,
@@ -76,22 +81,15 @@ export async function runInternalApProduceJob(opts: {
       return { complete: false, error: "Beat validation failed" };
     }
 
-    // Prefer selected LEAD take
     const { data: tasks } = await supabase
       .from("recording_tasks")
-      .select("id, type, start_ms, end_ms, status, active, selected_in_plan")
+      .select("id, type, title, start_ms, end_ms, status, active, selected_in_plan, section_id, metadata")
       .eq("project_id", projectId);
 
-    const leadTasks = (tasks || []).filter((t) => {
-      if (t.active === false || t.selected_in_plan === false) return false;
-      return vocalStemKind(t.type || "") === "LEAD";
-    });
-    const anyTasks = (tasks || []).filter((t) => t.active !== false && t.selected_in_plan !== false);
-    const taskList = leadTasks.length ? leadTasks : anyTasks;
+    const activeTasks = (tasks || []).filter((t) => t.active !== false && t.selected_in_plan !== false);
 
-    let vocalPath: string | null = null;
-    let vocalStartMs = 0;
-    for (const t of taskList) {
+    const vocals: ApVocalLayerInput[] = [];
+    for (const t of activeTasks) {
       const { data: recs } = await supabase
         .from("recordings")
         .select("id, audio_path, original_path, is_selected, timeline_start_ms")
@@ -100,14 +98,29 @@ export async function runInternalApProduceJob(opts: {
       const selected =
         (recs || []).find((r) => r.is_selected) || (recs || []).find((r) => r.audio_path) || null;
       const path = selected?.original_path || selected?.audio_path;
-      if (path && isStoragePath(path)) {
-        vocalPath = path;
-        vocalStartMs = selected?.timeline_start_ms ?? t.start_ms ?? 0;
-        break;
+      if (!path || !isStoragePath(path)) continue;
+
+      const meta = (t.metadata || {}) as { section_label?: string };
+      const sectionLabel =
+        meta.section_label ||
+        t.title ||
+        (typeof t.type === "string" ? t.type : null);
+
+      try {
+        const buffer = await downloadStorageOrUrl(path);
+        vocals.push({
+          buffer,
+          pathHint: path,
+          taskType: t.type,
+          sectionLabel,
+          startMs: selected?.timeline_start_ms ?? t.start_ms ?? 0,
+        });
+      } catch (e) {
+        console.warn("[ap-tick] skip vocal download", t.id, e);
       }
     }
 
-    if (!vocalPath) {
+    if (!vocals.length) {
       await patch("failed", 100, {
         error: "No saved vocal take found. Record a section, then Produce.",
       });
@@ -116,21 +129,17 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    const vocalBuffer = await downloadStorageOrUrl(vocalPath);
     const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
 
-    const result = await runApProduction(
+    const result = await runApArrangement(
       {
         jobId,
         projectId,
         userId,
-        vocalBuffer,
         beatBuffer,
-        vocalPathHint: vocalPath,
         beatPathHint: beat.audio_path,
+        vocals,
         genre: project?.genre,
-        vocalStartMs,
-        songDurationMs: beat.duration_ms,
       },
       report
     );
@@ -161,6 +170,8 @@ export async function runInternalApProduceJob(opts: {
       await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
     }
 
+    const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
+
     await supabase.from("songs").insert({
       project_id: projectId,
       audio_path: masterPath,
@@ -175,10 +186,8 @@ export async function runInternalApProduceJob(opts: {
         processed_vocal_path: processedVocalPath,
         restored_vocal_path: restoredVocalPath,
         decision: result.decision,
-        analysis_summary: {
-          vocalRms: result.analysis.vocal.rms,
-          beatRms: result.analysis.beat.rms,
-        },
+        vocal_layers: vocals.length,
+        roles: roleNote || null,
         qc: result.qc,
         retryCount: result.retryCount,
       },
@@ -200,8 +209,9 @@ export async function runInternalApProduceJob(opts: {
           master_mp3_path: mp3Path,
           processed_vocal_path: processedVocalPath,
           restored_vocal_path: restoredVocalPath,
-          qc: result.qc,
+          vocal_layers: vocals.length,
           decision_notes: result.decision.notes,
+          qc: result.qc,
           retryCount: result.retryCount,
           processing_ms: result.durationMs,
         },
