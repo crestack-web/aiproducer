@@ -69,5 +69,35 @@ export async function GET() {
     return NextResponse.json({ error: "Could not list projects" }, { status: 500 });
   }
 
-  return NextResponse.json({ projects: data ?? [] });
+  const projects = data ?? [];
+  const ids = projects.map((p: { id: string }) => p.id);
+  const mastered = new Set<string>();
+  if (ids.length) {
+    const { data: songs } = await supabase
+      .from("songs")
+      .select("project_id")
+      .in("project_id", ids);
+    for (const s of songs || []) {
+      if (s.project_id) mastered.add(s.project_id as string);
+    }
+    const { data: versions } = await supabase
+      .from("audio_versions")
+      .select("project_id")
+      .eq("kind", "master")
+      .in("project_id", ids);
+    for (const v of versions || []) {
+      if (v.project_id) mastered.add(v.project_id as string);
+    }
+  }
+
+  const enriched = projects.map((p: { id: string; status?: string }) => {
+    const hasMaster = mastered.has(p.id);
+    const status =
+      hasMaster && p.status !== "complete" && p.status !== "completed"
+        ? "complete"
+        : p.status;
+    return { ...p, status, has_master: hasMaster };
+  });
+
+  return NextResponse.json({ projects: enriched });
 }

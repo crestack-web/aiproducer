@@ -17,6 +17,7 @@ type Project = {
   genre: string | null;
   mood: string | null;
   updated_at: string;
+  has_master?: boolean;
 };
 type Tab = "home" | "library" | "profile";
 
@@ -67,6 +68,12 @@ function AppInner() {
       setLoading(false);
     })();
   }, [router]);
+
+  function isFinishedSong(p: Project) {
+    if (p.has_master) return true;
+    const s = (p.status || "").toLowerCase();
+    return s === "complete" || s === "completed" || s === "produced" || s === "done";
+  }
 
   async function signOut() {
     await createClient().auth.signOut();
@@ -242,7 +249,7 @@ function AppInner() {
   }
 
   function ProjectRow({ p, meta }: { p: Project; meta: string }) {
-    const isReady = p.status === "complete";
+    const isReady = isFinishedSong(p);
     return (
       <div style={rowStyle}>
         <Link
@@ -402,7 +409,7 @@ function AppInner() {
             {libraryTab === "songs" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
-                {!loading && projects.filter((p) => p.status === "complete").length === 0 && (
+                {!loading && projects.filter((p) => isFinishedSong(p)).length === 0 && (
                   <EmptyState
                     scene="songs"
                     title="No finished songs yet"
@@ -415,7 +422,7 @@ function AppInner() {
                   />
                 )}
                 {projects
-                  .filter((p) => p.status === "complete")
+                  .filter((p) => isFinishedSong(p))
                   .map((p) => (
                     <ProjectRow
                       key={p.id}
