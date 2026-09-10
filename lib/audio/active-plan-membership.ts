@@ -17,6 +17,12 @@ export type RecordingTaskRef = {
   id: string;
   task_id: string | null;
   is_selected?: boolean | null;
+  /** Optional — when present, prefer takes that actually have audio */
+  audio_path?: string | null;
+  processed_path?: string | null;
+  original_path?: string | null;
+  original_audio_path?: string | null;
+  created_at?: string | null;
 };
 
 /**
@@ -66,7 +72,17 @@ export function matchRecordingsToActivePlan<T extends RecordingTaskRef>(
   });
 }
 
-/** Prefer is_selected take per task; else first seen. */
+function hasUsablePath(r: RecordingTaskRef): boolean {
+  const p =
+    r.original_path || r.original_audio_path || r.processed_path || r.audio_path || null;
+  return Boolean(p && String(p).length > 2);
+}
+
+/**
+ * Prefer is_selected take per task; else take with a usable path; else newest.
+ * Always keeps ONE entry per distinct task_id so multi-section songs retain
+ * verse + chorus + bridge (etc.) instead of collapsing to a single vocal.
+ */
 export function oneTakePerTask<T extends RecordingTaskRef>(recordings: T[]): T[] {
   const byTask = new Map<string, T>();
   for (const t of recordings) {
@@ -76,7 +92,68 @@ export function oneTakePerTask<T extends RecordingTaskRef>(recordings: T[]): T[]
       byTask.set(tid, t);
       continue;
     }
-    if (t.is_selected && !prev.is_selected) byTask.set(tid, t);
+    // Prefer selected
+    if (t.is_selected && !prev.is_selected) {
+      byTask.set(tid, t);
+      continue;
+    }
+    if (!t.is_selected && prev.is_selected) continue;
+    // Prefer usable storage path
+    const tPath = hasUsablePath(t);
+    const pPath = hasUsablePath(prev);
+    if (tPath && !pPath) {
+      byTask.set(tid, t);
+      continue;
+    }
+    if (!tPath && pPath) continue;
+    // Prefer newer if timestamps exist
+    if (t.created_at && prev.created_at && t.created_at > prev.created_at) {
+      byTask.set(tid, t);
+    }
   }
   return [...byTask.values()];
+}
+
+/**
+ * Ensure every active/completed task that has a recording is represented.
+ * Call after oneTakePerTask when membership may have dropped sections.
+ */
+export function recoverMissingTaskTakes<T extends RecordingTaskRef>(opts: {
+  planTasks: PlanTaskFlags[];
+  allRecordings: T[];
+  currentTakes: T[];
+}): T[] {
+  const { planTasks, allRecordings, currentTakes } = opts;
+  const activeIds = activePlanTaskIds(planTasks);
+  const completedActive = planTasks.filter(
+    (t) => activeIds.has(t.id) && (isCompletedTaskStatus(t.status) || !t.status)
+  );
+  const have = new Set(
+    currentTakes.map((t) => t.task_id || t.id).filter(Boolean) as string[]
+  );
+  const out = [...currentTakes];
+
+  for (const task of completedActive) {
+    if (have.has(task.id)) continue;
+    const candidates = allRecordings.filter((r) => r.task_id === task.id && hasUsablePath(r));
+    if (!candidates.length) continue;
+    // Prefer selected, else first with path
+    const pick =
+      candidates.find((c) => c.is_selected) ||
+      candidates.find((c) => hasUsablePath(c)) ||
+      candidates[0];
+    out.push(pick);
+    have.add(task.id);
+  }
+
+  // Last-resort: if still only 0–1 takes but many recordings exist with distinct task_ids,
+  // include one per task_id that maps to any plan task (or all if no flags).
+  if (out.length <= 1) {
+    const byTask = oneTakePerTask(
+      matchRecordingsToActivePlan(planTasks, allRecordings.filter(hasUsablePath))
+    );
+    if (byTask.length > out.length) return byTask;
+  }
+
+  return out;
 }

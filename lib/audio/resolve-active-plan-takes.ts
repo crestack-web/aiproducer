@@ -4,6 +4,7 @@ import {
   activePlanTaskIds,
   matchRecordingsToActivePlan,
   oneTakePerTask,
+  recoverMissingTaskTakes,
   type PlanTaskFlags,
 } from "@/lib/audio/active-plan-membership";
 import type { createServiceClient } from "@/lib/supabase/server";
@@ -21,7 +22,8 @@ type PlanTaskRow = PlanTaskFlags & {
  * Resolve recordings that belong to the active artist plan.
  * Authoritative rule: recording.task_id ∈ selected recording_tasks.id
  *
- * Legacy: if plan flags (active / selected_in_plan) are absent, keep all project recordings.
+ * Always loads ALL project recordings, then membership-filters, so a single
+ * is_selected row cannot hide other section takes.
  */
 export async function resolveActivePlanTakes(
   supabase: Service,
@@ -36,27 +38,43 @@ export async function resolveActivePlanTakes(
   const planTasks = (planTasksRaw || []) as PlanTaskRow[];
   const taskById = new Map(planTasks.map((t) => [t.id, t]));
 
+  // Load every recording for the project (do not filter is_selected first)
   let { data: takesRaw, error: takesErr } = await supabase
     .from("recordings")
     .select("*")
     .eq("project_id", projectId)
-    .eq("is_selected", true);
+    .order("created_at", { ascending: false });
 
   if (takesErr) {
     logProduce({ event: "takes_query_error", jobId, projectId, error: takesErr.message });
   }
 
   let candidates = (takesRaw || []) as TakeRow[];
-  if (candidates.length === 0) {
-    const { data: anyTakes } = await supabase
+
+  // Fallback by task_id if project_id returned nothing
+  if (candidates.length === 0 && planTasks.length > 0) {
+    const ids = planTasks.map((t) => t.id).slice(0, 80);
+    const { data: byTask } = await supabase
       .from("recordings")
       .select("*")
-      .eq("project_id", projectId);
-    candidates = (anyTakes || []) as TakeRow[];
+      .in("task_id", ids)
+      .order("created_at", { ascending: false });
+    candidates = (byTask || []) as TakeRow[];
+    logProduce({
+      event: "takes_fallback_by_task",
+      jobId,
+      projectId,
+      count: candidates.length,
+    });
   }
 
   const matched = matchRecordingsToActivePlan(planTasks, candidates);
   let takes = oneTakePerTask(matched);
+  takes = recoverMissingTaskTakes({
+    planTasks,
+    allRecordings: candidates,
+    currentTakes: takes,
+  });
 
   takes = takes.map((t) => {
     const task = t.task_id ? taskById.get(t.task_id) : undefined;
@@ -83,6 +101,8 @@ export async function resolveActivePlanTakes(
     selectedTaskIds: [...activePlanTaskIds(planTasks)],
     matchedRecordingTaskIds: takes.map((t) => t.task_id),
     matchedCount: takes.length,
+    candidateCount: candidates.length,
+    planTaskCount: planTasks.length,
   });
 
   if (takes.length === 0) {

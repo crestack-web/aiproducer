@@ -110,6 +110,24 @@ const noRecMatch = matchRecordingsToActivePlan(tasks, [
 ]);
 assert(noRecMatch.length === 1, "only intro recording matched when verse missing");
 
+// Multi-section: only ONE is_selected must still keep one take PER task
+const multiRecs = [
+  { id: "r1", task_id: "t-intro", is_selected: false, audio_path: "intro.wav" },
+  { id: "r2", task_id: "t-verse", is_selected: true, audio_path: "verse.wav" },
+  { id: "r2b", task_id: "t-verse", is_selected: false, audio_path: "verse-old.wav" },
+];
+const multiMatched = matchRecordingsToActivePlan(tasks, multiRecs);
+const multiTakes = oneTakePerTask(multiMatched);
+assert(multiTakes.length === 2, "multi-section keeps intro+verse (not single vocal)");
+assert(
+  multiTakes.find((t) => t.task_id === "t-verse")?.id === "r2",
+  "prefers is_selected verse take"
+);
+assert(
+  multiTakes.some((t) => t.task_id === "t-intro"),
+  "intro included even when not is_selected"
+);
+
 if (process.exitCode) {
   console.error("\nSession preview membership tests failed.");
   process.exit(1);

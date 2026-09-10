@@ -1,11 +1,14 @@
 /**
  * Collect vocal takes for AP produce — same membership + placement as session-preview.
+ * Loads ALL section takes on the active plan (verse + chorus + bridge + …), not one only.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   activePlanTaskIds,
   isCompletedTaskStatus,
+  matchRecordingsToActivePlan,
   oneTakePerTask,
+  recoverMissingTaskTakes,
 } from "@/lib/audio/active-plan-membership";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
@@ -18,9 +21,11 @@ type RecRow = {
   audio_path: string | null;
   original_audio_path?: string | null;
   original_path?: string | null;
+  processed_path?: string | null;
   is_selected?: boolean | null;
   timeline_start_ms?: number | null;
   recording_offset_ms?: number | null;
+  created_at?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -43,6 +48,19 @@ export type PlacementLog = {
   path: string;
   title?: string | null;
 };
+
+function pickPath(rec: RecRow): string | null {
+  const candidates = [
+    rec.original_path,
+    rec.original_audio_path,
+    rec.processed_path,
+    rec.audio_path,
+  ];
+  for (const p of candidates) {
+    if (p && isStoragePath(p)) return p;
+  }
+  return null;
+}
 
 export async function collectVocalsForProduce(
   service: SupabaseClient,
@@ -72,11 +90,13 @@ export async function collectVocalsForProduce(
     if (error) diagnostics.push(`tasks_err: ${error.message}`);
   }
 
+  // Active plan + every completed task that is not explicitly deselected
   const activeIds = activePlanTaskIds(allTasks);
   for (const t of allTasks) {
     if (!isCompletedTaskStatus(t.status)) continue;
     if (t.active === false) continue;
     if (t.selected_in_plan === false) continue;
+    if (t.status === "skipped") continue;
     activeIds.add(t.id);
   }
   const selectedTaskIds = [...activeIds];
@@ -85,10 +105,10 @@ export async function collectVocalsForProduce(
 
   let recordings: RecRow[] = [];
   const recSelects = [
-    "id, task_id, audio_path, original_audio_path, original_path, is_selected, timeline_start_ms, recording_offset_ms, metadata",
-    "id, task_id, audio_path, original_audio_path, is_selected, timeline_start_ms, metadata",
+    "id, task_id, audio_path, original_audio_path, original_path, processed_path, is_selected, timeline_start_ms, recording_offset_ms, created_at, metadata",
+    "id, task_id, audio_path, original_audio_path, original_path, is_selected, timeline_start_ms, recording_offset_ms, created_at, metadata",
+    "id, task_id, audio_path, original_path, is_selected, timeline_start_ms, metadata",
     "id, task_id, audio_path, is_selected, timeline_start_ms, metadata",
-    "id, task_id, audio_path, is_selected, metadata",
     "id, task_id, audio_path, is_selected",
   ];
   for (const cols of recSelects) {
@@ -109,35 +129,57 @@ export async function collectVocalsForProduce(
   if (recordings.length === 0 && selectedTaskIds.length > 0) {
     const { data } = await service
       .from("recordings")
-      .select("id, task_id, audio_path, original_path, is_selected, timeline_start_ms, metadata")
-      .in("task_id", selectedTaskIds.slice(0, 80));
+      .select(
+        "id, task_id, audio_path, original_path, original_audio_path, is_selected, timeline_start_ms, created_at, metadata"
+      )
+      .in("task_id", selectedTaskIds.slice(0, 80))
+      .order("created_at", { ascending: false });
     if (data?.length) {
       recordings = data as unknown as RecRow[];
       diagnostics.push(`recordings_by_task=${recordings.length}`);
     }
   }
 
-  const matched = recordings.filter(
-    (r) => r.task_id && selectedTaskIds.includes(r.task_id)
+  const matched = matchRecordingsToActivePlan(allTasks, recordings);
+  let takes = oneTakePerTask(matched);
+  takes = recoverMissingTaskTakes({
+    planTasks: allTasks,
+    allRecordings: recordings,
+    currentTakes: takes,
+  });
+  diagnostics.push(
+    `takes_after_membership=${takes.length} matched=${matched.length} recordings=${recordings.length}`
   );
-  const takes = oneTakePerTask(matched);
-  diagnostics.push(`takes_after_one_per_task=${takes.length}`);
 
-  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  // Ultimate fallback: one take per task_id among all project recordings with paths
+  if (takes.length <= 1 && recordings.length > 1) {
+    const withPath = recordings.filter((r) => pickPath(r));
+    const expanded = oneTakePerTask(withPath);
+    if (expanded.length > takes.length) {
+      takes = expanded;
+      diagnostics.push(`takes_expanded_all_recordings=${takes.length}`);
+    }
+  }
+
+  const taskById = new Map(allTasks.map((t) => [t.id, t]));
+  // Also allow takes whose task row might be missing from filter but present in allTasks
   const vocals: ApVocalLayerInput[] = [];
   const placementLog: PlacementLog[] = [];
 
   for (const rec of takes) {
-    const task = taskById.get(rec.task_id as string);
-    if (!task) continue;
+    const task =
+      taskById.get(rec.task_id as string) ||
+      ({
+        id: rec.task_id || rec.id,
+        type: "lead",
+        title: null,
+        start_ms: null,
+        end_ms: null,
+      } as TaskRow);
 
-    const path =
-      (rec.original_path && isStoragePath(rec.original_path) && rec.original_path) ||
-      (rec.original_audio_path && isStoragePath(rec.original_audio_path) && rec.original_audio_path) ||
-      (rec.audio_path && isStoragePath(rec.audio_path) && rec.audio_path) ||
-      null;
+    const path = pickPath(rec);
     if (!path) {
-      diagnostics.push(`skip_no_path task=${rec.task_id}`);
+      diagnostics.push(`skip_no_path task=${rec.task_id} rec=${rec.id}`);
       continue;
     }
 
@@ -182,5 +224,10 @@ export async function collectVocalsForProduce(
   }
 
   diagnostics.push(`vocals_loaded=${vocals.length}`);
+  if (vocals.length <= 1 && recordings.length > 1) {
+    diagnostics.push(
+      `WARN_single_vocal_of_many recordings=${recordings.length} takes=${takes.length}`
+    );
+  }
   return { vocals, placementLog, diagnostics };
 }
