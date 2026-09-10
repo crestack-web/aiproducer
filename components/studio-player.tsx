@@ -119,29 +119,102 @@ export function Waveform({
   );
 }
 
-export function CoverArt({ seed, size = 64 }: { seed: string; size?: number }) {
+const COVER_ICON_HUES = [28, 160, 200, 280, 340, 45, 190];
+
+function MusicNoteIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      style={{ display: "block" }}
+    >
+      <path
+        d="M9 18V6.5l10-2V16"
+        stroke={color}
+        strokeWidth="1.85"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="7" cy="18" r="2.6" fill={color} />
+      <circle cx="17" cy="16" r="2.6" fill={color} />
+    </svg>
+  );
+}
+
+/** Album-style cover: seed gradient + music icon that shifts hue with the seed. */
+export function CoverArt({
+  seed,
+  size = 64,
+  showIcon = true,
+}: {
+  seed: string;
+  size?: number;
+  showIcon?: boolean;
+}) {
   const C = usePlayerColors();
   const [a, b] = coverGradientFor(seed);
+  let h = 0;
+  for (let i = 0; i < (seed || "x").length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const hue = COVER_ICON_HUES[h % COVER_ICON_HUES.length];
+  const iconColor = `hsla(${hue}, 72%, 72%, 0.95)`;
+  const iconSize = Math.max(18, Math.round(size * 0.42));
+  const radius = size >= 56 ? 14 : 12;
+
   return (
     <div
       style={{
         width: size,
         height: size,
-        borderRadius: 14,
+        borderRadius: radius,
         flexShrink: 0,
         background: `linear-gradient(145deg, ${a}, ${b})`,
         boxShadow: C.cardShadow,
         position: "relative",
         overflow: "hidden",
+        display: "grid",
+        placeItems: "center",
       }}
+      aria-hidden
     >
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.14), transparent 60%)",
+          background: "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.16), transparent 60%)",
         }}
       />
+      {/* Soft accent ring that picks up the icon hue */}
+      <div
+        style={{
+          position: "absolute",
+          inset: size * 0.12,
+          borderRadius: "50%",
+          border: `1px solid hsla(${hue}, 60%, 70%, 0.22)`,
+          pointerEvents: "none",
+        }}
+      />
+      {showIcon && (
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            filter: `drop-shadow(0 2px 6px hsla(${hue}, 80%, 40%, 0.45))`,
+            animation: "coverIconPulse 4.5s ease-in-out infinite",
+            animationDelay: `${(h % 7) * 0.15}s`,
+          }}
+        >
+          <MusicNoteIcon size={iconSize} color={iconColor} />
+        </div>
+      )}
+      <style>{`
+        @keyframes coverIconPulse {
+          0%, 100% { opacity: 0.88; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.06); }
+        }
+      `}</style>
     </div>
   );
 }

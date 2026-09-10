@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
+import { CoverArt } from "@/components/studio-player";
 
 type Project = {
   id: string;
@@ -193,9 +194,23 @@ function AppInner() {
   function ProjectRow({ p, meta }: { p: Project; meta: string }) {
     return (
       <div style={rowStyle}>
-        <Link href={`/app/studio/${p.id}`} style={{ ...rowBody, textDecoration: "none", color: "inherit" }}>
-          <div style={rowTitle}>{p.title}</div>
-          <div style={rowMeta}>{meta}</div>
+        <Link
+          href={`/app/studio/${p.id}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flex: 1,
+            minWidth: 0,
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <CoverArt seed={p.title || p.id} size={48} />
+          <div style={rowBody}>
+            <div style={rowTitle}>{p.title}</div>
+            <div style={rowMeta}>{meta}</div>
+          </div>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
           <Link href={`/app/studio/${p.id}`} style={{ ...rowAction, textDecoration: "none" }}>
