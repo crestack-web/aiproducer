@@ -8,6 +8,7 @@ import {
   RecordingVisualizer,
   PlayerLoadingState,
 } from "@/components/studio-player";
+import { forceDownloadFromApi } from "@/lib/download-audio";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
   MicInputPicker,
@@ -1999,24 +2000,22 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+
   async function downloadMaster(format: "wav" | "mp3") {
-    try {
-      const res = await fetch(`/api/projects/${id}/download?kind=master&format=${format}`);
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j.download_url) {
-        throw new Error(j.error || "Download not available");
-      }
-      const a = document.createElement("a");
-      a.href = j.download_url;
-      a.download = j.filename || `song.${format}`;
-      a.rel = "noopener";
-      a.target = "_blank";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Download failed");
+    setDownloadBusy(true);
+    const result = await forceDownloadFromApi(
+      id,
+      format,
+      `${project?.title || "song"}.${format}`
+    );
+    setDownloadBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+    setDownloadModalOpen(false);
   }
 
   async function startProduce() {
@@ -2851,13 +2850,30 @@ export default function ProjectDetailPage() {
                   gap: 10,
                   justifyContent: "center",
                   marginTop: 20,
+                  alignItems: "center",
                 }}
               >
-                <button type="button" style={btn} onClick={() => void downloadMaster("wav")}>
-                  Download WAV
-                </button>
-                <button type="button" style={btn2} onClick={() => void downloadMaster("mp3")}>
-                  Download MP3
+                <button
+                  type="button"
+                  aria-label="Download"
+                  title="Download"
+                  style={{
+                    ...btn,
+                    width: "auto",
+                    minWidth: 120,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                  onClick={() => setDownloadModalOpen(true)}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M12 3v12" strokeLinecap="round" />
+                    <path d="M7 11l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M5 21h14" strokeLinecap="round" />
+                  </svg>
+                  Download
                 </button>
                 <button
                   type="button"
@@ -2870,6 +2886,75 @@ export default function ProjectDetailPage() {
                 >
                   Arrangement preview
                 </button>
+              </div>
+            )}
+            {downloadModalOpen && (
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Download format"
+                onClick={() => !downloadBusy && setDownloadModalOpen(false)}
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 80,
+                  background: "rgba(0,0,0,0.55)",
+                  display: "grid",
+                  placeItems: "center",
+                  padding: 20,
+                }}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: "100%",
+                    maxWidth: 340,
+                    borderRadius: 18,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    padding: "22px 20px",
+                  }}
+                >
+                  <div style={{ fontFamily: "Georgia, serif", fontSize: 18, marginBottom: 6 }}>
+                    Download
+                  </div>
+                  <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 16px", lineHeight: 1.45 }}>
+                    Choose a format. The file will save to your device — it will not open in the browser player.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={downloadBusy}
+                    onClick={() => void downloadMaster("wav")}
+                    style={{ ...btn, marginBottom: 8, opacity: downloadBusy ? 0.7 : 1 }}
+                  >
+                    {downloadBusy ? "Downloading…" : "WAV — full quality"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={downloadBusy}
+                    onClick={() => void downloadMaster("mp3")}
+                    style={{ ...btn2, opacity: downloadBusy ? 0.7 : 1 }}
+                  >
+                    {downloadBusy ? "Downloading…" : "MP3 — smaller file"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={downloadBusy}
+                    onClick={() => setDownloadModalOpen(false)}
+                    style={{
+                      width: "100%",
+                      marginTop: 12,
+                      padding: 10,
+                      border: "none",
+                      background: "transparent",
+                      color: C.textMuted,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
             <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -8,6 +8,7 @@ import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
+import { forceDownloadFromApi } from "@/lib/download-audio";
 
 type Project = {
   id: string;
@@ -29,6 +30,8 @@ function AppInner() {
   const [tab, setTab] = useState<Tab>("home");
   const [libraryTab, setLibraryTab] = useState<"songs" | "beats" | "recordings">("songs");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [downloadModal, setDownloadModal] = useState<{ id: string; title: string } | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -191,25 +194,51 @@ function AppInner() {
     textDecoration: "none",
   };
 
-  async function downloadSong(projectId: string, title: string, format: "wav" | "mp3") {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/download?kind=master&format=${format}`);
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok || !j.download_url) {
-        window.alert(j.error || "Download not available yet.");
-        return;
-      }
-      const a = document.createElement("a");
-      a.href = j.download_url;
-      a.download = j.filename || `${title || "song"}.${format}`;
-      a.rel = "noopener";
-      a.target = "_blank";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch {
-      window.alert("Download failed. Try again.");
+  async function runDownload(projectId: string, title: string, format: "wav" | "mp3") {
+    setDownloadBusy(true);
+    const result = await forceDownloadFromApi(projectId, format, `${title || "song"}.${format}`);
+    setDownloadBusy(false);
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
     }
+    setDownloadModal(null);
+  }
+
+  function IconBtn({
+    label,
+    onClick,
+    children,
+    danger,
+  }: {
+    label: string;
+    onClick: () => void;
+    children: React.ReactNode;
+    danger?: boolean;
+  }) {
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        onClick={onClick}
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          border: `1px solid ${C.border}`,
+          background: C.surface,
+          color: danger ? "#E07070" : C.brass,
+          display: "grid",
+          placeItems: "center",
+          cursor: "pointer",
+          padding: 0,
+          flexShrink: 0,
+        }}
+      >
+        {children}
+      </button>
+    );
   }
 
   function ProjectRow({ p, meta }: { p: Project; meta: string }) {
@@ -234,65 +263,29 @@ function AppInner() {
             <div style={rowMeta}>{meta}</div>
           </div>
         </Link>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <IconBtn label="Play" onClick={() => router.push(`/app/studio/${p.id}`)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M8 5.5v13l11-6.5L8 5.5Z" />
+            </svg>
+          </IconBtn>
           {isReady && (
-            <>
-              <button
-                type="button"
-                onClick={() => void downloadSong(p.id, p.title, "wav")}
-                style={{
-                  background: "none",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 8,
-                  color: C.brass,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  padding: "4px 8px",
-                }}
-              >
-                WAV
-              </button>
-              <button
-                type="button"
-                onClick={() => void downloadSong(p.id, p.title, "mp3")}
-                style={{
-                  background: "none",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 8,
-                  color: C.brass,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  padding: "4px 8px",
-                }}
-              >
-                MP3
-              </button>
-            </>
+            <IconBtn label="Download" onClick={() => setDownloadModal({ id: p.id, title: p.title })}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <path d="M12 3v12" strokeLinecap="round" />
+                <path d="M7 11l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 21h14" strokeLinecap="round" />
+              </svg>
+            </IconBtn>
           )}
-          <Link href={`/app/studio/${p.id}`} style={{ ...rowAction, textDecoration: "none" }}>
-            {isReady ? "Play" : "Open"}
-          </Link>
-          <button
-            type="button"
-            disabled={deletingId === p.id}
-            onClick={() => deleteProject(p.id, p.title)}
-            style={{
-              background: "none",
-              border: "none",
-              color: C.textFaint,
-              fontSize: 12,
-              cursor: deletingId === p.id ? "wait" : "pointer",
-              fontFamily: "inherit",
-              padding: 0,
-            }}
-            aria-label={`Delete ${p.title}`}
-          >
-            {deletingId === p.id ? "…" : "Delete"}
-          </button>
+          <IconBtn label="Delete" danger onClick={() => void deleteProject(p.id, p.title)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M4 7h16" strokeLinecap="round" />
+              <path d="M10 11v6M14 11v6" strokeLinecap="round" />
+              <path d="M6 7l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M9 7V4h6v3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </IconBtn>
         </div>
       </div>
     );
@@ -499,6 +492,101 @@ function AppInner() {
           </div>
         )}
       </div>
+
+        {downloadModal && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Download format"
+            onClick={() => !downloadBusy && setDownloadModal(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 80,
+              background: "rgba(0,0,0,0.55)",
+              display: "grid",
+              placeItems: "center",
+              padding: 20,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                maxWidth: 340,
+                borderRadius: 18,
+                background: C.surfaceElevated || C.surface,
+                border: `1px solid ${C.border}`,
+                padding: "22px 20px",
+                boxShadow: C.cardShadow,
+              }}
+            >
+              <div style={{ fontFamily: "Georgia, serif", fontSize: 18, color: C.text, marginBottom: 6 }}>
+                Download
+              </div>
+              <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 16px", lineHeight: 1.45 }}>
+                Choose a format for “{downloadModal.title || "your song"}”. The file will save to your device.
+              </p>
+              <button
+                type="button"
+                disabled={downloadBusy}
+                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "wav")}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                  color: "#1A1208",
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: downloadBusy ? "wait" : "pointer",
+                  marginBottom: 8,
+                  fontFamily: "inherit",
+                }}
+              >
+                {downloadBusy ? "Downloading…" : "WAV — full quality"}
+              </button>
+              <button
+                type="button"
+                disabled={downloadBusy}
+                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "mp3")}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: C.surface,
+                  color: C.text,
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: downloadBusy ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {downloadBusy ? "Downloading…" : "MP3 — smaller file"}
+              </button>
+              <button
+                type="button"
+                disabled={downloadBusy}
+                onClick={() => setDownloadModal(null)}
+                style={{
+                  width: "100%",
+                  marginTop: 12,
+                  padding: "10px",
+                  border: "none",
+                  background: "transparent",
+                  color: C.textMuted,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
     </AppShell>
   );
 }
