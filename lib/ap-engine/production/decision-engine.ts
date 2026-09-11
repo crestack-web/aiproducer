@@ -182,8 +182,9 @@ export function decideLayer(
   }
 
   const width = Math.min(0.85, treatment.width * sec.widthMul);
-  const reverbSend = Math.min(0.4, treatment.reverb * sec.reverbMul);
-  const delaySend = Math.min(0.28, treatment.delay * sec.delayMul);
+  // Floor a little wet so voice shares space with the beat (anti-freestyle isolation)
+  const reverbSend = Math.min(0.42, Math.max(0.08, treatment.reverb * sec.reverbMul));
+  const delaySend = Math.min(0.28, Math.max(0.04, treatment.delay * sec.delayMul));
 
   // Ad-libs in sparse sections get more delay character
   if (ctx.role === "adlib" && v.silenceRatio > 0.35) {
@@ -226,8 +227,8 @@ export function decideArrangementMix(
   const profile = resolveGenreProfile(genre);
   const notes: string[] = [`genre:${profile.id}`, `layers:${layerCount}`];
 
-  let vocalGainDb = 2.0 * profile.leadForwardness;
-  let beatGainDb = -0.8 * profile.beatRespect;
+  let vocalGainDb = 1.4 * profile.leadForwardness;
+  let beatGainDb = -0.4 * profile.beatRespect;
   if (leadAnalysis) {
     const ratio = leadAnalysis.rms / (beatAnalysis.rms + 1e-9);
     if (ratio < 0.4) {
@@ -240,9 +241,9 @@ export function decideArrangementMix(
       notes.push("vocal_hot_vs_beat");
     } else {
       // Center the vocal slightly forward for pop/streaming
-      vocalGainDb = 1.8 * profile.leadForwardness;
-      beatGainDb = -0.6;
-      notes.push("vocal_balanced_forward");
+      vocalGainDb = 1.2 * profile.leadForwardness;
+      beatGainDb = -0.3;
+      notes.push("vocal_in_pocket");
     }
   }
 
@@ -265,10 +266,10 @@ export function decideArrangementMix(
     vocalGainDb,
     beatGainDb,
     vocalPan: 0,
-    duckDb: 1.1 + (1 - profile.beatRespect) * 1.0,
+    duckDb: 1.8 + (1 - profile.beatRespect) * 1.2,
     beatPresenceCutDb,
     beatMaskBands,
-    duckMidFocus: 0.72,
+    duckMidFocus: 0.8,
   };
 
   const master: MasterDecision = {

@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.3.0-pro-mix";
+export const AP_ENGINE_VERSION = "1.3.1-pocket-glue";
 
 export type ApStage =
   | "queued"
