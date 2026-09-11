@@ -8,7 +8,10 @@ import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
 import { restoreVocal } from "../restoration/denoise";
 import { type RoomToneQC } from "../restoration/room-tone";
-import { reduceNaturalRoom, applyIntentionalSpace, type SpaceQC } from "../restoration/intentional-space";
+import { reduceNaturalRoom, type SpaceQC } from "../restoration/intentional-space";
+import { planMusicalSpace, applyMusicalSpace } from "../production/musical-space";
+import { applyTimingIntelligence } from "../production/timing-intelligence";
+import { sectionEnergyDb } from "../production/vocal-automation";
 import { treatMouthNoise, type MouthNoiseQC } from "../restoration/mouth-noise";
 import { rideVocalLevel, type VocalRideQC } from "../restoration/vocal-ride";
 import { stabilizeLevel } from "../restoration/dynamics-fix";
@@ -23,6 +26,7 @@ export type StackLayerInput = {
   decision: LayerDecision;
   genre?: string | null;
   leadReference?: PcmStereo | null;
+  bpm?: number | null;
 };
 
 export type PerformanceQc = {
@@ -115,7 +119,21 @@ export function processAndPlaceLayerDetailed(
     );
   }
 
-  // 5. Light global stabilize, then production chain (EQ/comp/smart-deess/sat/FX)
+  // 5. Timing intelligence vs full-song beat (fix late vocals; role/section aware)
+  try {
+    const timed = applyTimingIntelligence({
+      vocal: v,
+      beat: beatLengthPcm,
+      role,
+      section: layer.decision.section,
+      leadReference: layer.leadReference || null,
+    });
+    v = timed.pcm;
+  } catch {
+    /* keep untimed */
+  }
+
+  // 5b. Light global stabilize, then production chain
   v = stabilizeLevel(v, role === "lead" ? 0.11 : 0.08);
   // Reduce chain sends slightly; intentional space owns musical room
   const vocalDec = {
@@ -126,16 +144,17 @@ export function processAndPlaceLayerDetailed(
   const chain = processVocalChainDetailed(v, vocalDec, role);
   v = chain.pcm;
 
-  // Intentional section space after cleanup (bad room gone → musical space)
+  // Musical space: ER + short/long + tempo delay + throws (producer space, not generic verb)
   try {
-    const spaced = applyIntentionalSpace(v, layer.decision.section, role);
+    const plan = planMusicalSpace(role, layer.decision.section, layer.bpm ?? null);
+    const spaced = applyMusicalSpace(v, plan);
     v = spaced.pcm;
     spaceQc = {
       room: roomQc,
       deReverbApplied: true,
       section: layer.decision.section,
-      reverbWet: spaced.reverbWet,
-      delayWet: spaced.delayWet,
+      reverbWet: plan.shortWet + plan.longWet,
+      delayWet: plan.delayWet,
       reverted: roomQc?.reverted ?? false,
     };
   } catch {

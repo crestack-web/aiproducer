@@ -204,6 +204,7 @@ export async function runApArrangement(
           decision,
           genre: input.genre,
           leadReference: leadPolishedRef,
+          bpm: beatA?.bpm ?? null,
         });
         placedByIndex[i] = detailed.placed;
         if (detailed.polished) pitchQcAll.push(detailed.polished.qc);

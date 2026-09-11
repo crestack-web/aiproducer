@@ -3,11 +3,11 @@ import type { MixDecision, PcmStereo } from "../types";
 import { applyMixGains, duckBeatFromVocal, sumStereo, autoBalanceGains } from "./balance";
 import { applyBeatPresenceCut } from "./masking-lite";
 import { applyMixGlue } from "./glue";
-import { lockVocalToBeat } from "./beat-lock";
+import { applyBusGrooveLock } from "../production/timing-intelligence";
+import { applyBusArrangementLift } from "../production/vocal-automation";
 
 /**
- * Mix vocal bus into beat so they feel like one song, not freestyle over a loop.
- * Order: groove lock → spectral carve → pocket balance → mid duck → sum → bus glue.
+ * Mix vocal into beat as one production — groove lock, pocket, mask, duck, glue.
  */
 export function mixVocalAndBeat(
   vocalIn: PcmStereo,
@@ -17,16 +17,18 @@ export function mixVocalAndBeat(
   let vocal = cloneStereo(vocalIn);
   const beat = cloneStereo(beatIn);
 
-  // 0. Micro-align vocal energy to instrumental onsets (keeps natural length)
-  const locked = lockVocalToBeat(vocal, beat, 32);
+  // 0. Bus groove lock — pull late vocal performances forward into the pocket
+  const locked = applyBusGrooveLock(vocal, beat, 60);
   vocal = locked.pcm;
 
-  // 1. Carve frequency space in the beat under the voice
+  // 0b. Arrangement energy lift on denser vocal regions (chorus contrast)
+  vocal = applyBusArrangementLift(vocal, 0.4);
+
+  // 1. Spectral space for the voice
   applyBeatPresenceCut(beat, decision);
 
-  // 2. Pocket balance — vocal slightly inside the beat, not on top
-  // Target ratio ~0.72 (was 0.88 → felt separated / freestyle-loud)
-  const balanced = autoBalanceGains(vocal, beat, decision, 0.72);
+  // 2. Pocket balance — vocal inside the track
+  const balanced = autoBalanceGains(vocal, beat, decision, 0.7);
   const liveDecision: MixDecision = {
     ...decision,
     vocalGainDb: balanced.vocalGainDb,
@@ -34,15 +36,13 @@ export function mixVocalAndBeat(
   };
   applyMixGains(vocal, beat, liveDecision);
 
-  // 3. Stronger mid-focused duck so the beat yields to the vocal in the pocket
-  const duck = Math.max(decision.duckDb, 1.6);
-  duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.78);
+  // 3. Mid-focused duck
+  const duck = Math.max(decision.duckDb, 1.8);
+  duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.82);
 
-  // 4. Sum
+  // 4. Sum + bus glue
   let mix = sumStereo(vocal, beat);
-
-  // 5. Bus glue: parallel compress + center mid + shared short room
-  mix = applyMixGlue(mix, { parallel: 0.4, room: 0.12, center: 0.25 });
+  mix = applyMixGlue(mix, { parallel: 0.42, room: 0.1, center: 0.28 });
 
   return mix;
 }
