@@ -237,6 +237,9 @@ export default function ProjectDetailPage() {
     canDecode: boolean;
   } | null>(null);
   const [reviewVoiceOnly, setReviewVoiceOnly] = useState(false);
+  const [reviewOverdubSrcs, setReviewOverdubSrcs] = useState<
+    { url: string; volume?: number; label?: string }[]
+  >([]);
   const [taskTakes, setTaskTakes] = useState<
     {
       id: string;
@@ -1197,6 +1200,7 @@ export default function ProjectDetailPage() {
         /* ignore */
       }
       setPhase("review");
+      void loadReviewOverdubs(task);
       setUploading(true);
       setProducerTip(null);
       try {
@@ -1430,12 +1434,7 @@ export default function ProjectDetailPage() {
         mode === "PHONE_HANDSET" ? 0.1 : mode === "PHONE_SPEAKER" ? 0.02 : 0.14;
       // Beat play starts *after* we arm the recorder below (tighter musical lock).
     }
-    // Any layer: hear existing section takes under the beat (soft volumes; not mixed into recorder).
-    void (async () => {
-      await startLayerMonitors(task);
-      seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
-      playLayerMonitors();
-    })();
+    // Load section peers FIRST so doubles/harmonies hear the lead with the beat.
     setRecordSeconds(0);
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
@@ -1464,18 +1463,34 @@ export default function ProjectDetailPage() {
       }, limitMs);
     }
 
-    // Arm recorder FIRST, then start beat in the same turn — reduces capture lag vs the groove.
-    if (sessionTimelineRef.current) {
-      sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
-      setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
-    }
-    rec.start(100);
-    if (beatAudioRef.current && beatUrl) {
-      beatAudioRef.current.play().catch(() => undefined);
-    }
-    setPhase("recording");
-    // Phone speaker only: VAD duck on monitor — MediaRecorder graph unchanged
-    startSpeakerDuckIfNeeded(stream);
+    const armAndStart = () => {
+      if (sessionTimelineRef.current) {
+        sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
+        setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
+      }
+      seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
+      playLayerMonitors();
+      rec.start(100);
+      if (beatAudioRef.current && beatUrl) {
+        try {
+          beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+        } catch {
+          /* ignore */
+        }
+        beatAudioRef.current.play().catch(() => undefined);
+      }
+      setPhase("recording");
+      startSpeakerDuckIfNeeded(stream);
+    };
+
+    void (async () => {
+      try {
+        await startLayerMonitors(task);
+      } catch (e) {
+        console.warn("[layer-monitor] failed", e);
+      }
+      armAndStart();
+    })();
   }
 
   function stopLayerMonitors() {
@@ -1492,12 +1507,11 @@ export default function ProjectDetailPage() {
   }
 
   /** Align existing section vocals to the same musical clock as the beat monitor. */
-  function seekLayerMonitorsToSectionStart(sectionStartMs: number) {
+  function seekLayerMonitorsToSectionStart(_sectionStartMs: number) {
+    // Same-section takes: file t=0 ≈ section placement — start with the beat at section start.
     for (const el of layerMonitorAudiosRef.current) {
       try {
         el.currentTime = 0;
-        // If element carried a data-offset from a different start_ms, prefer 0 for same-section takes
-        void sectionStartMs;
       } catch {
         /* ignore */
       }
@@ -1520,6 +1534,42 @@ export default function ProjectDetailPage() {
    * (Lead under harmony/ad-lib, or any prior layers under a retake).
    * Mic path is separate; these Audio elements never go into MediaRecorder.
    */
+
+  /** Prior takes in this section for Review — hear lead under a new double, etc. */
+  async function loadReviewOverdubs(task: Task) {
+    const srcs: { url: string; volume?: number; label?: string }[] = [];
+    const peers = tasks.filter(
+      (t0) =>
+        t0.id !== task.id &&
+        isCompletedTaskStatus(t0.status) &&
+        sameMusicalSection(task, t0)
+    );
+    peers.sort((a, b) => (isCoreTask(a) ? 0 : 1) - (isCoreTask(b) ? 0 : 1));
+    for (const p of peers.slice(0, 4)) {
+      try {
+        const res = await fetch(`/api/recording-tasks/${p.id}/recordings`);
+        if (!res.ok) continue;
+        const j = await res.json();
+        const list = (Array.isArray(j.recordings) ? j.recordings : []) as {
+          is_selected?: boolean | null;
+          audio_url?: string | null;
+        }[];
+        const selected =
+          list.find((r) => r.is_selected) || list[list.length - 1] || list[0];
+        if (selected?.audio_url) {
+          srcs.push({
+            url: selected.audio_url,
+            volume: isCoreTask(p) ? 0.7 : 0.45,
+            label: sectionLabel(p),
+          });
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    setReviewOverdubSrcs(srcs);
+  }
+
   async function startLayerMonitors(task: Task) {
     stopLayerMonitors();
 
@@ -1535,28 +1585,12 @@ export default function ProjectDetailPage() {
 
     // Prefer live plan tasks → selected take URLs (works even when previewLayers is empty)
     const taskKey = sectionGroupKey(task);
-    const peers = tasks.filter((t) => {
-      if (t.id === task.id) return false;
-      // Accept all terminal statuses (completed/complete/done/recorded/…)
-      if (!isCompletedTaskStatus(t.status)) return false;
-      if (sectionGroupKey(t) === taskKey) return true;
-      const tid =
-        t.section_id ||
-        (t.metadata as { section_id?: string } | null | undefined)?.section_id ||
-        null;
-      if (sectionId && tid && sectionId === tid) return true;
-      const tl = (sectionLabel(t) || "").toLowerCase().trim();
-      if (label && tl && label === tl) return true;
-      const s = t.start_ms ?? 0;
-      // Same musical window (±3s) for section peers
-      if (Math.abs(s - sectionStart) < 3000) return true;
-      if (
-        task.end_ms != null &&
-        s >= sectionStart - 500 &&
-        s < (task.end_ms as number) + 500
-      ) {
-        return true;
-      }
+    const peers = tasks.filter((t0) => {
+      if (t0.id === task.id) return false;
+      if (!isCompletedTaskStatus(t0.status)) return false;
+      // True same-section grouping (section_id / label / time overlap)
+      if (sameMusicalSection(task, t0)) return true;
+      if (sectionGroupKey(t0) === taskKey) return true;
       return false;
     });
     peers.sort((a, b) => {
@@ -1640,8 +1674,8 @@ export default function ProjectDetailPage() {
     // Keep monitors usable but below typical mic bleed risk on speaker
     // Hearable under the new take; still below typical speaker feedback risk
     // Layer monitors must stay soft on speaker — they also bleed into the mic.
-    const leadVol = mode === "PHONE_SPEAKER" ? 0.12 : 0.75;
-    const otherVol = mode === "PHONE_SPEAKER" ? 0.08 : 0.45;
+    const leadVol = mode === "PHONE_SPEAKER" ? 0.14 : 0.9;
+    const otherVol = mode === "PHONE_SPEAKER" ? 0.1 : 0.6;
 
     for (const src of sources.slice(0, 4)) {
       try {
@@ -1848,6 +1882,7 @@ export default function ProjectDetailPage() {
 
   function clearFocusAndAdvance(next: Task[], completed?: Task | null | undefined) {
     setLocalBlobUrl(null);
+    setReviewOverdubSrcs([]);
     setPhase("ready");
     setScreen("session");
     // Stay on this musical section until ALL open production layers are done
@@ -2542,7 +2577,8 @@ export default function ProjectDetailPage() {
                       )}
                       beatEndMs={current.end_ms}
                       vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.03}
+                      beatVolume={reviewVoiceOnly ? 0 : 0.06}
+                      overdubSrcs={reviewVoiceOnly ? [] : reviewOverdubSrcs}
                       playbackSinkId={
                         !selectedSpeakerId ||
                         selectedSpeakerId === "__handset__" ||

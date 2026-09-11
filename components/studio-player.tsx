@@ -464,6 +464,7 @@ export function CompactAudioPlayer({
   debugTaskId,
   debugSectionStartMs,
   debugRecordingOffsetMs,
+  overdubSrcs,
 }: {
   src: string;
   label?: string;
@@ -478,10 +479,13 @@ export function CompactAudioPlayer({
   debugTaskId?: string | null;
   debugSectionStartMs?: number | null;
   debugRecordingOffsetMs?: number | null;
+  /** Other takes already recorded in this section (lead under a double, etc.) */
+  overdubSrcs?: { url: string; volume?: number; label?: string }[] | null;
 }) {
   const C = usePlayerColors();
   const vocalRef = useRef<HTMLAudioElement | null>(null);
   const beatRef = useRef<HTMLAudioElement | null>(null);
+  const overdubRefs = useRef<HTMLAudioElement[]>([]);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -543,6 +547,48 @@ export function CompactAudioPlayer({
    * No artificial delay — delay caused "wrong section of beat" vs what was recorded.
    */
   const REVIEW_BEAT_DELAY_SEC = 0;
+
+
+  // Section overdubs (prior takes) for review — same musical clock as beat + new take
+  useEffect(() => {
+    for (const el of overdubRefs.current) {
+      try {
+        el.pause();
+        el.removeAttribute("src");
+      } catch {
+        /* ignore */
+      }
+    }
+    overdubRefs.current = [];
+    const list = overdubSrcs || [];
+    for (const o of list.slice(0, 4)) {
+      if (!o?.url) continue;
+      try {
+        const el = new Audio();
+        el.preload = "auto";
+        el.crossOrigin = "anonymous";
+        el.src = o.url;
+        el.volume = Math.max(0.05, Math.min(0.85, o.volume ?? 0.55));
+        el.muted = false;
+        overdubRefs.current.push(el);
+        void routePlaybackToPreferredOutput(el, playbackSinkId || undefined).catch(() => undefined);
+      } catch {
+        /* skip */
+      }
+    }
+    return () => {
+      for (const el of overdubRefs.current) {
+        try {
+          el.pause();
+          el.removeAttribute("src");
+        } catch {
+          /* ignore */
+        }
+      }
+      overdubRefs.current = [];
+    };
+  }, [overdubSrcs, playbackSinkId, src]);
+
 
 
   // Review listening output (speaker). Never block play if setSinkId fails.
@@ -913,6 +959,18 @@ export function CompactAudioPlayer({
 
     // Always keep the take engaged — dual play on mobile often pauses the vocal when beat starts
     vocalEngagedRef.current = true;
+    // Overdubs: align file t=0 to same placement as the take under review
+    for (const el of overdubRefs.current) {
+      try {
+        const placeSec = Math.max(0, place / 1000);
+        // Overdub takes are also section-aligned at t=0 ≈ their placement; start at 0 with the new take
+        el.currentTime = 0;
+        el.muted = false;
+        void el.play().catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
+    }
     if (wantBeat && startAtPlacement) {
       vocalStartedAtBeatMsRef.current = place;
     }
