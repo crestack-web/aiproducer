@@ -65,7 +65,12 @@ import {
   nextProductionRecommendation,
   layerRecommendationCopy,
 } from "@/components/session-steps";
-import { layerPhraseHint, normalizeLayerRole, sectionGroupKey } from "@/lib/layer-model";
+import {
+  layerPhraseHint,
+  normalizeLayerRole,
+  sectionGroupKey,
+  sameMusicalSection,
+} from "@/lib/layer-model";
 import { isCompletedTaskStatus } from "@/lib/audio/active-plan-membership";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
@@ -1843,20 +1848,23 @@ export default function ProjectDetailPage() {
     setLocalBlobUrl(null);
     setPhase("ready");
     setScreen("session");
-    // After a core take: offer at most ONE production-layer recommendation for that section
-    if (completed && isCoreTask(completed)) {
+    // Stay on this musical section until ALL open production layers are done
+    // (double / harmony / background / adlib). Never jump to the next core early.
+    if (completed) {
       const rec = nextProductionRecommendation(next, completed);
       if (rec) {
         setActiveTaskId(rec.id);
         return;
       }
-    }
-    // After a production layer: another layer for same section, or next core
-    if (completed && isProductionLayer(completed)) {
-      const rec = nextProductionRecommendation(next, completed);
-      if (rec) {
-        setActiveTaskId(rec.id);
-        return;
+      // Anchor on section lead if we just finished a layer (or key mismatch)
+      const sectionCore =
+        next.find((t) => isCoreTask(t) && sameMusicalSection(completed, t)) || null;
+      if (sectionCore && sectionCore.id !== completed.id) {
+        const rec2 = nextProductionRecommendation(next, sectionCore);
+        if (rec2) {
+          setActiveTaskId(rec2.id);
+          return;
+        }
       }
     }
     const nextCore = coreOpen(next)[0];

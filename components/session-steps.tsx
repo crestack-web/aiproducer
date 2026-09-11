@@ -8,6 +8,7 @@ import {
   normalizeLayerRole,
   layerPhraseHint,
   sectionGroupKey,
+  sameMusicalSection,
 } from "@/lib/layer-model";
 
 export type SessionTask = {
@@ -108,16 +109,20 @@ function sectionKey(t: SessionTask): string {
 }
 
 /**
- * After finishing a core (or any) take, recommend at most ONE open production layer
- * for the same section — never flood the artist with a list of "sections".
+ * After finishing a core (or any) take, recommend the next open production layer
+ * for the SAME musical section (double → harmony → background → adlib…).
+ * Must not jump to the next song section while layers remain on this one.
  */
 export function nextProductionRecommendation(
   tasks: SessionTask[],
   parent: SessionTask
 ): SessionTask | null {
-  const key = sectionKey(parent);
   const layers = tasks.filter(
-    (t) => isProductionLayer(t) && isTaskOpen(t) && sectionKey(t) === key
+    (t) =>
+      t.id !== parent.id &&
+      isProductionLayer(t) &&
+      isTaskOpen(t) &&
+      sameMusicalSection(parent, t)
   );
   // Prefer doubles, then harmony, then others (stable product priority)
   const rank = (type: string) => {

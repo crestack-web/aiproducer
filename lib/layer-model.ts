@@ -72,17 +72,85 @@ export function defaultLinearGainForTaskType(type: string | null | undefined): n
   return DEFAULT_LAYER_LINEAR_GAIN[role];
 }
 
+/**
+ * Group lead + doubles/harmonies/adlibs that belong to the SAME musical section.
+ * Never key only on start_ms — layers often start mid-section and would split apart.
+ */
 export function sectionGroupKey(task: {
   id: string;
   section_id?: string | null;
   start_ms?: number | null;
-  metadata?: { section_id?: string; section_label?: string } | null;
+  title?: string | null;
+  metadata?: {
+    section_id?: string;
+    section_label?: string;
+    parent_section_label?: string;
+    section_type?: string;
+  } | null;
 }): string {
   if (task.section_id) return `s:${task.section_id}`;
   const mid = task.metadata?.section_id;
   if (mid) return `s:${mid}`;
-  if (task.start_ms != null) return `ms:${task.start_ms}`;
+  const label = (
+    task.metadata?.parent_section_label ||
+    task.metadata?.section_label ||
+    task.title ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+  if (label) return `label:${label}`;
+  const st = (task.metadata?.section_type || "").trim().toLowerCase();
+  if (st && task.start_ms != null) {
+    // Coarse bucket so mid-section layers still group with the lead
+    return `type:${st}:ms:${Math.round(Number(task.start_ms) / 5000) * 5000}`;
+  }
+  if (task.start_ms != null) return `ms:${Math.round(Number(task.start_ms) / 5000) * 5000}`;
   return `id:${task.id}`;
+}
+
+/** True if layer task belongs to the same musical section as parent (lead or any part). */
+export function sameMusicalSection(
+  parent: {
+    id: string;
+    section_id?: string | null;
+    start_ms?: number | null;
+    end_ms?: number | null;
+    title?: string | null;
+    metadata?: {
+      section_id?: string;
+      section_label?: string;
+      parent_section_label?: string;
+      section_type?: string;
+    } | null;
+  },
+  candidate: {
+    id: string;
+    section_id?: string | null;
+    start_ms?: number | null;
+    end_ms?: number | null;
+    title?: string | null;
+    metadata?: {
+      section_id?: string;
+      section_label?: string;
+      parent_section_label?: string;
+      section_type?: string;
+    } | null;
+  }
+): boolean {
+  if (sectionGroupKey(parent) === sectionGroupKey(candidate)) return true;
+
+  // Overlapping time range (layer may start later inside the section)
+  const ps = parent.start_ms;
+  const pe = parent.end_ms;
+  const cs = candidate.start_ms;
+  if (ps != null && pe != null && cs != null) {
+    if (cs >= ps - 250 && cs < pe + 250) return true;
+  }
+  // Same start within 2s
+  if (ps != null && cs != null && Math.abs(ps - cs) <= 2000) return true;
+
+  return false;
 }
 
 export type BarRangeHint = {
