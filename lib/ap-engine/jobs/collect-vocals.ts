@@ -14,6 +14,10 @@ import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
 import { isStoragePath } from "@/lib/storage";
 import type { ApVocalLayerInput } from "../index";
+import { normalizeToInternalPcm } from "../ingestion/normalize";
+import { pickBestTake, stitchBestPhrases, scoreTake } from "../production/comping";
+import { encodeStereoWav } from "../dsp";
+
 
 type RecRow = {
   id: string;
@@ -162,28 +166,102 @@ export async function collectVocalsForProduce(
   }
 
   const taskById = new Map(allTasks.map((t) => [t.id, t]));
-  // Also allow takes whose task row might be missing from filter but present in allTasks
   const vocals: ApVocalLayerInput[] = [];
   const placementLog: PlacementLog[] = [];
 
-  for (const rec of takes) {
+  // Group ALL project recordings by task for automatic comping (best take / phrase stitch)
+  const byTask = new Map<string, RecRow[]>();
+  for (const r of recordings) {
+    if (!pickPath(r)) continue;
+    const tid = (r.task_id || r.id) as string;
+    // Only tasks we already selected via membership OR that appear in takes
+    const allowed = takes.some((t) => (t.task_id || t.id) === tid) || taskById.has(tid);
+    if (!allowed) continue;
+    const list = byTask.get(tid) || [];
+    list.push(r);
+    byTask.set(tid, list);
+  }
+  // Ensure every membership take is represented
+  for (const t of takes) {
+    const tid = (t.task_id || t.id) as string;
+    if (!byTask.has(tid)) byTask.set(tid, [t]);
+  }
+
+  for (const [tid, recs] of byTask) {
     const task =
-      taskById.get(rec.task_id as string) ||
+      taskById.get(tid) ||
       ({
-        id: rec.task_id || rec.id,
+        id: tid,
         type: "lead",
         title: null,
         start_ms: null,
         end_ms: null,
       } as TaskRow);
 
-    const path = pickPath(rec);
-    if (!path) {
-      diagnostics.push(`skip_no_path task=${rec.task_id} rec=${rec.id}`);
-      continue;
+    // Prefer selected first, then newest — max 3 candidates
+    const sorted = [...recs].sort((a, b) => {
+      if (a.is_selected && !b.is_selected) return -1;
+      if (!a.is_selected && b.is_selected) return 1;
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    });
+    const candidates = sorted.slice(0, 3);
+
+    const taskMeta = (task.metadata || {}) as { section_label?: string };
+    const sectionLabel = taskMeta.section_label || task.title || task.type || null;
+
+    type Cand = { rec: RecRow; path: string; pcm: Awaited<ReturnType<typeof normalizeToInternalPcm>>["pcm"]; buffer: Buffer };
+    const loaded: Cand[] = [];
+
+    for (const rec of candidates) {
+      const path = pickPath(rec);
+      if (!path) continue;
+      try {
+        const buffer = await downloadStorageOrUrl(path);
+        const norm = await normalizeToInternalPcm(buffer, path);
+        loaded.push({ rec, path, pcm: norm.pcm, buffer });
+      } catch (e) {
+        diagnostics.push(
+          `download_fail task=${tid} rec=${rec.id}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    if (!loaded.length) continue;
+
+    let chosen = loaded[0];
+    let compNote = "single_take";
+
+    if (loaded.length >= 2) {
+      try {
+        const { best, scores, index } = pickBestTake(loaded.map((c) => ({ pcm: c.pcm })));
+        chosen = loaded[index];
+        compNote = `best_take idx=${index} score=${scores[index].score.toFixed(1)}`;
+        // Phrase stitch when 2+ solid takes of similar length
+        const lengths = loaded.map((c) => c.pcm.left.length);
+        const minL = Math.min(...lengths);
+        const maxL = Math.max(...lengths);
+        const solid = loaded.filter((_, i) => scores[i].score > 0 && scores[i].clipRatio < 0.01);
+        if (solid.length >= 2 && maxL > 0 && minL / maxL > 0.75) {
+          const stitched = stitchBestPhrases(
+            solid.map((c) => c.pcm),
+            450
+          );
+          if (stitched.switches >= 1) {
+            const wavBuf = encodeStereoWav(stitched.pcm);
+            chosen = {
+              ...chosen,
+              pcm: stitched.pcm,
+              buffer: wavBuf,
+              path: chosen.path + "#comp",
+            };
+            compNote = `phrase_comp switches=${stitched.switches} from=${solid.length}`;
+          }
+        }
+      } catch (e) {
+        diagnostics.push(`comp_fail task=${tid}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
-    const meta = (rec.metadata || {}) as Record<string, unknown>;
+    const meta = (chosen.rec.metadata || {}) as Record<string, unknown>;
     const offsetFromMeta =
       typeof meta.recording_offset_ms === "number" ? (meta.recording_offset_ms as number) : null;
     const placementFromMeta =
@@ -192,35 +270,29 @@ export async function collectVocalsForProduce(
     const startMs = resolvePlacementStartMs({
       sectionStartMs: task.start_ms,
       recordingOffsetMs:
-        typeof rec.recording_offset_ms === "number" ? rec.recording_offset_ms : offsetFromMeta,
-      timelineStartMs: rec.timeline_start_ms,
+        typeof chosen.rec.recording_offset_ms === "number"
+          ? chosen.rec.recording_offset_ms
+          : offsetFromMeta,
+      timelineStartMs: chosen.rec.timeline_start_ms,
       placementStartMs: placementFromMeta,
     });
 
-    const taskMeta = (task.metadata || {}) as { section_label?: string };
-    const sectionLabel = taskMeta.section_label || task.title || task.type || null;
+    diagnostics.push(`comp task=${tid} ${compNote} candidates=${loaded.length}`);
 
-    try {
-      const buffer = await downloadStorageOrUrl(path);
-      vocals.push({
-        buffer,
-        pathHint: path,
-        taskType: task.type,
-        sectionLabel,
-        startMs,
-      });
-      placementLog.push({
-        taskId: task.id,
-        type: String(task.type || ""),
-        startMs,
-        path,
-        title: task.title,
-      });
-    } catch (e) {
-      diagnostics.push(
-        `download_fail task=${task.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
-    }
+    vocals.push({
+      buffer: chosen.buffer,
+      pathHint: chosen.path,
+      taskType: task.type,
+      sectionLabel,
+      startMs,
+    });
+    placementLog.push({
+      taskId: task.id,
+      type: String(task.type || ""),
+      startMs,
+      path: chosen.path,
+      title: task.title,
+    });
   }
 
   diagnostics.push(`vocals_loaded=${vocals.length}`);

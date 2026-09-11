@@ -7,7 +7,8 @@ import type { PcmStereo } from "../types";
 import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
 import { restoreVocal } from "../restoration/denoise";
-import { treatRoomTone, softDeReverb, type RoomToneQC } from "../restoration/room-tone";
+import { type RoomToneQC } from "../restoration/room-tone";
+import { reduceNaturalRoom, applyIntentionalSpace, type SpaceQC } from "../restoration/intentional-space";
 import { treatMouthNoise, type MouthNoiseQC } from "../restoration/mouth-noise";
 import { rideVocalLevel, type VocalRideQC } from "../restoration/vocal-ride";
 import { stabilizeLevel } from "../restoration/dynamics-fix";
@@ -29,6 +30,7 @@ export type PerformanceQc = {
   ride: VocalRideQC | null;
   deess: SmartDeessQC | null;
   room: RoomToneQC | null;
+  space: SpaceQC | null;
 };
 
 export type StackLayerResult = {
@@ -56,14 +58,13 @@ export function processAndPlaceLayerDetailed(
   // 1. Basic restore (edge fade, HPF, gate)
   v = restoreVocal(v, layer.decision.vocal);
 
-  // 1b. Conservative room/hiss cleanup + soft de-reverb (identity-preserving)
+  // 1b. Stronger safe room reduce (still budgeted)
   let roomQc: RoomToneQC | null = null;
+  let spaceQc: SpaceQC | null = null;
   try {
-    const room = treatRoomTone({ pcm: v, intensity: role === "lead" ? 0.42 : 0.5 });
-    if (room.qc.applied) v = room.pcm;
-    roomQc = room.qc;
-    const der = softDeReverb({ pcm: v, intensity: role === "lead" ? 0.28 : 0.35 });
-    if (der.applied) v = der.pcm;
+    const reduced = reduceNaturalRoom(v, role === "lead" ? 0.52 : 0.58);
+    v = reduced.pcm;
+    roomQc = reduced.room;
   } catch {
     roomQc = null;
   }
@@ -116,8 +117,31 @@ export function processAndPlaceLayerDetailed(
 
   // 5. Light global stabilize, then production chain (EQ/comp/smart-deess/sat/FX)
   v = stabilizeLevel(v, role === "lead" ? 0.11 : 0.08);
-  const chain = processVocalChainDetailed(v, layer.decision.vocal, role);
+  // Reduce chain sends slightly; intentional space owns musical room
+  const vocalDec = {
+    ...layer.decision.vocal,
+    reverbSend: Math.min(0.12, layer.decision.vocal.reverbSend * 0.45),
+    delaySend: Math.min(0.08, layer.decision.vocal.delaySend * 0.45),
+  };
+  const chain = processVocalChainDetailed(v, vocalDec, role);
   v = chain.pcm;
+
+  // Intentional section space after cleanup (bad room gone → musical space)
+  try {
+    const spaced = applyIntentionalSpace(v, layer.decision.section, role);
+    v = spaced.pcm;
+    spaceQc = {
+      room: roomQc,
+      deReverbApplied: true,
+      section: layer.decision.section,
+      reverbWet: spaced.reverbWet,
+      delayWet: spaced.delayWet,
+      reverted: roomQc?.reverted ?? false,
+    };
+  } catch {
+    spaceQc = null;
+  }
+
   const processed = cloneStereo(v);
 
   // 6. Stereo image by role
@@ -142,6 +166,7 @@ export function processAndPlaceLayerDetailed(
       ride: rideQc,
       deess: chain.deessQc,
       room: roomQc,
+      space: spaceQc,
     },
   };
 }

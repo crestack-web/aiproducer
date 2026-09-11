@@ -19,6 +19,7 @@ import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
 import { processVocalBus } from "./mix/vocal-bus";
 import { masterMix } from "./master/engine";
 import { runQc } from "./qc/checks";
+import { runTranslationQc, applyTranslationFix } from "./qc/translation";
 import { shouldRetry } from "./qc/retry";
 import { exportMp3, exportWav } from "./render/export-wav-mp3";
 import { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
@@ -339,6 +340,34 @@ export async function runApArrangement(
         jobId: input.jobId,
         warnings: qc.warnings,
         metrics: qc.metrics,
+      });
+    }
+
+    // Translation QC: phone / mono / quiet — auto presence lift if vocal disappears
+    try {
+      const tr = runTranslationQc(rendered.master);
+      logAp("translation_qc", {
+        jobId: input.jobId,
+        monoOk: tr.monoOk,
+        phoneOk: tr.phoneOk,
+        quietOk: tr.quietOk,
+        warnings: tr.warnings,
+        presenceBoostDb: tr.presenceBoostDb,
+      });
+      if (tr.presenceBoostDb > 0.3) {
+        rendered = {
+          ...rendered,
+          master: applyTranslationFix(rendered.master, tr.presenceBoostDb),
+        };
+        logAp("translation_fix", { jobId: input.jobId, boostDb: tr.presenceBoostDb });
+      }
+      if (tr.warnings.length) {
+        // non-fatal — attach to notes via log only
+      }
+    } catch (e) {
+      logAp("translation_qc_error", {
+        jobId: input.jobId,
+        error: e instanceof Error ? e.message : String(e),
       });
     }
 
