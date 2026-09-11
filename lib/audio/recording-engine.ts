@@ -114,12 +114,30 @@ export function buildMusicMicConstraints(
     ? "music_headphones"
     : "music_speaker";
 
-  const base: MediaTrackConstraints = {
-    echoCancellation: mode === "music_speaker",
-    noiseSuppression: false,
-    autoGainControl: false,
-    channelCount: 1,
-  };
+  // Headphones: clean music path, no AEC (AEC colors the voice).
+  // Speaker: aggressive AEC — beat is playing out the same device the mic hears.
+  const base = (
+    mode === "music_headphones"
+      ? {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        }
+      : {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+          channelCount: 1,
+          // Soft vendor hints — never {exact} (fails hard on unsupported browsers)
+          advanced: [
+            {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          ],
+        }
+  ) as MediaTrackConstraints;
 
   if (deviceId) {
     return { ...base, deviceId: { exact: deviceId } };
@@ -279,7 +297,7 @@ export async function openRecordingStream(opts: {
       typeof (settings as { echoCancellation?: boolean }).echoCancellation === "boolean"
         ? (settings as { echoCancellation: boolean }).echoCancellation
         : null,
-    noiseSuppression: false,
+    noiseSuppression: constraintsMode === "music_speaker",
     autoGainControl: false,
     sampleRate: typeof settings.sampleRate === "number" ? settings.sampleRate : undefined,
     channelCount: typeof settings.channelCount === "number" ? settings.channelCount : 1,

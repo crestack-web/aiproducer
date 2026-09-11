@@ -31,6 +31,13 @@
 export const DEFAULT_COUNT_IN_MS = 3000;
 export const DEFAULT_PRE_ROLL_MS = 3000;
 
+/**
+ * MediaRecorder + mobile capture path adds ~40–90ms before samples land in the file.
+ * Subtract so placement matches what the artist heard (fixes "vocal feels late").
+ */
+export const CAPTURE_PIPELINE_LATENCY_MS = 65;
+
+
 export type SessionTimeline = {
   taskId: string;
   sectionStartMs: number;
@@ -123,11 +130,14 @@ export function markBeatStart(
 
 export function markRecordingStart(
   tl: SessionTimeline,
-  opts?: { now?: number; audioContextTime?: number | null }
+  opts?: { now?: number; audioContextTime?: number | null; latencyCompMs?: number }
 ): SessionTimeline {
   const now = opts?.now ?? performance.now();
   const expected = tl.expectedMusicalStartAt ?? now;
-  const recordingOffsetMs = Math.round(now - expected);
+  const latency = opts?.latencyCompMs ?? CAPTURE_PIPELINE_LATENCY_MS;
+  // Positive offset = started after musical zero; subtract capture latency so produce/review
+  // place the take earlier (matches the groove the artist performed to).
+  const recordingOffsetMs = Math.round(now - expected - latency);
   return {
     ...tl,
     actualRecordingStartAt: now,

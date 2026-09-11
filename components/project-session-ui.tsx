@@ -1425,14 +1425,13 @@ export default function ProjectDetailPage() {
       beatAudioRef.current.muted = false;
       // Handset: higher usable level (earpiece far from bottom mic). Loudspeaker: moderate.
       // Headphones: normal monitoring level.
+      // Keep monitor quiet on speaker so the mic does not capture the beat into the take.
       beatAudioRef.current.volume =
-        mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
-      beatAudioRef.current.play().catch(() => undefined);
+        mode === "PHONE_HANDSET" ? 0.1 : mode === "PHONE_SPEAKER" ? 0.02 : 0.14;
+      // Beat play starts *after* we arm the recorder below (tighter musical lock).
     }
-    // Any layer: hear existing section takes (Lead / harmony / ad-lib) under the beat.
-    // Re-load peers if needed so multi-layer sections always monitor previous takes
+    // Any layer: hear existing section takes under the beat (soft volumes; not mixed into recorder).
     void (async () => {
-      // Always (re)load section peers so harmony/ad-lib hears Lead every take
       await startLayerMonitors(task);
       seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
       playLayerMonitors();
@@ -1465,13 +1464,15 @@ export default function ProjectDetailPage() {
       }, limitMs);
     }
 
-    // Mark recorder start at the true capture instant (after beat seek / setup).
-    // Measuring earlier under-counted offset and made Review vocals sound late.
+    // Arm recorder FIRST, then start beat in the same turn — reduces capture lag vs the groove.
     if (sessionTimelineRef.current) {
       sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
       setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
     }
-    rec.start(250);
+    rec.start(100);
+    if (beatAudioRef.current && beatUrl) {
+      beatAudioRef.current.play().catch(() => undefined);
+    }
     setPhase("recording");
     // Phone speaker only: VAD duck on monitor — MediaRecorder graph unchanged
     startSpeakerDuckIfNeeded(stream);
@@ -1638,8 +1639,9 @@ export default function ProjectDetailPage() {
     const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
     // Keep monitors usable but below typical mic bleed risk on speaker
     // Hearable under the new take; still below typical speaker feedback risk
-    const leadVol = mode === "PHONE_SPEAKER" ? 0.4 : 0.85;
-    const otherVol = mode === "PHONE_SPEAKER" ? 0.28 : 0.55;
+    // Layer monitors must stay soft on speaker — they also bleed into the mic.
+    const leadVol = mode === "PHONE_SPEAKER" ? 0.12 : 0.75;
+    const otherVol = mode === "PHONE_SPEAKER" ? 0.08 : 0.45;
 
     for (const src of sources.slice(0, 4)) {
       try {
@@ -1740,7 +1742,7 @@ export default function ProjectDetailPage() {
         const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
         beatAudioRef.current.muted = false;
         beatAudioRef.current.volume =
-          mode === "PHONE_HANDSET" ? 0.12 : mode === "PHONE_SPEAKER" ? 0.05 : 0.12;
+          mode === "PHONE_HANDSET" ? 0.1 : mode === "PHONE_SPEAKER" ? 0.02 : 0.14;
         beatAudioRef.current.play().catch(() => undefined);
       }
       // Always monitor prior takes in this section (harmony under Lead, etc.)
