@@ -11,6 +11,7 @@ import {
 import type { PcmStereo, VocalDecision } from "../types";
 import type { VocalRole } from "../roles";
 import { smartDeess, type SmartDeessQC } from "../restoration/smart-deess";
+import { parallelVocalDensity } from "./parallel-vocal";
 
 export type VocalChainResult = {
   pcm: PcmStereo;
@@ -54,6 +55,18 @@ export function processVocalChainDetailed(
   saturateInPlace(out.left, decision.saturation);
   saturateInPlace(out.right, decision.saturation);
   applyGainStereo(out, dbToGain(decision.gainDb));
+
+  // Parallel density on lead — expensive presence without killing dynamics
+  if (role === "lead" || !role) {
+    try {
+      const dens = parallelVocalDensity(out, 0.26);
+      out.left.set(dens.left);
+      out.right.set(dens.right);
+    } catch {
+      /* keep dry path */
+    }
+  }
+
   addReverbStereo(out, decision.reverbSend);
   addDelayStereo(out, decision.delaySend);
   return { pcm: out, deessQc };

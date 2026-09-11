@@ -1,7 +1,38 @@
 import { bandEnergy, peakOf, rmsOf, stereoToMono } from "../dsp";
-import type { PcmStereo, VocalAnalysis } from "../types";
+import type { BandEnergies, PcmStereo, VocalAnalysis } from "../types";
+
+export type VocalCharacter = {
+  mud: number; // 0–1 excess 80–250
+  box: number; // 0–1 excess 300–600
+  nasal: number; // 0–1 excess 800–1500
+  harsh: number; // 0–1 excess 2.5–5k
+  air: number; // 0–1 energy above 8k
+  thin: number; // 0–1 lack of body <250
+  presence: number; // 0–1 1.5–4k
+};
+
+export type ExtendedVocalAnalysis = VocalAnalysis & {
+  character: VocalCharacter;
+  bandsFine: {
+    sub: number;
+    body: number;
+    lowMid: number;
+    mid: number;
+    presence: number;
+    brilliance: number;
+    air: number;
+  };
+};
+
+function safeRatio(part: number, sum: number): number {
+  return Math.max(0, Math.min(1, part / (sum + 1e-9)));
+}
 
 export function analyzeVocal(pcm: PcmStereo): VocalAnalysis {
+  return analyzeVocalExtended(pcm);
+}
+
+export function analyzeVocalExtended(pcm: PcmStereo): ExtendedVocalAnalysis {
   const mono = stereoToMono(pcm);
   const sr = pcm.sampleRate;
   const peak = peakOf(mono);
@@ -20,7 +51,6 @@ export function analyzeVocal(pcm: PcmStereo): VocalAnalysis {
   const clippingRatio = mono.length ? clipCount / mono.length : 0;
   const silenceRatio = mono.length ? silent / mono.length : 1;
 
-  // Noise floor ~ lower percentile of frame RMS
   const frame = Math.floor(sr * 0.02);
   const frameRms: number[] = [];
   for (let i = 0; i + frame < mono.length; i += frame) {
@@ -35,10 +65,45 @@ export function analyzeVocal(pcm: PcmStereo): VocalAnalysis {
   const noiseFloor =
     frameRms.length > 10 ? frameRms[Math.floor(frameRms.length * 0.1)] : null;
 
-  const low = bandEnergy(mono, sr, 30, 250);
-  const mid = bandEnergy(mono, sr, 250, 4000);
-  const high = bandEnergy(mono, sr, 4000, Math.min(12000, sr * 0.45));
-  const sum = low + mid + high + 1e-9;
+  const sub = bandEnergy(mono, sr, 40, 120);
+  const body = bandEnergy(mono, sr, 120, 300);
+  const lowMid = bandEnergy(mono, sr, 300, 700);
+  const mid = bandEnergy(mono, sr, 700, 1800);
+  const presence = bandEnergy(mono, sr, 1800, 4500);
+  const brilliance = bandEnergy(mono, sr, 4500, 8000);
+  const air = bandEnergy(mono, sr, 8000, Math.min(14000, sr * 0.45));
+  const fineSum = sub + body + lowMid + mid + presence + brilliance + air + 1e-9;
+
+  const bandsFine = {
+    sub: safeRatio(sub, fineSum),
+    body: safeRatio(body, fineSum),
+    lowMid: safeRatio(lowMid, fineSum),
+    mid: safeRatio(mid, fineSum),
+    presence: safeRatio(presence, fineSum),
+    brilliance: safeRatio(brilliance, fineSum),
+    air: safeRatio(air, fineSum),
+  };
+
+  const low = sub + body;
+  const midB = lowMid + mid + presence;
+  const high = brilliance + air;
+  const sum = low + midB + high + 1e-9;
+  const bands: BandEnergies = {
+    low: low / sum,
+    mid: midB / sum,
+    high: high / sum,
+  };
+
+  // Character scores vs healthy voice priors (relative)
+  const character: VocalCharacter = {
+    mud: Math.max(0, Math.min(1, (bandsFine.body + bandsFine.sub) * 1.4 - 0.22)),
+    box: Math.max(0, Math.min(1, bandsFine.lowMid * 2.2 - 0.18)),
+    nasal: Math.max(0, Math.min(1, bandsFine.mid * 2.0 - 0.2)),
+    harsh: Math.max(0, Math.min(1, (bandsFine.presence * 0.6 + bandsFine.brilliance) * 1.8 - 0.2)),
+    air: Math.max(0, Math.min(1, bandsFine.air * 3.5)),
+    thin: Math.max(0, Math.min(1, 0.28 - (bandsFine.body + bandsFine.sub))),
+    presence: Math.max(0, Math.min(1, bandsFine.presence * 2.2)),
+  };
 
   return {
     durationMs: Math.round((mono.length / sr) * 1000),
@@ -50,6 +115,8 @@ export function analyzeVocal(pcm: PcmStereo): VocalAnalysis {
     clippingRatio,
     noiseFloor,
     silenceRatio,
-    bands: { low: low / sum, mid: mid / sum, high: high / sum },
+    bands,
+    character,
+    bandsFine,
   };
 }

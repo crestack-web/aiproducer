@@ -16,6 +16,7 @@ import {
 } from "./production/decision-engine";
 import { mixVocalAndBeat } from "./mix/engine";
 import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
+import { processVocalBus } from "./mix/vocal-bus";
 import { masterMix } from "./master/engine";
 import { runQc } from "./qc/checks";
 import { shouldRetry } from "./qc/retry";
@@ -241,7 +242,8 @@ export async function runApArrangement(
         placed.push(placedByIndex[i]!);
       }
 
-      const vocalBus = sumVocalBus(placed);
+      let vocalBus = sumVocalBus(placed);
+      vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
       const master = masterMix(mix, arrMix.master);
       return {

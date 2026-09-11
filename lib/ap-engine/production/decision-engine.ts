@@ -143,6 +143,39 @@ export function decideLayer(
     eq.push({ type: "highshelf", freq: 9000, gainDb: 1.0, q: 0.7 });
   }
 
+  // Per-voice character EQ (recording-production engineer, not a flat preset)
+  const ch = v.character;
+  if (ch && ctx.role === "lead") {
+    if (ch.mud > 0.35) {
+      eq.push({ type: "peak", freq: 180, gainDb: -2.2 * ch.mud, q: 0.85 });
+      notes.push("cut_mud");
+    }
+    if (ch.box > 0.35) {
+      eq.push({ type: "peak", freq: 450, gainDb: -2.0 * ch.box, q: 1.0 });
+      notes.push("cut_box");
+    }
+    if (ch.nasal > 0.4) {
+      eq.push({ type: "peak", freq: 1100, gainDb: -1.8 * ch.nasal, q: 1.2 });
+      notes.push("cut_nasal");
+    }
+    if (ch.harsh > 0.4) {
+      eq.push({ type: "peak", freq: 3500, gainDb: -2.4 * ch.harsh, q: 1.3 });
+      notes.push("tame_harsh");
+    }
+    if (ch.thin > 0.35) {
+      eq.push({ type: "lowshelf", freq: 200, gainDb: 1.8 * ch.thin, q: 0.7 });
+      notes.push("add_body");
+    }
+    if (ch.air < 0.15 && ch.harsh < 0.35) {
+      eq.push({ type: "highshelf", freq: 11000, gainDb: 1.4, q: 0.7 });
+      notes.push("add_air");
+    }
+    if (ch.presence < 0.25) {
+      eq.push({ type: "peak", freq: 2800, gainDb: 1.6, q: 1.0 });
+      notes.push("lift_presence");
+    }
+  }
+
   let ratio = 3.0 + treatment.compressionRatioBoost;
   let thresholdDb = -18;
   if (profile.preserveDynamics > 0.7 && ctx.role === "lead") {

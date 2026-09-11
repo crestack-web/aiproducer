@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.3.1-pocket-glue";
+export const AP_ENGINE_VERSION = "1.4.0-vocal-engineer";
 
 export type ApStage =
   | "queued"
@@ -24,6 +24,16 @@ export type BandEnergies = {
   high: number; // ~4k–nyquist
 };
 
+export type VocalCharacter = {
+  mud: number;
+  box: number;
+  nasal: number;
+  harsh: number;
+  air: number;
+  thin: number;
+  presence: number;
+};
+
 export type VocalAnalysis = {
   durationMs: number;
   sampleRate: number;
@@ -35,6 +45,8 @@ export type VocalAnalysis = {
   noiseFloor: number | null;
   silenceRatio: number;
   bands: BandEnergies;
+  /** Fine spectral character 0–1 — drives per-voice EQ */
+  character?: VocalCharacter;
 };
 
 export type BeatAnalysis = {
