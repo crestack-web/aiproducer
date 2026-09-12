@@ -65,6 +65,7 @@ import {
   productionLayersAdded,
   nextProductionRecommendation,
   nextCoreForward,
+  openLayersForSection,
   type SessionTask,
   layerRecommendationCopy,
   sectionHasOpenWork,
@@ -630,18 +631,23 @@ export default function ProjectDetailPage() {
     const task = tasks.find((t) => t.id === taskId);
     // Revisit a completed section: open Review with the selected take so the
     // artist can listen without recording again.
-    if (task && task.status === "completed") {
-      setPhase("review");
+    if (task && isTaskDone(task)) {
       void loadTaskTakes(taskId).then((list) => {
         if (list.some((t) => t.audio_url)) {
+          setPhase("review");
           applySelectedTakeToReview(list);
         } else {
+          // Marked done but no audio — allow re-record, don't show Keep take
           setPhase("ready");
+          setSavedRecordingId(null);
+          setLocalBlobUrl(null);
         }
       });
       return;
     }
     setPhase("ready");
+    setSavedRecordingId(null);
+    setLocalBlobUrl(null);
   }
 
   const pollProduceOnce = useCallback(async (): Promise<
@@ -2061,6 +2067,13 @@ export default function ProjectDetailPage() {
 
     const ensureActive = (task: Task | SessionTask) => {
       const normalized: Task = asSessionTask(task);
+      // Always reset capture UI — never carry "Keep take" onto a new unrecorded task
+      setSavedRecordingId(null);
+      setLocalBlobUrl(null);
+      setTaskTakes([]);
+      setReviewOverdubSrcs([]);
+      setPhase("ready");
+      setError(null);
       setTasks((prev) => {
         if (prev.some((t) => t.id === normalized.id)) {
           return prev.map((t) => (t.id === normalized.id ? { ...t, ...normalized } : t));
@@ -2661,6 +2674,38 @@ export default function ProjectDetailPage() {
               ← Plan
             </button>
             <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
+            {current && (() => {
+              const layers = openLayersForSection(tasks, current);
+              if (!layers.length && !isCoreTask(current)) return null;
+              const show = isCoreTask(current) ? layers : openLayersForSection(tasks, current);
+              if (!show.length) return null;
+              return (
+                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface }}>
+                  <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+                    Also on this section (real takes — not just notes)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {show.map((layer) => (
+                      <button
+                        key={layer.id}
+                        type="button"
+                        onClick={() => selectTask(layer.id)}
+                        disabled={phase === "recording" || phase === "countdown"}
+                        style={{
+                          ...btn2,
+                          fontSize: 12,
+                          padding: "6px 10px",
+                          opacity: isTaskDone(layer) ? 0.55 : 1,
+                        }}
+                      >
+                        {(layer.title || layer.type || "Layer").toString()}
+                        {isTaskDone(layer) ? " ✓" : isTaskOpen(layer) ? "" : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <p style={{ textAlign: "center", fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>
               {coreDone(tasks).length}/{coreTasks(tasks).length} core sections
               {productionLayersAdded(tasks).length > 0
@@ -2980,7 +3025,7 @@ export default function ProjectDetailPage() {
                 {producerTip && (
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
                 )}
-                <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId} onClick={keepAndContinue}>
+                <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId || phase !== "review"} onClick={keepAndContinue}>
                 {!uploading && current && (() => {
                   const nextLayer = nextProductionRecommendation(
                     [

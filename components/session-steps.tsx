@@ -142,47 +142,55 @@ export function nextProductionRecommendation(
   parent: SessionTask
 ): SessionTask | null {
   const openOthers = tasks.filter((t) => t.id !== parent.id && isTaskOpen(t));
+  if (!openOthers.length) return null;
+
+  const parentSid =
+    parent.section_id ||
+    (parent.metadata && (parent.metadata as { section_id?: string }).section_id) ||
+    null;
   const parentStart = parent.start_ms != null ? Number(parent.start_ms) : null;
 
-  // Primary: same musical section (label / section_id)
-  let sameSection = openOthers.filter((t) => sameMusicalSection(parent, t));
-
-  // Fallback: only tasks that START near the parent lead (not a wide 60s net that
-  // pulls earlier sections). Layers usually share start_ms with the lead.
-  if (!sameSection.length && parentStart != null) {
-    sameSection = openOthers.filter((t) => {
-      const cs = t.start_ms != null ? Number(t.start_ms) : null;
-      if (cs == null) return false;
-      // Must be within 4s of the lead start — not the whole song window
-      return Math.abs(cs - parentStart) <= 4000;
-    });
-  }
+  const sameSection = openOthers.filter((t) => {
+    // 1) Shared section_id is the real plan link (analyze inserts section_id per section)
+    const sid =
+      t.section_id ||
+      (t.metadata && (t.metadata as { section_id?: string }).section_id) ||
+      null;
+    if (parentSid && sid && parentSid === sid) return true;
+    // 2) Label / group key
+    if (sameMusicalSection(parent, t)) return true;
+    // 3) Near-identical start_ms only (layers share the lead's start)
+    if (parentStart != null && t.start_ms != null) {
+      if (Math.abs(Number(t.start_ms) - parentStart) <= 4000) return true;
+    }
+    return false;
+  });
 
   if (!sameSection.length) return null;
 
-  // Prefer production layers on THIS section only
-  const layers = sameSection.filter((t) => isProductionLayer(t) || isProductionLayerTask(t));
-  layers.sort((a, b) => layerRank(a.type) - layerRank(b.type));
+  // Production layers only — never another section's lead here
+  const layers = sameSection
+    .filter((t) => isProductionLayer(t) || isProductionLayerTask(t) || !isCoreTask(t))
+    .filter((t) => !isCoreTask(t));
+  layers.sort((a, b) => {
+    const lr = layerRank(a.type) - layerRank(b.type);
+    if (lr !== 0) return lr;
+    const as = a.start_ms != null ? Number(a.start_ms) : 0;
+    const bs = b.start_ms != null ? Number(b.start_ms) : 0;
+    return as - bs;
+  });
   if (layers[0]) return layers[0];
-
-  const other = sameSection.filter((t) => !isCoreTask(t));
-  other.sort((a, b) => layerRank(a.type) - layerRank(b.type));
-  if (other[0]) return other[0];
-
-  // Peer core only if same section — never a different section's lead
-  const peerCore = sameSection.find((t) => isCoreTask(t));
-  if (peerCore) return peerCore;
 
   return null;
 }
 
-/** Next open lead AFTER the completed task in timeline order (never go backward). */
+/** Next open lead AFTER the completed task in timeline order (never go backward first). */
 export function nextCoreForward(
   tasks: SessionTask[],
   completed: SessionTask | null | undefined
 ): SessionTask | null {
   const opens = tasks
-    .filter((t) => isCoreTask(t) && isTaskOpen(t))
+    .filter((t) => isCoreTask(t) && isTaskOpen(t) && (!completed || t.id !== completed.id))
     .slice()
     .sort((a, b) => {
       const as = a.start_ms != null ? Number(a.start_ms) : 0;
@@ -193,24 +201,46 @@ export function nextCoreForward(
   if (!opens.length) return null;
   if (!completed) return opens[0];
   const cs = completed.start_ms != null ? Number(completed.start_ms) : null;
-  if (cs == null) {
-    // No timing — pick first core that is not the completed id
-    return opens.find((t) => t.id !== completed.id) || null;
-  }
-  // Prefer next section at or after this start (excluding same-section peer already handled)
+  if (cs == null) return opens[0];
+
+  // Strictly forward: first lead that starts after this section's start
   const forward = opens.find((t) => {
-    if (t.id === completed.id) return false;
-    if (sameMusicalSection(completed, t)) return false; // stay handled by layer path
+    if (sameMusicalSection(completed, t)) return false;
     const ts = t.start_ms != null ? Number(t.start_ms) : 0;
-    return ts >= cs - 500; // allow tiny float/order noise
+    return ts > cs + 500;
   });
   if (forward) return forward;
-  // If nothing ahead, only then earlier incomplete cores
-  return opens.find((t) => t.id !== completed.id) || null;
+
+  // Same start_ms bucket but different section_id (rare) — any open not same section
+  const other = opens.find((t) => !sameMusicalSection(completed, t));
+  if (other) return other;
+
+  // Last resort: earlier incomplete leads
+  return opens[0];
 }
 
+/** Open production-layer tasks for the same section as parent (for UI list). */
+export function openLayersForSection(
+  tasks: SessionTask[],
+  parent: SessionTask
+): SessionTask[] {
+  return tasks
+    .filter(
+      (t) =>
+        t.id !== parent.id &&
+        isTaskOpen(t) &&
+        !isCoreTask(t) &&
+        (sameMusicalSection(parent, t) ||
+          (parent.section_id &&
+            t.section_id &&
+            parent.section_id === t.section_id) ||
+          (parent.start_ms != null &&
+            t.start_ms != null &&
+            Math.abs(Number(t.start_ms) - Number(parent.start_ms)) <= 4000))
+    )
+    .sort((a, b) => layerRank(a.type) - layerRank(b.type));
+}
 
-/** True if this section still has open vocal work (layers or unfinished peers). */
 export function sectionHasOpenWork(tasks: SessionTask[], parent: SessionTask): boolean {
   return tasks.some(
     (t) => t.id !== parent.id && isTaskOpen(t) && sameMusicalSection(parent, t)
