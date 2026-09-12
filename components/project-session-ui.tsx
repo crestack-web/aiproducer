@@ -154,7 +154,7 @@ function asSessionTask(t: {
   start_ms?: number | null;
   end_ms?: number | null;
   section_id?: string | null;
-  metadata?: Task["metadata"];
+  metadata?: Task["metadata"] | null;
 }): Task {
   return {
     id: t.id,
@@ -167,7 +167,7 @@ function asSessionTask(t: {
     start_ms: t.start_ms ?? null,
     end_ms: t.end_ms ?? null,
     section_id: t.section_id ?? null,
-    metadata: t.metadata,
+    metadata: t.metadata ?? undefined,
   };
 }
 
@@ -2158,10 +2158,22 @@ export default function ProjectDetailPage() {
             metadata: existing.metadata ?? (p.metadata as Task["metadata"]),
           });
         } else {
-          byId.set(p.id, asSessionTask({
-            ...p,
-            status: p.id === completedId ? "completed" : p.status || "pending",
-          }));
+          byId.set(
+            p.id,
+            asSessionTask({
+              id: p.id,
+              type: p.type,
+              title: p.title,
+              instruction: p.instruction,
+              reason: p.reason,
+              status: p.id === completedId ? "completed" : p.status || "pending",
+              required: p.required,
+              start_ms: p.start_ms,
+              end_ms: p.end_ms,
+              section_id: p.section_id,
+              metadata: (p.metadata as Task["metadata"] | null) ?? undefined,
+            })
+          );
         }
       }
       // Ensure the just-completed task is marked done even if API is lagging
