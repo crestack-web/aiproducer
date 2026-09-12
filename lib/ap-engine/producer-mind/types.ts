@@ -47,6 +47,14 @@ export type PhraseDecision = {
     adlibs: boolean;
     reasoning: string;
   };
+  pitchTiming?: {
+    pitchCorrection: "none" | "light" | "moderate" | "tight";
+    timingCorrection: "none" | "light" | "moderate" | "tight";
+    preserve: string[];
+    reasoning: string;
+    pitchStrength: number;
+    timingStrength: number;
+  };
 };
 
 export type SectionDecision = {

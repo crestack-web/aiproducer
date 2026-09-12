@@ -29,6 +29,8 @@ export type StackLayerInput = {
   genre?: string | null;
   leadReference?: PcmStereo | null;
   bpm?: number | null;
+  correctionStrengthBias?: number;
+  timingTightnessBias?: number;
 };
 
 export type PerformanceQc = {
@@ -114,6 +116,9 @@ export function processAndPlaceLayerDetailed(
       role,
       genre: layer.genre,
       leadReference: layer.leadReference || null,
+      correctionStrengthBias: layer.correctionStrengthBias,
+      timingTightnessBias: layer.timingTightnessBias,
+      forcePreserveVibrato: true,
     });
     if (polished.applied) v = polished.pcm;
   } catch (e) {

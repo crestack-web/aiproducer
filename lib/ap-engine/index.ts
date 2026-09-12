@@ -45,6 +45,7 @@ import {
   generateFromDecision,
   type GeneratedLayer,
 } from "./fullness";
+import { decidePitchTimingForPhrase, aggregatePitchTiming } from "./producer-mind/pitch-timing";
 import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
@@ -276,13 +277,40 @@ export async function runApArrangement(
       summary: decisionMap.summary.slice(0, 8),
     });
 
+    // ——— Pitch/timing phrase decisions → partial correction strengths ———
+    const styleIntimate = decisionMap.song.restraintVsPolish < 0.42;
+    const layerPitchPolicy: { pitchStrength: number; timingStrength: number; summary: string }[] =
+      normalizedLayers.map((layer) => {
+        const phrases = decisionMap.phrases.filter(
+          (p) => p.role === layer.role && p.section === layer.section
+        );
+        const decisions = (phrases.length ? phrases : decisionMap.phrases.filter((p) => p.role === "lead")).map(
+          (ph) =>
+            decidePitchTimingForPhrase({
+              phrase: ph,
+              song: decisionMap.song,
+              section: decisionMap.sections.find((s) => s.section === ph.section),
+              styleIntimate,
+            })
+        );
+        return aggregatePitchTiming(decisions);
+      });
+    logAp("pitch_timing_policy", {
+      jobId: input.jobId,
+      layers: layerPitchPolicy.map((p, i) => ({
+        role: normalizedLayers[i]?.role,
+        pitch: p.pitchStrength,
+        timing: p.timingStrength,
+        summary: p.summary,
+      })),
+    });
+
     // ——— Fullness layer: doubles / gated harmonies / sparse ad-libs from real vocal ———
     const keyEst = estimateKeyFromBeat(beatNorm.pcm);
     logAp("fullness_key", {
       jobId: input.jobId,
       ...keyEst,
     });
-    const styleIntimate = decisionMap.song.restraintVsPolish < 0.42;
     let adlibBudget = 2;
     const generated: GeneratedLayer[] = [];
     const fullnessNotes: string[] = [];
@@ -437,6 +465,8 @@ export async function runApArrangement(
           genre: input.genre,
           leadReference: leadPolishedRef,
           bpm: beatA?.bpm ?? null,
+          correctionStrengthBias: layerPitchPolicy[i]?.pitchStrength,
+          timingTightnessBias: layerPitchPolicy[i]?.timingStrength,
         });
         placedByIndex[i] = detailed.placed;
         if (detailed.polished) pitchQcAll.push(detailed.polished.qc);
@@ -505,7 +535,7 @@ export async function runApArrangement(
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
         pitchQcAll,
-        performanceNotes: [...performanceNotes, ...restoreNotes, ...fullnessNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
+        performanceNotes: [...performanceNotes, ...restoreNotes, ...fullnessNotes, ...layerPitchPolicy.map((p) => p.summary), ...decisionMap.summary.map((s) => `mind:${s}`)],
       };
     };
 

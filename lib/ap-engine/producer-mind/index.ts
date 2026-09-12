@@ -12,3 +12,6 @@ export { readSongLevel } from "./song-read";
 export { readSectionLevel } from "./section-read";
 export { readPhraseLevel } from "./phrase-read";
 export { applyPhraseFaderRides, phraseInfluenceForLayer } from "./apply-map";
+
+export { decidePitchTimingForPhrase, aggregatePitchTiming } from "./pitch-timing";
+export type { PitchTimingDecision, CorrectionAmount } from "./pitch-timing";
