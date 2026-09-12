@@ -4,33 +4,29 @@ import { cleanTakeEdges } from "./edge-fade";
 import { trimVocalSilence } from "./silence-trim";
 
 /**
- * Restoration: silence trim → edge clean → HPF → gate.
- * Empty space is removed/zeroed so FX don't create weird noise in gaps.
+ * Light restoration: gentle edge clean → HPF → soft gate.
+ * Avoid aggressive silence chopping (it created vocal artifacts).
  */
 export function restoreVocal(pcm: PcmStereo, decision: VocalDecision): PcmStereo {
-  // 1. Trim empty head/tail + silence long internal gaps (timing preserved)
-  let out = trimVocalSilence(pcm, "aggressive").pcm;
+  // Soft head/tail only — no internal gap muting
+  let out = trimVocalSilence(pcm, "normal").pcm;
 
-  // 2. Extra edge polish after trim
-  out = cleanTakeEdges(out, {
-    fadeInMs: 40,
-    fadeOutMs: 80,
-    maxLeadMs: 200,
-    maxTailMs: 250,
-    contentRatio: 0.05,
-  });
   out = cloneStereo(out);
   highPassInPlace(out.left, out.sampleRate, decision.highPassHz);
   highPassInPlace(out.right, out.sampleRate, decision.highPassHz);
-  gateInPlace(out.left, out.sampleRate, decision.gateThresholdDb);
-  gateInPlace(out.right, out.sampleRate, decision.gateThresholdDb);
-  // Second gentle edge pass after gate
+
+  // Gentler gate: don't carve into quiet phrase endings
+  const gateDb = Math.min(decision.gateThresholdDb, -38);
+  gateInPlace(out.left, out.sampleRate, gateDb);
+  gateInPlace(out.right, out.sampleRate, gateDb);
+
+  // One soft edge pass after gate (not multiple aggressive trims)
   out = cleanTakeEdges(out, {
-    fadeInMs: 20,
-    fadeOutMs: 60,
-    maxLeadMs: 100,
-    maxTailMs: 150,
-    contentRatio: 0.05,
+    fadeInMs: 30,
+    fadeOutMs: 70,
+    maxLeadMs: 180,
+    maxTailMs: 220,
+    contentRatio: 0.08,
   });
   return out;
 }
