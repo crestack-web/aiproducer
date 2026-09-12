@@ -28,7 +28,7 @@ export function enhanceRnbProfile(profile: GenreProfile): GenreProfile {
     beatRespect: Math.min(0.78, Math.max(0.62, profile.beatRespect)),
     chorusEnergyBoostDb: Math.max(1.4, profile.chorusEnergyBoostDb),
     verseIntimacyDb: Math.min(-1.2, profile.verseIntimacyDb),
-    targetLufs: profile.targetLufs ?? -11.5,
+    targetLufs: Math.min(-12, Math.max(-14, profile.targetLufs ?? -12.5)),
     roles: {
       ...profile.roles,
       lead: {

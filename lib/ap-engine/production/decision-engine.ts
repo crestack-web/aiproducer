@@ -325,9 +325,10 @@ export function decideArrangementMix(
       makeupDb: 0.5,
     },
     limiterCeilingDb: -1.0,
-    targetLufs: profile.targetLufs,
-    makeupDb: 0.9,
-    truePeakMarginDb: 0.5,
+    // Streaming competitive: clamp profile into -12…-14 family
+    targetLufs: Math.min(-12, Math.max(-14.5, profile.targetLufs ?? -13)),
+    makeupDb: 1.5,
+    truePeakMarginDb: 0.35,
   };
 
   return { mix, master, notes };

@@ -86,7 +86,7 @@ const PROFILES: Record<string, GenreProfile> = {
     beatRespect: 0.68,
     chorusEnergyBoostDb: 1.5,
     verseIntimacyDb: -1.6,
-    targetLufs: -11.5,
+    targetLufs: -12.5,
     roles: baseRoles({
       lead: {
         presenceDb: 2.4,
@@ -181,7 +181,7 @@ const PROFILES: Record<string, GenreProfile> = {
     beatRespect: 0.6,
     chorusEnergyBoostDb: 0.8,
     verseIntimacyDb: -1.8,
-    targetLufs: -13.5,
+    targetLufs: -13,
     roles: baseRoles({
       lead: { presenceDb: 1.8, warmthDb: 2, reverb: 0.18, compressionRatioBoost: -0.6, delay: 0.05 },
       harmony_mid: { reverb: 0.26, width: 0.5 },
