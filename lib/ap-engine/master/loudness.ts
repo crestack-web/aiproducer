@@ -81,9 +81,9 @@ export function normalizeToStreamingTarget(
   ceilingDb = -1.0,
   marginDb = 0.35
 ): LoudnessNormalizeResult {
-  // RMS proxy vs integrated LUFS: for dense pop/R&B, RMS is often ~1–3 dB
-  // hotter than LUFS. Aim RMS slightly above targetLufs so final feels competitive.
-  const targetRmsDb = targetLufs + 1.2;
+  // RMS proxy vs integrated LUFS: aim hotter so phones/speakers feel competitive.
+  // Streaming refs often sit ~-9 to -11 LUFS; push RMS a couple dB above target label.
+  const targetRmsDb = targetLufs + 2.4;
   const beforeDb = estimateLoudnessProxyDb(pcm);
   let totalGainDb = 0;
   let passes = 0;

@@ -72,12 +72,19 @@ function correctiveEq(
     notes.push("added low-end body");
   }
   // Presence: forward + polished more; raw keeps texture
+  // Vocal clarity / "crisp" without harshness
   const presence =
-    (ctx.vocalSit === "forward" ? 1.0 : 0.35) * (0.6 + style * 0.5) *
-    (fp.vocalTimbre.harmonicity > 0.4 ? 1 : 0.85);
-  applyBiquadInPlace(out.left, "peak", 2600, out.sampleRate, presence, 1.0);
-  applyBiquadInPlace(out.right, "peak", 2600, out.sampleRate, presence, 1.0);
-  if (presence > 0.5) notes.push("lifted vocal presence");
+    (ctx.vocalSit === "forward" ? 1.35 : 0.55) * (0.75 + style * 0.55) *
+    (fp.vocalTimbre.harmonicity > 0.4 ? 1 : 0.9);
+  // Presence (intelligibility) + gentle air (crisp, not harsh)
+  applyBiquadInPlace(out.left, "peak", 3000, out.sampleRate, presence, 1.05);
+  applyBiquadInPlace(out.right, "peak", 3000, out.sampleRate, presence, 1.05);
+  applyBiquadInPlace(out.left, "peak", 5200, out.sampleRate, presence * 0.45, 1.2);
+  applyBiquadInPlace(out.right, "peak", 5200, out.sampleRate, presence * 0.45, 1.2);
+  const air = 0.55 + style * 0.45;
+  applyBiquadInPlace(out.left, "highshelf", 10000, out.sampleRate, air, 0.7);
+  applyBiquadInPlace(out.right, "highshelf", 10000, out.sampleRate, air, 0.7);
+  if (presence > 0.4) notes.push("lifted vocal presence + air");
   return notes;
 }
 
@@ -137,8 +144,9 @@ function saturation(out: PcmStereo, style: StyleAxis, density: number): string {
 }
 
 function targetFromStyle(ctx: MasterContext, style: StyleAxis, loudnessBiasDb: number): number {
-  // Raw → quieter/more dynamic; polished → competitive
-  const base = -13.5 + style * 3.5; // -13.5 raw → -10 polished
+  // Competitive commercial loudness (RMS proxy). Raw stays more dynamic.
+  // ~-11.5 raw → ~-9 polished so masters don't feel quiet vs streaming refs.
+  const base = -11.5 + style * 2.8;
   let t = base;
   if (ctx.mood === "loud") t = Math.max(t, -10.5);
   if (ctx.mood === "spacious") t = Math.min(t, -12.5);

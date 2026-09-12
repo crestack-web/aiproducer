@@ -24,8 +24,8 @@ export function processVocalBus(
   applyEqStereo(out, [
     { type: "highpass", freq: 70, q: 0.7 },
     { type: "peak", freq: 280, gainDb: -1.2, q: 0.9 },
-    { type: "peak", freq: 3000, gainDb: 1.0, q: 1.0 },
-    { type: "highshelf", freq: 10000, gainDb: 0.6, q: 0.7 },
+    { type: "peak", freq: 3200, gainDb: 1.0, q: 1.0 },
+    { type: "highshelf", freq: 10000, gainDb: 1.4, q: 0.7 },
   ]);
 
   // Glue compressor
@@ -34,7 +34,7 @@ export function processVocalBus(
     ratio: 1.8 + glue * 1.2,
     attackMs: 15,
     releaseMs: 140,
-    makeupDb: 1.5 * glue,
+    makeupDb: 2.2 * glue,
   });
 
   out = parallelVocalDensity(out, density * 0.85);

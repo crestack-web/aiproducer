@@ -134,12 +134,19 @@ export function decideLayer(
     eq.push({ type: "lowshelf", freq: 200, gainDb: treatment.warmthDb * 0.55, q: 0.7 });
   }
 
-  const presence = treatment.presenceDb * (ctx.role === "lead" ? 1 : ctx.role === "double" ? 0.55 : 0.35);
-  eq.push({ type: "peak", freq: ctx.role === "harmony_low" ? 2200 : 2800, gainDb: presence * 0.55, q: 1.1 });
+  const presence = treatment.presenceDb * (ctx.role === "lead" ? 1.25 : ctx.role === "double" ? 0.55 : 0.35);
+  eq.push({ type: "peak", freq: ctx.role === "harmony_low" ? 2200 : 3200, gainDb: presence * 0.72, q: 1.05 });
+  if (ctx.role === "lead") {
+    eq.push({ type: "peak", freq: 5500, gainDb: Math.min(2.2, presence * 0.4), q: 1.15 });
+  }
 
-  if (v.bands.high > 0.4 && ctx.role === "lead") {
-    eq.push({ type: "highshelf", freq: 8000, gainDb: -1.8, q: 0.7 });
-    notes.push("tame_air");
+  if (v.bands.high > 0.55 && ctx.role === "lead") {
+    // Only tame extreme harsh air — keep crispness by default
+    eq.push({ type: "highshelf", freq: 9000, gainDb: -0.8, q: 0.7 });
+    notes.push("tame_harsh_air");
+  } else if (ctx.role === "lead") {
+    eq.push({ type: "highshelf", freq: 11000, gainDb: 1.2, q: 0.7 });
+    notes.push("lead_air");
   } else if (ctx.role === "harmony_high" || ctx.role === "adlib") {
     eq.push({ type: "highshelf", freq: 9000, gainDb: 1.0, q: 0.7 });
   }
@@ -190,7 +197,7 @@ export function decideLayer(
   }
 
   // Level toward role-relative target (lead ~ -18 dBFS RMS proxy)
-  const leadTarget = 0.12;
+  const leadTarget = 0.14;
   const roleGain = DEFAULT_ROLE_GAIN_DB[ctx.role] + treatment.gainDbOffset + sec.gainDb;
   let gainDb = roleGain;
   if (v.rms > 1e-6) {
