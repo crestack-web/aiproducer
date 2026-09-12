@@ -152,10 +152,42 @@ function humanTitle(type: string) {
   return "Lead vocal";
 }
 
+
+/** Canonical musical window for a task — prefers columns, then metadata timeline. */
+function resolveTaskWindow(task: {
+  start_ms?: number | null;
+  end_ms?: number | null;
+  metadata?: Record<string, unknown> | null;
+}): { startMs: number; endMs: number | null; durationMs: number | null } {
+  const meta = (task.metadata || {}) as Record<string, unknown>;
+  const startRaw =
+    task.start_ms ??
+    (typeof meta.timeline_start_ms === "number" ? meta.timeline_start_ms : null) ??
+    0;
+  const endRaw =
+    task.end_ms ??
+    (typeof meta.timeline_end_ms === "number" ? meta.timeline_end_ms : null);
+  const startMs = Math.max(0, Math.round(Number(startRaw) || 0));
+  const endMs =
+    endRaw != null && Number.isFinite(Number(endRaw))
+      ? Math.max(startMs + 500, Math.round(Number(endRaw)))
+      : null;
+  const durationMs = endMs != null ? endMs - startMs : null;
+  return { startMs, endMs, durationMs };
+}
+
+function fmtSectionWindow(startMs: number, endMs: number | null): string {
+  const fmt = (ms: number) => {
+    const s = Math.max(0, ms) / 1000;
+    const m = Math.floor(s / 60);
+    const r = Math.floor(s % 60);
+    return `${m}:${String(r).padStart(2, "0")}`;
+  };
+  return endMs != null ? `${fmt(startMs)} → ${fmt(endMs)}` : fmt(startMs);
+}
 function sectionDurationMs(task: Task): number | null {
-  if (task.start_ms == null || task.end_ms == null) return null;
-  const d = Number(task.end_ms) - Number(task.start_ms);
-  return d > 500 ? d : null;
+  const w = resolveTaskWindow(task);
+  return w.durationMs != null && w.durationMs > 500 ? w.durationMs : null;
 }
 
 function activeSessionTasksFromPlan(rows: PlanEditorTask[]): Task[] {
@@ -1416,7 +1448,8 @@ export default function ProjectDetailPage() {
       }
     };
 
-    const limitMs = sectionDurationMs(task);
+    const taskWin = resolveTaskWindow(task);
+    const limitMs = taskWin.durationMs != null && taskWin.durationMs > 500 ? taskWin.durationMs : sectionDurationMs(task);
 
     startedAtRef.current = Date.now();
     recordingStartPerfRef.current = performance.now();
@@ -1424,7 +1457,7 @@ export default function ProjectDetailPage() {
     // Beat seeks to canonical section start (musical position), not 0
     if (beatAudioRef.current && beatUrl) {
       void routePlaybackToPreferredOutput(beatAudioRef.current, selectedSpeakerIdRef.current || undefined);
-      beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+      beatAudioRef.current.currentTime = taskWin.startMs / 1000;
       const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
       beatAudioRef.current.muted = false;
       // Handset: higher usable level (earpiece far from bottom mic). Loudspeaker: moderate.
@@ -1468,12 +1501,12 @@ export default function ProjectDetailPage() {
         sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
         setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
       }
-      seekLayerMonitorsToSectionStart(task.start_ms ?? 0);
+      seekLayerMonitorsToSectionStart(taskWin.startMs);
       playLayerMonitors();
       rec.start(100);
       if (beatAudioRef.current && beatUrl) {
         try {
-          beatAudioRef.current.currentTime = (task.start_ms ?? 0) / 1000;
+          beatAudioRef.current.currentTime = taskWin.startMs / 1000;
         } catch {
           /* ignore */
         }
@@ -1573,7 +1606,7 @@ export default function ProjectDetailPage() {
   async function startLayerMonitors(task: Task) {
     stopLayerMonitors();
 
-    const sectionStart = task.start_ms ?? 0;
+    const sectionStart = resolveTaskWindow(task).startMs;
     const sectionId =
       task.section_id ||
       (task.metadata as { section_id?: string } | null | undefined)?.section_id ||
@@ -1757,10 +1790,11 @@ export default function ProjectDetailPage() {
         selectedSpeakerIdRef.current || undefined
       );
       // Canonical session timeline from task musical position (never rewritten by plan)
+      const win = resolveTaskWindow(current);
       let tl = createSessionTimeline({
         taskId: current.id,
-        sectionStartMs: current.start_ms ?? 0,
-        sectionEndMs: current.end_ms,
+        sectionStartMs: win.startMs,
+        sectionEndMs: win.endMs,
         countInMs: 3000,
       });
       tl = markCountdownStart(tl);
@@ -1772,7 +1806,7 @@ export default function ProjectDetailPage() {
       void markRecordingStatus();
       if (beatAudioRef.current && beatUrl) {
         // Pre-roll: beat seeks to sectionStart - countIn (musical clock)
-        beatAudioRef.current.currentTime = Math.max(0, ((current.start_ms ?? 0) - 3000) / 1000);
+        beatAudioRef.current.currentTime = Math.max(0, (resolveTaskWindow(current).startMs - 3000) / 1000);
         const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
         beatAudioRef.current.muted = false;
         beatAudioRef.current.volume =
@@ -2261,7 +2295,7 @@ export default function ProjectDetailPage() {
               onTasksChange={(next) => {
                 setPlanTasks(next);
                 const active = next
-                  .filter((t) => t.active !== false && t.selected_in_plan !== false)
+                  .filter((t) => t.active !== false && t.selected_in_plan !== false && t.status !== "skipped")
                   .map((t) => ({
                     id: t.id,
                     type: t.type,
@@ -2276,11 +2310,23 @@ export default function ProjectDetailPage() {
                     metadata: t.metadata as Task["metadata"],
                   }));
                 setTasks(active);
-                // Refresh session list from active-plan endpoint
+                // Refresh from API but keep any newer plan times (avoid stale overwrite)
                 void fetch(`/api/projects/${id}/recording-tasks`)
                   .then((r) => r.json())
                   .then((j) => {
-                    if (Array.isArray(j.tasks)) setTasks(j.tasks);
+                    if (!Array.isArray(j.tasks)) return;
+                    const byId = new Map(active.map((t) => [t.id, t]));
+                    const merged = j.tasks.map((row: Task) => {
+                      const local = byId.get(row.id);
+                      if (!local) return row;
+                      return {
+                        ...row,
+                        start_ms: local.start_ms ?? row.start_ms,
+                        end_ms: local.end_ms ?? row.end_ms,
+                        metadata: local.metadata ?? row.metadata,
+                      };
+                    });
+                    setTasks(merged);
                   })
                   .catch(() => undefined);
               }}
@@ -2412,8 +2458,8 @@ export default function ProjectDetailPage() {
                 ) : null}
                 {(current.start_ms != null || current.end_ms != null) && (
                   <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
-                    Same musical window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
-                    {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
+                    Section: {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
+                    {sectionMs != null ? ` · records ${Math.round(sectionMs / 1000)}s` : ""}
                   </p>
                 )}
               </div>
@@ -2424,8 +2470,8 @@ export default function ProjectDetailPage() {
                 <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
                 {(current.start_ms != null || current.end_ms != null) && (
                   <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
-                    Section window: {current.start_ms ?? 0}ms → {current.end_ms ?? "—"}ms
-                    {sectionMs != null ? ` · auto-stops at ${Math.round(sectionMs / 1000)}s` : ""}
+                    Section: {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
+                    {sectionMs != null ? ` · records ${Math.round(sectionMs / 1000)}s` : ""}
                   </p>
                 )}
               </div>
@@ -2572,10 +2618,10 @@ export default function ProjectDetailPage() {
                       seed={`take-${current.id}`}
                       beatSrc={beatUrl}
                       beatStartMs={reviewBeatStartMs(
-                        current.start_ms ?? 0,
+                        resolveTaskWindow(current).startMs,
                         lastRecordingOffsetMs
                       )}
-                      beatEndMs={current.end_ms}
+                      beatEndMs={resolveTaskWindow(current).endMs}
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.06}
                       overdubSrcs={reviewVoiceOnly ? [] : reviewOverdubSrcs}
@@ -2588,7 +2634,7 @@ export default function ProjectDetailPage() {
                       }
                       debugSectionLabel={sectionLabel(current)}
                       debugTaskId={current.id}
-                      debugSectionStartMs={current.start_ms ?? 0}
+                      debugSectionStartMs={resolveTaskWindow(current).startMs}
                       debugRecordingOffsetMs={lastRecordingOffsetMs}
                     />
                     <button

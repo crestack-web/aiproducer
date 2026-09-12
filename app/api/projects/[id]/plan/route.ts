@@ -271,31 +271,95 @@ export async function PATCH(req: Request, ctx: Ctx) {
     ]) {
       if (key in patch) allowed[key] = patch[key];
     }
+    // Coerce timeline fields to integers (ms)
+    if ("start_ms" in allowed) {
+      const n = Number(allowed.start_ms);
+      allowed.start_ms = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+    }
+    if ("end_ms" in allowed) {
+      const n = Number(allowed.end_ms);
+      allowed.end_ms = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+    }
+    if (
+      typeof allowed.start_ms === "number" &&
+      typeof allowed.end_ms === "number" &&
+      (allowed.end_ms as number) <= (allowed.start_ms as number)
+    ) {
+      allowed.end_ms = (allowed.start_ms as number) + 1000;
+    }
     if (Object.keys(allowed).length === 0) {
       return NextResponse.json({ error: "Empty patch" }, { status: 400 });
     }
-    // Merge timeline into metadata
+    // Merge timeline into metadata (always keep a copy for clients that read metadata)
     const { data: existing } = await supabase
       .from("recording_tasks")
-      .select("metadata")
+      .select("metadata, section_id, type")
       .eq("id", taskId)
       .eq("project_id", projectId)
       .maybeSingle();
     if (existing) {
-      const m = (existing.metadata || {}) as Record<string, unknown>;
+      const m = { ...((existing.metadata || {}) as Record<string, unknown>) };
       if ("start_ms" in allowed) m.timeline_start_ms = allowed.start_ms;
       if ("end_ms" in allowed) m.timeline_end_ms = allowed.end_ms;
       allowed.metadata = m;
     }
-    const { data, error: upErr } = await supabase
-      .from("recording_tasks")
-      .update(allowed)
-      .eq("id", taskId)
-      .eq("project_id", projectId)
-      .select()
-      .maybeSingle();
+    let data = null as Record<string, unknown> | null;
+    let upErr: { message: string } | null = null;
+    {
+      const res = await supabase
+        .from("recording_tasks")
+        .update(allowed)
+        .eq("id", taskId)
+        .eq("project_id", projectId)
+        .select()
+        .maybeSingle();
+      data = res.data as Record<string, unknown> | null;
+      upErr = res.error;
+    }
+    // Fallback: columns may reject metadata merge
+    if (upErr) {
+      const { metadata: _m, ...core } = allowed;
+      const res2 = await supabase
+        .from("recording_tasks")
+        .update(core)
+        .eq("id", taskId)
+        .eq("project_id", projectId)
+        .select()
+        .maybeSingle();
+      if (!res2.error && res2.data) {
+        data = res2.data as Record<string, unknown>;
+        upErr = null;
+      } else {
+        upErr = res2.error || upErr;
+      }
+    }
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
     if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+
+    // Keep sibling layers on the same section on the same window
+    if ("start_ms" in allowed || "end_ms" in allowed) {
+      const sectionId = (data.section_id as string | null) || (existing?.section_id as string | null);
+      const startMs = (allowed.start_ms as number | undefined) ?? (data.start_ms as number | undefined);
+      const endMs = (allowed.end_ms as number | undefined) ?? (data.end_ms as number | undefined);
+      if (sectionId && startMs != null && endMs != null) {
+        await supabase
+          .from("recording_tasks")
+          .update({
+            start_ms: startMs,
+            end_ms: endMs,
+          })
+          .eq("project_id", projectId)
+          .eq("section_id", sectionId)
+          .neq("id", taskId);
+        // Best-effort: keep song_sections aligned so any section-based UI matches
+        await supabase
+          .from("song_sections")
+          .update({ start_ms: startMs, end_ms: endMs })
+          .eq("id", sectionId)
+          .eq("project_id", projectId);
+      }
+    }
+
     return NextResponse.json({ task: data });
   }
 
