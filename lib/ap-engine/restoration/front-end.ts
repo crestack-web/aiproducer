@@ -188,7 +188,7 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
     levelGainDb = Math.max(-12, Math.min(18, gainToDb(targetRms / rms0)));
     // Don't boost clipped material hard
     if (flags.includes("clipping_detected")) levelGainDb = Math.min(levelGainDb, 3);
-    pcm = applyGainStereo(pcm, dbToGain(levelGainDb));
+    applyGainStereo(pcm, dbToGain(levelGainDb));
   }
   plain.push(`leveled ${levelGainDb >= 0 ? "+" : ""}${levelGainDb.toFixed(1)} dB`);
 
@@ -245,7 +245,8 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
   // If risk high, dial back by mixing some raw (safety)
   if (artifactRisk > 0.55) {
     const blend = Math.min(0.4, (artifactRisk - 0.55) * 0.8);
-    const rawN = applyGainStereo(cloneStereo(raw), dbToGain(levelGainDb));
+    const rawN = cloneStereo(raw);
+    applyGainStereo(rawN, dbToGain(levelGainDb));
     for (let i = 0; i < pcm.left.length; i++) {
       pcm.left[i] = (pcm.left[i] || 0) * (1 - blend) + (rawN.left[i] || 0) * blend;
       pcm.right[i] = (pcm.right[i] || 0) * (1 - blend) + (rawN.right[i] || 0) * blend;
