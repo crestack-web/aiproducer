@@ -36,6 +36,7 @@ import {
 } from "./types";
 import type { PitchQC } from "./pitch";
 import { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
+import { transcribeVocalLayer, toLayerLyrics } from "./transcription";
 import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
@@ -173,6 +174,43 @@ export async function runApArrangement(
 
     let arrMix = decideArrangementMix(leadAnalysis, beatA, input.genre, layerCount);
 
+    // ——— Transcription + alignment (optional ASR) → layer.lyrics ———
+    await stage("analyzing", { sub: "transcription" });
+    const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = [];
+    for (let i = 0; i < normalizedLayers.length; i++) {
+      const layer = normalizedLayers[i];
+      // Prefer lead + doubles for ASR cost/latency; always try lead
+      const shouldAsr =
+        layer.role === "lead" ||
+        layer.role === "double" ||
+        normalizedLayers.length <= 3;
+      if (!shouldAsr) {
+        layerLyrics.push(null);
+        continue;
+      }
+      try {
+        const tr = await transcribeVocalLayer(layer.pcm);
+        const lyrics = toLayerLyrics(tr);
+        layerLyrics.push(lyrics.length ? lyrics : null);
+        if (lyrics.length) {
+          logAp("transcription", {
+            jobId: input.jobId,
+            layer: i,
+            role: layer.role,
+            phrases: lyrics.length,
+            source: tr.source,
+          });
+        }
+      } catch (e) {
+        logAp("transcription_fail", {
+          jobId: input.jobId,
+          layer: i,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        layerLyrics.push(null);
+      }
+    }
+
     // ——— Producer Mind: reason about intent, then DSP executes ———
     const decisionMap: DecisionMap = buildDecisionMap(
       {
@@ -180,18 +218,20 @@ export async function runApArrangement(
         beatDurationMs: beatA.durationMs,
         vocalRms: leadAnalysis.rms,
         beatRms: beatA.rms,
-        layers: normalizedLayers.map((l) => ({
+        layers: normalizedLayers.map((l, i) => ({
           role: l.role,
           section: l.section,
           startMs: l.startMs,
           durationMs: l.analysis.durationMs,
+          lyrics: layerLyrics[i],
         })),
       },
-      normalizedLayers.map((l) => ({
+      normalizedLayers.map((l, i) => ({
         role: l.role,
         section: l.section,
         startMs: l.startMs,
         pcm: l.pcm,
+        lyrics: layerLyrics[i],
       }))
     );
     logAp("producer_mind", {

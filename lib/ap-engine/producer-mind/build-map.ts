@@ -11,12 +11,12 @@ export type LayerAudio = {
   section: SongSectionKind;
   startMs: number;
   pcm: PcmStereo;
-  lyrics?: Array<{ text: string; startMs: number; endMs: number }> | null;
+  lyrics?: Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null;
 };
 
 /**
  * Build the full decision map: song → section → phrase.
- * Transcription is optional; energy phrases always available.
+ * Transcription optional; energy phrases always available as safety net.
  */
 export function buildDecisionMap(
   input: ProducerMindInput,
@@ -24,7 +24,6 @@ export function buildDecisionMap(
 ): DecisionMap {
   const song = readSongLevel(input.genre, input.vocalRms, input.beatRms);
 
-  // Unique sections from layers
   const sectionMap = new Map<string, { section: SongSectionKind; startMs: number; endMs: number }>();
   for (const layer of input.layers) {
     const key = `${layer.section}_${Math.round(layer.startMs)}`;
@@ -33,7 +32,6 @@ export function buildDecisionMap(
     if (!prev) sectionMap.set(key, { section: layer.section, startMs: layer.startMs, endMs: end });
     else prev.endMs = Math.max(prev.endMs, end);
   }
-  // Fallback whole-song section if empty
   if (!sectionMap.size) {
     sectionMap.set("other_0", {
       section: "other",
@@ -44,13 +42,31 @@ export function buildDecisionMap(
 
   const sections = readSectionLevel(song, [...sectionMap.values()]);
 
+  // Corpus of all lyric lines for repetition detection
+  const songLyricCorpus: string[] = [];
+  for (const layer of input.layers) {
+    for (const line of layer.lyrics || []) {
+      if (line.text?.trim()) songLyricCorpus.push(line.text.trim());
+    }
+  }
+  if (layerAudio) {
+    for (const la of layerAudio) {
+      for (const line of la.lyrics || []) {
+        if (line.text?.trim()) songLyricCorpus.push(line.text.trim());
+      }
+    }
+  }
+
   const phrases = [];
   for (let li = 0; li < input.layers.length; li++) {
     const layer = input.layers[li];
+    const audio = layerAudio?.[li];
+    const lyrics = layer.lyrics || audio?.lyrics || null;
+
     let localPhrases = layer.phrasesLocal;
 
-    if ((!localPhrases || !localPhrases.length) && layerAudio?.[li]) {
-      const analysis = analyzeVocalPhrases(layerAudio[li].pcm);
+    if ((!localPhrases || !localPhrases.length) && audio) {
+      const analysis = analyzeVocalPhrases(audio.pcm);
       localPhrases = analysis.phrases.map((p) => ({
         startMs: p.startMs,
         endMs: p.endMs,
@@ -58,20 +74,28 @@ export function buildDecisionMap(
       }));
     }
 
-    if (!localPhrases?.length) {
+    // Prefer ASR phrase boundaries when available
+    if (lyrics?.length) {
+      localPhrases = lyrics.map((l) => {
+        // energy proxy: unknown from text alone — neutral mid
+        return { startMs: l.startMs, endMs: l.endMs, energy: 0.12, lyric: l.text, confidence: (l as { confidence?: number }).confidence };
+      });
+    } else if (!localPhrases?.length) {
       localPhrases = [{ startMs: 0, endMs: layer.durationMs, energy: 0.15 }];
+    } else {
+      // Attach lyrics to nearest energy phrase
+      localPhrases = localPhrases.map((ph) => {
+        let lyric: string | null = null;
+        let confidence: number | undefined;
+        if (lyrics?.length) {
+          const mid = (ph.startMs + ph.endMs) / 2;
+          const hit = lyrics.find((l) => mid >= l.startMs && mid <= l.endMs);
+          lyric = hit?.text ?? null;
+          confidence = hit ? (hit as { confidence?: number }).confidence : undefined;
+        }
+        return { ...ph, lyric, confidence };
+      });
     }
-
-    // Attach lyrics to nearest phrase when provided
-    const withLyrics = localPhrases.map((ph) => {
-      let lyric: string | null = null;
-      if (layer.lyrics?.length) {
-        const mid = (ph.startMs + ph.endMs) / 2;
-        const hit = layer.lyrics.find((l) => mid >= l.startMs && mid <= l.endMs);
-        lyric = hit?.text ?? null;
-      }
-      return { ...ph, lyric };
-    });
 
     phrases.push(
       ...readPhraseLevel({
@@ -80,7 +104,8 @@ export function buildDecisionMap(
         role: layer.role,
         section: layer.section,
         layerStartMs: layer.startMs,
-        phrases: withLyrics,
+        phrases: localPhrases,
+        songLyricCorpus,
       })
     );
   }
@@ -90,10 +115,22 @@ export function buildDecisionMap(
     ...sections.map((s) => `${s.section}: ${s.density} (${s.rationale})`),
   ];
 
+  const lyricDriven = phrases.filter((p) => p.weightSource === "lyric" || p.weightSource === "blended");
   const vuln = phrases.filter((p) => p.emotionalWeight === "vulnerable" || p.instructions.restraint === "preserve");
   const hooks = phrases.filter((p) => p.emotionalWeight === "hook");
-  if (vuln.length) summary.push(`Pulled back ${vuln.length} intimate/vulnerable phrase(s)`);
-  if (hooks.length) summary.push(`Pushed ${hooks.length} hook phrase(s)`);
+  if (lyricDriven.length) {
+    summary.push(`Lyric-informed phrases: ${lyricDriven.length}/${phrases.length}`);
+  }
+  for (const p of phrases.slice(0, 12)) {
+    if (p.lyric && (p.weightSource === "lyric" || p.emotionalWeight === "vulnerable" || p.emotionalWeight === "hook")) {
+      const snippet = p.lyric.length > 42 ? p.lyric.slice(0, 40) + "…" : p.lyric;
+      summary.push(
+        `${p.instructions.vocalFaderRideDb >= 0 ? "Pushed" : "Pulled back"} “${snippet}” (${p.emotionalWeight}, ${p.weightSource})`
+      );
+    }
+  }
+  if (vuln.length) summary.push(`Restraint on ${vuln.length} intimate/vulnerable phrase(s)`);
+  if (hooks.length) summary.push(`Hook treatment on ${hooks.length} phrase(s)`);
 
   return {
     version: "1.0",

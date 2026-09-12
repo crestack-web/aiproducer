@@ -34,6 +34,8 @@ export type PhraseDecision = {
   timeRangeMs: [number, number];
   lyric: string | null;
   emotionalWeight: EmotionalWeight;
+  /** What drove classification — lyric meaning, energy, or blend */
+  weightSource: "lyric" | "energy" | "blended";
   role: VocalRole;
   section: SongSectionKind;
   instructions: PhraseInstructions;
@@ -75,7 +77,7 @@ export type ProducerMindInput = {
     startMs: number;
     durationMs: number;
     /** Optional aligned lyric lines for this layer */
-    lyrics?: Array<{ text: string; startMs: number; endMs: number }> | null;
+    lyrics?: Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null;
     /** Energy phrase regions in layer-local time (ms from take start) */
     phrasesLocal?: Array<{ startMs: number; endMs: number; energy: number }> | null;
   }>;

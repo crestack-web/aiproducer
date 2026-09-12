@@ -43,3 +43,22 @@ After vocal analysis, before/with layer DSP:
 ## Feedback (future)
 
 Tune weights such as “restraint for vulnerable phrases” rather than only EQ numbers.
+
+
+## Transcription → phrase weight
+
+Pipeline:
+
+```
+Analysis
+ → Transcription + Alignment (optional OpenAI Whisper when OPENAI_API_KEY set)
+ → Producer Mind (lyric-aware phrase weight + energy fallback)
+ → DSP
+```
+
+- Word timestamps grouped into phrases by pause (~280ms)
+- weight_source: lyric | energy | blended
+- Quiet repeated lines can still score as hooks
+- Low ASR confidence falls back per-phrase to energy — never fails the song
+
+Env: OPENAI_API_KEY, optional OPENAI_WHISPER_MODEL (default whisper-1).
