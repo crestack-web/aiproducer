@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.10.0-mastering-agent";
+export const AP_ENGINE_VERSION = "1.11.0-adaptive-master";
 
 export type ApStage =
   | "queued"

@@ -1,19 +1,12 @@
 import type { MasterDecision, PcmStereo } from "../types";
-import { runMasteringAgent, type MasterAgentResult } from "./agent";
+import { runMasteringAgent, type MasterAgentResult, type MasterAgentOptions } from "./agent";
 import { estimateLoudnessProxyDb } from "./loudness";
+import { applyFeedbackTag, type ArtistMasterProfile } from "./artist-profile";
+import { extractSongFingerprint } from "./song-fingerprint";
+import { resolveStyleAxis, styleLabel } from "./style-axis";
 
-export type MasterMixOptions = {
-  genre?: string | null;
-  mood?: string | null;
-  vocalSit?: string | null;
-  platform?: string | null;
-  knownIssues?: string[] | null;
-};
+export type MasterMixOptions = MasterAgentOptions;
 
-/**
- * Master the full mix via the Mastering Agent.
- * Returns PCM; call masterMixDetailed for before/after report.
- */
 export function masterMix(
   pcm: PcmStereo,
   decision: MasterDecision,
@@ -30,5 +23,11 @@ export function masterMixDetailed(
   return runMasteringAgent(pcm, decision, opts);
 }
 
-export { estimateLoudnessProxyDb };
-export type { MasterAgentResult };
+export {
+  estimateLoudnessProxyDb,
+  applyFeedbackTag,
+  extractSongFingerprint,
+  resolveStyleAxis,
+  styleLabel,
+};
+export type { MasterAgentResult, MasterAgentOptions, ArtistMasterProfile };

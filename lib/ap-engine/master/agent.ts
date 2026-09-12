@@ -1,7 +1,6 @@
 /**
- * AP Mastering Agent
- * Analyze → context-aware process chain → plain-language report.
- * Order: corrective EQ → bus glue → tonal EQ → saturation → limit → safety.
+ * AP Mastering Agent — adaptive per-song intelligence.
+ * Song fingerprint + style axis + genre/mood context → process chain → report.
  */
 import {
   applyEqStereo,
@@ -16,136 +15,179 @@ import type { MasterDecision, PcmStereo } from "../types";
 import { analyzeMasterInput, type MasterAnalysis } from "./analyze";
 import { resolveMasterContext, type MasterContext } from "./context";
 import { normalizeToStreamingTarget, truePeakLimit } from "./loudness";
+import { extractSongFingerprint, type SongFingerprint } from "./song-fingerprint";
+import { resolveStyleAxis, styleLabel, type StyleAxis } from "./style-axis";
+import { mergeArtistProfile, type ArtistMasterProfile } from "./artist-profile";
 
 export type MasterAgentResult = {
   pcm: PcmStereo;
   before: MasterAnalysis;
   after: MasterAnalysis;
   context: MasterContext;
+  fingerprint: SongFingerprint;
+  styleAxis: StyleAxis;
   steps: string[];
-  /** Plain language for the artist */
   summary: string;
 };
 
-function correctiveEq(out: PcmStereo, before: MasterAnalysis, ctx: MasterContext): string[] {
+export type MasterAgentOptions = {
+  genre?: string | null;
+  mood?: string | null;
+  vocalSit?: string | null;
+  platform?: string | null;
+  knownIssues?: string[] | null;
+  style?: number | string | null;
+  bpm?: number | null;
+  artistProfile?: ArtistMasterProfile | null;
+};
+
+function correctiveEq(
+  out: PcmStereo,
+  before: MasterAnalysis,
+  ctx: MasterContext,
+  fp: SongFingerprint,
+  style: StyleAxis
+): string[] {
   const notes: string[] = [];
   const issues = ctx.knownIssues.map((s) => s.toLowerCase());
+  const carve = 0.7 + fp.density * 0.6; // denser → more surgical
 
-  // Mud
-  if (before.bands.low > 0.42 || issues.some((i) => i.includes("mud") || i.includes("boomy"))) {
-    applyBiquadInPlace(out.left, "peak", 180, out.sampleRate, -1.8, 0.9);
-    applyBiquadInPlace(out.right, "peak", 180, out.sampleRate, -1.8, 0.9);
+  if (before.bands.low > 0.4 || issues.some((i) => i.includes("mud"))) {
+    const cut = -1.4 * carve - (1 - style) * 0.3;
+    applyBiquadInPlace(out.left, "peak", 180, out.sampleRate, cut, 0.9);
+    applyBiquadInPlace(out.right, "peak", 180, out.sampleRate, cut, 0.9);
     notes.push("eased low-mid mud");
   }
-  // Harsh
-  if (before.bands.high > 0.38 || issues.some((i) => i.includes("harsh") || i.includes("bright"))) {
-    applyBiquadInPlace(out.left, "peak", 3500, out.sampleRate, -1.6, 1.2);
-    applyBiquadInPlace(out.right, "peak", 3500, out.sampleRate, -1.6, 1.2);
+  // Powerful/bright voice → stronger de-ess region; soft voice → gentler
+  const harshCut =
+    -1.2 * (0.6 + fp.vocalTimbre.brightness * 0.8) * (style > 0.5 ? 1 : 0.7);
+  if (before.bands.high > 0.36 || fp.vocalTimbre.brightness > 0.65 || issues.some((i) => i.includes("harsh"))) {
+    applyBiquadInPlace(out.left, "peak", 3500, out.sampleRate, harshCut, 1.2);
+    applyBiquadInPlace(out.right, "peak", 3500, out.sampleRate, harshCut, 1.2);
     notes.push("softened harsh upper mids");
   }
-  // Thin
-  if (before.bands.low < 0.22 || issues.some((i) => i.includes("thin"))) {
-    applyBiquadInPlace(out.left, "lowshelf", 160, out.sampleRate, 1.4, 0.7);
-    applyBiquadInPlace(out.right, "lowshelf", 160, out.sampleRate, 1.4, 0.7);
+  if (before.bands.low < 0.22 || fp.vocalTimbre.brightness > 0.7 || issues.some((i) => i.includes("thin"))) {
+    applyBiquadInPlace(out.left, "lowshelf", 160, out.sampleRate, 1.2 + (1 - style) * 0.4, 0.7);
+    applyBiquadInPlace(out.right, "lowshelf", 160, out.sampleRate, 1.2 + (1 - style) * 0.4, 0.7);
     notes.push("added low-end body");
   }
-  // Vocal forward presence if requested
-  if (ctx.vocalSit === "forward") {
-    applyBiquadInPlace(out.left, "peak", 2600, out.sampleRate, 1.1, 1.0);
-    applyBiquadInPlace(out.right, "peak", 2600, out.sampleRate, 1.1, 1.0);
-    notes.push("lifted vocal presence");
-  } else {
-    applyBiquadInPlace(out.left, "peak", 2600, out.sampleRate, 0.4, 1.0);
-    applyBiquadInPlace(out.right, "peak", 2600, out.sampleRate, 0.4, 1.0);
-  }
+  // Presence: forward + polished more; raw keeps texture
+  const presence =
+    (ctx.vocalSit === "forward" ? 1.0 : 0.35) * (0.6 + style * 0.5) *
+    (fp.vocalTimbre.harmonicity > 0.4 ? 1 : 0.85);
+  applyBiquadInPlace(out.left, "peak", 2600, out.sampleRate, presence, 1.0);
+  applyBiquadInPlace(out.right, "peak", 2600, out.sampleRate, presence, 1.0);
+  if (presence > 0.5) notes.push("lifted vocal presence");
   return notes;
 }
 
-function busGlue(out: PcmStereo, ctx: MasterContext, before: MasterAnalysis): string {
-  // Low ratio, slower attack for glue — denser if LRA is wide or mood is loud
-  let ratio = ctx.mood === "loud" ? 2.2 : ctx.mood === "balanced" ? 1.8 : 1.5;
-  let threshold = ctx.mood === "loud" ? -14 : -12;
-  if (before.lraProxy > 9) {
-    ratio += 0.35;
-    threshold -= 1;
-  }
+function busGlue(
+  out: PcmStereo,
+  ctx: MasterContext,
+  fp: SongFingerprint,
+  style: StyleAxis
+): string {
+  // Tempo-scaled attack/release
+  const bpm = fp.bpm || 96;
+  const beatMs = 60000 / bpm;
+  const attackMs = Math.max(12, Math.min(40, beatMs * (style < 0.4 ? 0.08 : 0.05)));
+  const releaseMs = Math.max(80, Math.min(280, beatMs * 0.35));
+
+  // Glue amount from style + existing dynamics
+  let ratio = 1.4 + style * 1.0;
+  if (fp.currentLra > 9) ratio += 0.35;
+  if (fp.currentLra < 5) ratio -= 0.25;
+  if (fp.density > 0.7) ratio += 0.2;
+  ratio = Math.max(1.3, Math.min(2.6, ratio));
+
+  const threshold = -11 - style * 4 - (fp.density > 0.65 ? 1 : 0);
+  const makeup = 0.4 + style * 1.0;
+
   compressStereo(out, {
     thresholdDb: threshold,
     ratio,
-    attackMs: ctx.mood === "spacious" ? 35 : 22,
-    releaseMs: 160,
-    makeupDb: ctx.mood === "loud" ? 1.2 : 0.7,
+    attackMs,
+    releaseMs,
+    makeupDb: makeup,
   });
-  return `bus glue (ratio ${ratio.toFixed(1)}, ${ctx.mood})`;
+  return `bus glue style=${styleLabel(style)} ratio=${ratio.toFixed(1)} atk=${attackMs.toFixed(0)}ms`;
 }
 
-function tonalEq(out: PcmStereo, before: MasterAnalysis, ctx: MasterContext): string[] {
+function tonalEq(out: PcmStereo, before: MasterAnalysis, style: StyleAxis): string[] {
   const notes: string[] = [];
-  // Reference-ish curve: controlled sub, present mids, smooth air
   applyBiquadInPlace(out.left, "highpass", 28, out.sampleRate, 0, 0.7);
   applyBiquadInPlace(out.right, "highpass", 28, out.sampleRate, 0, 0.7);
-
   if (before.bands.low < 0.28) {
-    applyBiquadInPlace(out.left, "peak", 90, out.sampleRate, 0.8, 0.8);
-    applyBiquadInPlace(out.right, "peak", 90, out.sampleRate, 0.8, 0.8);
-    notes.push("warmed sub foundation");
-  } else if (before.bands.low > 0.4) {
-    applyBiquadInPlace(out.left, "peak", 90, out.sampleRate, -0.6, 0.8);
-    applyBiquadInPlace(out.right, "peak", 90, out.sampleRate, -0.6, 0.8);
+    applyBiquadInPlace(out.left, "peak", 90, out.sampleRate, 0.7, 0.8);
+    applyBiquadInPlace(out.right, "peak", 90, out.sampleRate, 0.7, 0.8);
+    notes.push("warmed sub");
   }
-
-  // Slight air for commercial sheen without harshness
-  const air = ctx.mood === "spacious" ? 0.5 : 0.9;
+  const air = 0.25 + style * 0.75;
   applyBiquadInPlace(out.left, "highshelf", 11000, out.sampleRate, air, 0.7);
   applyBiquadInPlace(out.right, "highshelf", 11000, out.sampleRate, air, 0.7);
-  notes.push("commercial top polish");
+  notes.push(style > 0.6 ? "commercial air" : "natural top");
   return notes;
 }
 
-function saturation(out: PcmStereo, ctx: MasterContext): string {
-  const amount = ctx.mood === "loud" ? 0.18 : ctx.mood === "balanced" ? 0.12 : 0.07;
+function saturation(out: PcmStereo, style: StyleAxis, density: number): string {
+  const amount = 0.04 + style * 0.16 + density * 0.04;
   saturateInPlace(out.left, amount);
   saturateInPlace(out.right, amount);
-  return `light harmonic density (${ctx.mood})`;
+  return `saturation ${amount.toFixed(2)} (${styleLabel(style)})`;
+}
+
+function targetFromStyle(ctx: MasterContext, style: StyleAxis, loudnessBiasDb: number): number {
+  // Raw → quieter/more dynamic; polished → competitive
+  const base = -13.5 + style * 3.5; // -13.5 raw → -10 polished
+  let t = base;
+  if (ctx.mood === "loud") t = Math.max(t, -10.5);
+  if (ctx.mood === "spacious") t = Math.min(t, -12.5);
+  t += loudnessBiasDb;
+  return Math.min(-9.5, Math.max(-14.5, t));
 }
 
 function buildSummary(
   ctx: MasterContext,
   before: MasterAnalysis,
   after: MasterAnalysis,
+  fp: SongFingerprint,
+  style: StyleAxis,
   steps: string[]
 ): string {
-  const louder = after.integratedDb - before.integratedDb;
   const parts: string[] = [];
-  if (louder > 1) parts.push("louder and more competitive");
-  else if (louder < -1) parts.push("a bit more controlled in level");
-  else parts.push("leveled for streaming");
+  parts.push(styleLabel(style));
+  if (after.integratedDb - before.integratedDb > 1.5) parts.push("louder");
+  if (style > 0.6) parts.push("denser glue");
+  else parts.push("more open dynamics");
+  if (fp.vocalTimbre.brightness > 0.65) parts.push("tamed bright vocal");
+  if (steps.some((s) => s.includes("mud"))) parts.push("cleared mud");
 
-  if (ctx.mood === "loud") parts.push("denser and more glued");
-  if (ctx.vocalSit === "forward") parts.push("vocal kept forward");
-  else parts.push("vocal sitting in the pocket");
-
-  if (steps.some((s) => s.includes("mud"))) parts.push("mud cleaned up");
-  if (steps.some((s) => s.includes("harsh"))) parts.push("harsh edges softened");
-
-  const delta = `Level ${before.integratedDb.toFixed(1)} → ${after.integratedDb.toFixed(1)} dB (proxy), peak ${after.truePeakDb.toFixed(1)} dBTP.`;
-  return `Master is ${parts.join(", ")}. ${delta} Want it louder/quieter, or more/less vocal presence?`;
+  return (
+    `Master is ${parts.join(", ")}. ` +
+    `Level ${before.integratedDb.toFixed(1)}→${after.integratedDb.toFixed(1)} dB, ` +
+    `peak ${after.truePeakDb.toFixed(1)} dBTP, ` +
+    `density ${fp.density.toFixed(2)}, style ${style.toFixed(2)}. ` +
+    `Want it louder/quieter, or more raw vs polished?`
+  );
 }
 
-/**
- * Full mastering agent pass on a finished mix.
- */
 export function runMasteringAgent(
   mix: PcmStereo,
   decision: MasterDecision,
-  opts?: {
-    genre?: string | null;
-    mood?: string | null;
-    vocalSit?: string | null;
-    platform?: string | null;
-    knownIssues?: string[] | null;
-  }
+  opts?: MasterAgentOptions
 ): MasterAgentResult {
+  const before = analyzeMasterInput(mix);
+  const fp = extractSongFingerprint(mix, opts?.bpm ?? null);
+  const artist = mergeArtistProfile(opts?.artistProfile, fp.vocalTimbre.brightness);
+
+  let style = resolveStyleAxis({
+    explicit: opts?.style,
+    mood: opts?.mood,
+    fingerprintLra: fp.currentLra,
+    fingerprintDensity: fp.density,
+  });
+  style = Math.max(0, Math.min(1, style + artist.styleBias));
+
   const ctx = resolveMasterContext({
     genre: opts?.genre,
     mood: opts?.mood,
@@ -155,74 +197,45 @@ export function runMasteringAgent(
     targetLufsHint: decision.targetLufs,
   });
 
-  // Prefer competitive target from context when decision is quiet/default
-  const targetLufs = Math.min(-9.5, Math.max(-14, ctx.targetLufs));
+  const targetLufs = targetFromStyle(ctx, style, artist.loudnessBiasDb);
   const ceiling = Math.min(-1.0, decision.limiterCeilingDb ?? -1.0);
 
-  const before = analyzeMasterInput(mix);
   const out = cloneStereo(mix);
-  const steps: string[] = [];
+  const steps: string[] = [
+    `fingerprint density=${fp.density.toFixed(2)} lra=${fp.currentLra.toFixed(1)} bpm=${fp.bpm?.toFixed(0) ?? "?"}`,
+    `style=${styleLabel(style)} (${style.toFixed(2)}) conf=${artist.confidence.toFixed(2)}`,
+  ];
 
-  // 1. Corrective EQ
-  steps.push(...correctiveEq(out, before, ctx));
-
-  // Apply decision EQ as additional tonal polish if provided
+  steps.push(...correctiveEq(out, before, ctx, fp, style));
   if (decision.eq?.length) {
     applyEqStereo(out, decision.eq);
     steps.push("profile EQ");
   }
+  steps.push(busGlue(out, ctx, fp, style));
+  steps.push(...tonalEq(out, before, style));
+  steps.push(saturation(out, style, fp.density));
 
-  // 2. Bus glue
-  steps.push(busGlue(out, ctx, before));
-  if (decision.compressor) {
-    // lighter second stage if decision has compressor
-    compressStereo(out, {
-      ...decision.compressor,
-      ratio: Math.min(decision.compressor.ratio, 1.8),
-      makeupDb: Math.min(decision.compressor.makeupDb, 0.6),
-    });
-  }
-
-  // 3. Tonal EQ
-  steps.push(...tonalEq(out, before, ctx));
-
-  // 4. Saturation
-  steps.push(saturation(out, ctx));
-
-  // Pre-limit makeup
   if (decision.makeupDb && Math.abs(decision.makeupDb) > 0.05) {
-    applyGainStereo(out, dbToGain(Math.min(2, decision.makeupDb)));
+    applyGainStereo(out, dbToGain(Math.min(1.5, decision.makeupDb * (0.5 + style * 0.5))));
   }
 
-  // 5. Limiting to target loudness
   const ln = normalizeToStreamingTarget(out, targetLufs, ceiling, 0.35);
   steps.push(
-    `limited to ~${targetLufs} LUFS family (${ln.beforeDb.toFixed(1)}→${ln.afterDb.toFixed(1)} dB, ${ln.passes} passes)`
+    `limit ~${targetLufs.toFixed(1)} (${ln.beforeDb.toFixed(1)}→${ln.afterDb.toFixed(1)}, ${ln.passes}p)`
   );
-
-  // 6. Safety
   truePeakLimit(out, ceiling, 0.35);
-  const after = analyzeMasterInput(out);
 
-  // Guard: if peak still hot, pull once more
+  let after = analyzeMasterInput(out);
   if (after.truePeakDb > -0.8) {
     truePeakLimit(out, -1.2, 0.2);
+    after = analyzeMasterInput(out);
   }
 
-  const afterFinal = analyzeMasterInput(out);
-  const summary = buildSummary(ctx, before, afterFinal, steps);
-
+  const summary = buildSummary(ctx, before, after, fp, style, steps);
   if (typeof console !== "undefined") {
     console.log("[ap-master-agent]", summary);
-    console.log("[ap-master-agent] steps:", steps.join(" | "));
+    console.log("[ap-master-agent]", steps.join(" | "));
   }
 
-  return {
-    pcm: out,
-    before,
-    after: afterFinal,
-    context: ctx,
-    steps,
-    summary,
-  };
+  return { pcm: out, before, after, context: ctx, fingerprint: fp, styleAxis: style, steps, summary };
 }
