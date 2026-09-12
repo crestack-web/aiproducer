@@ -46,6 +46,7 @@ import {
   type GeneratedLayer,
 } from "./fullness";
 import { decidePitchTimingForPhrase, aggregatePitchTiming } from "./producer-mind/pitch-timing";
+import { applyCreativeFxToPlacedVocal } from "./creative-fx/apply";
 import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
@@ -509,6 +510,22 @@ export async function runApArrangement(
       // Producer Mind: phrase/section fader rides on placed timeline
       for (let pi = 0; pi < placed.length; pi++) {
         placed[pi] = applyPhraseFaderRides(placed[pi], decisionMap, normalizedLayers[pi]?.role);
+      }
+
+      // Creative FX on lead-aligned phrases (sparse, stylistic)
+      {
+        const leadIdx = normalizedLayers.findIndex((l) => l.role === "lead");
+        if (leadIdx >= 0 && placed[leadIdx]) {
+          const fxed = applyCreativeFxToPlacedVocal({
+            placed: placed[leadIdx],
+            phrases: decisionMap.phrases.filter((p) => p.role === "lead"),
+            bpm: beatA?.bpm ?? null,
+          });
+          placed[leadIdx] = fxed.pcm;
+          if (fxed.notes.length) {
+            logAp("creative_fx", { jobId: input.jobId, notes: fxed.notes.slice(0, 12) });
+          }
+        }
       }
 
       // Fullness stacks (doubles/harmonies/ad-libs) — place on timeline, lighter processing

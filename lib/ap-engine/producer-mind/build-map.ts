@@ -4,6 +4,7 @@ import type { VocalRole, SongSectionKind } from "../roles";
 import { readSongLevel } from "./song-read";
 import { readSectionLevel } from "./section-read";
 import { readPhraseLevel } from "./phrase-read";
+import { decideCreativeFxForPhrase, enforceCreativeFxDensity } from "./creative-fx";
 import type { DecisionMap, ProducerMindInput } from "./types";
 
 export type LayerAudio = {
@@ -114,6 +115,33 @@ export function buildDecisionMap(
     `Song read: ${song.mood} (${song.genre}), restraint ${song.restraintVsPolish.toFixed(2)}`,
     ...sections.map((s) => `${s.section}: ${s.density} (${s.rationale})`),
   ];
+
+  // Creative FX (default off, density capped)
+  let throwCount = 0;
+  let filterCount = 0;
+  const styleIntimate = song.restraintVsPolish < 0.42;
+  for (const ph of phrases) {
+    const sec = sections.find((s) => s.section === ph.section);
+    const fx = decideCreativeFxForPhrase({
+      phrase: ph,
+      song,
+      section: sec,
+      role: ph.role,
+      styleIntimate,
+      delayThrowsUsed: throwCount,
+      filterMomentsUsed: filterCount,
+    });
+    if (fx.delayThrow?.enabled) throwCount += 1;
+    if (fx.filterAutomation) filterCount += 1;
+    ph.creativeFx = fx;
+  }
+  const densified = enforceCreativeFxDensity(
+    phrases.map((p) => ({ phraseId: p.phraseId, fx: p.creativeFx! }))
+  );
+  for (const d of densified) {
+    const ph = phrases.find((x) => x.phraseId === d.phraseId);
+    if (ph) ph.creativeFx = d.fx;
+  }
 
   const lyricDriven = phrases.filter((p) => p.weightSource === "lyric" || p.weightSource === "blended");
   const vuln = phrases.filter((p) => p.emotionalWeight === "vulnerable" || p.instructions.restraint === "preserve");

@@ -15,3 +15,5 @@ export { applyPhraseFaderRides, phraseInfluenceForLayer } from "./apply-map";
 
 export { decidePitchTimingForPhrase, aggregatePitchTiming } from "./pitch-timing";
 export type { PitchTimingDecision, CorrectionAmount } from "./pitch-timing";
+
+export { decideCreativeFxForPhrase, enforceCreativeFxDensity } from "./creative-fx";

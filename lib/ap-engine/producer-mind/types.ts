@@ -55,6 +55,19 @@ export type PhraseDecision = {
     pitchStrength: number;
     timingStrength: number;
   };
+  /** Stylistic FX — default off; sparse */
+  creativeFx?: {
+    delayThrow: {
+      enabled: boolean;
+      target: "last_word";
+      type: "eighth_note_echo" | "quarter_echo" | "slap";
+    } | null;
+    filterAutomation: boolean;
+    reverbCharacter: "default" | "ambient_large" | "none";
+    stereoMovement: boolean;
+    genreFx: string | null;
+    reasoning: string;
+  };
 };
 
 export type SectionDecision = {
