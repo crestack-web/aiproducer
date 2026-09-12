@@ -76,6 +76,31 @@ export function defaultLinearGainForTaskType(type: string | null | undefined): n
  * Group lead + doubles/harmonies/adlibs that belong to the SAME musical section.
  * Never key only on start_ms — layers often start mid-section and would split apart.
  */
+export function musicalLabelKey(task: {
+  title?: string | null;
+  metadata?: {
+    section_label?: string;
+    parent_section_label?: string;
+    section_type?: string;
+  } | null;
+}): string | null {
+  const rawLabel = (
+    task.metadata?.parent_section_label ||
+    task.metadata?.section_label ||
+    task.title ||
+    ""
+  ).trim();
+  const label = rawLabel
+    .toLowerCase()
+    .replace(
+      /\b(lead|main|double|doubler|harmony|harmonies|high|low|mid|adlib|ad-libs?|ad libs?|background|bgv|oohs?|ahhs?|texture|hum|response|call|vocal|take)\b/g,
+      " "
+    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return label || null;
+}
+
 export function sectionGroupKey(task: {
   id: string;
   section_id?: string | null;
@@ -88,25 +113,13 @@ export function sectionGroupKey(task: {
     section_type?: string;
   } | null;
 }): string {
+  // Prefer musical label so "Verse 1 Lead" and "Verse 1 Harmony" share a key
+  // even when section_id differs or is missing on one of them.
+  const label = musicalLabelKey(task);
+  if (label) return `label:${label}`;
   if (task.section_id) return `s:${task.section_id}`;
   const mid = task.metadata?.section_id;
   if (mid) return `s:${mid}`;
-  const rawLabel = (
-    task.metadata?.parent_section_label ||
-    task.metadata?.section_label ||
-    task.title ||
-    ""
-  ).trim();
-  // Strip role words so "Verse 1 Lead" and "Verse 1 Harmony" group together
-  const label = rawLabel
-    .toLowerCase()
-    .replace(
-      /\b(lead|main|double|doubler|harmony|harmonies|adlib|ad-libs?|ad libs?|background|bgv|oohs?|ahhs?|texture|hum|response|call)\b/g,
-      " "
-    )
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  if (label) return `label:${label}`;
   const st = (task.metadata?.section_type || "").trim().toLowerCase();
   if (st && task.start_ms != null) {
     // Coarse bucket so mid-section layers still group with the lead
@@ -162,17 +175,20 @@ export function sameMusicalSection(
     } | null;
   }
 ): boolean {
-  // Strongest signal: shared section_id (never match across different ids)
   const pid = taskSectionId(parent);
   const cid = taskSectionId(candidate);
-  if (pid && cid) return pid === cid;
-  if (pid && !cid) {
-    // candidate missing id — allow only if group key / window matches
-  } else if (!pid && cid) {
-    /* fall through */
-  }
+  // Same section_id is a strong positive match
+  if (pid && cid && pid === cid) return true;
 
-  if (sectionGroupKey(parent) === sectionGroupKey(candidate)) return true;
+  // Label match is authoritative for "same musical section" even when
+  // section_ids differ (plan rows sometimes get distinct ids per task).
+  const pk = sectionGroupKey(parent);
+  const ck = sectionGroupKey(candidate);
+  if (pk && ck && pk === ck) return true;
+
+  const pl = musicalLabelKey(parent);
+  const cl = musicalLabelKey(candidate);
+  if (pl && cl && pl === cl) return true;
 
   // Time window: candidate onset must fall inside parent window (layers often start later)
   const ps = parent.start_ms != null ? Number(parent.start_ms) : null;

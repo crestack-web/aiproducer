@@ -228,6 +228,7 @@ function activeSessionTasksFromPlan(rows: PlanEditorTask[]): Task[] {
         selected_in_plan?: boolean | null;
       };
       if (t.active === false) return false;
+      // null/undefined selected_in_plan means included in plan
       if (t.selected_in_plan === false) return false;
       if (t.status === "skipped") return false;
       return Boolean(t.id);
@@ -2020,7 +2021,18 @@ export default function ProjectDetailPage() {
       for (const p of planTasks) {
         if (p.active === false || p.selected_in_plan === false || p.status === "skipped") continue;
         if (byId.has(p.id)) {
-          // Prefer session status (just completed) over stale plan status
+          // Keep session status (just completed) over stale plan status
+          const cur = byId.get(p.id)!;
+          byId.set(p.id, {
+            ...cur,
+            // Fill missing placement/section from plan so sameMusicalSection works
+            section_id: cur.section_id ?? p.section_id ?? null,
+            start_ms: cur.start_ms ?? p.start_ms ?? null,
+            end_ms: cur.end_ms ?? p.end_ms ?? null,
+            title: cur.title || p.title,
+            metadata: (cur.metadata as Task["metadata"]) || (p.metadata as Task["metadata"]) || undefined,
+            type: cur.type || p.type,
+          });
           continue;
         }
         byId.set(p.id, {
@@ -2029,7 +2041,7 @@ export default function ProjectDetailPage() {
           title: p.title,
           instruction: p.instruction || "",
           reason: p.reason,
-          status: p.status || "pending",
+          status: p.id === completed?.id ? "completed" : p.status || "pending",
           required: Boolean(p.required),
           start_ms: p.start_ms,
           end_ms: p.end_ms,
@@ -2037,66 +2049,94 @@ export default function ProjectDetailPage() {
           metadata: p.metadata as Task["metadata"],
         });
       }
+      // If we just completed, force that status in pool
+      if (completed) {
+        const d = byId.get(completed.id);
+        if (d) byId.set(completed.id, { ...d, status: "completed" });
+      }
       return Array.from(byId.values());
     })();
 
-    // Stay on this musical section until every open vocal task is done or skipped.
+    const ensureActive = (task: Task) => {
+      setTasks((prev) => {
+        if (prev.some((t) => t.id === task.id)) {
+          return prev.map((t) => (t.id === task.id ? { ...t, ...task } : t));
+        }
+        return [...prev, task];
+      });
+      setActiveTaskId(task.id);
+    };
+
+    // 1) HARD RULE: after any take, finish remaining work on THIS musical section first
     if (completed) {
       const rec = nextProductionRecommendation(pool, completed);
       if (rec) {
-        // Ensure the chosen layer is in session tasks list
-        setTasks((prev) => {
-          if (prev.some((t) => t.id === rec.id)) return prev;
-          return [...prev, asSessionTask(rec)];
-        });
-        setActiveTaskId(rec.id);
+        ensureActive(rec);
         return;
       }
-      const sectionCore =
-        pool.find((t) => isCoreTask(t) && sameMusicalSection(completed, t)) || null;
-      if (sectionCore) {
-        const rec2 = nextProductionRecommendation(pool, sectionCore);
-        if (rec2) {
-          setTasks((prev) => {
-            if (prev.some((t) => t.id === rec2.id)) return prev;
-            return [...prev, asSessionTask(rec2)];
-          });
-          setActiveTaskId(rec2.id);
-          return;
-        }
-        // Hard stop: if section still reports open work, do not jump cores
-        if (sectionHasOpenWork(pool, sectionCore) || sectionHasOpenWork(pool, completed)) {
-          setActiveTaskId(sectionCore.id);
-          return;
-        }
-      }
-    }
-
-    // Before jumping to the next section's lead, scan ALL open tasks for any
-    // unfinished work that still belongs with the section we just finished.
-    if (completed) {
-      const lingering = pool.find(
+      // Any open non-lead on same section (belt and suspenders)
+      const openSame = pool.filter(
         (t) =>
           t.id !== completed.id &&
           isTaskOpen(t) &&
+          !isCoreTask(t) &&
           sameMusicalSection(completed, t)
       );
-      if (lingering) {
-        setTasks((prev) => {
-          if (prev.some((x) => x.id === lingering.id)) return prev;
-          return [...prev, lingering];
-        });
-        setActiveTaskId(lingering.id);
+      openSame.sort((a, b) => {
+        const rank = (ty: string) => {
+          const x = (ty || "").toLowerCase();
+          if (x.includes("double")) return 0;
+          if (x.includes("harmony")) return 1;
+          if (x.includes("background") || x.includes("hum")) return 2;
+          if (x.includes("adlib")) return 3;
+          return 5;
+        };
+        return rank(a.type) - rank(b.type);
+      });
+      if (openSame[0]) {
+        ensureActive(openSame[0]);
         return;
+      }
+      // Soft time-window fallback for layers with mismatched labels/ids
+      const ps = completed.start_ms != null ? Number(completed.start_ms) : null;
+      const pe = completed.end_ms != null ? Number(completed.end_ms) : null;
+      if (ps != null) {
+        const winEnd = pe != null ? pe : ps + 60000;
+        const byTime = pool.filter((t) => {
+          if (t.id === completed.id || !isTaskOpen(t) || isCoreTask(t)) return false;
+          const cs = t.start_ms != null ? Number(t.start_ms) : null;
+          if (cs == null) return false;
+          return cs >= ps - 3000 && cs <= winEnd + 3000;
+        });
+        byTime.sort((a, b) => {
+          const rank = (ty: string) => {
+            const x = (ty || "").toLowerCase();
+            if (x.includes("double")) return 0;
+            if (x.includes("harmony")) return 1;
+            if (x.includes("adlib")) return 3;
+            return 5;
+          };
+          return rank(a.type) - rank(b.type);
+        });
+        if (byTime[0]) {
+          ensureActive(byTime[0]);
+          return;
+        }
       }
     }
 
-    const nextCore = coreOpen(pool)[0];
+    // 2) Only now advance to the next section's lead
+    const nextCore = coreOpen(pool).find((t) => {
+      if (!completed) return true;
+      // Do not pick a lead that still shares the completed section while open layers exist
+      if (sameMusicalSection(completed, t) && sectionHasOpenWork(pool, completed)) return false;
+      return true;
+    }) || coreOpen(pool)[0];
+
     if (nextCore) {
-      // Leaving section — clear any previous-section monitor audio
       stopLayerMonitors();
       setReviewOverdubSrcs([]);
-      setActiveTaskId(nextCore.id);
+      ensureActive(nextCore);
       return;
     }
     setActiveTaskId(null);

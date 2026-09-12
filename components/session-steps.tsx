@@ -141,26 +141,39 @@ export function nextProductionRecommendation(
   tasks: SessionTask[],
   parent: SessionTask
 ): SessionTask | null {
-  // Always use sameMusicalSection (section_id, group key, time window) —
-  // section_id-only matching dropped layers that share a label but no id.
-  const sameSection = tasks.filter((t) => {
-    if (t.id === parent.id) return false;
-    if (!isTaskOpen(t)) return false;
-    return sameMusicalSection(parent, t);
-  });
+  const openOthers = tasks.filter((t) => t.id !== parent.id && isTaskOpen(t));
+
+  // Primary: same musical section
+  let sameSection = openOthers.filter((t) => sameMusicalSection(parent, t));
+
+  // Fallback: time-overlap within ~8s of parent window (layers often share start_ms)
+  if (!sameSection.length) {
+    const ps = parent.start_ms != null ? Number(parent.start_ms) : null;
+    const pe = parent.end_ms != null ? Number(parent.end_ms) : null;
+    if (ps != null) {
+      const windowEnd = pe != null ? pe : ps + 60000;
+      sameSection = openOthers.filter((t) => {
+        const cs = t.start_ms != null ? Number(t.start_ms) : null;
+        if (cs == null) return false;
+        // onset inside parent window, or parent onset inside candidate window
+        if (cs >= ps - 2500 && cs <= windowEnd + 2500) return true;
+        const ce = t.end_ms != null ? Number(t.end_ms) : cs + 30000;
+        return ps >= cs - 2500 && ps <= ce + 2500;
+      });
+    }
+  }
+
   if (!sameSection.length) return null;
 
-  // 1) Open production layers first (double → harmony → background → adlib)
+  // Prefer production layers — never jump to another section's lead while these exist
   const layers = sameSection.filter((t) => isProductionLayer(t) || isProductionLayerTask(t));
   layers.sort((a, b) => layerRank(a.type) - layerRank(b.type));
   if (layers[0]) return layers[0];
 
-  // 2) Any other open non-core task on this section
   const other = sameSection.filter((t) => !isCoreTask(t));
   other.sort((a, b) => layerRank(a.type) - layerRank(b.type));
   if (other[0]) return other[0];
 
-  // 3) Another open core in the same section (e.g. second lead window) before leaving
   const peerCore = sameSection.find((t) => isCoreTask(t));
   if (peerCore) return peerCore;
 
