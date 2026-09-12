@@ -143,6 +143,34 @@ type ProjectMeta = {
 type Screen = "beat" | "analyzing" | "plan" | "session" | "assemble" | "done";
 type Phase = "ready" | "countdown" | "recording" | "review";
 
+function asSessionTask(t: {
+  id: string;
+  type: string;
+  title?: string | null;
+  instruction?: string | null;
+  reason?: string | null;
+  status?: string | null;
+  required?: boolean | null;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  section_id?: string | null;
+  metadata?: Task["metadata"];
+}): Task {
+  return {
+    id: t.id,
+    type: t.type,
+    title: t.title ?? null,
+    instruction: t.instruction || "",
+    reason: t.reason ?? null,
+    status: t.status || "pending",
+    required: Boolean(t.required),
+    start_ms: t.start_ms ?? null,
+    end_ms: t.end_ms ?? null,
+    section_id: t.section_id ?? null,
+    metadata: t.metadata,
+  };
+}
+
 const PRODUCE_POLL_MS = 4000;
 const PRODUCE_MAX_MS = 15 * 60 * 1000;
 
@@ -2006,7 +2034,7 @@ export default function ProjectDetailPage() {
         // Ensure the chosen layer is in session tasks list
         setTasks((prev) => {
           if (prev.some((t) => t.id === rec.id)) return prev;
-          return [...prev, rec];
+          return [...prev, asSessionTask(rec)];
         });
         setActiveTaskId(rec.id);
         return;
@@ -2018,7 +2046,7 @@ export default function ProjectDetailPage() {
         if (rec2) {
           setTasks((prev) => {
             if (prev.some((t) => t.id === rec2.id)) return prev;
-            return [...prev, rec2];
+            return [...prev, asSessionTask(rec2)];
           });
           setActiveTaskId(rec2.id);
           return;
