@@ -85,7 +85,8 @@ function softenHarmonic(pcm: PcmStereo): PcmStereo {
     prevL = lpL;
     prevR = lpR;
   }
-  return applyGainStereo(out, 0.72);
+  applyGainStereo(out, 0.72);
+  return out;
 }
 
 export function generateDouble(opts: {
@@ -101,7 +102,7 @@ export function generateDouble(opts: {
   const ratio = Math.pow(2, cents / 1200);
   let d = delayPcm(opts.pcm, (delayMs / 1000) * sr);
   d = pitchShiftRatio(d, ratio);
-  d = applyGainStereo(d, 0.55);
+  applyGainStereo(d, 0.55);
   const pan = opts.side === "right" ? 0.55 : -0.55;
   applyWidth(d, 0.35, pan);
   return {
@@ -158,7 +159,7 @@ export function generateAdlibEcho(opts: {
     right: new Float32Array(right),
     sampleRate: sr,
   };
-  snippet = applyGainStereo(snippet, 0.4);
+  applyGainStereo(snippet, 0.4);
   applyWidth(snippet, 0.45, 0.5);
   // Place slightly after phrase (startMs is layer origin; phrase end relative)
   const placeMs = opts.startMs + (opts.phraseEndMs - opts.startMs) + 80;

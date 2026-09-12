@@ -6,7 +6,7 @@ import { analyzeBeat } from "./analysis/beat";
 import { combineAnalysis } from "./analysis/combine";
 import { analyzeVocal } from "./analysis/vocal";
 import { normalizeToInternalPcm, placeOnTimeline } from "./ingestion/normalize";
-import { applyGainStereo, dbToGain } from "./dsp";
+import { applyGainStereo, dbToGain, cloneStereo } from "./dsp";
 import { validateAudioBuffer } from "./ingestion/validate";
 import {
   adjustArrangementForRetry,
@@ -513,7 +513,8 @@ export async function runApArrangement(
 
       // Fullness stacks (doubles/harmonies/ad-libs) — place on timeline, lighter processing
       for (const g of generated) {
-        const gPcm = applyGainStereo(g.pcm, dbToGain(g.gainDb));
+        const gPcm = cloneStereo(g.pcm);
+        applyGainStereo(gPcm, dbToGain(g.gainDb));
         const placedG = placeOnTimeline(gPcm, beatNorm.pcm, g.startMs).vocal;
         placed.push(placedG);
       }
