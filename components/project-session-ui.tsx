@@ -66,7 +66,6 @@ import {
   nextProductionRecommendation,
   layerRecommendationCopy,
   sectionHasOpenWork,
-  isTaskOpen,
 } from "@/components/session-steps";
 import {
   layerPhraseHint,
