@@ -61,4 +61,7 @@ Analysis
 - Quiet repeated lines can still score as hooks
 - Low ASR confidence falls back per-phrase to energy — never fails the song
 
-Env: OPENAI_API_KEY, optional OPENAI_WHISPER_MODEL (default whisper-1).
+Env (preferred first):
+- `MISTRAL_API_KEY` — Voxtral Mini Transcribe (`voxtral-mini-latest`)
+- optional `MISTRAL_TRANSCRIBE_MODEL`
+- fallback: `OPENAI_API_KEY` / `OPENAI_WHISPER_MODEL`

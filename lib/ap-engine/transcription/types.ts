@@ -19,6 +19,6 @@ export type LyricPhrase = {
 export type TranscriptionResult = {
   phrases: LyricPhrase[];
   language?: string | null;
-  source: "openai_whisper" | "none" | "empty";
+  source: "mistral_voxtral" | "openai_whisper" | "none" | "empty";
   durationMs?: number;
 };
