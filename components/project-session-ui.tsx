@@ -64,6 +64,7 @@ import {
   coreTasks,
   productionLayersAdded,
   nextProductionRecommendation,
+  nextCoreForward,
   type SessionTask,
   layerRecommendationCopy,
   sectionHasOpenWork,
@@ -2069,57 +2070,56 @@ export default function ProjectDetailPage() {
       setActiveTaskId(normalized.id);
     };
 
-    // 1) HARD RULE: after any take, finish remaining work on THIS musical section first
+    // 1) HARD RULE: finish remaining layers on THIS section before any other section
     if (completed) {
       const rec = nextProductionRecommendation(pool, completed);
       if (rec) {
         ensureActive(rec);
         return;
       }
-      // Any open non-lead on same section (belt and suspenders)
-      const openSame = pool.filter(
-        (t) =>
-          t.id !== completed.id &&
-          isTaskOpen(t) &&
-          !isCoreTask(t) &&
-          sameMusicalSection(completed, t)
-      );
-      openSame.sort((a, b) => {
-        const rank = (ty: string) => {
-          const x = (ty || "").toLowerCase();
-          if (x.includes("double")) return 0;
-          if (x.includes("harmony")) return 1;
-          if (x.includes("background") || x.includes("hum")) return 2;
-          if (x.includes("adlib")) return 3;
-          return 5;
-        };
-        return rank(a.type) - rank(b.type);
-      });
-      if (openSame[0]) {
-        ensureActive(openSame[0]);
-        return;
-      }
-      // Soft time-window fallback for layers with mismatched labels/ids
-      const ps = completed.start_ms != null ? Number(completed.start_ms) : null;
-      const pe = completed.end_ms != null ? Number(completed.end_ms) : null;
-      if (ps != null) {
-        const winEnd = pe != null ? pe : ps + 60000;
-        const byTime = pool.filter((t) => {
-          if (t.id === completed.id || !isTaskOpen(t) || isCoreTask(t)) return false;
-          const cs = t.start_ms != null ? Number(t.start_ms) : null;
-          if (cs == null) return false;
-          return cs >= ps - 3000 && cs <= winEnd + 3000;
-        });
-        byTime.sort((a, b) => {
+      const openSame = pool
+        .filter(
+          (t) =>
+            t.id !== completed.id &&
+            isTaskOpen(t) &&
+            !isCoreTask(t) &&
+            sameMusicalSection(completed, t)
+        )
+        .sort((a, b) => {
           const rank = (ty: string) => {
             const x = (ty || "").toLowerCase();
             if (x.includes("double")) return 0;
             if (x.includes("harmony")) return 1;
+            if (x.includes("background") || x.includes("hum")) return 2;
             if (x.includes("adlib")) return 3;
             return 5;
           };
           return rank(a.type) - rank(b.type);
         });
+      if (openSame[0]) {
+        ensureActive(openSame[0]);
+        return;
+      }
+      // Tight start_ms match only (±4s) — do not pull earlier sections
+      const ps = completed.start_ms != null ? Number(completed.start_ms) : null;
+      if (ps != null) {
+        const byTime = pool
+          .filter((t) => {
+            if (t.id === completed.id || !isTaskOpen(t) || isCoreTask(t)) return false;
+            const cs = t.start_ms != null ? Number(t.start_ms) : null;
+            if (cs == null) return false;
+            return Math.abs(cs - ps) <= 4000;
+          })
+          .sort((a, b) => {
+            const rank = (ty: string) => {
+              const x = (ty || "").toLowerCase();
+              if (x.includes("double")) return 0;
+              if (x.includes("harmony")) return 1;
+              if (x.includes("adlib")) return 3;
+              return 5;
+            };
+            return rank(a.type) - rank(b.type);
+          });
         if (byTime[0]) {
           ensureActive(byTime[0]);
           return;
@@ -2127,14 +2127,8 @@ export default function ProjectDetailPage() {
       }
     }
 
-    // 2) Only now advance to the next section's lead
-    const nextCore = coreOpen(pool).find((t) => {
-      if (!completed) return true;
-      // Do not pick a lead that still shares the completed section while open layers exist
-      if (sameMusicalSection(completed, t) && sectionHasOpenWork(pool, completed)) return false;
-      return true;
-    }) || coreOpen(pool)[0];
-
+    // 2) Next section's lead — FORWARD in timeline only (never jump to an earlier open lead)
+    const nextCore = nextCoreForward(pool, completed);
     if (nextCore) {
       stopLayerMonitors();
       setReviewOverdubSrcs([]);
