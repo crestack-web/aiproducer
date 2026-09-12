@@ -6,6 +6,7 @@
 import { gainToDb } from "../dsp";
 import { buildBeatMaskBands } from "../mix/masking-lite";
 import { resolveGenreProfile } from "../profiles/genre-profiles";
+import { applyRnbMixBias } from "../profiles/rnb-production";
 import type { VocalRole, SongSectionKind } from "../roles";
 import { DEFAULT_ROLE_GAIN_DB } from "../roles";
 import type {
@@ -295,7 +296,7 @@ export function decideArrangementMix(
   const beatMaskBands = buildBeatMaskBands(leadAnalysis, beatAnalysis, beatPresenceCutDb);
   if (beatMaskBands.length) notes.push(`mask_bands:${beatMaskBands.length}`);
 
-  const mix: MixDecision = {
+  let mix: MixDecision = {
     vocalGainDb,
     beatGainDb,
     vocalPan: 0,
@@ -304,23 +305,28 @@ export function decideArrangementMix(
     beatMaskBands,
     duckMidFocus: 0.8,
   };
+  mix = applyRnbMixBias(mix, profile.id);
+  if (mix.duckDb >= 2.4) notes.push("rnb_mid_duck");
+  if ((mix.beatMaskBands?.length || 0) >= 3) notes.push("rnb_presence_pocket");
 
   const master: MasterDecision = {
     eq: [
       { type: "highpass", freq: 28, q: 0.7 },
-      { type: "peak", freq: 120, gainDb: 0.4, q: 0.8 },
-      { type: "highshelf", freq: 10000, gainDb: profile.leadForwardness > 0.8 ? 1.2 : 0.7, q: 0.7 },
+      { type: "peak", freq: 120, gainDb: 0.5, q: 0.8 },
+      { type: "peak", freq: 2800, gainDb: -0.4, q: 1.0 }, // slight glue notch
+      { type: "highshelf", freq: 10000, gainDb: profile.leadForwardness > 0.8 ? 0.9 : 0.55, q: 0.7 },
+      { type: "peak", freq: 180, gainDb: 0.35, q: 0.7 }, // R&B warmth body
     ],
     compressor: {
-      thresholdDb: -11,
-      ratio: 1.6 + (1 - profile.preserveDynamics) * 0.5,
-      attackMs: 22,
-      releaseMs: 160,
-      makeupDb: 0.6,
+      thresholdDb: -12,
+      ratio: 1.5 + (1 - profile.preserveDynamics) * 0.45,
+      attackMs: 28,
+      releaseMs: 180,
+      makeupDb: 0.5,
     },
     limiterCeilingDb: -1.0,
     targetLufs: profile.targetLufs,
-    makeupDb: 1.0,
+    makeupDb: 0.9,
     truePeakMarginDb: 0.5,
   };
 

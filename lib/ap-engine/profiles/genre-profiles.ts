@@ -3,6 +3,7 @@
  */
 
 import type { VocalRole } from "../roles";
+import { enhanceRnbProfile, isRnbFamily } from "./rnb-production";
 
 export type RoleTreatment = {
   gainDbOffset: number;
@@ -80,18 +81,33 @@ const PROFILES: Record<string, GenreProfile> = {
   rnb: {
     id: "rnb",
     label: "R&B / Neo-Soul",
-    leadForwardness: 0.65,
-    preserveDynamics: 0.75,
-    beatRespect: 0.7,
-    chorusEnergyBoostDb: 1.0,
-    verseIntimacyDb: -1.5,
-    targetLufs: -12.5,
+    leadForwardness: 0.72,
+    preserveDynamics: 0.78,
+    beatRespect: 0.68,
+    chorusEnergyBoostDb: 1.5,
+    verseIntimacyDb: -1.6,
+    targetLufs: -11.5,
     roles: baseRoles({
-      lead: { presenceDb: 2, warmthDb: 1.8, reverb: 0.15, compressionRatioBoost: -0.3 },
-      harmony_mid: { reverb: 0.22, width: 0.5 },
+      lead: {
+        presenceDb: 2.4,
+        warmthDb: 2.0,
+        reverb: 0.12,
+        delay: 0.07,
+        compressionRatioBoost: -0.25,
+      },
+      double: {
+        gainDbOffset: -4.2,
+        width: 0.26,
+        reverb: 0.08,
+        delay: 0.03,
+        compressionRatioBoost: 0.55,
+      },
+      harmony_high: { reverb: 0.24, width: 0.6, delay: 0.1 },
+      harmony_mid: { reverb: 0.22, width: 0.52 },
       background: { reverb: 0.32, width: 0.7 },
+      adlib: { delay: 0.18, reverb: 0.22, width: 0.55 },
     }),
-    notes: ["emotion_over_perfection"],
+    notes: ["emotion_over_perfection", "rnb_pocket", "warm_intimate_lead"],
   },
   hiphop: {
     id: "hiphop",
@@ -180,13 +196,16 @@ export function resolveGenreProfile(genre?: string | null): GenreProfile {
   if (g.includes("trap")) return PROFILES.trap;
   if (g.includes("hip") || g.includes("rap")) return PROFILES.hiphop;
   if (g.includes("amapiano") || g.includes("piano")) return PROFILES.amapiano;
-  if (g.includes("afro") && (g.includes("r&b") || g.includes("rnb") || g.includes("soul"))) return PROFILES.afro_rnb;
+  if (g.includes("afro") && (g.includes("r&b") || g.includes("rnb") || g.includes("soul"))) return enhanceRnbProfile(PROFILES.afro_rnb);
   if (g.includes("afrobeat") || g.includes("afropop") || g.includes("afro pop")) return PROFILES.afrobeats;
   if (g.includes("ballad") || g.includes("slow")) return PROFILES.ballad;
   if (g.includes("pop")) return PROFILES.pop;
-  if (g.includes("hausa")) return PROFILES.afro_rnb;
-  if (g.includes("r&b") || g.includes("rnb") || g.includes("soul") || g.includes("neo")) return PROFILES.rnb;
-  return PROFILES.rnb;
+  if (g.includes("hausa")) return enhanceRnbProfile(PROFILES.afro_rnb);
+  if (g.includes("r&b") || g.includes("rnb") || g.includes("soul") || g.includes("neo")) {
+    return enhanceRnbProfile(PROFILES.rnb);
+  }
+  // Default: R&B doctrine (most AP sessions trend contemporary R&B)
+  return enhanceRnbProfile(PROFILES.rnb);
 }
 
 export function listGenreProfiles(): GenreProfile[] {

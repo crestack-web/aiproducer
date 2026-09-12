@@ -127,6 +127,7 @@ export function processAndPlaceLayerDetailed(
       role,
       section: layer.decision.section,
       leadReference: layer.leadReference || null,
+      genre: layer.genre ?? null,
     });
     v = timed.pcm;
   } catch {
@@ -146,7 +147,7 @@ export function processAndPlaceLayerDetailed(
 
   // Musical space: ER + short/long + tempo delay + throws (producer space, not generic verb)
   try {
-    const plan = planMusicalSpace(role, layer.decision.section, layer.bpm ?? null);
+    const plan = planMusicalSpace(role, layer.decision.section, layer.bpm ?? null, layer.genre ?? null);
     const spaced = applyMusicalSpace(v, plan);
     v = spaced.pcm;
     spaceQc = {

@@ -6,6 +6,7 @@ import { cloneStereo, stereoToMono } from "../dsp";
 import type { PcmStereo } from "../types";
 import type { VocalRole, SongSectionKind } from "../roles";
 import { lockVocalToBeat } from "../mix/beat-lock";
+import { isRnbFamily, rnbTimingPull } from "../profiles/rnb-production";
 
 export type TimingPolicy = {
   maxShiftMs: number;
@@ -65,9 +66,17 @@ export function applyTimingIntelligence(opts: {
   role: VocalRole;
   section: SongSectionKind;
   leadReference?: PcmStereo | null;
+  genre?: string | null;
 }): { pcm: PcmStereo; shiftMs: number; policy: TimingPolicy; notes: string[] } {
-  const policy = timingPolicyFor(opts.role, opts.section);
+  const policy = { ...timingPolicyFor(opts.role, opts.section) };
+  if (opts.genre && isRnbFamily(opts.genre)) {
+    policy.pull = rnbTimingPull(opts.role, policy.pull);
+    if (opts.role === "double") {
+      policy.maxShiftMs = Math.max(policy.maxShiftMs, 48);
+    }
+  }
   const notes: string[] = [`timing_role:${opts.role}`, `timing_section:${opts.section}`];
+  if (opts.genre && isRnbFamily(opts.genre)) notes.push("timing:rnb_tight");
 
   // Primary: lock to beat groove
   const locked = lockVocalToBeat(opts.vocal, opts.beat, policy.maxShiftMs);

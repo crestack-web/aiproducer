@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.6.2-gentle-edges";
+export const AP_ENGINE_VERSION = "1.7.0-rnb-production";
 
 export type ApStage =
   | "queued"

@@ -28,7 +28,7 @@ export function mixVocalAndBeat(
   applyBeatPresenceCut(beat, decision);
 
   // 2. Pocket balance — vocal inside the track
-  const balanced = autoBalanceGains(vocal, beat, decision, 0.7);
+  const balanced = autoBalanceGains(vocal, beat, decision, 0.72);
   const liveDecision: MixDecision = {
     ...decision,
     vocalGainDb: balanced.vocalGainDb,
@@ -36,9 +36,9 @@ export function mixVocalAndBeat(
   };
   applyMixGains(vocal, beat, liveDecision);
 
-  // 3. Mid-focused duck
-  const duck = Math.max(decision.duckDb, 1.8);
-  duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.82);
+  // 3. Mid-focused duck — R&B needs a real pocket under the lead
+  const duck = Math.max(decision.duckDb, 2.2);
+  duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.88);
 
   // 4. Sum + bus glue
   let mix = sumStereo(vocal, beat);

@@ -13,6 +13,7 @@ import {
 } from "../dsp";
 import type { PcmStereo } from "../types";
 import type { VocalRole, SongSectionKind } from "../roles";
+import { isRnbFamily, rnbSectionSpaceScale } from "../profiles/rnb-production";
 
 export type SpacePlan = {
   earlyMs: number;
@@ -28,7 +29,8 @@ export type SpacePlan = {
 export function planMusicalSpace(
   role: VocalRole,
   section: SongSectionKind,
-  bpm: number | null
+  bpm: number | null,
+  genre?: string | null
 ): SpacePlan {
   const notes: string[] = [];
   const tempo = bpm && bpm > 60 && bpm < 200 ? bpm : 96;
@@ -99,6 +101,17 @@ export function planMusicalSpace(
     shortWet *= 0.85;
     delayWet *= 0.5;
     notes.push("space:double_tight");
+  }
+
+  // R&B: intimate verses, open choruses, controlled not washed
+  if (genre && isRnbFamily(genre)) {
+    const sc = rnbSectionSpaceScale(section);
+    earlyWet *= sc.early;
+    shortWet *= sc.short;
+    longWet *= sc.long;
+    delayWet *= sc.delay;
+    throwWet *= sc.throw;
+    notes.push("space:rnb_section");
   }
 
   return { earlyMs, earlyWet, shortWet, longWet, delayMs, delayWet, throwWet, notes };
