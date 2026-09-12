@@ -37,6 +37,7 @@ import {
 import type { PitchQC } from "./pitch";
 import { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
 import { transcribeVocalLayer, toLayerLyrics } from "./transcription";
+import { runRestorationFrontEnd, restorationToLog, type RestorationReport } from "./restoration/front-end";
 import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
@@ -113,7 +114,11 @@ export async function runApArrangement(
       section: ReturnType<typeof resolveSectionKind>;
       startMs: number;
       analysis: ReturnType<typeof analyzeVocal>;
+      restoration: RestorationReport;
     }[] = [];
+    const restoreNotes: string[] = [];
+
+    await stage("restoring", { sub: "front_end" });
 
     for (const v of input.vocals) {
       const val = validateAudioBuffer(v.buffer, v.pathHint);
@@ -121,13 +126,28 @@ export async function runApArrangement(
       const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
       const role = resolveVocalRole(v.taskType, v.sectionLabel);
       const section = resolveSectionKind(v.sectionLabel, v.taskType);
-      const analysis = analyzeVocal(norm.pcm);
+
+      // ——— Restoration front-end BEFORE analysis / ASR / Producer Mind ———
+      const restored = runRestorationFrontEnd(norm.pcm);
+      restoreNotes.push(...restorationToLog(restored.report));
+      logAp("restoration", {
+        jobId: input.jobId,
+        role,
+        section,
+        confidence: restored.report.confidence,
+        risk: restored.report.artifactRiskScore,
+        flags: restored.report.flags,
+        noiseDb: [restored.report.noiseFloorBeforeDb, restored.report.noiseFloorAfterDb],
+      });
+
+      const analysis = analyzeVocal(restored.pcm);
       normalizedLayers.push({
-        pcm: norm.pcm,
+        pcm: restored.pcm,
         role,
         section,
         startMs: v.startMs ?? 0,
         analysis,
+        restoration: restored.report,
       });
     }
 
@@ -212,6 +232,14 @@ export async function runApArrangement(
     }
 
     // ——— Producer Mind: reason about intent, then DSP executes ———
+        const lowRestore = normalizedLayers.some((l) => l.restoration.confidence === "low");
+    if (lowRestore) {
+      logAp("restoration_caution", {
+        jobId: input.jobId,
+        note: "Low-confidence restoration — Producer Mind will prefer restraint",
+      });
+    }
+
     const decisionMap: DecisionMap = buildDecisionMap(
       {
         genre: input.genre,
@@ -256,10 +284,19 @@ export async function runApArrangement(
       }
       vocal.deEsserAmount = Math.min(0.55, vocal.deEsserAmount * inf.deEssScale);
       vocal.gainDb += inf.faderDb * 0.35;
+      if (lowRestore) {
+        vocal.gateThresholdDb = Math.min(vocal.gateThresholdDb, -50);
+        vocal.reverbSend = Math.min(vocal.reverbSend, vocal.reverbSend * 0.85);
+        vocal.compressor = { ...vocal.compressor, ratio: Math.max(1.8, vocal.compressor.ratio * 0.9) };
+      }
       return {
         ...d,
         vocal,
-        notes: [...d.notes, `mind:${inf.preserveBreath ? "preserve" : "standard"}`],
+        notes: [
+          ...d.notes,
+          `mind:${inf.preserveBreath ? "preserve" : "standard"}`,
+          ...(lowRestore ? ["restore:conservative"] : []),
+        ],
       };
     });
 
@@ -364,7 +401,7 @@ export async function runApArrangement(
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
         pitchQcAll,
-        performanceNotes: [...performanceNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
+        performanceNotes: [...performanceNotes, ...restoreNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
       };
     };
 
