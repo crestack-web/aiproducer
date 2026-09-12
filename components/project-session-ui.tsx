@@ -64,6 +64,7 @@ import {
   coreTasks,
   productionLayersAdded,
   nextProductionRecommendation,
+  type SessionTask,
   layerRecommendationCopy,
   sectionHasOpenWork,
 } from "@/components/session-steps";
