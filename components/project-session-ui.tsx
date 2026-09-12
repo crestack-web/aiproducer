@@ -40,6 +40,7 @@ import {
 import {
   createSessionTimeline,
   markCountdownStart,
+  markBeatStart,
   markRecordingStart,
   markRecordingStop,
   placementStartMs,
@@ -1497,30 +1498,66 @@ export default function ProjectDetailPage() {
     }
 
     const armAndStart = () => {
+      // Align beat to section start — soft if pre-roll already landed nearby
+      if (beatAudioRef.current && beatUrl) {
+        const targetSec = taskWin.startMs / 1000;
+        try {
+          const cur = beatAudioRef.current.currentTime;
+          if (!Number.isFinite(cur) || Math.abs(cur - targetSec) > 0.12) {
+            beatAudioRef.current.currentTime = targetSec;
+          }
+        } catch {
+          try {
+            beatAudioRef.current.currentTime = taskWin.startMs / 1000;
+          } catch {
+            /* ignore */
+          }
+        }
+        beatAudioRef.current.muted = false;
+        beatAudioRef.current.play().catch(() => undefined);
+      }
+
       if (sessionTimelineRef.current) {
         sessionTimelineRef.current = markRecordingStart(sessionTimelineRef.current);
         setLastRecordingOffsetMs(sessionTimelineRef.current.recordingOffsetMs);
       }
+
+      // Peers start with the section (t=0 on take files), not during pre-roll
       seekLayerMonitorsToSectionStart(taskWin.startMs);
       playLayerMonitors();
-      rec.start(100);
-      if (beatAudioRef.current && beatUrl) {
+
+      // Guard: mic tracks must still be live
+      const live = stream.getAudioTracks().some((t) => t.readyState === "live");
+      if (!live) {
+        setError("Microphone disconnected — tap Record to try again");
+        setPhase("ready");
         try {
-          beatAudioRef.current.currentTime = taskWin.startMs / 1000;
+          rec.stop();
         } catch {
           /* ignore */
         }
-        beatAudioRef.current.play().catch(() => undefined);
+        return;
+      }
+
+      try {
+        if (rec.state === "inactive") rec.start(100);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not start recorder");
+        setPhase("ready");
+        return;
       }
       setPhase("recording");
       startSpeakerDuckIfNeeded(stream);
     };
 
     void (async () => {
-      try {
-        await startLayerMonitors(task);
-      } catch (e) {
-        console.warn("[layer-monitor] failed", e);
+      // Only fetch peers if countdown preload did not populate them
+      if (layerMonitorAudiosRef.current.length === 0) {
+        try {
+          await startLayerMonitors(task, { play: false });
+        } catch (e) {
+          console.warn("[layer-monitor] failed", e);
+        }
       }
       armAndStart();
     })();
@@ -1603,8 +1640,14 @@ export default function ProjectDetailPage() {
     setReviewOverdubSrcs(srcs);
   }
 
-  async function startLayerMonitors(task: Task) {
+  /** Load section peers into layerMonitorAudiosRef without playing (for countdown prep). */
+  async function preloadLayerMonitors(task: Task) {
+    await startLayerMonitors(task, { play: false });
+  }
+
+  async function startLayerMonitors(task: Task, opts?: { play?: boolean }) {
     stopLayerMonitors();
+    const shouldPlay = opts?.play !== false;
 
     const sectionStart = resolveTaskWindow(task).startMs;
     const sectionId =
@@ -1725,10 +1768,14 @@ export default function ProjectDetailPage() {
           /* ignore */
         }
         await routePlaybackToPreferredOutput(el, sink);
+        el.pause();
+        el.currentTime = 0;
         layerMonitorAudiosRef.current.push(el);
-        await el.play().catch((e) => {
-          console.warn("[layer-monitor] play failed", e);
-        });
+        if (shouldPlay) {
+          await el.play().catch((e) => {
+            console.warn("[layer-monitor] play failed", e);
+          });
+        }
       } catch {
         /* skip broken layer */
       }
@@ -1804,41 +1851,44 @@ export default function ProjectDetailPage() {
       setCountdown(3);
       setPhase("countdown");
       void markRecordingStatus();
+      // Preload section peers during countdown (do NOT play — would be 3s early vs beat)
+      void preloadLayerMonitors(current).catch(() => undefined);
+
       if (beatAudioRef.current && beatUrl) {
         // Pre-roll: beat seeks to sectionStart - countIn (musical clock)
-        beatAudioRef.current.currentTime = Math.max(0, (resolveTaskWindow(current).startMs - 3000) / 1000);
+        const preRollStart = Math.max(0, (resolveTaskWindow(current).startMs - 3000) / 1000);
+        try {
+          beatAudioRef.current.currentTime = preRollStart;
+        } catch {
+          /* ignore */
+        }
         const mode = classifyMonitorMode(selectedSpeakerIdRef.current);
         beatAudioRef.current.muted = false;
         beatAudioRef.current.volume =
           mode === "PHONE_HANDSET" ? 0.1 : mode === "PHONE_SPEAKER" ? 0.02 : 0.14;
         beatAudioRef.current.play().catch(() => undefined);
-      }
-      // Always monitor prior takes in this section (harmony under Lead, etc.)
-      void (async () => {
-        await startLayerMonitors(current);
-        // Pre-roll: start layers ~3s before section (same as beat) when possible
-        for (const el of layerMonitorAudiosRef.current) {
-          try {
-            el.currentTime = Math.max(0, el.currentTime); // takes usually start at section
-            // If take is section-length only, stay at 0 during countdown silence then real content at record
-          } catch {
-            /* ignore */
-          }
+        if (sessionTimelineRef.current) {
+          sessionTimelineRef.current = markBeatStart(sessionTimelineRef.current);
         }
-        playLayerMonitors();
-      })();
+      }
       const captureStream = opened.recordStream;
+      const taskSnapshot = current;
       let n = 3;
       if (countdownRef.current) clearInterval(countdownRef.current);
+      // Use performance.now deadline so countdown stays tight to the 3s pre-roll
+      const countDeadline = performance.now() + 3000;
       countdownRef.current = setInterval(() => {
-        n -= 1;
-        if (n <= 0) {
+        const left = Math.ceil((countDeadline - performance.now()) / 1000);
+        if (left <= 0) {
           if (countdownRef.current) clearInterval(countdownRef.current);
           countdownRef.current = null;
           setCountdown(0);
-          beginMediaCapture(captureStream, current);
-        } else setCountdown(n);
-      }, 1000);
+          beginMediaCapture(captureStream, taskSnapshot);
+        } else {
+          setCountdown(left);
+          n = left;
+        }
+      }, 100);
     } catch (e) {
       setMicStream(null);
       setPhase("ready");
@@ -1858,6 +1908,7 @@ export default function ProjectDetailPage() {
     countdownRef.current = null;
     stopSpeakerDuck();
     beatAudioRef.current?.pause();
+    stopLayerMonitors();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     setMicStream(null);
