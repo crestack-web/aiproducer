@@ -250,8 +250,47 @@ export default function WelcomePage() {
         </section>
 
         <footer>
-          <span>◆ Studio — AI Music Producer</span>
-          <span>You bring the voice. We help you make the song.</span>
+          <div className="footer-brand">
+            <Link href="/" className="footer-logo">
+              <img
+                src="/logo.svg"
+                alt="AP Studio"
+                width={32}
+                height={32}
+                className="logo-img"
+              />
+              <span>AP Studio</span>
+            </Link>
+            <span className="footer-tag">Your voice. Produced.</span>
+          </div>
+          <div className="footer-socials">
+            <a
+              href="https://www.instagram.com/Apstudio.site"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="AP Studio on Instagram"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.75" />
+                <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.75" />
+                <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" />
+              </svg>
+              <span>Instagram</span>
+            </a>
+            <a
+              href="https://www.tiktok.com/@Apstudio.site"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="AP Studio on TikTok"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .56.04.82.12v-3.4a6.22 6.22 0 0 0-.82-.05A6.34 6.34 0 0 0 3.15 15.4 6.34 6.34 0 0 0 9.49 21.7a6.34 6.34 0 0 0 6.34-6.34V8.92a8.2 8.2 0 0 0 4.76 1.52V7.02a4.84 4.84 0 0 1-1-.33z" />
+              </svg>
+              <span>TikTok</span>
+            </a>
+          </div>
         </footer>
       </div>
     </>
@@ -375,7 +414,15 @@ const css = `
   }
   html[data-theme="light"] .bottom-cta h2{color:var(--text)}
   html[data-theme="light"] .bottom-cta p{color:var(--muted)}
-  html[data-theme="light"] footer{color:var(--faint);border-top:1px solid var(--border)}
+  html[data-theme="light"] footer{margin-top:48px;padding-top:24px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:16px 24px;justify-content:space-between;align-items:center;font-size:13px;color:var(--faint)}
+  .footer-brand{display:flex;flex-direction:column;gap:6px}
+  .footer-logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:var(--text);text-decoration:none}
+  .footer-logo:hover{opacity:0.9}
+  .footer-tag{font-size:12px;color:var(--faint)}
+  .footer-socials{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .social-link{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid var(--border);color:var(--text);text-decoration:none;font-size:12px;font-weight:500;background:var(--surface)}
+  .social-link:hover{border-color:var(--accent, #c17a12);color:var(--accent, #c17a12)}
+  .social-link svg{flex-shrink:0}
   html[data-theme="light"] .panel-label{color:var(--brass)}
   html[data-theme="light"] .panel h3{color:var(--text)}
   html[data-theme="light"] .panel p{color:var(--muted)}
