@@ -1,5 +1,9 @@
 /**
- * Mobile vocal RecordingEngine — capture path only (no beat mixing).
+ * Mobile vocal RecordingEngine — LIVE PATH only (no beat mixing, no AP polish).
+ *
+ * LIVE vs OFFLINE fork:
+ *   Live:  low-latency capture + monitoring + raw MediaRecorder blob
+ *   Offline (after save): Restoration → Producer Mind → Fullness → Mix/Master
  *
  * INPUT (independent):
  *   Selected mic → getUserMedia → MediaStream → MediaRecorder
@@ -8,7 +12,11 @@
  *   Beat <audio> → setSinkId(headphones|speaker) → user ears
  *
  * The beat must never connect to MediaRecorder / MediaStreamDestination.
- * Input and output are never forced to match each other by the app.
+ * Never record a processed/AP-polished stream as the source of truth.
+ * Target monitor latency ~10–15ms perceived; actual ceiling is the platform audio stack.
+ *
+ * @see docs/realtime-recording-pipeline.md
+ * @see lib/audio/live-recording-path.ts
  */
 
 export type RecordingConstraintsMode = "music_headphones" | "music_speaker" | "speech_fallback";
