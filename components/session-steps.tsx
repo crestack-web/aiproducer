@@ -141,27 +141,17 @@ export function nextProductionRecommendation(
   tasks: SessionTask[],
   parent: SessionTask
 ): SessionTask | null {
-  const parentSid =
-    parent.section_id ||
-    (parent.metadata && (parent.metadata as { section_id?: string }).section_id) ||
-    null;
-
+  // Always use sameMusicalSection (section_id, group key, time window) —
+  // section_id-only matching dropped layers that share a label but no id.
   const sameSection = tasks.filter((t) => {
     if (t.id === parent.id) return false;
     if (!isTaskOpen(t)) return false;
-    if (parentSid) {
-      const sid =
-        t.section_id ||
-        (t.metadata && (t.metadata as { section_id?: string }).section_id) ||
-        null;
-      if (sid) return sid === parentSid;
-    }
     return sameMusicalSection(parent, t);
   });
   if (!sameSection.length) return null;
 
-  // 1) Open production layers first (double → harmony → …)
-  const layers = sameSection.filter((t) => isProductionLayer(t));
+  // 1) Open production layers first (double → harmony → background → adlib)
+  const layers = sameSection.filter((t) => isProductionLayer(t) || isProductionLayerTask(t));
   layers.sort((a, b) => layerRank(a.type) - layerRank(b.type));
   if (layers[0]) return layers[0];
 
@@ -169,6 +159,10 @@ export function nextProductionRecommendation(
   const other = sameSection.filter((t) => !isCoreTask(t));
   other.sort((a, b) => layerRank(a.type) - layerRank(b.type));
   if (other[0]) return other[0];
+
+  // 3) Another open core in the same section (e.g. second lead window) before leaving
+  const peerCore = sameSection.find((t) => isCoreTask(t));
+  if (peerCore) return peerCore;
 
   return null;
 }

@@ -2072,6 +2072,25 @@ export default function ProjectDetailPage() {
       }
     }
 
+    // Before jumping to the next section's lead, scan ALL open tasks for any
+    // unfinished work that still belongs with the section we just finished.
+    if (completed) {
+      const lingering = pool.find(
+        (t) =>
+          t.id !== completed.id &&
+          isTaskOpen(t) &&
+          sameMusicalSection(completed, t)
+      );
+      if (lingering) {
+        setTasks((prev) => {
+          if (prev.some((x) => x.id === lingering.id)) return prev;
+          return [...prev, lingering];
+        });
+        setActiveTaskId(lingering.id);
+        return;
+      }
+    }
+
     const nextCore = coreOpen(pool)[0];
     if (nextCore) {
       // Leaving section — clear any previous-section monitor audio

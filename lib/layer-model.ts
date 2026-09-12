@@ -91,14 +91,21 @@ export function sectionGroupKey(task: {
   if (task.section_id) return `s:${task.section_id}`;
   const mid = task.metadata?.section_id;
   if (mid) return `s:${mid}`;
-  const label = (
+  const rawLabel = (
     task.metadata?.parent_section_label ||
     task.metadata?.section_label ||
     task.title ||
     ""
-  )
-    .trim()
-    .toLowerCase();
+  ).trim();
+  // Strip role words so "Verse 1 Lead" and "Verse 1 Harmony" group together
+  const label = rawLabel
+    .toLowerCase()
+    .replace(
+      /\b(lead|main|double|doubler|harmony|harmonies|adlib|ad-libs?|ad libs?|background|bgv|oohs?|ahhs?|texture|hum|response|call)\b/g,
+      " "
+    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
   if (label) return `label:${label}`;
   const st = (task.metadata?.section_type || "").trim().toLowerCase();
   if (st && task.start_ms != null) {
@@ -119,6 +126,14 @@ function taskSectionId(t: {
 }
 
 /** True if layer task belongs to the same musical section as parent (lead or any part). */
+function normalizeSectionLabel(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\b(lead|double|harmony|adlib|ad-lib|background|bgv|take)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export function sameMusicalSection(
   parent: {
     id: string;
