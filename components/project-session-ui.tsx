@@ -2057,14 +2057,15 @@ export default function ProjectDetailPage() {
       return Array.from(byId.values());
     })();
 
-    const ensureActive = (task: Task) => {
+    const ensureActive = (task: Task | SessionTask) => {
+      const normalized: Task = asSessionTask(task);
       setTasks((prev) => {
-        if (prev.some((t) => t.id === task.id)) {
-          return prev.map((t) => (t.id === task.id ? { ...t, ...task } : t));
+        if (prev.some((t) => t.id === normalized.id)) {
+          return prev.map((t) => (t.id === normalized.id ? { ...t, ...normalized } : t));
         }
-        return [...prev, task];
+        return [...prev, normalized];
       });
-      setActiveTaskId(task.id);
+      setActiveTaskId(normalized.id);
     };
 
     // 1) HARD RULE: after any take, finish remaining work on THIS musical section first
