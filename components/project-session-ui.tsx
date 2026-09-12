@@ -65,6 +65,8 @@ import {
   productionLayersAdded,
   nextProductionRecommendation,
   layerRecommendationCopy,
+  sectionHasOpenWork,
+  isTaskOpen,
 } from "@/components/session-steps";
 import {
   layerPhraseHint,
@@ -1970,32 +1972,75 @@ export default function ProjectDetailPage() {
     setReviewOverdubSrcs([]);
     setPhase("ready");
     setScreen("session");
-    // Stay on this musical section until ALL open production layers are done
-    // (double / harmony / background / adlib). Never jump to the next core early.
+
+    // Merge planTasks so layers that exist in the plan but dropped from `tasks` still count
+    const pool: Task[] = (() => {
+      const byId = new Map<string, Task>();
+      for (const t of next) byId.set(t.id, t);
+      for (const p of planTasks) {
+        if (p.active === false || p.selected_in_plan === false || p.status === "skipped") continue;
+        if (byId.has(p.id)) {
+          // Prefer session status (just completed) over stale plan status
+          continue;
+        }
+        byId.set(p.id, {
+          id: p.id,
+          type: p.type,
+          title: p.title,
+          instruction: p.instruction || "",
+          reason: p.reason,
+          status: p.status || "pending",
+          required: Boolean(p.required),
+          start_ms: p.start_ms,
+          end_ms: p.end_ms,
+          section_id: p.section_id,
+          metadata: p.metadata as Task["metadata"],
+        });
+      }
+      return Array.from(byId.values());
+    })();
+
+    // Stay on this musical section until every open vocal task is done or skipped.
     if (completed) {
-      const rec = nextProductionRecommendation(next, completed);
+      const rec = nextProductionRecommendation(pool, completed);
       if (rec) {
+        // Ensure the chosen layer is in session tasks list
+        setTasks((prev) => {
+          if (prev.some((t) => t.id === rec.id)) return prev;
+          return [...prev, rec];
+        });
         setActiveTaskId(rec.id);
         return;
       }
-      // Anchor on section lead if we just finished a layer (or key mismatch)
       const sectionCore =
-        next.find((t) => isCoreTask(t) && sameMusicalSection(completed, t)) || null;
-      if (sectionCore && sectionCore.id !== completed.id) {
-        const rec2 = nextProductionRecommendation(next, sectionCore);
+        pool.find((t) => isCoreTask(t) && sameMusicalSection(completed, t)) || null;
+      if (sectionCore) {
+        const rec2 = nextProductionRecommendation(pool, sectionCore);
         if (rec2) {
+          setTasks((prev) => {
+            if (prev.some((t) => t.id === rec2.id)) return prev;
+            return [...prev, rec2];
+          });
           setActiveTaskId(rec2.id);
+          return;
+        }
+        // Hard stop: if section still reports open work, do not jump cores
+        if (sectionHasOpenWork(pool, sectionCore) || sectionHasOpenWork(pool, completed)) {
+          setActiveTaskId(sectionCore.id);
           return;
         }
       }
     }
-    const nextCore = coreOpen(next)[0];
+
+    const nextCore = coreOpen(pool)[0];
     if (nextCore) {
       setActiveTaskId(nextCore.id);
       return;
     }
     setActiveTaskId(null);
-    if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) setScreen("assemble");
+    if (coreOpen(pool).length === 0 && pool.every((t) => !isTaskOpen(t))) {
+      setScreen("assemble");
+    }
   }
 
   function keepAndContinue() {
@@ -2005,9 +2050,13 @@ export default function ProjectDetailPage() {
       return;
     }
     const wasRetake = isRetake;
-    const completedSnapshot = current;
+    const completedSnapshot: Task = { ...current, status: "completed" };
     setError(null);
     setSavedRecordingId(null);
+    // Keep planTasks in sync so section layer lookup sees this task as done
+    setPlanTasks((prev) =>
+      prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t))
+    );
     setTasks((prev) => {
       const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
       if (wasRetake) {
@@ -2761,6 +2810,43 @@ export default function ProjectDetailPage() {
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
                 )}
                 <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId} onClick={keepAndContinue}>
+                {!uploading && current && (() => {
+                  const nextLayer = nextProductionRecommendation(
+                    [
+                      ...tasks.map((t) =>
+                        t.id === current.id ? { ...t, status: "completed" } : t
+                      ),
+                      ...planTasks
+                        .filter(
+                          (p) =>
+                            p.active !== false &&
+                            p.selected_in_plan !== false &&
+                            p.status !== "skipped" &&
+                            !tasks.some((t) => t.id === p.id)
+                        )
+                        .map((p) => ({
+                          id: p.id,
+                          type: p.type,
+                          title: p.title,
+                          instruction: p.instruction || "",
+                          status: p.status || "pending",
+                          required: Boolean(p.required),
+                          start_ms: p.start_ms,
+                          end_ms: p.end_ms,
+                          section_id: p.section_id,
+                          metadata: p.metadata as Task["metadata"],
+                        })),
+                    ],
+                    { ...current, status: "completed" }
+                  );
+                  if (!nextLayer) return null;
+                  const copy = layerRecommendationCopy(nextLayer.type);
+                  return (
+                    <p style={{ textAlign: "center", color: C.brass, fontSize: 13, marginTop: 8, fontWeight: 600 }}>
+                      Next on this section: {copy.cta}
+                    </p>
+                  );
+                })()}
                   {uploading ? "Saving…" : isRetake ? "Keep retake & continue" : "Keep take & continue"}
                 </button>
                 {savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (

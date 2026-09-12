@@ -141,14 +141,16 @@ export function sameMusicalSection(
   if (sectionGroupKey(parent) === sectionGroupKey(candidate)) return true;
 
   // Overlapping time range (layer may start later inside the section)
-  const ps = parent.start_ms;
-  const pe = parent.end_ms;
-  const cs = candidate.start_ms;
+  const ps = parent.start_ms != null ? Number(parent.start_ms) : null;
+  const pe = parent.end_ms != null ? Number(parent.end_ms) : null;
+  const cs = candidate.start_ms != null ? Number(candidate.start_ms) : null;
+  const ce = candidate.end_ms != null ? Number(candidate.end_ms) : null;
   if (ps != null && pe != null && cs != null) {
-    if (cs >= ps - 250 && cs < pe + 250) return true;
+    if (cs >= ps - 500 && cs <= pe + 500) return true;
+    if (ce != null && ce > ps - 500 && cs < pe + 500) return true;
   }
-  // Same start within 2s
-  if (ps != null && cs != null && Math.abs(ps - cs) <= 2000) return true;
+  // Same start within 5s (section windows can drift after plan edits)
+  if (ps != null && cs != null && Math.abs(ps - cs) <= 5000) return true;
 
   return false;
 }

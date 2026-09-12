@@ -40,7 +40,15 @@ export function sectionLabel(t: SessionTask) {
 }
 
 export function isTaskOpen(t: SessionTask) {
-  return t.status === "pending" || t.status === "in_progress";
+  const s = (t.status || "").trim().toLowerCase();
+  // Treat blank/unknown as still open — only terminal states close a task
+  if (!s) return true;
+  if (["pending", "in_progress", "ready", "open", "todo", "new"].includes(s)) return true;
+  if (["completed", "complete", "done", "recorded", "produced", "skipped", "skip"].includes(s)) {
+    return false;
+  }
+  // Any other status: still recordable
+  return true;
 }
 
 export function isTaskDone(t: SessionTask) {
@@ -113,29 +121,49 @@ function sectionKey(t: SessionTask): string {
  * for the SAME musical section (double → harmony → background → adlib…).
  * Must not jump to the next song section while layers remain on this one.
  */
+function layerRank(type: string) {
+  const ty = (type || "").toLowerCase();
+  if (ty.includes("double")) return 0;
+  if (ty.includes("harmony")) return 1;
+  if (ty.includes("background") || ty.includes("hum") || ty.includes("texture") || ty.includes("whisper"))
+    return 2;
+  if (ty.includes("adlib") || ty.includes("ad-lib")) return 3;
+  if (ty.includes("response") || ty.includes("call")) return 4;
+  return 5;
+}
+
+/**
+ * Next open vocal task in the SAME musical section.
+ * Prefers production layers (double → harmony → …) but will also return any
+ * other open non-lead task so Continue never jumps sections early.
+ */
 export function nextProductionRecommendation(
   tasks: SessionTask[],
   parent: SessionTask
 ): SessionTask | null {
-  const layers = tasks.filter(
-    (t) =>
-      t.id !== parent.id &&
-      isProductionLayer(t) &&
-      isTaskOpen(t) &&
-      sameMusicalSection(parent, t)
+  const sameSection = tasks.filter(
+    (t) => t.id !== parent.id && isTaskOpen(t) && sameMusicalSection(parent, t)
   );
-  // Prefer doubles, then harmony, then others (stable product priority)
-  const rank = (type: string) => {
-    const ty = (type || "").toLowerCase();
-    if (ty.includes("double")) return 0;
-    if (ty.includes("harmony")) return 1;
-    if (ty.includes("background")) return 2;
-    if (ty.includes("adlib") || ty.includes("ad-lib")) return 3;
-    if (ty.includes("response") || ty.includes("call")) return 4;
-    return 5;
-  };
-  layers.sort((a, b) => rank(a.type) - rank(b.type));
-  return layers[0] || null;
+  if (!sameSection.length) return null;
+
+  // 1) Open production layers first
+  const layers = sameSection.filter((t) => isProductionLayer(t));
+  layers.sort((a, b) => layerRank(a.type) - layerRank(b.type));
+  if (layers[0]) return layers[0];
+
+  // 2) Any other open non-core task on this section
+  const other = sameSection.filter((t) => !isCoreTask(t));
+  other.sort((a, b) => layerRank(a.type) - layerRank(b.type));
+  if (other[0]) return other[0];
+
+  return null;
+}
+
+/** True if this section still has open vocal work (layers or unfinished peers). */
+export function sectionHasOpenWork(tasks: SessionTask[], parent: SessionTask): boolean {
+  return tasks.some(
+    (t) => t.id !== parent.id && isTaskOpen(t) && sameMusicalSection(parent, t)
+  );
 }
 
 export function layerRecommendationCopy(type: string): {
