@@ -12,6 +12,7 @@ import { type RoomToneQC } from "../restoration/room-tone";
 import { reduceNaturalRoom, type SpaceQC } from "../restoration/intentional-space";
 import { planMusicalSpace, applyMusicalSpace } from "../production/musical-space";
 import { applyTimingIntelligence } from "../production/timing-intelligence";
+import { runApTime } from "../timing";
 import { sectionEnergyDb } from "../production/vocal-automation";
 import { treatMouthNoise, type MouthNoiseQC } from "../restoration/mouth-noise";
 import { rideVocalLevel, type VocalRideQC } from "../restoration/vocal-ride";
@@ -136,19 +137,36 @@ export function processAndPlaceLayerDetailed(
     );
   }
 
-  // 5. Timing intelligence vs full-song beat (fix late vocals; role/section aware)
+  // 5. AP TIME — phrase-level musical timing (after pitch; uses AP EDIT phrases)
   try {
-    const timed = applyTimingIntelligence({
+    const timed = runApTime({
       vocal: v,
       beat: beatLengthPcm,
       role,
       section: layer.decision.section,
-      leadReference: layer.leadReference || null,
       genre: layer.genre ?? null,
+      bpm: layer.bpm ?? null,
+      leadOffsetMs: null,
     });
-    v = timed.pcm;
-  } catch {
-    /* keep untimed */
+    v = timed.pcm as typeof v;
+    if (timed.notes.length) {
+      console.log("[ap-time]", timed.notes.join(" "));
+    }
+  } catch (e) {
+    console.warn("[ap-time] failed — fallback coarse lock", e instanceof Error ? e.message : e);
+    try {
+      const timed = applyTimingIntelligence({
+        vocal: v,
+        beat: beatLengthPcm,
+        role,
+        section: layer.decision.section,
+        leadReference: layer.leadReference || null,
+        genre: layer.genre ?? null,
+      });
+      v = timed.pcm;
+    } catch {
+      /* keep untimed */
+    }
   }
 
   // 5b. Light global stabilize, then production chain

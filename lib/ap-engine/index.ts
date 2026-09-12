@@ -37,6 +37,7 @@ import type { PitchQC } from "./pitch";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
+export { runApTime } from "./timing";
 export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
 
 export type ApVocalLayerInput = {

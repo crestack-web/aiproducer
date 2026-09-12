@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.8.0-vocal-edit";
+export const AP_ENGINE_VERSION = "1.9.0-ap-time";
 
 export type ApStage =
   | "queued"
