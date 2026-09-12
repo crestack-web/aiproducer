@@ -104,3 +104,6 @@ Each vocal take runs through `cleanTakeEdges` during restoration:
 - Cosine fade-in (~50ms) and fade-out (~100ms)
 
 Goal: only the song parts remain in each section take — not a hard cut that clicks.
+
+
+See also: [Producer Mind](./producer-mind.md).

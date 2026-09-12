@@ -35,12 +35,16 @@ import {
   type StageReporter,
 } from "./types";
 import type { PitchQC } from "./pitch";
+import { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
+import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
 export { runApTime } from "./timing";
 export { extractSongFingerprint, applyFeedbackTag, resolveStyleAxis, styleLabel } from "./master/engine";
 export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
+export { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
+export type { DecisionMap, PhraseDecision, SectionDecision } from "./producer-mind";
 
 export type ApVocalLayerInput = {
   buffer: Buffer;
@@ -168,11 +172,62 @@ export async function runApArrangement(
     );
 
     let arrMix = decideArrangementMix(leadAnalysis, beatA, input.genre, layerCount);
+
+    // ——— Producer Mind: reason about intent, then DSP executes ———
+    const decisionMap: DecisionMap = buildDecisionMap(
+      {
+        genre: input.genre,
+        beatDurationMs: beatA.durationMs,
+        vocalRms: leadAnalysis.rms,
+        beatRms: beatA.rms,
+        layers: normalizedLayers.map((l) => ({
+          role: l.role,
+          section: l.section,
+          startMs: l.startMs,
+          durationMs: l.analysis.durationMs,
+        })),
+      },
+      normalizedLayers.map((l) => ({
+        role: l.role,
+        section: l.section,
+        startMs: l.startMs,
+        pcm: l.pcm,
+      }))
+    );
+    logAp("producer_mind", {
+      jobId: input.jobId,
+      sections: decisionMap.sections.length,
+      phrases: decisionMap.phrases.length,
+      summary: decisionMap.summary.slice(0, 8),
+    });
+
+    // Modulate per-layer DSP params from phrase/section instructions
+    layerDecisions = layerDecisions.map((d, i) => {
+      const layer = normalizedLayers[i];
+      const inf = phraseInfluenceForLayer(decisionMap, layer.role, layer.section);
+      const vocal = { ...d.vocal };
+      vocal.reverbSend = Math.min(0.45, vocal.reverbSend * inf.reverbScale);
+      vocal.compressor = {
+        ...vocal.compressor,
+        ratio: Math.max(1.5, vocal.compressor.ratio * inf.compressionScale),
+      };
+      if (inf.preserveBreath) {
+        vocal.gateThresholdDb = Math.min(vocal.gateThresholdDb, -48);
+      }
+      vocal.deEsserAmount = Math.min(0.55, vocal.deEsserAmount * inf.deEssScale);
+      vocal.gainDb += inf.faderDb * 0.35;
+      return {
+        ...d,
+        vocal,
+        notes: [...d.notes, `mind:${inf.preserveBreath ? "preserve" : "standard"}`],
+      };
+    });
+
     logAp("decision", {
       jobId: input.jobId,
       genre: arrMix.notes.find((n) => n.startsWith("genre:")),
       roles: layerDecisions.map((d) => d.role),
-      notes: [...arrMix.notes, ...layerDecisions.flatMap((d) => d.notes)].slice(0, 20),
+      notes: [...arrMix.notes, ...layerDecisions.flatMap((d) => d.notes), ...decisionMap.summary].slice(0, 24),
     });
 
     await stage("restoring");
@@ -247,6 +302,11 @@ export async function runApArrangement(
         placed.push(placedByIndex[i]!);
       }
 
+      // Producer Mind: phrase/section fader rides on placed timeline
+      for (let pi = 0; pi < placed.length; pi++) {
+        placed[pi] = applyPhraseFaderRides(placed[pi], decisionMap, normalizedLayers[pi]?.role);
+      }
+
       // Cross-section vocal consistency — match lead active RMS across the song
       const rolesForMatch = normalizedLayers.map((l) => l.role);
       const matched = matchVocalLevelsAcrossSong(placed, rolesForMatch);
@@ -264,7 +324,7 @@ export async function runApArrangement(
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
         pitchQcAll,
-        performanceNotes,
+        performanceNotes: [...performanceNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
       };
     };
 
