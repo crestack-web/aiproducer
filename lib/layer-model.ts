@@ -109,6 +109,15 @@ export function sectionGroupKey(task: {
   return `id:${task.id}`;
 }
 
+function taskSectionId(t: {
+  section_id?: string | null;
+  metadata?: { section_id?: string } | null;
+}): string | null {
+  if (t.section_id) return String(t.section_id);
+  const mid = t.metadata?.section_id;
+  return mid ? String(mid) : null;
+}
+
 /** True if layer task belongs to the same musical section as parent (lead or any part). */
 export function sameMusicalSection(
   parent: {
@@ -138,19 +147,32 @@ export function sameMusicalSection(
     } | null;
   }
 ): boolean {
+  // Strongest signal: shared section_id (never match across different ids)
+  const pid = taskSectionId(parent);
+  const cid = taskSectionId(candidate);
+  if (pid && cid) return pid === cid;
+  if (pid && !cid) {
+    // candidate missing id — allow only if group key / window matches
+  } else if (!pid && cid) {
+    /* fall through */
+  }
+
   if (sectionGroupKey(parent) === sectionGroupKey(candidate)) return true;
 
-  // Overlapping time range (layer may start later inside the section)
+  // Time window: candidate onset must fall inside parent window (layers often start later)
   const ps = parent.start_ms != null ? Number(parent.start_ms) : null;
   const pe = parent.end_ms != null ? Number(parent.end_ms) : null;
   const cs = candidate.start_ms != null ? Number(candidate.start_ms) : null;
   const ce = candidate.end_ms != null ? Number(candidate.end_ms) : null;
   if (ps != null && pe != null && cs != null) {
-    if (cs >= ps - 500 && cs <= pe + 500) return true;
-    if (ce != null && ce > ps - 500 && cs < pe + 500) return true;
+    // Onset inside parent section (with small tolerance)
+    if (cs >= ps - 300 && cs < pe - 200) return true;
+    // Substantial overlap of ranges
+    if (ce != null) {
+      const overlap = Math.min(pe, ce) - Math.max(ps, cs);
+      if (overlap > 1500) return true;
+    }
   }
-  // Same start within 5s (section windows can drift after plan edits)
-  if (ps != null && cs != null && Math.abs(ps - cs) <= 5000) return true;
 
   return false;
 }

@@ -141,12 +141,26 @@ export function nextProductionRecommendation(
   tasks: SessionTask[],
   parent: SessionTask
 ): SessionTask | null {
-  const sameSection = tasks.filter(
-    (t) => t.id !== parent.id && isTaskOpen(t) && sameMusicalSection(parent, t)
-  );
+  const parentSid =
+    parent.section_id ||
+    (parent.metadata && (parent.metadata as { section_id?: string }).section_id) ||
+    null;
+
+  const sameSection = tasks.filter((t) => {
+    if (t.id === parent.id) return false;
+    if (!isTaskOpen(t)) return false;
+    if (parentSid) {
+      const sid =
+        t.section_id ||
+        (t.metadata && (t.metadata as { section_id?: string }).section_id) ||
+        null;
+      if (sid) return sid === parentSid;
+    }
+    return sameMusicalSection(parent, t);
+  });
   if (!sameSection.length) return null;
 
-  // 1) Open production layers first
+  // 1) Open production layers first (double → harmony → …)
   const layers = sameSection.filter((t) => isProductionLayer(t));
   layers.sort((a, b) => layerRank(a.type) - layerRank(b.type));
   if (layers[0]) return layers[0];

@@ -607,6 +607,19 @@ export default function ProjectDetailPage() {
     setLocalBlobUrl(null);
     setSavedRecordingId(null);
     setTaskTakes([]);
+    setReviewOverdubSrcs([]);
+    stopLayerMonitors();
+    try {
+      if (beatAudioRef.current) {
+        beatAudioRef.current.pause();
+        const task = tasks.find((t) => t.id === taskId);
+        if (task) {
+          beatAudioRef.current.currentTime = resolveTaskWindow(task).startMs / 1000;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     setActiveTaskId(taskId);
     setScreen("session");
     void markRecordingStatus();
@@ -2061,6 +2074,9 @@ export default function ProjectDetailPage() {
 
     const nextCore = coreOpen(pool)[0];
     if (nextCore) {
+      // Leaving section — clear any previous-section monitor audio
+      stopLayerMonitors();
+      setReviewOverdubSrcs([]);
       setActiveTaskId(nextCore.id);
       return;
     }
@@ -2070,36 +2086,97 @@ export default function ProjectDetailPage() {
     }
   }
 
-  function keepAndContinue() {
+  async function keepAndContinue() {
     if (!current) return;
     if (!savedRecordingId) {
       setError("Take is not saved yet. Wait until it says Saved, or press Retake.");
       return;
     }
     const wasRetake = isRetake;
+    const completedId = current.id;
     const completedSnapshot: Task = { ...current, status: "completed" };
     setError(null);
     setSavedRecordingId(null);
-    // Keep planTasks in sync so section layer lookup sees this task as done
+    setLocalBlobUrl(null);
+    setReviewOverdubSrcs([]);
+    stopLayerMonitors();
+    try {
+      beatAudioRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+
+    // Mark completed locally immediately
     setPlanTasks((prev) =>
-      prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t))
+      prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
     );
-    setTasks((prev) => {
-      const next = prev.map((t) => (t.id === current.id ? { ...t, status: "completed" } : t));
-      if (wasRetake) {
-        setActiveTaskId(null);
-        setLocalBlobUrl(null);
-        setPhase("ready");
-        setScreen("session");
-        if (coreOpen(next).length === 0 && optionalOpen(next).length === 0) {
-          setScreen("assemble");
-          void loadSongPreview();
-        }
-      } else {
-        clearFocusAndAdvance(next, completedSnapshot);
+    setTasks((prev) =>
+      prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
+    );
+
+    if (wasRetake) {
+      setActiveTaskId(null);
+      setPhase("ready");
+      setScreen("session");
+      return;
+    }
+
+    // Authoritative list from server — never trust stale client-only layer membership
+    let pool: Task[] = [];
+    try {
+      const [tr, pr] = await Promise.all([
+        fetch(`/api/projects/${id}/recording-tasks`),
+        fetch(`/api/projects/${id}/plan`),
+      ]);
+      const sessionRows: Task[] = tr.ok ? ((await tr.json()).tasks || []) : [];
+      let planRows: PlanEditorTask[] = [];
+      if (pr.ok) {
+        const pj = await pr.json();
+        planRows = Array.isArray(pj.tasks) ? (pj.tasks as PlanEditorTask[]) : [];
+        if (planRows.length) setPlanTasks(planRows);
       }
-      return next;
-    });
+      const byId = new Map<string, Task>();
+      for (const t of sessionRows) {
+        byId.set(t.id, {
+          ...t,
+          status: t.id === completedId ? "completed" : t.status,
+          start_ms: t.start_ms ?? null,
+          end_ms: t.end_ms ?? null,
+        });
+      }
+      for (const p of planRows) {
+        if (p.active === false || p.selected_in_plan === false) continue;
+        if ((p.status || "").toLowerCase() === "skipped") continue;
+        const existing = byId.get(p.id);
+        if (existing) {
+          byId.set(p.id, {
+            ...existing,
+            status: p.id === completedId ? "completed" : existing.status,
+            section_id: existing.section_id ?? p.section_id,
+            start_ms: existing.start_ms ?? p.start_ms ?? null,
+            end_ms: existing.end_ms ?? p.end_ms ?? null,
+            metadata: existing.metadata ?? (p.metadata as Task["metadata"]),
+          });
+        } else {
+          byId.set(p.id, asSessionTask({
+            ...p,
+            status: p.id === completedId ? "completed" : p.status || "pending",
+          }));
+        }
+      }
+      // Ensure the just-completed task is marked done even if API is lagging
+      const done = byId.get(completedId);
+      if (done) byId.set(completedId, { ...done, status: "completed" });
+      else byId.set(completedId, completedSnapshot);
+      pool = Array.from(byId.values());
+      setTasks(pool.filter((t) => (t.status || "").toLowerCase() !== "skipped"));
+    } catch {
+      pool = tasks.map((t) =>
+        t.id === completedId ? { ...t, status: "completed" } : t
+      );
+    }
+
+    clearFocusAndAdvance(pool, completedSnapshot);
   }
 
   async function skipCurrent() {
