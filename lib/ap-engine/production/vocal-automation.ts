@@ -7,13 +7,15 @@ import type { PcmStereo } from "../types";
 import type { SongSectionKind } from "../roles";
 
 export function sectionEnergyDb(section: SongSectionKind, role: string): number {
+  // Subtle arc only — large jumps made sections feel like different songs.
+  // Cross-section consistency is handled by matchVocalLevelsAcrossSong.
   let db = 0;
-  if (section === "verse") db = role === "lead" ? -0.5 : -1.2;
-  else if (section === "pre_chorus") db = 0.4;
-  else if (section === "chorus") db = role === "lead" ? 1.0 : 1.4;
-  else if (section === "bridge") db = -0.3;
-  else if (section === "outro") db = role === "lead" ? -0.8 : -1.5;
-  else if (section === "intro") db = -1.0;
+  if (section === "verse") db = role === "lead" ? -0.25 : -0.5;
+  else if (section === "pre_chorus") db = 0.2;
+  else if (section === "chorus") db = role === "lead" ? 0.45 : 0.6;
+  else if (section === "bridge") db = -0.15;
+  else if (section === "outro") db = role === "lead" ? -0.35 : -0.6;
+  else if (section === "intro") db = -0.4;
   return db;
 }
 

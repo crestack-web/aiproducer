@@ -128,7 +128,7 @@ export function rideVocalLevel(opts: {
     if (gDb > maxBoostDb) gDb = maxBoostDb;
     if (gDb < -maxCutDb) gDb = -maxCutDb;
     // Don't boost very quiet noise-like phrases aggressively
-    if (ph.rms < voiceThr * 1.2 && gDb > 2) gDb = Math.min(gDb, 2.5);
+    if (ph.rms < voiceThr * 1.2 && gDb > 2) gDb = Math.min(gDb, 2.0);
     const g = Math.pow(10, gDb / 20);
 
     // Fade gain in/out at phrase edges (~30 ms)

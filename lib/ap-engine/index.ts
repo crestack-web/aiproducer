@@ -16,6 +16,7 @@ import {
 } from "./production/decision-engine";
 import { mixVocalAndBeat } from "./mix/engine";
 import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
+import { matchVocalLevelsAcrossSong } from "./mix/level-match";
 import { processVocalBus } from "./mix/vocal-bus";
 import { masterMix } from "./master/engine";
 import { runQc } from "./qc/checks";
@@ -244,6 +245,13 @@ export async function runApArrangement(
       for (let i = 0; i < placedByIndex.length; i++) {
         placed.push(placedByIndex[i]!);
       }
+
+      // Cross-section vocal consistency — match lead active RMS across the song
+      const rolesForMatch = normalizedLayers.map((l) => l.role);
+      const matched = matchVocalLevelsAcrossSong(placed, rolesForMatch);
+      placed.length = 0;
+      placed.push(...matched.layers);
+      if (matched.notes.length) performanceNotes.push(...matched.notes);
 
       let vocalBus = sumVocalBus(placed);
       vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
