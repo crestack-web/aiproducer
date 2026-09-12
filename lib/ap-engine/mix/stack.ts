@@ -7,6 +7,7 @@ import type { PcmStereo } from "../types";
 import type { LayerDecision } from "../production/decision-engine";
 import { applyWidth } from "./width";
 import { restoreVocal } from "../restoration/denoise";
+import { editVocalPerformance, type VocalEditQC } from "../edit/vocal-edit";
 import { type RoomToneQC } from "../restoration/room-tone";
 import { reduceNaturalRoom, type SpaceQC } from "../restoration/intentional-space";
 import { planMusicalSpace, applyMusicalSpace } from "../production/musical-space";
@@ -58,6 +59,22 @@ export function processAndPlaceLayerDetailed(
 ): StackLayerResult {
   const role = layer.decision.role;
   let v = cloneStereo(layer.pcm);
+
+  // 0. AP EDIT — phrase detect, clear dead pre/post, keep musical pauses
+  let editQc: VocalEditQC | null = null;
+  try {
+    const edited = editVocalPerformance(v);
+    v = edited.pcm;
+    editQc = edited.qc;
+    if (editQc.applied) {
+      console.log(
+        `[ap-edit] phrases=${editQc.phraseCount} pre=${editQc.preRollClearedMs}ms post=${editQc.postRollClearedMs}ms`
+      );
+    }
+  } catch (e) {
+    console.warn("[ap-edit] failed — continuing with raw take", e instanceof Error ? e.message : e);
+    editQc = null;
+  }
 
   // 1. Basic restore (edge fade, HPF, gate)
   v = restoreVocal(v, layer.decision.vocal);
