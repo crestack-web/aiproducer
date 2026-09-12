@@ -256,7 +256,7 @@ export async function runApArrangement(
       let vocalBus = sumVocalBus(placed);
       vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
-      const master = masterMix(mix, arrMix.master);
+      const master = masterMix(mix, arrMix.master, { genre: input.genre, mood: null, vocalSit: "forward", platform: "both" });
       return {
         mix,
         master,

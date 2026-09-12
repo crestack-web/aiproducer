@@ -325,9 +325,9 @@ export function decideArrangementMix(
       makeupDb: 0.5,
     },
     limiterCeilingDb: -1.0,
-    // Streaming competitive: clamp profile into -12…-14 family
-    targetLufs: Math.min(-12, Math.max(-14.5, profile.targetLufs ?? -13)),
-    makeupDb: 1.5,
+    // Competitive pre-normalization (−10…−13); agent may refine by mood
+    targetLufs: Math.min(-10, Math.max(-13.5, profile.targetLufs ?? -11)),
+    makeupDb: 1.2,
     truePeakMarginDb: 0.35,
   };
 

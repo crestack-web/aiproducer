@@ -2,7 +2,7 @@
  * AP Audio Production Engine — shared types (Phase 1)
  */
 
-export const AP_ENGINE_VERSION = "1.9.2-vocal-level-match";
+export const AP_ENGINE_VERSION = "1.10.0-mastering-agent";
 
 export type ApStage =
   | "queued"
