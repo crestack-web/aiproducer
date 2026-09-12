@@ -18,6 +18,142 @@ async function assertOwned(
   return data;
 }
 
+
+/** Update recording_tasks with schema-resilient plan flags.
+ * Production DBs may lack active / selected_in_plan / plan_source columns.
+ */
+async function updateTaskPlanFlags(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+  projectId: string,
+  taskId: string,
+  flags: {
+    selected?: boolean;
+    active?: boolean;
+    plan_source?: string;
+  }
+) {
+  const attempts: Record<string, unknown>[] = [];
+
+  // Preferred: full plan columns
+  const full: Record<string, unknown> = {};
+  if (flags.selected !== undefined) full.selected_in_plan = flags.selected;
+  if (flags.active !== undefined) full.active = flags.active;
+  if (flags.plan_source) full.plan_source = flags.plan_source;
+  if (Object.keys(full).length) attempts.push(full);
+
+  // No `active` column
+  if (flags.selected !== undefined) {
+    attempts.push({ selected_in_plan: flags.selected });
+  }
+
+  // No plan columns at all — soft-skip via status + metadata
+  if (flags.selected === false) {
+    attempts.push({ status: "skipped" });
+  } else if (flags.selected === true) {
+    attempts.push({ status: "pending" });
+  }
+
+  let lastErr: { message: string } | null = null;
+  for (const patch of attempts) {
+    const { data, error } = await supabase
+      .from("recording_tasks")
+      .update(patch)
+      .eq("id", taskId)
+      .eq("project_id", projectId)
+      .select()
+      .maybeSingle();
+    if (!error && data) {
+      // Normalize response so UI always sees plan flags
+      const row = data as Record<string, unknown>;
+      if (flags.selected !== undefined && row.selected_in_plan === undefined) {
+        row.selected_in_plan = flags.selected;
+      }
+      if (flags.active !== undefined && row.active === undefined) {
+        row.active = flags.active;
+      }
+      if (flags.selected === false) {
+        row.selected_in_plan = false;
+        row.active = false;
+      }
+      if (flags.selected === true) {
+        row.selected_in_plan = true;
+        row.active = true;
+      }
+      return { data: row, error: null };
+    }
+    lastErr = error;
+    const msg = (error?.message || "").toLowerCase();
+    // Only retry on missing-column schema errors
+    if (!/column|schema cache|does not exist|active|selected_in_plan|plan_source/i.test(msg)) {
+      break;
+    }
+  }
+
+  // Last resort: merge flags into metadata so UI can still filter
+  const { data: existing } = await supabase
+    .from("recording_tasks")
+    .select("id, metadata, status")
+    .eq("id", taskId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (existing) {
+    const m = { ...((existing.metadata || {}) as Record<string, unknown>) };
+    if (flags.selected !== undefined) {
+      m.selected_in_plan = flags.selected;
+      m.active = flags.selected;
+    }
+    const statusPatch: Record<string, unknown> = { metadata: m };
+    if (flags.selected === false) statusPatch.status = "skipped";
+    if (flags.selected === true && existing.status === "skipped") statusPatch.status = "pending";
+    const { data, error } = await supabase
+      .from("recording_tasks")
+      .update(statusPatch)
+      .eq("id", taskId)
+      .eq("project_id", projectId)
+      .select()
+      .maybeSingle();
+    if (!error && data) {
+      const row = data as Record<string, unknown>;
+      row.selected_in_plan = flags.selected ?? true;
+      row.active = flags.selected ?? true;
+      return { data: row, error: null };
+    }
+    lastErr = error || lastErr;
+  }
+
+  return { data: null, error: lastErr };
+}
+
+async function bulkUpdatePlanFlags(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+  projectId: string,
+  flags: { selected?: boolean; active?: boolean; plan_source?: string },
+  filter?: { ids?: string[]; plan_sources?: string[] }
+) {
+  const patches: Record<string, unknown>[] = [];
+  const full: Record<string, unknown> = {};
+  if (flags.selected !== undefined) full.selected_in_plan = flags.selected;
+  if (flags.active !== undefined) full.active = flags.active;
+  if (flags.plan_source) full.plan_source = flags.plan_source;
+  patches.push(full);
+  if (flags.selected !== undefined) patches.push({ selected_in_plan: flags.selected });
+  if (flags.selected === false) patches.push({ status: "skipped" });
+  if (flags.selected === true) patches.push({ status: "pending" });
+
+  for (const patch of patches) {
+    let q = supabase.from("recording_tasks").update(patch).eq("project_id", projectId);
+    if (filter?.ids?.length) q = q.in("id", filter.ids);
+    if (filter?.plan_sources?.length) q = q.in("plan_source", filter.plan_sources);
+    const { error } = await q;
+    if (!error) return null;
+    const msg = (error.message || "").toLowerCase();
+    if (!/column|schema cache|does not exist|active|selected_in_plan|plan_source/i.test(msg)) {
+      return error;
+    }
+  }
+  return null;
+}
+
 /** GET — AI plan snapshot + artist plan (all tasks including inactive). */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -81,18 +217,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (action === "select") {
     const taskId = String(body.task_id || "");
     const selected = Boolean(body.selected);
-    const { data, error: upErr } = await supabase
-      .from("recording_tasks")
-      .update({
-        selected_in_plan: selected,
-        active: selected ? true : undefined,
-        // re-selecting a removed task reactivates it
-        ...(selected ? { active: true } : {}),
-      })
-      .eq("id", taskId)
-      .eq("project_id", projectId)
-      .select()
-      .maybeSingle();
+    const { data, error: upErr } = await updateTaskPlanFlags(supabase, projectId, taskId, {
+      selected,
+      active: selected,
+    });
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
     if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
     return NextResponse.json({ task: data });
@@ -101,13 +229,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (action === "remove") {
     const taskId = String(body.task_id || "");
     // Soft-remove: keep row + recordings; drop from active plan
-    const { data, error: upErr } = await supabase
-      .from("recording_tasks")
-      .update({ active: false, selected_in_plan: false })
-      .eq("id", taskId)
-      .eq("project_id", projectId)
-      .select()
-      .maybeSingle();
+    const { data, error: upErr } = await updateTaskPlanFlags(supabase, projectId, taskId, {
+      selected: false,
+      active: false,
+    });
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
     if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
     await supabase
@@ -119,13 +244,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   if (action === "restore") {
     const taskId = String(body.task_id || "");
-    const { data, error: upErr } = await supabase
-      .from("recording_tasks")
-      .update({ active: true, selected_in_plan: true, plan_source: "restored_ai" })
-      .eq("id", taskId)
-      .eq("project_id", projectId)
-      .select()
-      .maybeSingle();
+    const { data, error: upErr } = await updateTaskPlanFlags(supabase, projectId, taskId, {
+      selected: true,
+      active: true,
+      plan_source: "restored_ai",
+    });
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
     if (!data) return NextResponse.json({ error: "Task not found" }, { status: 404 });
     return NextResponse.json({ task: data });
@@ -224,18 +347,19 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const ai = meta.ai_plan as { tasks?: { id?: string }[] } | undefined;
     const ids = (ai?.tasks || []).map((t) => t.id).filter(Boolean) as string[];
     if (ids.length) {
-      await supabase
-        .from("recording_tasks")
-        .update({ active: true, selected_in_plan: true, plan_source: "restored_ai" })
-        .eq("project_id", projectId)
-        .in("id", ids);
+      await bulkUpdatePlanFlags(
+        supabase,
+        projectId,
+        { selected: true, active: true, plan_source: "restored_ai" },
+        { ids }
+      );
     } else {
-      // No snapshot: re-select all AI-sourced tasks
-      await supabase
-        .from("recording_tasks")
-        .update({ active: true, selected_in_plan: true })
-        .eq("project_id", projectId)
-        .in("plan_source", ["ai", "restored_ai"]);
+      await bulkUpdatePlanFlags(
+        supabase,
+        projectId,
+        { selected: true, active: true },
+        { plan_sources: ["ai", "restored_ai"] }
+      );
     }
     await supabase
       .from("projects")
@@ -250,10 +374,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   if (action === "clear_to_scratch") {
-    await supabase
-      .from("recording_tasks")
-      .update({ selected_in_plan: false, active: false })
-      .eq("project_id", projectId);
+    await bulkUpdatePlanFlags(supabase, projectId, { selected: false, active: false });
     await supabase
       .from("projects")
       .update({ metadata: { ...meta, plan_mode: "scratch" } })
