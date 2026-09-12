@@ -23,16 +23,41 @@ export function polishVocalLayer(opts: {
   genre?: string | null;
   leadReference?: PcmStereo | null;
   forceProfile?: CorrectionProfile;
+  /** Producer Mind partial-correction strength 0–1 (never full snap) */
+  correctionStrengthBias?: number;
+  timingTightnessBias?: number;
+  forcePreserveVibrato?: boolean;
 }): PolishResult {
   const src = cloneStereo(opts.pcm);
   const mono = stereoToMono(src);
   const analysis = analyzePitch(mono, src.sampleRate);
-  const decision: VocalPolishDecision = decideVocalPolish({
+  let decision: VocalPolishDecision = decideVocalPolish({
     analysis,
     role: opts.role,
     genre: opts.genre,
     forceProfile: opts.forceProfile,
   });
+  if (typeof opts.correctionStrengthBias === "number") {
+    const bias = Math.max(0, Math.min(0.78, opts.correctionStrengthBias));
+    decision = {
+      ...decision,
+      correctionStrength: Math.max(
+        0,
+        Math.min(0.78, (decision.correctionStrength || 0.4) * 0.35 + bias * 0.65)
+      ),
+      timingTightness:
+        typeof opts.timingTightnessBias === "number"
+          ? Math.min(0.55, opts.timingTightnessBias)
+          : decision.timingTightness,
+      preserveVibrato: opts.forcePreserveVibrato !== false ? true : decision.preserveVibrato,
+      maxCorrectionCents: Math.min(
+        decision.maxCorrectionCents || 80,
+        35 + bias * 50
+      ),
+      notes: [...decision.notes, `mind_strength:${bias.toFixed(2)}`],
+    };
+  }
+
   const noteDecisions = decideNoteCorrections(analysis.notes, decision);
 
   const qcBase: PitchQC = {
