@@ -22,12 +22,33 @@ export type PlanEditorTask = {
   song_sections?: { label?: string | null; type?: string | null } | null;
 };
 
+/** Display mm:ss from milliseconds */
 function fmtMs(ms: number | null | undefined) {
   if (ms == null || Number.isNaN(ms)) return "—";
   const s = Math.max(0, ms) / 1000;
   const m = Math.floor(s / 60);
   const r = Math.floor(s % 60);
   return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/** Edit field: show seconds (one decimal), not raw ms like 11357 */
+function msToSecInput(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(Number(ms))) return "0";
+  const s = Math.max(0, Number(ms)) / 1000;
+  // Whole seconds when clean; otherwise one decimal
+  if (Math.abs(s - Math.round(s)) < 0.05) return String(Math.round(s));
+  return s.toFixed(1);
+}
+
+/** Parse user input as seconds → ms. Accepts "12", "12.5", or legacy ms if > 600. */
+function secInputToMs(value: string): number {
+  const raw = String(value || "").trim().replace(",", ".");
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  // Legacy: if someone pastes a large ms value (> 10 min as "seconds"), treat as ms
+  if (n > 600 && Number.isInteger(n)) return Math.round(n);
+  return Math.round(n * 1000);
 }
 
 function roleLabel(type: string) {
@@ -117,8 +138,9 @@ export function PlanEditor({
     setDraft({
       type: t.type || "LEAD",
       title: t.title || roleLabel(t.type),
-      start_ms: String(t.start_ms ?? 0),
-      end_ms: String(t.end_ms ?? 0),
+      // Draft stores seconds for the artist — converted to ms on save
+      start_ms: msToSecInput(t.start_ms),
+      end_ms: msToSecInput(t.end_ms),
     });
   }
 
@@ -129,8 +151,8 @@ export function PlanEditor({
       patch: {
         type: draft.type,
         title: draft.title,
-        start_ms: Number(draft.start_ms) || 0,
-        end_ms: Number(draft.end_ms) || 0,
+        start_ms: secInputToMs(draft.start_ms),
+        end_ms: secInputToMs(draft.end_ms),
       },
     });
     setEditingId(null);
@@ -276,20 +298,53 @@ export function PlanEditor({
                         placeholder="Title"
                         style={{ padding: 8, borderRadius: 8, border: `1px solid ${C.border}` }}
                       />
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input
-                          value={draft.start_ms}
-                          onChange={(e) => setDraft({ ...draft, start_ms: e.target.value })}
-                          placeholder="start_ms"
-                          style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${C.border}` }}
-                        />
-                        <input
-                          value={draft.end_ms}
-                          onChange={(e) => setDraft({ ...draft, end_ms: e.target.value })}
-                          placeholder="end_ms"
-                          style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${C.border}` }}
-                        />
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <label style={{ flex: 1, fontSize: 11, color: C.textMuted }}>
+                          Start (sec)
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            min={0}
+                            value={draft.start_ms}
+                            onChange={(e) => setDraft({ ...draft, start_ms: e.target.value })}
+                            placeholder="e.g. 11.4"
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              marginTop: 4,
+                              padding: 8,
+                              borderRadius: 8,
+                              border: `1px solid ${C.border}`,
+                              boxSizing: "border-box",
+                            }}
+                          />
+                        </label>
+                        <label style={{ flex: 1, fontSize: 11, color: C.textMuted }}>
+                          End (sec)
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.1"
+                            min={0}
+                            value={draft.end_ms}
+                            onChange={(e) => setDraft({ ...draft, end_ms: e.target.value })}
+                            placeholder="e.g. 28"
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              marginTop: 4,
+                              padding: 8,
+                              borderRadius: 8,
+                              border: `1px solid ${C.border}`,
+                              boxSizing: "border-box",
+                            }}
+                          />
+                        </label>
                       </div>
+                      <p style={{ margin: 0, fontSize: 11, color: C.textMuted }}>
+                        Times are in seconds on the song timeline (not milliseconds).
+                      </p>
                       <div style={{ display: "flex", gap: 8 }}>
                         <button type="button" onClick={() => void saveEdit(t.id)} disabled={busy}>
                           Save
