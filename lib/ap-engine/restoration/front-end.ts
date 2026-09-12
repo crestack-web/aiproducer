@@ -193,7 +193,8 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
   plain.push(`leveled ${levelGainDb >= 0 ? "+" : ""}${levelGainDb.toFixed(1)} dB`);
 
   // Edge silence / mouth close
-  pcm = trimVocalSilence(pcm);
+  const trimmed = trimVocalSilence(pcm);
+  pcm = trimmed.pcm;
   pcm = cleanTakeEdges(pcm, { fadeInMs: 40, fadeOutMs: 80, maxLeadMs: 350, maxTailMs: 400 });
 
   // Artifact budget: higher noise → allow a bit more NR, but never extreme
