@@ -5,7 +5,8 @@
 import { analyzeBeat } from "./analysis/beat";
 import { combineAnalysis } from "./analysis/combine";
 import { analyzeVocal } from "./analysis/vocal";
-import { normalizeToInternalPcm } from "./ingestion/normalize";
+import { normalizeToInternalPcm, placeOnTimeline } from "./ingestion/normalize";
+import { applyGainStereo, dbToGain } from "./dsp";
 import { validateAudioBuffer } from "./ingestion/validate";
 import {
   adjustArrangementForRetry,
@@ -38,6 +39,12 @@ import type { PitchQC } from "./pitch";
 import { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
 import { transcribeVocalLayer, toLayerLyrics } from "./transcription";
 import { runRestorationFrontEnd, restorationToLog, type RestorationReport } from "./restoration/front-end";
+import {
+  estimateKeyFromBeat,
+  decideFullnessForPhrase,
+  generateFromDecision,
+  type GeneratedLayer,
+} from "./fullness";
 import type { DecisionMap } from "./producer-mind";
 
 export * from "./types";
@@ -269,6 +276,96 @@ export async function runApArrangement(
       summary: decisionMap.summary.slice(0, 8),
     });
 
+    // ——— Fullness layer: doubles / gated harmonies / sparse ad-libs from real vocal ———
+    const keyEst = estimateKeyFromBeat(beatNorm.pcm);
+    logAp("fullness_key", {
+      jobId: input.jobId,
+      ...keyEst,
+    });
+    const styleIntimate = decisionMap.song.restraintVsPolish < 0.42;
+    let adlibBudget = 2;
+    const generated: GeneratedLayer[] = [];
+    const fullnessNotes: string[] = [];
+
+    for (let i = 0; i < normalizedLayers.length; i++) {
+      const layer = normalizedLayers[i];
+      if (layer.role !== "lead") continue;
+      const layerPhrases = decisionMap.phrases.filter(
+        (p) => p.role === "lead" && p.section === layer.section
+      );
+      // Aggregate fullness: if any phrase wants doubles/harmony, apply to this take
+      let wantDouble = false;
+      let wantHarmony = false;
+      let harmonyInterval: "major3rd" | "minor3rd" | "perfect5th" | "none" = "none";
+      let harmConf: "high" | "medium" | "low" | "none" = "none";
+      let wantAdlib = false;
+      let phraseEndMs = layer.startMs + layer.analysis.durationMs;
+
+      for (const ph of layerPhrases.length ? layerPhrases : decisionMap.phrases.filter((p) => p.role === "lead")) {
+        const sec = decisionMap.sections.find((s) => s.section === ph.section);
+        const fd = decideFullnessForPhrase({
+          phrase: ph,
+          song: decisionMap.song,
+          section: sec,
+          keyConfidence: keyEst.confidence,
+          styleIntimate,
+        });
+        if (fd.doubles) wantDouble = true;
+        if (fd.harmony.interval !== "none") {
+          wantHarmony = true;
+          harmonyInterval = fd.harmony.interval as typeof harmonyInterval;
+          harmConf = fd.harmony.confidence;
+        }
+        if (fd.adlibs) {
+          wantAdlib = true;
+          phraseEndMs = ph.timeRangeMs[1];
+        }
+      }
+
+      // Section fallback for chorus/hook without phrases
+      if (!layerPhrases.length && (layer.section === "chorus" || layer.section === "pre_chorus")) {
+        wantDouble = !styleIntimate;
+        if (keyEst.confidence === "high" || keyEst.confidence === "medium") {
+          wantHarmony = true;
+          harmonyInterval = keyEst.confidence === "high" ? "major3rd" : "perfect5th";
+          harmConf = keyEst.confidence;
+        }
+      }
+
+      const fdAgg = {
+        doubles: wantDouble,
+        harmony: {
+          interval: wantHarmony ? harmonyInterval : ("none" as const),
+          confidence: wantHarmony ? harmConf : ("none" as const),
+        },
+        adlibs: wantAdlib && adlibBudget > 0,
+        reasoning: "aggregated_lead",
+      };
+
+      const gens = generateFromDecision({
+        leadPcm: layer.pcm,
+        startMs: layer.startMs,
+        section: layer.section,
+        decision: fdAgg,
+        minorMode: keyEst.mode === "minor",
+        phraseEndMs,
+        adlibBudgetLeft: adlibBudget,
+      });
+      for (const g of gens) {
+        if (g.kind === "adlib") adlibBudget -= 1;
+        generated.push(g);
+        fullnessNotes.push(
+          `fullness: ${g.kind} on ${layer.section} @${Math.round(g.startMs)}ms (${fdAgg.reasoning})`
+        );
+      }
+    }
+
+    logAp("fullness", {
+      jobId: input.jobId,
+      generated: generated.map((g) => g.kind),
+      notes: fullnessNotes.slice(0, 12),
+    });
+
     // Modulate per-layer DSP params from phrase/section instructions
     layerDecisions = layerDecisions.map((d, i) => {
       const layer = normalizedLayers[i];
@@ -384,6 +481,13 @@ export async function runApArrangement(
         placed[pi] = applyPhraseFaderRides(placed[pi], decisionMap, normalizedLayers[pi]?.role);
       }
 
+      // Fullness stacks (doubles/harmonies/ad-libs) — place on timeline, lighter processing
+      for (const g of generated) {
+        const gPcm = applyGainStereo(g.pcm, dbToGain(g.gainDb));
+        const placedG = placeOnTimeline(gPcm, beatNorm.pcm, g.startMs).vocal;
+        placed.push(placedG);
+      }
+
       // Cross-section vocal consistency — match lead active RMS across the song
       const rolesForMatch = normalizedLayers.map((l) => l.role);
       const matched = matchVocalLevelsAcrossSong(placed, rolesForMatch);
@@ -401,7 +505,7 @@ export async function runApArrangement(
         processedVocal: leadProcessed || placed[0],
         restoredVocal: restoredLead || placed[0],
         pitchQcAll,
-        performanceNotes: [...performanceNotes, ...restoreNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
+        performanceNotes: [...performanceNotes, ...restoreNotes, ...fullnessNotes, ...decisionMap.summary.map((s) => `mind:${s}`)],
       };
     };
 

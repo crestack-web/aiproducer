@@ -40,6 +40,13 @@ export type PhraseDecision = {
   section: SongSectionKind;
   instructions: PhraseInstructions;
   rationale: string;
+  /** Optional fullness plan (Producer Mind extension) */
+  fullness?: {
+    doubles: boolean;
+    harmony: { interval: string; confidence: string };
+    adlibs: boolean;
+    reasoning: string;
+  };
 };
 
 export type SectionDecision = {
