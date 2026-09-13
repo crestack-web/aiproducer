@@ -45,10 +45,10 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 
   // Download is the paid moment — preview stays free
-  const meta = (project as { metadata?: Record<string, unknown> }).metadata || {};
+  const projectMeta = (project as { metadata?: Record<string, unknown> }).metadata || {};
   const unlocked =
-    meta.download_unlocked === true ||
-    Boolean(meta.subscription_plan) ||
+    projectMeta.download_unlocked === true ||
+    Boolean(projectMeta.subscription_plan) ||
     process.env.AP_DOWNLOADS_OPEN === "1";
   if (!unlocked) {
     return NextResponse.json(
