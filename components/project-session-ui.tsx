@@ -369,12 +369,25 @@ export default function ProjectDetailPage() {
     actualOutput?: string | null;
   }>({});
 
-  const current: Task | null =
-    tasks.find((t) => t.id === activeTaskId) ||
-    (coreOpen(tasks)[0] as Task | undefined) ||
-    (optionalOpen(tasks)[0] as Task | undefined) ||
-    tasks.find((t) => isTaskOpen(t)) ||
-    null;
+    const current: Task | null = (() => {
+    if (activeTaskId) {
+      const hit = tasks.find((t) => t.id === activeTaskId);
+      // Do not fall back to another section's task — that caused "already recorded" UI
+      return hit || null;
+    }
+    return (
+      (coreOpen(tasks)[0] as Task | undefined) ||
+      (optionalOpen(tasks)[0] as Task | undefined) ||
+      null
+    );
+  })();
+
+  /** Review/Keep UI only when this task actually has a take — never for a fresh lead */
+  const showReviewUi =
+    phase === "review" &&
+    Boolean(current) &&
+    Boolean(savedRecordingId || localBlobUrl || taskTakes.some((x) => x.audio_url));
+
   const currentIsLayer = current ? isProductionLayer(current) : false;
   const sectionLayerStack = (() => {
     if (!current) return [] as Task[];
@@ -390,7 +403,7 @@ export default function ProjectDetailPage() {
       return k === key || (current.section_id && t.section_id === current.section_id);
     });
   })();
-  const isRetake = current ? isTaskDone(current) : false;
+  const isRetake = Boolean(current && isTaskDone(current) && (savedRecordingId || localBlobUrl || taskTakes.some((x) => x.audio_url)));
   const sectionMs = current ? sectionDurationMs(current) : null;
 
   useEffect(() => {
@@ -633,21 +646,26 @@ export default function ProjectDetailPage() {
     // artist can listen without recording again.
     if (task && isTaskDone(task)) {
       void loadTaskTakes(taskId).then((list) => {
+        // Stale "completed" with no files → treat as fresh record
         if (list.some((t) => t.audio_url)) {
           setPhase("review");
           applySelectedTakeToReview(list);
         } else {
-          // Marked done but no audio — allow re-record, don't show Keep take
           setPhase("ready");
           setSavedRecordingId(null);
           setLocalBlobUrl(null);
+          setTasks((prev) =>
+            prev.map((t) => (t.id === taskId ? { ...t, status: "pending" } : t))
+          );
         }
       });
       return;
     }
+    // Fresh / open task — never show Keep take
     setPhase("ready");
     setSavedRecordingId(null);
     setLocalBlobUrl(null);
+    setTaskTakes([]);
   }
 
   const pollProduceOnce = useCallback(async (): Promise<
@@ -987,16 +1005,38 @@ export default function ProjectDetailPage() {
   }
 
   async function enterSession() {
+    // Ensure every core/lead stays required when starting the session
+    try {
+      await fetch(`/api/projects/${id}/plan`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "require_cores" }),
+      });
+    } catch {
+      /* non-blocking */
+    }
+
     let list = tasks.filter((t) => t.status !== "skipped");
     if (list.length === 0 && planTasks.length > 0) {
       list = activeSessionTasksFromPlan(planTasks);
       if (list.length) setTasks(list);
     }
+    // Mark cores required on client
+    list = list.map((t) =>
+      isCoreTask(t) ? { ...t, required: true } : t
+    );
+    setTasks(list);
+
     const open =
-      list.find((t) => t.status === "pending" || t.status === "in_progress") ||
-      list[0] ||
+      list.find((t) => isCoreTask(t) && isTaskOpen(t)) ||
+      list.find((t) => isTaskOpen(t)) ||
       null;
+    setSavedRecordingId(null);
+    setLocalBlobUrl(null);
+    setTaskTakes([]);
+    setReviewOverdubSrcs([]);
     if (open) setActiveTaskId(open.id);
+    else setActiveTaskId(null);
     setPhase("ready");
     setScreen("session");
     await markRecordingStatus();
@@ -2075,10 +2115,16 @@ export default function ProjectDetailPage() {
       setPhase("ready");
       setError(null);
       setTasks((prev) => {
-        if (prev.some((t) => t.id === normalized.id)) {
-          return prev.map((t) => (t.id === normalized.id ? { ...t, ...normalized } : t));
+        const openStatus = isTaskOpen(normalized) ? "pending" : normalized.status;
+        // If task is still open, force pending in client state so UI never treats it as done
+        const merged = {
+          ...normalized,
+          status: isTaskOpen(normalized) ? "pending" : normalized.status || openStatus,
+        };
+        if (prev.some((t) => t.id === merged.id)) {
+          return prev.map((t) => (t.id === merged.id ? { ...t, ...merged } : t));
         }
-        return [...prev, normalized];
+        return [...prev, merged];
       });
       setActiveTaskId(normalized.id);
     };
@@ -2909,7 +2955,7 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
-            {phase === "review" && (
+            {showReviewUi && (
               <div style={{ marginTop: 16 }}>
                 <p style={{ textAlign: "center", color: C.textMuted }}>
                   {uploading

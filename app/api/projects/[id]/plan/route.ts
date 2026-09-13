@@ -450,5 +450,36 @@ export async function PATCH(req: Request, ctx: Ctx) {
     return NextResponse.json({ plan_mode: "scratch", tasks: tasks || [] });
   }
 
+    if (action === "require_cores") {
+    // Lead/core parts must stay required when the artist starts recording
+    const { data: allTasks, error: listErr } = await service
+      .from("recording_tasks")
+      .select("id, type, required")
+      .eq("project_id", projectId);
+    if (listErr) {
+      return NextResponse.json({ error: listErr.message }, { status: 500 });
+    }
+    const coreIds = (allTasks || [])
+      .filter((t) => {
+        const ty = String(t.type || "").toLowerCase();
+        return ty.includes("lead") || ty === "main" || ty === "verse" || ty === "chorus";
+      })
+      .map((t) => t.id);
+    if (coreIds.length) {
+      const { error: upErr } = await service
+        .from("recording_tasks")
+        .update({ required: true })
+        .in("id", coreIds);
+      if (upErr) {
+        return NextResponse.json({ error: upErr.message }, { status: 500 });
+      }
+    }
+    const { data: tasks } = await service
+      .from("recording_tasks")
+      .select("*")
+      .eq("project_id", projectId);
+    return NextResponse.json({ ok: true, tasks: tasks || [] });
+  }
+
   return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
 }
