@@ -17,6 +17,8 @@ import {
   runCommercialReadiness,
   type SectionHint,
 } from "@/lib/ap-engine/tweak";
+import { promptToToolCalls, applyToolCalls, applyToolCallsToRegion } from "@/lib/ap-engine/toolkit";
+
 
 type Body = {
   action?: "tweak" | "revert" | "status" | "commercial";
@@ -177,6 +179,8 @@ export async function POST(
   const sections = await loadSectionHints(service, projectId);
   let interpret = null as ReturnType<typeof interpretTweakPrompt> | null;
   let adjustments = currentAdjustments(history);
+  let toolkitDecision: ReturnType<typeof promptToToolCalls> | null = null;
+
 
   if (action === "tweak") {
     const prompt = String(body.prompt || "").trim();
@@ -306,10 +310,41 @@ export async function POST(
   }
 
   // Version 0 = original; only apply if currentVersion > 0
-  const rendered =
+  let rendered =
     history.currentVersion > 0
       ? applyAdjustmentsToMaster(pcmStereo, adjustments)
-      : pcmStereo;
+      : cloneIfNeeded(pcmStereo);
+
+  // Producer toolkit parametric tools (reverb type/decay, EQ, delay, etc.)
+  toolkitDecision =
+    action === "tweak" && body.prompt
+      ? promptToToolCalls({
+          request: String(body.prompt),
+          sections,
+          playbackMs: body.playbackMs ?? null,
+        })
+      : null;
+
+  if (toolkitDecision && toolkitDecision.tool_calls.length) {
+    const bySection = new Map<string, typeof sections>();
+    // Group calls by target
+    const songCalls = toolkitDecision.tool_calls.filter((c) => c.scope === "song" || c.target === "song");
+    const sectionCalls = toolkitDecision.tool_calls.filter((c) => c.scope === "section" && c.target && c.target !== "song");
+
+    if (songCalls.length) {
+      const r = applyToolCalls(rendered, songCalls);
+      rendered = r.pcm;
+    }
+    for (const sec of sections) {
+      const calls = sectionCalls.filter((c) => c.target === sec.id);
+      if (!calls.length) continue;
+      rendered = applyToolCallsToRegion(rendered, calls, sec.startMs, sec.endMs);
+    }
+  }
+
+  function cloneIfNeeded(pcm: typeof pcmStereo) {
+    return pcm;
+  }
 
   const wavOut = exportWav(rendered);
   const outPath = `projects/${projectId}/masters/tweak-v${history.currentVersion}-${Date.now()}.wav`;
@@ -378,5 +413,12 @@ export async function POST(
     safety: "True-peak held near -1 dBTP",
     commercial,
     doneSignal,
+    toolkit: toolkitDecision
+      ? {
+          tool_calls: toolkitDecision.tool_calls,
+          plain_summary: toolkitDecision.plain_summary,
+          capped: toolkitDecision.capped,
+        }
+      : null,
   });
 }
