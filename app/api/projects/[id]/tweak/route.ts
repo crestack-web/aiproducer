@@ -12,15 +12,18 @@ import {
   pushVersion,
   revertTo,
   currentAdjustments,
-  emptyHistory,
+  runIterationAgent,
+  applyTasteLog,
+  runCommercialReadiness,
   type SectionHint,
 } from "@/lib/ap-engine/tweak";
 
 type Body = {
-  action?: "tweak" | "revert" | "status";
+  action?: "tweak" | "revert" | "status" | "commercial";
   prompt?: string;
   playbackMs?: number | null;
   version?: number;
+  variationId?: string | null;
 };
 
 async function loadSectionHints(
@@ -180,20 +183,50 @@ export async function POST(
     if (!prompt) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
-    interpret = interpretTweakPrompt({
+    // Load artist taste profile
+    const { data: profileRow } = await service
+      .from("profiles")
+      .select("id, metadata")
+      .eq("id", user.id)
+      .maybeSingle();
+    const profileMeta = { ...(((profileRow?.metadata || {}) as Record<string, unknown>)) };
+    const tasteRaw = profileMeta.taste_profile;
+
+    const agent = runIterationAgent({
       request: prompt,
       sections,
       playbackMs: body.playbackMs ?? null,
+      tasteRaw,
+      variationId: body.variationId ?? null,
+      settledScore: history.currentVersion,
     });
 
-    if (interpret.confirmation_needed || !interpret.interpreted_edits.length) {
+    if (agent.useVariations && agent.variations) {
+      return NextResponse.json({
+        ok: false,
+        needsVariationPick: true,
+        plain: agent.plain,
+        variations: agent.variations.map((v) => ({
+          id: v.id,
+          label: v.label,
+          plain: v.plain,
+        })),
+        loopNote: agent.loopNote,
+        tasteHints: agent.tasteHints,
+      });
+    }
+
+    interpret = agent.interpret;
+    if (!interpret || interpret.confirmation_needed || !interpret.interpreted_edits.length) {
       return NextResponse.json({
         ok: false,
         interpret,
         needsClarification: true,
+        loopNote: agent.loopNote,
       });
     }
 
+    // Explicit request wins — apply edits; log taste after
     adjustments = buildSectionAdjustments(
       sections,
       interpret.interpreted_edits,
@@ -205,6 +238,12 @@ export async function POST(
       summary: interpret.plain_summary,
       sectionAdjustments: adjustments,
     });
+
+    const newSession = !meta.tweak_taste_session;
+    const nextTaste = applyTasteLog(tasteRaw, interpret, newSession);
+    profileMeta.taste_profile = nextTaste;
+    meta.tweak_taste_session = true;
+    await service.from("profiles").update({ metadata: profileMeta }).eq("id", user.id);
   } else if (action === "revert") {
     adjustments = currentAdjustments(history);
   }
@@ -312,6 +351,14 @@ export async function POST(
   await service.from("projects").update({ metadata: meta }).eq("id", projectId);
 
   const masterUrl = await resolveAudioUrl(outPath, 3600);
+  const commercial = runCommercialReadiness(rendered);
+
+  // Done signal (taste + commercial)
+  let doneSignal: string | null = null;
+  if (commercial.passed && history.currentVersion >= 2) {
+    doneSignal =
+      "This one’s tracking well and looks clean for export — keep exploring if you want, or download when you’re ready.";
+  }
 
   return NextResponse.json({
     ok: true,
@@ -329,5 +376,7 @@ export async function POST(
     })),
     master_url: masterUrl,
     safety: "True-peak held near -1 dBTP",
+    commercial,
+    doneSignal,
   });
 }

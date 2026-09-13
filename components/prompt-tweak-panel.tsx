@@ -9,6 +9,8 @@ type VersionInfo = {
   at?: string;
 };
 
+type Variation = { id: string; label: string; plain: string };
+
 type Props = {
   projectId: string;
   colors: {
@@ -35,13 +37,22 @@ export function PromptTweakPanel({
   const [versions, setVersions] = useState<VersionInfo[]>([]);
   const [currentVersion, setCurrentVersion] = useState(0);
   const [clarification, setClarification] = useState<string | null>(null);
+  const [variations, setVariations] = useState<Variation[] | null>(null);
+  const [variationPrompt, setVariationPrompt] = useState<string | null>(null);
+  const [doneSignal, setDoneSignal] = useState<string | null>(null);
+  const [commercialNote, setCommercialNote] = useState<string | null>(null);
+  const [loopNote, setLoopNote] = useState<string | null>(null);
 
-  async function runTweak() {
-    const text = prompt.trim();
+  async function runTweak(variationId?: string) {
+    const text = (variationId ? variationPrompt : prompt)?.trim();
     if (!text || busy) return;
     setBusy(true);
     setError(null);
     setClarification(null);
+    setDoneSignal(null);
+    setCommercialNote(null);
+    setLoopNote(null);
+    if (!variationId) setVariations(null);
     try {
       const res = await fetch(`/api/projects/${projectId}/tweak`, {
         method: "POST",
@@ -50,11 +61,24 @@ export function PromptTweakPanel({
           action: "tweak",
           prompt: text,
           playbackMs: playbackMs ?? null,
+          variationId: variationId || null,
         }),
       });
       const j = await res.json().catch(() => ({}));
+
+      if (j.needsVariationPick && Array.isArray(j.variations)) {
+        setVariations(j.variations as Variation[]);
+        setVariationPrompt(text);
+        setSummary(j.plain || "Pick a direction:");
+        setLoopNote(j.loopNote || null);
+        return;
+      }
+
       if (j.needsClarification) {
-        setClarification(j.interpret?.clarification || j.interpret?.plain_summary || "Try a clearer mix request.");
+        setClarification(
+          j.interpret?.clarification || j.interpret?.plain_summary || "Try a clearer mix request."
+        );
+        setLoopNote(j.loopNote || null);
         return;
       }
       if (!res.ok || !j.ok) {
@@ -63,6 +87,10 @@ export function PromptTweakPanel({
       setSummary(j.summary || null);
       setVersions(j.versions || []);
       setCurrentVersion(j.currentVersion || 0);
+      setDoneSignal(j.doneSignal || null);
+      setCommercialNote(j.commercial?.plainSummary || null);
+      setVariations(null);
+      setVariationPrompt(null);
       if (j.master_url && onMasterUrl) onMasterUrl(j.master_url as string);
       setPrompt("");
     } catch (e) {
@@ -87,6 +115,8 @@ export function PromptTweakPanel({
       setSummary(j.summary || "Reverted");
       setVersions(j.versions || []);
       setCurrentVersion(j.currentVersion || 0);
+      setCommercialNote(j.commercial?.plainSummary || null);
+      setDoneSignal(j.doneSignal || null);
       if (j.master_url && onMasterUrl) onMasterUrl(j.master_url as string);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Revert failed");
@@ -110,15 +140,14 @@ export function PromptTweakPanel({
         Tweak with a prompt
       </div>
       <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
-        Describe a change in plain language — e.g. “make the chorus louder” or “less reverb on the verse”.
-        Only the affected parts are re-rendered.
+        Describe a change in plain language. Ambiguous requests get a few clear options — your call, not a silent guess.
       </p>
 
       <textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         rows={2}
-        placeholder='e.g. "pull the vocal forward a bit"'
+        placeholder='e.g. "make the chorus louder" or "make it hit harder"'
         disabled={busy}
         style={{
           width: "100%",
@@ -176,12 +205,50 @@ export function PromptTweakPanel({
         </button>
       </div>
 
+      {variations && variations.length > 0 && (
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 13, color: C.textMuted }}>{summary}</p>
+          {variations.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              disabled={busy}
+              onClick={() => void runTweak(v.id)}
+              style={{
+                textAlign: "left",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: C.surface,
+                color: C.text,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              <strong style={{ display: "block", fontSize: 14 }}>{v.label}</strong>
+              <span style={{ fontSize: 12, color: C.textMuted }}>{v.plain}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {clarification && (
         <p style={{ margin: "12px 0 0", fontSize: 13, color: "#F0BC80" }}>{clarification}</p>
       )}
-      {summary && (
+      {!variations && summary && (
         <p style={{ margin: "12px 0 0", fontSize: 13, color: C.textMuted }}>
           <strong style={{ color: C.text }}>AP:</strong> {summary}
+        </p>
+      )}
+      {loopNote && (
+        <p style={{ margin: "10px 0 0", fontSize: 13, color: "#F0BC80" }}>{loopNote}</p>
+      )}
+      {doneSignal && (
+        <p style={{ margin: "10px 0 0", fontSize: 13, color: "#7BEBD4" }}>{doneSignal}</p>
+      )}
+      {commercialNote && (
+        <p style={{ margin: "10px 0 0", fontSize: 12, color: C.textMuted }}>
+          <strong style={{ color: C.text }}>Export check:</strong> {commercialNote}
         </p>
       )}
       {error && (
