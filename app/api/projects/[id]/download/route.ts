@@ -35,13 +35,30 @@ export async function GET(req: Request, ctx: Ctx) {
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, title, status, user_id")
+    .select("id, title, status, user_id, metadata")
     .eq("id", projectId)
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (!project) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Download is the paid moment — preview stays free
+  const meta = (project as { metadata?: Record<string, unknown> }).metadata || {};
+  const unlocked =
+    meta.download_unlocked === true ||
+    Boolean(meta.subscription_plan) ||
+    process.env.AP_DOWNLOADS_OPEN === "1";
+  if (!unlocked) {
+    return NextResponse.json(
+      {
+        error: "Unlock required",
+        code: "PAYWALL",
+        message: "Purchase this song or a plan to download.",
+      },
+      { status: 402 }
+    );
   }
 
   const service = createServiceClient();

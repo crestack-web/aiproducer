@@ -9,6 +9,7 @@ import {
   PlayerLoadingState,
 } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
+import { ApPaywall } from "@/components/ap-paywall";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
   MicInputPicker,
@@ -2432,6 +2433,25 @@ export default function ProjectDetailPage() {
   }
 
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  const [downloadUnlocked, setDownloadUnlocked] = useState(false);
+  useEffect(() => {
+    const meta = (project as { metadata?: Record<string, unknown> } | null)?.metadata;
+    if (meta?.download_unlocked === true || meta?.subscription_plan) {
+      setDownloadUnlocked(true);
+    }
+  }, [project]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("unlocked") === "1") {
+      setDownloadUnlocked(true);
+      setPaywallOpen(false);
+    }
+    if (q.get("paywall") === "1") setPaywallOpen(true);
+  }, []);
+
   const [downloadBusy, setDownloadBusy] = useState(false);
 
   async function downloadMaster(format: "wav" | "mp3") {
@@ -3378,7 +3398,10 @@ export default function ProjectDetailPage() {
                     justifyContent: "center",
                     gap: 8,
                   }}
-                  onClick={() => setDownloadModalOpen(true)}
+                  onClick={() => {
+                    if (downloadUnlocked) setDownloadModalOpen(true);
+                    else setPaywallOpen(true);
+                  }}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
                     <path d="M12 3v12" strokeLinecap="round" />
@@ -3399,6 +3422,27 @@ export default function ProjectDetailPage() {
                   Arrangement preview
                 </button>
               </div>
+            )}
+            {paywallOpen && (
+              <ApPaywall
+                open={paywallOpen}
+                onClose={() => setPaywallOpen(false)}
+                songTitle={project?.title}
+                projectId={id}
+                colors={{
+                  text: C.text,
+                  textMuted: C.textMuted,
+                  surface: C.surface,
+                  border: C.border,
+                  accent: "#c17a12",
+                  bg: C.surface,
+                }}
+                onUnlocked={() => {
+                  setDownloadUnlocked(true);
+                  setPaywallOpen(false);
+                  setDownloadModalOpen(true);
+                }}
+              />
             )}
             {downloadModalOpen && (
               <div
