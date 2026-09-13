@@ -3432,10 +3432,10 @@ export default function ProjectDetailPage() {
                 colors={{
                   text: C.text,
                   textMuted: C.textMuted,
-                  surface: C.surface,
+                  surface: C.bg,
                   border: C.border,
                   accent: "#c17a12",
-                  bg: C.surface,
+                  bg: C.bg,
                 }}
                 onUnlocked={() => {
                   setDownloadUnlocked(true);
@@ -3454,7 +3454,7 @@ export default function ProjectDetailPage() {
                   position: "fixed",
                   inset: 0,
                   zIndex: 80,
-                  background: "rgba(0,0,0,0.55)",
+                  background: "rgba(0,0,0,0.78)",
                   display: "grid",
                   placeItems: "center",
                   padding: 20,
@@ -3466,9 +3466,11 @@ export default function ProjectDetailPage() {
                     width: "100%",
                     maxWidth: 340,
                     borderRadius: 18,
-                    background: C.surface,
+                    background: C.bg,
                     border: `1px solid ${C.border}`,
                     padding: "22px 20px",
+                    boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+                    color: C.text,
                   }}
                 >
                   <div style={{ fontFamily: "Georgia, serif", fontSize: 18, marginBottom: 6 }}>

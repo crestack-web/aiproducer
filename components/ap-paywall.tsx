@@ -71,6 +71,12 @@ export function ApPaywall({
   }
 
   const accent = C.accent || "#c17a12";
+  const sheetBg = C.bg && !String(C.bg).includes("rgba") ? C.bg : "#121214";
+  const cardBg = String(sheetBg).toLowerCase().includes("f7") || String(sheetBg).startsWith("#f") || String(sheetBg).startsWith("#e")
+    ? "#ffffff"
+    : "#1c1c20";
+  const toggleBg = cardBg;
+
 
   return (
     <div
@@ -81,7 +87,7 @@ export function ApPaywall({
         position: "fixed",
         inset: 0,
         zIndex: 1000,
-        background: "rgba(0,0,0,.72)",
+        background: "rgba(0,0,0,0.82)",
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
@@ -96,12 +102,12 @@ export function ApPaywall({
           maxWidth: 440,
           maxHeight: "92vh",
           overflowY: "auto",
-          background: C.bg || "#0c0c0e",
+          background: sheetBg,
           borderRadius: "24px 24px 0 0",
           padding: "20px 20px 28px",
           border: `1px solid ${C.border}`,
           color: C.text,
-          boxShadow: "0 -12px 40px rgba(0,0,0,.45)",
+          boxShadow: "0 -12px 40px rgba(0,0,0,.55)",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -115,7 +121,7 @@ export function ApPaywall({
               height: 36,
               borderRadius: 999,
               border: `1px solid ${C.border}`,
-              background: C.surface,
+              background: cardBg,
               color: C.text,
               cursor: "pointer",
               fontSize: 18,
@@ -148,7 +154,7 @@ export function ApPaywall({
           style={{
             display: "flex",
             position: "relative",
-            background: C.surface,
+            background: toggleBg,
             borderRadius: 999,
             padding: 4,
             border: `1px solid ${C.border}`,
@@ -168,7 +174,7 @@ export function ApPaywall({
                 cursor: "pointer",
                 fontWeight: 600,
                 fontSize: 14,
-                background: interval === iv ? C.bg || "#1a1a1e" : "transparent",
+                background: interval === iv ? "#2a2a30" : "transparent",
                 color: interval === iv ? C.text : C.textMuted,
                 boxShadow: interval === iv ? `0 0 0 1px ${C.border}` : "none",
               }}
