@@ -285,7 +285,7 @@ function screenForStatus(
   hasProgress = false
 ): Screen | null {
   const s = (status || "").toLowerCase();
-  if (s === "complete" || s === "produced" || s === "done") return "done";
+  if (s === "complete" || s === "completed" || s === "produced" || s === "done") return "done";
   if (s === "processing" || s === "mixing" || s === "mastering") return "assemble";
   // Resume booth whenever recording has started — do not require tasks to have loaded yet
   if (s === "recording" || s === "in_progress") return "session";
@@ -631,6 +631,12 @@ export default function ProjectDetailPage() {
 
   async function markRecordingStatus() {
     try {
+      // Never demote a produced project back to "recording" (breaks done-screen resume)
+      const cur = (project?.status || "").toLowerCase();
+      if (cur === "complete" || cur === "completed" || cur === "produced" || cur === "done") {
+        return;
+      }
+      if (masterUrl) return;
       const res = await fetch(`/api/projects/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -844,6 +850,7 @@ export default function ProjectDetailPage() {
         /* non-fatal */
       }
       let recordingCount = 0;
+      let statusMasterUrl: string | null = null;
       const sr = await fetch(`/api/projects/${id}/status`);
       if (sr.ok) {
         const st = await sr.json();
@@ -851,7 +858,8 @@ export default function ProjectDetailPage() {
           loadedProject = st.project;
           setProject(st.project);
         }
-        if (st.master_url) setMasterUrl(st.master_url);
+        statusMasterUrl = st.master_url || null;
+        if (statusMasterUrl) setMasterUrl(statusMasterUrl);
         if (typeof st.recording_count === "number") recordingCount = st.recording_count;
 
         const jobs = (st.jobs || []) as { type?: string; status?: string; stage?: string }[];
@@ -865,6 +873,11 @@ export default function ProjectDetailPage() {
           produceActiveRef.current = true;
           resumedRef.current = true;
           scheduleProducePoll();
+        } else if (statusMasterUrl) {
+          // Produced song — always resume on done (not the recording booth)
+          setScreen("done");
+          setProduceStage("complete");
+          resumedRef.current = true;
         }
       }
       // Plan list may lag; if session tasks empty, hydrate from /plan active rows
@@ -903,11 +916,15 @@ export default function ProjectDetailPage() {
               task.status === "in_progress" ||
               isTaskDone(task)
           );
-        const next = screenForStatus(
+        // Master present → done screen wins over stale "recording" status
+        let next = screenForStatus(
           loadedProject.status,
           loadedTasks.length > 0,
           hasProgress
         );
+        if (statusMasterUrl) {
+          next = "done";
+        }
         if (next && !produceActiveRef.current) {
           setScreen(next);
           if (next === "session") {

@@ -441,7 +441,10 @@ export async function POST(
 
   meta.tweak_history = history;
   meta.tweak_latest_path = outPath;
-  await service.from("projects").update({ metadata: meta }).eq("id", projectId);
+  await service
+    .from("projects")
+    .update({ metadata: meta, status: "complete" })
+    .eq("id", projectId);
 
   const masterUrl = await resolveAudioUrl(outPath, 3600);
   const commercial = runCommercialReadiness(rendered);

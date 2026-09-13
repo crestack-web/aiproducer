@@ -137,8 +137,24 @@ export async function GET(_req: Request, ctx: Ctx) {
     return true;
   }).length;
 
+  // If a real master exists, the project is produced — even if status lagged on "recording"
+  let statusOut = String(projNow?.status || project.status || "");
+  const hasMaster =
+    Boolean(master_url) ||
+    (master?.audio_path &&
+      typeof master.audio_path === "string" &&
+      !String(master.audio_path).startsWith("mock://"));
+  if (hasMaster) {
+    const s = statusOut.toLowerCase();
+    if (s !== "complete" && s !== "completed" && s !== "produced" && s !== "done") {
+      statusOut = "complete";
+      // Persist so next load opens the done screen
+      await service.from("projects").update({ status: "complete" }).eq("id", id);
+    }
+  }
+
   return NextResponse.json({
-    project: { ...project, status: projNow?.status || project.status },
+    project: { ...project, status: statusOut },
     jobs: jobs ?? [],
     master,
     master_url,
