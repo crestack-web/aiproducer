@@ -2673,39 +2673,38 @@ export default function ProjectDetailPage() {
             <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
               ← Plan
             </button>
-            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
             {current && (() => {
-              const layers = openLayersForSection(tasks, current);
-              if (!layers.length && !isCoreTask(current)) return null;
-              const show = isCoreTask(current) ? layers : openLayersForSection(tasks, current);
-              if (!show.length) return null;
+              // Single compact CTA: next open layer on this section (harmony / double / …)
+              const nextLayer =
+                nextProductionRecommendation(tasks, current) ||
+                openLayersForSection(tasks, current).find((l) => isTaskOpen(l)) ||
+                null;
+              if (!nextLayer || nextLayer.id === current.id) return null;
+              const label = humanTitle(nextLayer.type || nextLayer.title || "layer");
               return (
-                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface }}>
-                  <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
-                    Also on this section (real takes — not just notes)
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {show.map((layer) => (
-                      <button
-                        key={layer.id}
-                        type="button"
-                        onClick={() => selectTask(layer.id)}
-                        disabled={phase === "recording" || phase === "countdown"}
-                        style={{
-                          ...btn2,
-                          fontSize: 12,
-                          padding: "6px 10px",
-                          opacity: isTaskDone(layer) ? 0.55 : 1,
-                        }}
-                      >
-                        {(layer.title || layer.type || "Layer").toString()}
-                        {isTaskDone(layer) ? " ✓" : isTaskOpen(layer) ? "" : ""}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => selectTask(nextLayer.id)}
+                  disabled={phase === "recording" || phase === "countdown"}
+                  style={{
+                    ...btn2,
+                    width: "100%",
+                    marginTop: 8,
+                    marginBottom: 4,
+                    padding: "10px 14px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  Next: record {label}
+                </button>
               );
             })()}
+            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
             <p style={{ textAlign: "center", fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>
               {coreDone(tasks).length}/{coreTasks(tasks).length} core sections
               {productionLayersAdded(tasks).length > 0
