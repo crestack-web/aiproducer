@@ -165,7 +165,7 @@ export default function WelcomePage() {
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
               <div className="cost-total">From $2.99<span> / song</span></div>
-              <div className="cost-sub">Session: $2.99/song · Creator: ~$3.60/song · Pro: ~$3.20/song</div>
+              <div className="cost-sub">Session: $2.99/song · Creator: ~$1.90/song · Pro: ~$1.63/song</div>
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
                 <li>Guided recording (unlimited takes*) <em>included</em></li>
@@ -210,10 +210,10 @@ export default function WelcomePage() {
             <div className="price-card featured">
               <div className="price-badge">Popular</div>
               <div className="price-name">Creator</div>
-              <div className="price-amount">$29 <span>/ month</span></div>
+              <div className="price-amount">$19 <span>/ month</span></div>
               <p className="price-desc">For artists shipping singles regularly with real mastering cost covered.</p>
               <ul className="price-list">
-                <li>8 finished songs / month</li>
+                <li>10 finished songs / month</li>
                 <li>Everything in Session</li>
                 <li>Professional mix & master</li>
                 <li>WAV + MP3 export</li>
@@ -224,10 +224,10 @@ export default function WelcomePage() {
             </div>
             <div className="price-card">
               <div className="price-name">Pro</div>
-              <div className="price-amount">$79 <span>/ month</span></div>
+              <div className="price-amount">$49 <span>/ month</span></div>
               <p className="price-desc">Higher volume for catalogs, EPs, and faster turnaround.</p>
               <ul className="price-list">
-                <li>25 finished songs / month</li>
+                <li>30 finished songs / month</li>
                 <li>Everything in Creator</li>
                 <li>Priority mastering queue</li>
                 <li>Stem export (when available)</li>
