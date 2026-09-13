@@ -193,22 +193,48 @@ function resolveTaskWindow(task: {
   start_ms?: number | null;
   end_ms?: number | null;
   metadata?: Record<string, unknown> | null;
+  title?: string | null;
+  type?: string | null;
 }): { startMs: number; endMs: number | null; durationMs: number | null } {
   const meta = (task.metadata || {}) as Record<string, unknown>;
-  const startRaw =
-    task.start_ms ??
-    (typeof meta.timeline_start_ms === "number" ? meta.timeline_start_ms : null) ??
-    0;
-  const endRaw =
-    task.end_ms ??
-    (typeof meta.timeline_end_ms === "number" ? meta.timeline_end_ms : null);
-  const startMs = Math.max(0, Math.round(Number(startRaw) || 0));
+  const startCandidate = [
+    task.start_ms,
+    meta.timeline_start_ms,
+    meta.section_start_ms,
+    meta.placement_start_ms,
+  ].find((v) => v != null && Number.isFinite(Number(v)));
+  const endCandidate = [
+    task.end_ms,
+    meta.timeline_end_ms,
+    meta.section_end_ms,
+    meta.placement_end_ms,
+  ].find((v) => v != null && Number.isFinite(Number(v)));
+  const startMs = Math.max(0, Math.round(Number(startCandidate) || 0));
   const endMs =
-    endRaw != null && Number.isFinite(Number(endRaw))
-      ? Math.max(startMs + 500, Math.round(Number(endRaw)))
+    endCandidate != null && Number.isFinite(Number(endCandidate))
+      ? Math.max(startMs + 500, Math.round(Number(endCandidate)))
       : null;
   const durationMs = endMs != null ? endMs - startMs : null;
   return { startMs, endMs, durationMs };
+}
+
+/** Merge plan row times onto a task so review/record never fall back to 0ms wrongly. */
+function withPlanTiming<T extends {
+  id: string;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  section_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}>(task: T, plan: Array<{ id: string; start_ms?: number | null; end_ms?: number | null; section_id?: string | null; metadata?: unknown }> = []): T {
+  const p = plan.find((x) => x.id === task.id);
+  if (!p) return task;
+  return {
+    ...task,
+    start_ms: task.start_ms ?? p.start_ms ?? null,
+    end_ms: task.end_ms ?? p.end_ms ?? null,
+    section_id: task.section_id ?? p.section_id ?? null,
+    metadata: (task.metadata as Record<string, unknown>) || (p.metadata as Record<string, unknown>) || null,
+  };
 }
 
 function fmtSectionWindow(startMs: number, endMs: number | null): string {
@@ -515,7 +541,7 @@ export default function ProjectDetailPage() {
       if (selected?.audio_url) {
         setLocalBlobUrl(selected.audio_url);
         setSavedRecordingId(selected.id);
-        setLastRecordingOffsetMs(offsetFromTake(selected));
+        setLastRecordingOffsetMs(Math.max(0, Math.min(offsetFromTake(selected), 180000)));
       }
     },
     []
@@ -625,6 +651,7 @@ export default function ProjectDetailPage() {
     setProducerTip(null);
     setLocalBlobUrl(null);
     setSavedRecordingId(null);
+    setLastRecordingOffsetMs(0);
     setTaskTakes([]);
     setReviewOverdubSrcs([]);
     stopLayerMonitors();
@@ -668,6 +695,10 @@ export default function ProjectDetailPage() {
     setSavedRecordingId(null);
     setLocalBlobUrl(null);
     setTaskTakes([]);
+    // Preload same-section recorded vocals for monitoring while adding layers
+    if (task && !isTaskDone(task)) {
+      void startLayerMonitors(task, { play: false });
+    }
   }
 
   const pollProduceOnce = useCallback(async (): Promise<
@@ -1542,7 +1573,8 @@ export default function ProjectDetailPage() {
       }
     };
 
-    const taskWin = resolveTaskWindow(task);
+    const taskTimed = withPlanTiming(task, planTasks);
+    const taskWin = resolveTaskWindow(taskTimed);
     const limitMs = taskWin.durationMs != null && taskWin.durationMs > 500 ? taskWin.durationMs : sectionDurationMs(task);
 
     startedAtRef.current = Date.now();
@@ -1645,7 +1677,11 @@ export default function ProjectDetailPage() {
 
     void (async () => {
       // Only fetch peers if countdown preload did not populate them
-      if (layerMonitorAudiosRef.current.length === 0) {
+      // Always refresh same-section monitors so lead/harmonies are present for this take
+      try {
+        await startLayerMonitors(task, { play: false });
+      } catch { /* ignore */ }
+      if (false && layerMonitorAudiosRef.current.length === 0) {
         try {
           await startLayerMonitors(task, { play: false });
         } catch (e) {
@@ -1756,10 +1792,16 @@ export default function ProjectDetailPage() {
     const taskKey = sectionGroupKey(task);
     const peers = tasks.filter((t0) => {
       if (t0.id === task.id) return false;
-      if (!isCompletedTaskStatus(t0.status)) return false;
-      // True same-section grouping (section_id / label / time overlap)
+      const done = isCompletedTaskStatus(t0.status) || isTaskDone(t0);
+      if (!done) return false;
       if (sameMusicalSection(task, t0)) return true;
       if (sectionGroupKey(t0) === taskKey) return true;
+      const a = task.section_id || (task.metadata as { section_id?: string } | null)?.section_id;
+      const b = t0.section_id || (t0.metadata as { section_id?: string } | null)?.section_id;
+      if (a && b && a === b) return true;
+      const ts = task.start_ms != null ? Number(task.start_ms) : null;
+      const ps = t0.start_ms != null ? Number(t0.start_ms) : null;
+      if (ts != null && ps != null && Math.abs(ts - ps) <= 4000) return true;
       return false;
     });
     peers.sort((a, b) => {
@@ -1854,9 +1896,9 @@ export default function ProjectDetailPage() {
         el.src = src.url;
         el.volume = src.isLead ? leadVol : otherVol;
         el.muted = false;
-        const fileOffsetSec = Math.max(0, (sectionStart - src.startMs) / 1000);
+        // Same-section takes: file t=0 = section placement. Do not seek by start_ms delta.
         try {
-          el.currentTime = fileOffsetSec > 0.05 ? fileOffsetSec : 0;
+          el.currentTime = 0;
         } catch {
           /* ignore */
         }
@@ -3000,10 +3042,14 @@ export default function ProjectDetailPage() {
                       seed={`take-${current.id}`}
                       beatSrc={beatUrl}
                       beatStartMs={reviewBeatStartMs(
-                        resolveTaskWindow(current).startMs,
-                        lastRecordingOffsetMs
+                        resolveTaskWindow(withPlanTiming(current, planTasks)).startMs,
+                        // Clamp runaway offsets (stale state from another section)
+                        Math.max(0, Math.min(lastRecordingOffsetMs, 120000))
                       )}
-                      beatEndMs={resolveTaskWindow(current).endMs}
+                      beatEndMs={
+                        resolveTaskWindow(withPlanTiming(current, planTasks)).endMs ??
+                        resolveTaskWindow(withPlanTiming(current, planTasks)).startMs + 120000
+                      }
                       vocalVolume={1}
                       beatVolume={reviewVoiceOnly ? 0 : 0.06}
                       overdubSrcs={reviewVoiceOnly ? [] : reviewOverdubSrcs}
