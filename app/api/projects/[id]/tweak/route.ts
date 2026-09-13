@@ -70,37 +70,97 @@ async function loadMasterBuffer(
   service: ReturnType<typeof createServiceClient>,
   projectId: string
 ): Promise<{ buffer: Buffer; path: string } | null> {
-  const { data: version } = await service
+  const candidates: string[] = [];
+
+  // 1) audio_versions master / mix (newest first)
+  const { data: versions } = await service
     .from("audio_versions")
     .select("audio_path, kind, version")
     .eq("project_id", projectId)
-    .in("kind", ["master", "mix"])
+    .in("kind", ["master", "mix", "preview_mix"])
     .order("version", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  let path = version?.audio_path as string | undefined;
-  if (!path) {
-    const { data: song } = await service
-      .from("songs")
-      .select("audio_path, master_path, storage_path")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    path =
-      (song as { master_path?: string })?.master_path ||
-      (song as { audio_path?: string })?.audio_path ||
-      (song as { storage_path?: string })?.storage_path;
+    .limit(5);
+  for (const v of versions || []) {
+    if (v?.audio_path && isStoragePath(v.audio_path) && !String(v.audio_path).startsWith("mock://")) {
+      candidates.push(String(v.audio_path));
+    }
   }
-  if (!path || !isStoragePath(path)) return null;
 
-  const signed = await resolveAudioUrl(path, 120);
-  if (!signed) return null;
-  const res = await fetch(signed);
-  if (!res.ok) return null;
-  const ab = await res.arrayBuffer();
-  return { buffer: Buffer.from(ab), path };
+  // 2) songs table
+  const { data: songs } = await service
+    .from("songs")
+    .select("audio_path, master_path, storage_path, metadata")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false })
+    .limit(3);
+  for (const song of songs || []) {
+    for (const key of ["master_path", "audio_path", "storage_path"] as const) {
+      const path = (song as Record<string, unknown>)[key];
+      if (typeof path === "string" && isStoragePath(path) && !path.startsWith("mock://")) {
+        candidates.push(path);
+      }
+    }
+    const meta = (song as { metadata?: Record<string, unknown> })?.metadata;
+    if (meta && typeof meta.master_storage_path === "string") {
+      candidates.push(meta.master_storage_path);
+    }
+  }
+
+  // 3) complete produce jobs output_data
+  const { data: jobs } = await service
+    .from("jobs")
+    .select("output_data, status, created_at")
+    .eq("project_id", projectId)
+    .in("status", ["complete", "completed", "done"])
+    .order("created_at", { ascending: false })
+    .limit(5);
+  for (const job of jobs || []) {
+    const od = (job.output_data || {}) as Record<string, unknown>;
+    for (const key of ["master_storage_path", "master_path", "audio_path", "mix_storage_path"]) {
+      const path = od[key];
+      if (typeof path === "string" && isStoragePath(path) && !path.startsWith("mock://")) {
+        candidates.push(path);
+      }
+    }
+  }
+
+  // 4) project metadata
+  const { data: project } = await service
+    .from("projects")
+    .select("metadata")
+    .eq("id", projectId)
+    .maybeSingle();
+  const pmeta = (project?.metadata || {}) as Record<string, unknown>;
+  for (const key of ["tweak_latest_path", "tweak_original_master_path", "master_storage_path", "master_path"]) {
+    const path = pmeta[key];
+    if (typeof path === "string" && isStoragePath(path) && !path.startsWith("mock://")) {
+      candidates.push(path);
+    }
+  }
+
+  // Deduplicate preserving order
+  const seen = new Set<string>();
+  const unique = candidates.filter((c) => {
+    if (seen.has(c)) return false;
+    seen.add(c);
+    return true;
+  });
+
+  for (const path of unique) {
+    try {
+      const signed = await resolveAudioUrl(path, 180);
+      if (!signed) continue;
+      const res = await fetch(signed);
+      if (!res.ok) continue;
+      const ab = await res.arrayBuffer();
+      if (ab.byteLength < 1000) continue;
+      return { buffer: Buffer.from(ab), path };
+    } catch {
+      /* try next */
+    }
+  }
+
+  return null;
 }
 
 export async function GET(
