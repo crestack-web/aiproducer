@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isStoragePath, resolveAudioUrl, getStorageBucket } from "@/lib/storage";
 import { decodeWav } from "@/lib/audio/wav";
+import type { PcmStereo } from "@/lib/ap-engine/types";
 import { exportWav } from "@/lib/ap-engine/render/export-wav-mp3";
 import {
   interpretTweakPrompt,
@@ -281,7 +282,7 @@ export async function POST(
     }
   }
 
-  let pcmStereo;
+  let pcmStereo: PcmStereo;
   try {
     const decoded = decodeWav(masterLoad.buffer);
     const ch = decoded.channels || 1;
@@ -310,10 +311,10 @@ export async function POST(
   }
 
   // Version 0 = original; only apply if currentVersion > 0
-  let rendered =
+  let rendered: PcmStereo =
     history.currentVersion > 0
       ? applyAdjustmentsToMaster(pcmStereo, adjustments)
-      : cloneIfNeeded(pcmStereo);
+      : pcmStereo;
 
   // Producer toolkit parametric tools (reverb type/decay, EQ, delay, etc.)
   toolkitDecision =
@@ -342,9 +343,6 @@ export async function POST(
     }
   }
 
-  function cloneIfNeeded(pcm: typeof pcmStereo) {
-    return pcm;
-  }
 
   const wavOut = exportWav(rendered);
   const outPath = `projects/${projectId}/masters/tweak-v${history.currentVersion}-${Date.now()}.wav`;
