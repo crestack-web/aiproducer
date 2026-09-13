@@ -22,7 +22,7 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
 
   const title = useMemo(
-    () => (mode === "login" ? "Welcome back" : "Create your account"),
+    () => (mode === "login" ? "Welcome back" : "Start creating"),
     [mode]
   );
 
@@ -71,7 +71,7 @@ export default function AuthPage() {
       router.push(needsOnboarding ? "/onboarding" : nextPath === "/onboarding" ? "/app" : nextPath);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
@@ -79,144 +79,237 @@ export default function AuthPage() {
 
   return (
     <>
-      <style>{`
-html,body{margin:0;width:100%;max-width:100%;overflow-x:hidden;background:#050508}
-.auth-shell{min-height:100dvh;min-height:100vh;display:grid;grid-template-columns:1fr;background:#050508;color:#F4F1EC;font-family:Inter,system-ui,sans-serif;width:100%;max-width:100%;overflow-x:hidden}
-.auth-brand{display:none}
-.auth-main{display:flex;align-items:flex-start;justify-content:center;padding:24px 16px 40px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(40px,env(safe-area-inset-bottom));width:100%;max-width:100%;min-width:0;box-sizing:border-box}
-.auth-card{width:100%;max-width:360px;min-width:0;box-sizing:border-box}
-.auth-logo{display:inline-flex;align-items:center;gap:8px;font-weight:600;text-decoration:none;color:inherit;margin-bottom:24px;font-size:15px}
-.auth-logo img{display:block;flex-shrink:0;border-radius:6px;object-fit:cover}
-.auth-back{color:#9B96A3;font-size:13px;text-decoration:none;display:inline-block;margin-bottom:16px}
-.auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);margin-bottom:18px;width:100%;box-sizing:border-box}
-.auth-tab{padding:10px 8px;border-radius:10px;border:none;background:transparent;color:#9B96A3;font-weight:600;font-size:14px;cursor:pointer;font-family:inherit}
-.auth-tab.on{background:rgba(255,255,255,.08);color:#F4F1EC}
-.auth-card h2{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:1.5rem;margin:0 0 6px;line-height:1.2}
-.auth-sub{color:#9B96A3;font-size:14px;margin:0 0 18px;line-height:1.45}
-.auth-error{margin-bottom:12px;padding:10px 12px;border-radius:10px;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.25);color:#ffb4b4;font-size:13px;word-break:break-word}
-.auth-field{display:block;font-size:13px;color:#9B96A3;margin-bottom:14px;font-weight:500}
-.auth-field input{display:block;width:100%;max-width:100%;margin-top:6px;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.04);color:#F4F1EC;font-size:16px;font-family:inherit;outline:none;box-sizing:border-box;-webkit-appearance:none;appearance:none}
-.auth-field input:focus{border-color:rgba(123,235,212,.45);background:rgba(123,235,212,.04)}
-.auth-primary{width:100%;margin-top:6px;padding:13px 16px;border-radius:999px;border:none;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;font-weight:600;font-size:15px;cursor:pointer;font-family:inherit;box-sizing:border-box}
-.auth-primary:disabled{opacity:.55;cursor:not-allowed}
-.auth-foot-mobile{display:block;margin-top:24px;text-align:center;font-size:12px;color:#5C5866;line-height:1.4}
-@media (min-width:900px){
-.auth-shell{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-.auth-brand{display:flex;flex-direction:column;justify-content:space-between;padding:40px 48px;border-right:1px solid rgba(255,255,255,.09);min-width:0}
-.auth-brand-copy{max-width:420px;padding:32px 0}
-.auth-brand-copy h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:2.4rem;line-height:1.12;margin:0 0 16px}
-.auth-brand-copy h1 em{font-style:normal;background:linear-gradient(120deg,#7BEBD4,#a8f0e0 45%,#E7A961);-webkit-background-clip:text;background-clip:text;color:transparent}
-.auth-brand-copy p{color:#9B96A3;font-size:15px;line-height:1.55;margin:0 0 24px}
-.auth-points{list-style:none;margin:0;padding:0}
-.auth-points li{position:relative;padding-left:18px;font-size:14px;color:#9B96A3;line-height:1.45;margin-bottom:12px}
-.auth-points li::before{content:"";position:absolute;left:0;top:7px;width:7px;height:7px;border-radius:99px;background:#7BEBD4}
-.auth-foot{color:#5C5866;font-size:13px;margin:0}
-.auth-main{align-items:center;padding:40px 24px}
-.auth-card{max-width:380px}
-.auth-logo.mobile-only{display:none}
-.auth-foot-mobile{display:none}
-}
-`}</style>
-      <div className="auth-shell">
-        <aside className="auth-brand">
-          <Link href="/" className="auth-logo">
-            <img src={STUDIO_LOGO_URL} alt="" width={22} height={22} /> Studio
+      <style>{css}</style>
+      <div className="auth-root">
+        <aside className="auth-brand-panel" aria-hidden={false}>
+          <Link href="/" className="auth-mark">
+            <img src={STUDIO_LOGO_URL} alt="" width={36} height={36} />
+            <span>AP Studio</span>
           </Link>
           <div className="auth-brand-copy">
             <h1>
               Your voice.
               <br />
-              <em>A finished song.</em>
+              <em>Produced.</em>
             </h1>
-            <p>Log in to continue producer sessions, or create an account and ship your first radio-ready track.</p>
-            <ul className="auth-points">
-              <li>AI plans the structure — you record the lead</li>
-              <li>Guided takes: doubles, harmonies, adlibs</li>
-              <li>Professional mix & master included on every credit</li>
-            </ul>
+            <p>
+              Record on your phone. AP mixes and masters with you — so the song still sounds like you.
+            </p>
           </div>
-          <p className="auth-foot">You bring the voice. Studio helps you make the song.</p>
+          <p className="auth-brand-foot">Artist-first production · Not another AI singer</p>
         </aside>
 
-        <main className="auth-main">
-          <div className="auth-card">
-            <Link href="/" className="auth-logo mobile-only">
-              <img src={STUDIO_LOGO_URL} alt="" width={22} height={22} /> Studio
-            </Link>
-            <Link href="/" className="auth-back">
-              ← Back
-            </Link>
-
-            <div className="auth-tabs">
-              <button
-                type="button"
-                className={mode === "login" ? "auth-tab on" : "auth-tab"}
-                onClick={() => setMode("login")}
+        <main className="auth-form-panel">
+          <div className="auth-form-inner">
+            <div className="auth-top-mobile">
+              <Link href="/">
+                <img src={STUDIO_LOGO_URL} alt="" width={28} height={28} />
+                AP Studio
+              </Link>
+              <Link
+                href={mode === "login" ? "/auth?mode=signup" : "/auth?mode=login"}
+                className="auth-switch-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setMode(mode === "login" ? "signup" : "login");
+                  setError(null);
+                }}
               >
-                Log in
-              </button>
-              <button
-                type="button"
-                className={mode === "signup" ? "auth-tab on" : "auth-tab"}
-                onClick={() => setMode("signup")}
-              >
-                Sign up
-              </button>
+                {mode === "login" ? (
+                  <>
+                    New here? <strong>Sign up</strong>
+                  </>
+                ) : (
+                  <>
+                    Have an account? <strong>Log in</strong>
+                  </>
+                )}
+              </Link>
             </div>
 
-            <h2>{title}</h2>
-            <p className="auth-sub">
-              {mode === "login"
-                ? "Continue your songs and producer sessions."
-                : "Buy a Session when you’re ready to finish a song."}
-            </p>
+            <div className="auth-card">
+              <div className="auth-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "login"}
+                  className={mode === "login" ? "auth-tab on" : "auth-tab"}
+                  onClick={() => {
+                    setMode("login");
+                    setError(null);
+                  }}
+                >
+                  Log in
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "signup"}
+                  className={mode === "signup" ? "auth-tab on" : "auth-tab"}
+                  onClick={() => {
+                    setMode("signup");
+                    setError(null);
+                  }}
+                >
+                  Sign up
+                </button>
+              </div>
 
-            {error && <div className="auth-error">{error}</div>}
+              <h2>{title}</h2>
+              <p className="auth-sub">
+                {mode === "login"
+                  ? "Pick up where you left off — sessions, takes, and masters."
+                  : "Create an account in a minute. Finish songs when you’re ready."}
+              </p>
 
-            <form onSubmit={onSubmit}>
-              {mode === "signup" && (
+              {error && <div className="auth-error">{error}</div>}
+
+              <form onSubmit={onSubmit}>
+                {mode === "signup" && (
+                  <label className="auth-field">
+                    Artist name
+                    <input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="How should we call you?"
+                      autoComplete="nickname"
+                      required
+                    />
+                  </label>
+                )}
                 <label className="auth-field">
-                  Artist name
+                  Email
                   <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="How should we call you?"
-                    autoComplete="nickname"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@email.com"
+                    autoComplete="email"
                     required
                   />
                 </label>
-              )}
-              <label className="auth-field">
-                Email
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@email.com"
-                  autoComplete="email"
-                  required
-                />
-              </label>
-              <label className="auth-field">
-                Password
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 6 characters"
-                  minLength={6}
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  required
-                />
-              </label>
-              <button type="submit" className="auth-primary" disabled={loading}>
-                {loading ? "Please wait…" : mode === "login" ? "Log in" : "Continue"}
-              </button>
-            </form>
-            <p className="auth-foot-mobile">You bring the voice. Studio helps you make the song.</p>
+                <label className="auth-field">
+                  Password
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    minLength={6}
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    required
+                  />
+                </label>
+                <button type="submit" className="auth-primary" disabled={loading}>
+                  {loading ? "Please wait…" : mode === "login" ? "Log in" : "Continue"}
+                </button>
+              </form>
+            </div>
+
+            <p className="auth-foot-mobile">You bring the voice. AP helps you make the song.</p>
           </div>
         </main>
       </div>
     </>
   );
 }
+
+const css = `
+.auth-root{
+  min-height:100dvh;display:grid;grid-template-columns:1fr;
+  background:#0B0A0F;color:#F4F1EA;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+.auth-brand-panel{
+  display:none;position:relative;overflow:hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 15% 15%, rgba(240,188,128,.2), transparent 55%),
+    radial-gradient(ellipse 60% 45% at 95% 85%, rgba(123,235,212,.07), transparent 50%),
+    linear-gradient(165deg, #14121C 0%, #0B0A0F 50%, #0E0C14 100%);
+  padding:48px 44px;flex-direction:column;justify-content:space-between;
+}
+.auth-mark{display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:#F4F1EA;position:relative;z-index:1}
+.auth-mark img{border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+.auth-mark span{font-weight:600;letter-spacing:.02em;font-size:15px}
+.auth-brand-copy{position:relative;z-index:1;max-width:380px}
+.auth-brand-copy h1{
+  font-family:Georgia,"Times New Roman",serif;font-weight:500;
+  font-size:clamp(2.1rem,3.8vw,2.9rem);line-height:1.12;margin:0 0 18px;letter-spacing:-0.025em;
+}
+.auth-brand-copy h1 em{font-style:italic;color:#F0BC80}
+.auth-brand-copy p{margin:0;color:#9B96A3;font-size:15px;line-height:1.6}
+.auth-brand-foot{position:relative;z-index:1;font-size:12px;color:#5C5866;letter-spacing:.02em}
+.auth-form-panel{
+  display:flex;flex-direction:column;justify-content:center;
+  padding:28px 22px 40px;min-height:100dvh;
+}
+.auth-form-inner{width:100%;max-width:400px;margin:0 auto}
+.auth-top-mobile{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.auth-top-mobile a{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:#F4F1EA;font-weight:600;font-size:14px}
+.auth-top-mobile a img{border-radius:8px}
+.auth-switch-link{font-size:13px;color:#9B96A3;text-decoration:none}
+.auth-switch-link strong{color:#F0BC80;font-weight:600}
+.auth-card{
+  background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:24px;padding:28px 24px 26px;
+  box-shadow:0 24px 48px rgba(0,0,0,.22);
+}
+.auth-tabs{
+  display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:999px;
+  background:#16141C;border:1px solid rgba(255,255,255,.06);margin-bottom:22px;
+}
+.auth-tab{
+  border:none;background:transparent;color:#9B96A3;padding:11px 12px;border-radius:999px;
+  font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,color .15s;
+}
+.auth-tab.on{
+  background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;
+  box-shadow:0 2px 10px rgba(231,169,97,.35);
+}
+.auth-card h2{
+  font-family:Georgia,"Times New Roman",serif;font-weight:500;
+  font-size:1.7rem;margin:0 0 8px;letter-spacing:-0.02em;line-height:1.2;
+}
+.auth-sub{margin:0 0 20px;color:#9B96A3;font-size:14px;line-height:1.5}
+.auth-error{
+  background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);
+  color:#FCA5A5;padding:12px 14px;border-radius:12px;font-size:13px;margin-bottom:16px;
+}
+.auth-field{
+  display:flex;flex-direction:column;gap:8px;margin-bottom:14px;
+  font-size:11px;font-weight:600;color:#9B96A3;letter-spacing:.06em;text-transform:uppercase;
+}
+.auth-field input{
+  width:100%;padding:14px 16px;border-radius:14px;
+  border:1px solid rgba(255,255,255,.1);background:#12101A;color:#F4F1EA;
+  font-size:16px;font-family:inherit;box-sizing:border-box;
+  -webkit-appearance:none;appearance:none;text-transform:none;letter-spacing:0;font-weight:400;
+  transition:border-color .15s,box-shadow .15s;
+}
+.auth-field input::placeholder{color:#5C5866}
+.auth-field input:focus{
+  outline:none;border-color:rgba(240,188,128,.55);
+  box-shadow:0 0 0 3px rgba(240,188,128,.12);
+}
+.auth-primary{
+  width:100%;margin-top:10px;padding:15px 18px;border-radius:999px;border:none;
+  background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;
+  font-weight:700;font-size:15px;cursor:pointer;font-family:inherit;box-sizing:border-box;
+  box-shadow:0 8px 24px rgba(231,169,97,.28);
+}
+.auth-primary:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
+.auth-foot-mobile{display:block;margin-top:28px;text-align:center;font-size:12px;color:#5C5866;line-height:1.5}
+@media (min-width:900px){
+  .auth-root{grid-template-columns:minmax(0,1.05fr) minmax(0,0.95fr)}
+  .auth-brand-panel{display:flex}
+  .auth-form-panel{padding:48px 44px;min-height:auto;border-left:1px solid rgba(255,255,255,.06)}
+  .auth-top-mobile{display:none}
+  .auth-card{background:transparent;border:none;box-shadow:none;padding:0}
+  .auth-foot-mobile{display:none}
+}
+@media (max-width:400px){
+  .auth-form-panel{padding:20px 16px 32px}
+  .auth-card{padding:22px 18px}
+}
+`;
