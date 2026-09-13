@@ -338,7 +338,10 @@ export async function POST(_req: Request, ctx: Ctx) {
         start_ms: t.start_ms,
         end_ms: t.end_ms,
         // required never blocks produce — AI signal lives in recommendation
-        required: false,
+        required:
+          Boolean(t.required) ||
+          String(t.type || "").toUpperCase().includes("LEAD") ||
+          String(t.type || "").toLowerCase() === "main",
         priority: t.priority,
         status: "pending",
         active: true,
