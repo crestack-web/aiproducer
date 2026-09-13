@@ -10,6 +10,7 @@ import {
 } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
+import { PromptTweakPanel } from "@/components/prompt-tweak-panel";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
   MicInputPicker,
@@ -3421,6 +3422,22 @@ export default function ProjectDetailPage() {
                 >
                   Arrangement preview
                 </button>
+
+                <div style={{ width: "100%", maxWidth: 420, marginTop: 4 }}>
+                  <PromptTweakPanel
+                    projectId={id}
+                    colors={{
+                      text: C.text,
+                      textMuted: C.textMuted,
+                      surface: C.surface,
+                      border: C.border,
+                      bg: C.bg,
+                    }}
+                    onMasterUrl={(url) => {
+                      setMasterUrl(url);
+                    }}
+                  />
+                </div>
               </div>
             )}
             {paywallOpen && (
