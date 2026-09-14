@@ -293,7 +293,10 @@ export default function WelcomePage() {
           <Link href={START_HREF} className="primary lg">Create your first song</Link>
         </section>
 
-                        <footer>
+      </div>
+
+      <footer className="site-footer">
+        <div className="site-footer-inner">
           <div className="footer-brand">
             <Link href="/" className="footer-logo">
               <img
@@ -335,8 +338,8 @@ export default function WelcomePage() {
               <span>TikTok</span>
             </a>
           </div>
-        </footer>
-      </div>
+                </div>
+      </footer>
     </>
   );
 }
@@ -427,6 +430,67 @@ html[data-theme="light"] .chip{
     box-shadow:0 12px 36px rgba(196,120,32,.14),var(--shadow);
   }
   html[data-theme="light"] .
+  
+  .site-footer{
+    width:100%;
+    margin-top:48px;
+    border-top:1px solid var(--border);
+    background:transparent;
+  }
+  .site-footer-inner{
+    max-width:1200px;margin:0 auto;width:100%;
+    padding:28px 24px 36px;box-sizing:border-box;
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;
+  }
+  .footer-brand{display:flex;flex-direction:column;gap:6px}
+  .footer-logo{
+    display:inline-flex;align-items:center;gap:10px;
+    text-decoration:none;color:var(--text);font-weight:600;font-size:15px;
+  }
+  .footer-tag{font-size:13px;color:var(--muted)}
+  .footer-socials{display:flex;flex-wrap:wrap;gap:10px}
+  .social-link{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:10px 14px;border-radius:999px;
+    border:1px solid var(--border);
+    color:var(--muted);text-decoration:none;font-size:13px;font-weight:600;
+    background:var(--surface);
+    transition:color .15s,border-color .15s,background .15s;
+  }
+  .social-link:hover{color:var(--brass);border-color:var(--brass)}
+  html[data-theme="light"] .site-footer{
+    background:linear-gradient(180deg,#FFFBF6,var(--bg));
+    border-top-color:var(--border);
+  }
+  html[data-theme="light"] .social-link{
+    background:#fff;box-shadow:var(--shadow);
+  }
+  @media (min-width:1100px){
+    .site-footer-inner{max-width:1240px;padding:32px 40px 40px}
+  }
+  @media (min-width:1400px){
+    .site-footer-inner{max-width:1320px}
+  }
+  .create-upload-btn{
+    border:none;cursor:pointer;font-family:inherit;
+  }
+  .create-file-chip{
+    display:flex;align-items:center;gap:8px;
+    padding:6px 10px;border-radius:10px;
+    background:rgba(123,235,212,.1);border:1px solid rgba(123,235,212,.25);
+    margin:0 2px;
+  }
+  .create-file-name{
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:13px;color:var(--signal);font-weight:600;
+  }
+  .create-file-clear{
+    background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px;
+  }
+  html[data-theme="light"] .create-file-chip{
+    background:rgba(10,143,122,.1);border-color:rgba(10,143,122,.22);
+  }
+
   .faq-list{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
   .faq-item{
     border:1px solid var(--border);

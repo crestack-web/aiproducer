@@ -1,17 +1,44 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+const BEAT_DB = "ap_welcome_beat";
+const BEAT_STORE = "files";
+
+async function stashBeatFile(file: File): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.open(BEAT_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(BEAT_STORE)) db.createObjectStore(BEAT_STORE);
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction(BEAT_STORE, "readwrite");
+      tx.objectStore(BEAT_STORE).put(
+        { blob: file, name: file.name, type: file.type, size: file.size, at: Date.now() },
+        "pending_beat"
+      );
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 /**
- * Hero create bar — only after the artist enters a beat/idea and continues
- * do we open a register modal (email or Google) to start the session.
+ * Hero create bar — describe a track and/or upload a beat, then register modal.
  */
 export function WelcomeCreateHook() {
-  const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [prompt, setPrompt] = useState("");
+  const [beatFile, setBeatFile] = useState<File | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,41 +52,66 @@ export function WelcomeCreateHook() {
     return () => window.removeEventListener("keydown", onKey);
   }, [modalOpen]);
 
-  function stashIntent() {
+  function onPickFile(file: File | null) {
+    if (!file) return;
+    const ok =
+      file.type.startsWith("audio/") ||
+      /\.(mp3|wav|m4a|aac|ogg|flac|mpeg)$/i.test(file.name);
+    if (!ok) {
+      setError("Please choose an audio file (MP3, WAV, M4A…).");
+      return;
+    }
+    if (file.size > 80 * 1024 * 1024) {
+      setError("Beat must be under 80MB.");
+      return;
+    }
+    setError(null);
+    setBeatFile(file);
+  }
+
+  async function stashIntent() {
     try {
       const value = prompt.trim();
       if (value) sessionStorage.setItem("ap_create_intent", value);
+      else sessionStorage.removeItem("ap_create_intent");
       sessionStorage.setItem("ap_create_source", "welcome_hook");
+      if (beatFile) {
+        sessionStorage.setItem(
+          "ap_pending_beat_meta",
+          JSON.stringify({ name: beatFile.name, type: beatFile.type, size: beatFile.size })
+        );
+        await stashBeatFile(beatFile);
+      } else {
+        sessionStorage.removeItem("ap_pending_beat_meta");
+      }
     } catch {
       /* ignore */
     }
   }
 
-  function onSubmit(e: FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault();
     const value = prompt.trim();
-    if (!value) {
-      setError("Describe your beat or track to continue.");
+    if (!value && !beatFile) {
+      setError("Upload a beat or describe your track to continue.");
       return;
     }
     setError(null);
-    stashIntent();
+    await stashIntent();
     setModalOpen(true);
   }
 
   function authHref(mode: "signup" | "login") {
-    const q = new URLSearchParams({
-      mode,
-      next: "/onboarding",
-    });
+    const q = new URLSearchParams({ mode, next: "/onboarding" });
     if (prompt.trim()) q.set("intent", prompt.trim().slice(0, 120));
+    if (beatFile) q.set("beat", "1");
     return `/auth?${q.toString()}`;
   }
 
   async function continueWithGoogle() {
     setBusy(true);
     setError(null);
-    stashIntent();
+    await stashIntent();
     try {
       const supabase = createClient();
       const origin = window.location.origin;
@@ -77,13 +129,27 @@ export function WelcomeCreateHook() {
     }
   }
 
+  const summary =
+    beatFile && prompt.trim()
+      ? `${beatFile.name} · ${prompt.trim().slice(0, 60)}`
+      : beatFile
+        ? beatFile.name
+        : prompt.trim().slice(0, 80);
+
   return (
     <section className="create-hook" id="create" aria-label="Start creating">
       <p className="create-hook-lead">
-        Drop a beat idea or describe your track — AP guides your vocals and produces the record.
+        Upload your beat or describe the track — AP guides your vocals and produces the record.
       </p>
 
-      <form className="create-bar" onSubmit={onSubmit}>
+      <form className="create-bar" onSubmit={(e) => void onSubmit(e)}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+          className="sr-only"
+          onChange={(e) => onPickFile(e.target.files?.[0] || null)}
+        />
         <label className="sr-only" htmlFor="create-prompt">
           Describe your beat or song
         </label>
@@ -95,14 +161,35 @@ export function WelcomeCreateHook() {
             setPrompt(e.target.value);
             if (error) setError(null);
           }}
-          placeholder="Upload a beat or describe your track…"
+          placeholder="Describe your track (optional if you upload a beat)…"
           autoComplete="off"
           maxLength={200}
         />
+        {beatFile && (
+          <div className="create-file-chip">
+            <span className="create-file-name" title={beatFile.name}>
+              ♪ {beatFile.name}
+            </span>
+            <button
+              type="button"
+              className="create-file-clear"
+              aria-label="Remove beat"
+              onClick={() => setBeatFile(null)}
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="create-bar-actions">
-          <span className="create-bar-hint" aria-hidden>
+          <button
+            type="button"
+            className="create-bar-hint create-upload-btn"
+            aria-label="Upload beat"
+            title="Upload beat"
+            onClick={() => fileRef.current?.click()}
+          >
             +
-          </span>
+          </button>
           <button type="submit" className="create-btn">
             Continue
           </button>
@@ -134,11 +221,10 @@ export function WelcomeCreateHook() {
             <p className="reg-modal-kicker">Your session is ready</p>
             <h2 id="reg-modal-title">Create a free account to continue</h2>
             <p className="reg-modal-body">
-              {prompt.trim() ? (
+              {summary ? (
                 <>
-                  We’ll start from <strong>“{prompt.trim().slice(0, 80)}
-                  {prompt.trim().length > 80 ? "…" : ""}”</strong> — register to
-                  open the booth and produce with your real voice.
+                  We’ll start from <strong>“{summary}{summary.length >= 80 ? "…" : ""}”</strong> —
+                  register to open the booth with your beat.
                 </>
               ) : (
                 <>Register to open the booth and produce with your real voice.</>
