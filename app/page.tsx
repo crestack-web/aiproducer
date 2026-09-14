@@ -11,7 +11,6 @@ export default function WelcomePage() {
       <div className="ambient" aria-hidden />
       <div className="wrap">
         <header className="header">
-          <div className="header-inner">
           <Link href="/" className="logo">
             <img
               src="/logo.svg"
@@ -32,7 +31,6 @@ export default function WelcomePage() {
             <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>
-                  </div>
         </header>
 
         <section className="hero">
@@ -326,35 +324,17 @@ const css = `
       radial-gradient(ellipse at 0% 70%,rgba(123,92,219,.08),transparent 42%),
       radial-gradient(ellipse at 80% 100%,rgba(232,93,76,.07),transparent 40%);
   }
-  html[data-theme="light"] .header{position:sticky;top:0;z-index:20;margin:0;padding:0;background:var(--header-bg);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid transparent}
-  html[data-theme="light"] .header .nav,
-  html[data-theme="light"] .nav{
-    display:flex;
-    align-items:center;
-    gap:8px;
-    flex-wrap:wrap;
-    justify-content:flex-end;
-    max-width:none;
-    margin:0;
-    width:100%;
-    padding:0;
-    min-height:0;
-  }
-  html[data-theme="light"] .logo{
-    color:var(--text);
-    font-weight:700;
-    display:inline-flex;align-items:center;gap:10px;
-    text-decoration:none;font-size:15px;letter-spacing:.02em;
-  }
-  html[data-theme="light"] .logo-img{
-    border-radius:8px;width:28px;height:28px;object-fit:cover;
+    /* Light header: same structure/size as dark — colors only */
+  html[data-theme="light"] .header{
+    background:var(--header-bg);
+    border-bottom:1px solid var(--border);
+    box-shadow:0 1px 0 rgba(48,36,22,.04);
   }
   html[data-theme="light"] .nav a:not(.primary):not(.ghost){
     color:var(--muted);
-    font-weight:600;
   }
   html[data-theme="light"] .nav a:not(.primary):not(.ghost):hover{
-    color:var(--brass-deep);
+    color:var(--brass-deep, var(--brass));
     background:var(--brass-soft);
   }
   html[data-theme="light"] .nav a.primary,
@@ -362,22 +342,14 @@ const css = `
     background:linear-gradient(135deg,#E8A04A 0%,#C47820 45%,#E85D4C 100%);
     color:#1A1208;
     box-shadow:0 6px 18px rgba(196,120,32,.28);
-    border:none;
-    padding:10px 18px;
-    font-size:14px;
-    font-weight:700;
-    border-radius:999px;
   }
-  html[data-theme="light"] .nav a.primary:hover,
-  html[data-theme="light"] a.primary:hover{
-    filter:brightness(1.05);
-  }
-  html[data-theme="light"] .nav a.ghost{
+  html[data-theme="light"] .nav a.ghost,
+  html[data-theme="light"] a.ghost{
     border-color:rgba(196,120,32,.35);
-    color:var(--brass-deep);
+    color:var(--brass-deep, var(--brass));
   }
 
-  html[data-theme="light"] .chip{
+html[data-theme="light"] .chip{
     background:var(--signal-soft);
     color:var(--signal);
     border:1px solid rgba(10,143,122,.22);
