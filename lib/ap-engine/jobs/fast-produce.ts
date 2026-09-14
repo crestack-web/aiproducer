@@ -4,15 +4,34 @@
  * within Vercel time limits. Full engine remains available via AP_FULL_ENGINE=1.
  */
 import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
-import { encodeStereoWav, cloneStereo, applyGainStereo, peakOf, limitStereo, compressStereo, applyEqStereo } from "@/lib/ap-engine/dsp";
+import {
+  encodeStereoWav,
+  cloneStereo,
+  applyGainStereo,
+  peakOf,
+  limitStereo,
+  compressStereo,
+  applyEqStereo,
+} from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import type { PcmStereo } from "@/lib/ap-engine/types";
+
+/**
+ * Accepts either preloaded buffers (from collectVocalsForProduce / ApVocalLayerInput)
+ * or a storage path to download.
+ */
 export type FastVocalLayer = {
-  audio_path: string;
-  startMs: number;
-  type?: string;
-  role?: string;
+  /** Preferred when collect already downloaded the take. */
+  buffer?: Buffer;
+  /** Storage path or URL — used when buffer is missing. */
+  audio_path?: string;
+  pathHint?: string;
+  startMs?: number | null;
+  type?: string | null;
+  taskType?: string | null;
+  role?: string | null;
   taskId?: string;
+  sectionLabel?: string | null;
 };
 
 const ROLE_GAIN: Record<string, number> = {
@@ -52,6 +71,16 @@ function mixOnto(
   }
 }
 
+async function loadVocalBuffer(v: FastVocalLayer): Promise<{ raw: Buffer; hint: string }> {
+  if (v.buffer && v.buffer.length > 0) {
+    return { raw: v.buffer, hint: v.pathHint || v.audio_path || "vocal.wav" };
+  }
+  const path = v.audio_path || v.pathHint;
+  if (!path) throw new Error("Vocal layer missing buffer and audio_path");
+  const raw = await downloadStorageOrUrl(path);
+  return { raw, hint: path };
+}
+
 export async function runFastArrangement(opts: {
   beatPath: string;
   vocals: FastVocalLayer[];
@@ -67,7 +96,6 @@ export async function runFastArrangement(opts: {
     right: new Float32Array(beatNorm.pcm.right),
     sampleRate: beatNorm.pcm.sampleRate,
   };
-  // Ensure minimum length
   if (beat.left.length < beat.sampleRate * 2) {
     throw new Error("Beat is too short or failed to decode");
   }
@@ -76,14 +104,13 @@ export async function runFastArrangement(opts: {
   const layers: { pcm: PcmStereo; startMs: number; gain: number; type: string }[] = [];
   for (const v of opts.vocals) {
     try {
-      const raw = await downloadStorageOrUrl(v.audio_path);
-      const vocalNorm = await normalizeToInternalPcm(raw, v.audio_path);
-      let pcm: PcmStereo = {
+      const { raw, hint } = await loadVocalBuffer(v);
+      const vocalNorm = await normalizeToInternalPcm(raw, hint);
+      const pcm: PcmStereo = {
         left: new Float32Array(vocalNorm.pcm.left),
         right: new Float32Array(vocalNorm.pcm.right),
         sampleRate: vocalNorm.pcm.sampleRate,
       };
-      // Light vocal polish
       applyEqStereo(pcm, [
         { type: "highpass", freq: 80, q: 0.7 },
         { type: "peak", freq: 3200, gainDb: 1.2, q: 1.0 },
@@ -98,24 +125,24 @@ export async function runFastArrangement(opts: {
       });
       const pk = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-6);
       if (pk > 0.9) applyGainStereo(pcm, 0.9 / pk);
+      const type = String(v.taskType || v.type || v.role || "lead");
       layers.push({
         pcm,
         startMs: Math.max(0, v.startMs || 0),
-        gain: roleGain(v.type || v.role || "lead"),
-        type: v.type || "lead",
+        gain: roleGain(type),
+        type,
       });
     } catch (e) {
-      console.warn("[fast-produce] skip layer", v.taskId, e);
+      console.warn("[fast-produce] skip layer", v.taskId || v.pathHint || v.audio_path, e);
     }
   }
   if (!layers.length) throw new Error("Could not decode any vocal takes");
 
   await report("mixing");
-  // Extend beat if last vocal ends later
   let needSamples = beat.left.length;
   for (const L of layers) {
     const end = Math.floor((L.startMs / 1000) * beat.sampleRate) + L.pcm.left.length;
-    needSamples = Math.max(needSamples, end + beat.sampleRate); // +1s tail
+    needSamples = Math.max(needSamples, end + beat.sampleRate);
   }
   if (needSamples > beat.left.length) {
     const left = new Float32Array(needSamples);
@@ -126,7 +153,6 @@ export async function runFastArrangement(opts: {
   }
 
   const mix = cloneStereo(beat);
-  // Duck beat slightly under vocals
   applyGainStereo(mix, 0.85);
   for (const L of layers) {
     const start = Math.floor((L.startMs / 1000) * mix.sampleRate);
@@ -134,7 +160,6 @@ export async function runFastArrangement(opts: {
   }
 
   await report("mastering");
-  // Glue + loudness
   compressStereo(mix, {
     thresholdDb: -14,
     ratio: 2.2,
