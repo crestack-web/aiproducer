@@ -137,18 +137,21 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    const useFull = process.env.AP_FULL_ENGINE === "1" || process.env.AP_FULL_ENGINE === "true";
+    // Full engine is the default produce path (restoration + QC + proper gain staging).
+    // Opt into the fast stopgap only with AP_FAST_ENGINE=1 (e.g. emergency Vercel timeouts).
+    const useFast =
+      process.env.AP_FAST_ENGINE === "1" || process.env.AP_FAST_ENGINE === "true";
 
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
     let mp3Path: string | null = null;
-    let engineVersion = "ap-fast-stopgap-2";
+    let engineVersion = "ap-full";
     let metaExtra: Record<string, unknown> = {
       vocal_layers: vocals.length,
       placements: placementLog,
     };
 
-    if (!useFull) {
+    if (useFast) {
       const fast = await runFastArrangement({
         beatPath: beat.audio_path,
         vocals,
@@ -167,7 +170,7 @@ export async function runInternalApProduceJob(opts: {
         path: "fast-stopgap",
         engineVersion: "ap-fast-stopgap-2",
         fast_diagnostics: fast.diagnostics,
-        note: "STOPGAP fast path (Vercel). Set AP_FULL_ENGINE=1 for full restoration/QC.",
+        note: "Opt-in fast stopgap (AP_FAST_ENGINE=1). Default produce uses full engine.",
       };
     } else {
       const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
