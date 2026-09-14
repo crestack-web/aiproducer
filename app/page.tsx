@@ -62,12 +62,7 @@ export default function WelcomePage() {
               <h3>Warm keys. Deep bass.</h3>
               <p>AI builds the instrumental. You focus on performance.</p>
               <div className="wave" aria-hidden>
-                <i style={{ height: "35%" }} /><i style={{ height: "55%" }} /><i style={{ height: "80%" }} />
-                <i style={{ height: "45%" }} /><i style={{ height: "90%" }} /><i style={{ height: "60%" }} />
-                <i style={{ height: "40%" }} /><i style={{ height: "75%" }} /><i style={{ height: "95%" }} />
-                <i style={{ height: "50%" }} /><i style={{ height: "30%" }} /><i style={{ height: "70%" }} />
-                <i style={{ height: "85%" }} /><i style={{ height: "45%" }} /><i style={{ height: "65%" }} />
-                <i style={{ height: "40%" }} /><i style={{ height: "55%" }} /><i style={{ height: "25%" }} />
+                <i style={{ height: "28%" }} /> <i style={{ height: "42%" }} /> <i style={{ height: "55%" }} /> <i style={{ height: "70%" }} /> <i style={{ height: "48%" }} /> <i style={{ height: "88%" }} /> <i style={{ height: "62%" }} /> <i style={{ height: "40%" }} /> <i style={{ height: "78%" }} /> <i style={{ height: "95%" }} /> <i style={{ height: "58%" }} /> <i style={{ height: "35%" }} /> <i style={{ height: "72%" }} /> <i style={{ height: "90%" }} /> <i style={{ height: "52%" }} /> <i style={{ height: "68%" }} /> <i style={{ height: "44%" }} /> <i style={{ height: "82%" }} /> <i style={{ height: "60%" }} /> <i style={{ height: "38%" }} /> <i style={{ height: "75%" }} /> <i style={{ height: "92%" }} /> <i style={{ height: "50%" }} /> <i style={{ height: "66%" }} /> <i style={{ height: "34%" }} /> <i style={{ height: "80%" }} /> <i style={{ height: "56%" }} /> <i style={{ height: "45%" }} /> <i style={{ height: "85%" }} /> <i style={{ height: "70%" }} />
               </div>
               <div>
                 <span className="chip">94 BPM</span>
@@ -458,10 +453,44 @@ const css = `
   .panel-label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass);font-weight:600;margin-bottom:10px}
   .panel h3{font-family:Fraunces,serif;font-weight:500;font-size:22px;margin:0 0 8px}
   .panel p{color:var(--muted);font-size:14.5px;line-height:1.5;margin:0 0 18px}
-  .wave{display:flex;align-items:flex-end;gap:3px;height:56px;margin:16px 0 8px}
-  .wave i{flex:1;border-radius:3px;background:linear-gradient(180deg,var(--signal),rgba(123,235,212,.25));opacity:.85;animation:pulse 1.4s ease-in-out infinite}
-  .wave i:nth-child(odd){animation-delay:.15s}.wave i:nth-child(3n){animation-delay:.35s}
-  @keyframes pulse{0%,100%{transform:scaleY(.55);opacity:.55}50%{transform:scaleY(1);opacity:1}}
+  .wave{
+    display:flex;align-items:flex-end;justify-content:center;
+    gap:3px;height:56px;margin:16px auto 8px;
+    max-width:320px;width:100%;
+    transform-origin:center bottom;
+  }
+  .wave i{
+    flex:1;min-width:3px;max-width:10px;border-radius:4px;
+    background:linear-gradient(180deg,var(--signal),rgba(123,235,212,.22));
+    opacity:.9;
+    transform-origin:center bottom;
+    animation:wavePulse 1.35s ease-in-out infinite;
+    will-change:transform,opacity;
+  }
+  .wave i:nth-child(odd){animation-delay:.12s}
+  .wave i:nth-child(3n){animation-delay:.28s}
+  .wave i:nth-child(4n){animation-delay:.42s}
+  .wave i:nth-child(5n){animation-delay:.08s}
+  @keyframes wavePulse{
+    0%,100%{transform:scaleY(.42);opacity:.5}
+    50%{transform:scaleY(1);opacity:1}
+  }
+
+  @media (min-width:900px){
+    .wave{
+      height:88px;gap:5px;max-width:520px;margin:24px auto 14px;
+    }
+    .wave i{
+      min-width:5px;max-width:14px;border-radius:5px;
+      animation-duration:1.5s;
+    }
+  }
+  @media (min-width:1200px){
+    .wave{
+      height:108px;gap:6px;max-width:640px;margin:28px auto 16px;
+    }
+    .wave i{min-width:6px;max-width:16px;border-radius:6px}
+  }
   .chip{display:inline-flex;font-size:12px;padding:6px 10px;border-radius:999px;background:rgba(123,235,212,.14);color:var(--signal);border:1px solid rgba(123,235,212,.25);margin-right:6px;margin-bottom:6px}
   .task{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:14px;background:var(--surface);border:1px solid var(--border);margin-bottom:10px}
   .task strong{display:block;font-size:13.5px;margin-bottom:2px}.task span{font-size:12.5px;color:var(--muted);line-height:1.4}
