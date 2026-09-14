@@ -1,32 +1,23 @@
 import { gateInPlace, highPassInPlace, cloneStereo } from "../dsp";
 import type { PcmStereo, VocalDecision } from "../types";
-import { cleanTakeEdges } from "./edge-fade";
 import { trimVocalSilence } from "./silence-trim";
 
 /**
- * Light restoration: gentle edge clean → HPF → soft gate.
- * Avoid aggressive silence chopping (it created vocal artifacts).
+ * Light restoration: HPF + very soft gate.
+ * No lead/tail silence zeroing and no musical edge fades (preserves space/hum).
  */
 export function restoreVocal(pcm: PcmStereo, decision: VocalDecision): PcmStereo {
-  // Soft head/tail only — no internal gap muting
+  // Micro click-guard only — keeps duration and quiet material
   let out = trimVocalSilence(pcm, "normal").pcm;
 
   out = cloneStereo(out);
   highPassInPlace(out.left, out.sampleRate, decision.highPassHz);
   highPassInPlace(out.right, out.sampleRate, decision.highPassHz);
 
-  // Gentler gate: don't carve into quiet phrase endings
-  const gateDb = Math.min(decision.gateThresholdDb, -38);
+  // Gate only true near-silence — never carve hum or soft phrase endings
+  const gateDb = Math.min(decision.gateThresholdDb, -55);
   gateInPlace(out.left, out.sampleRate, gateDb);
   gateInPlace(out.right, out.sampleRate, gateDb);
 
-  // One soft edge pass after gate (not multiple aggressive trims)
-  out = cleanTakeEdges(out, {
-    fadeInMs: 30,
-    fadeOutMs: 70,
-    maxLeadMs: 180,
-    maxTailMs: 220,
-    contentRatio: 0.08,
-  });
   return out;
 }
