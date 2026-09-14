@@ -41,10 +41,6 @@ export default function WelcomePage() {
             <br />
             <em>With your real voice.</em>
           </h1>
-          <div className="cta-row">
-            <Link href={START_HREF} className="primary lg">Create a song</Link>
-            <a href="#how" className="secondary">See the 5 steps</a>
-          </div>
           <p className="trust">No music theory · Pay per finished song · Your voice stays the lead</p>
           <WelcomeCreateHook />
         </section>
@@ -669,6 +665,67 @@ html[data-theme="light"] .chip{
     text-underline-offset:3px;
   }
   .create-error{color:#F07167;font-size:13px;margin-top:10px}
+
+  .reg-modal-backdrop{
+    position:fixed;inset:0;z-index:80;
+    background:rgba(5,5,8,.72);
+    backdrop-filter:blur(8px);
+    display:grid;place-items:center;
+    padding:20px;
+  }
+  .reg-modal{
+    width:100%;max-width:400px;
+    background:#12101A;
+    border:1px solid rgba(255,255,255,.1);
+    border-radius:20px;
+    padding:28px 24px 24px;
+    box-shadow:0 24px 64px rgba(0,0,0,.45);
+    position:relative;
+    text-align:left;
+  }
+  .reg-modal-close{
+    position:absolute;top:12px;right:14px;
+    background:none;border:none;color:var(--muted);
+    font-size:24px;line-height:1;cursor:pointer;padding:4px 8px;
+  }
+  .reg-modal-kicker{
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--brass);margin:0 0 8px;font-weight:600;
+  }
+  .reg-modal h2{
+    font-family:Fraunces,Georgia,serif;font-size:1.45rem;
+    margin:0 0 10px;color:var(--text);font-weight:600;
+  }
+  .reg-modal-body{
+    font-size:14.5px;line-height:1.5;color:var(--muted);margin:0 0 20px;
+  }
+  .reg-modal-body strong{color:var(--text);font-weight:600}
+  .reg-modal-google{max-width:none;width:100%;margin:0}
+  .reg-modal-or{
+    display:flex;align-items:center;gap:12px;margin:16px 0;
+    color:var(--faint);font-size:12px;
+  }
+  .reg-modal-or::before,.reg-modal-or::after{
+    content:"";flex:1;height:1px;background:rgba(255,255,255,.1);
+  }
+  .reg-modal-primary{
+    display:block;text-align:center;text-decoration:none;
+    padding:13px 16px;border-radius:12px;font-weight:700;font-size:14.5px;
+    background:linear-gradient(135deg,#F0BC80,#E7A961);
+    color:#1A1208;margin-bottom:10px;
+  }
+  .reg-modal-secondary{
+    display:block;text-align:center;font-size:13px;color:var(--muted);
+    text-decoration:none;padding:8px;
+  }
+  .reg-modal-secondary:hover{color:var(--text)}
+  html[data-theme="light"] .reg-modal-backdrop{background:rgba(40,28,12,.45)}
+  html[data-theme="light"] .reg-modal{
+    background:#FFFBF6;border-color:var(--border);box-shadow:var(--shadow);
+  }
+  html[data-theme="light"] .reg-modal-or::before,
+  html[data-theme="light"] .reg-modal-or::after{background:var(--border)}
+
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
   html[data-theme="light"] .create-bar{
     background:#fff;border-color:var(--border);box-shadow:var(--shadow);

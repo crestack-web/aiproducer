@@ -1,18 +1,29 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 /**
- * Suno-style create bar — captures intent (beat description) then routes to signup.
- * Optional Google one-tap path.
+ * Hero create bar — only after the artist enters a beat/idea and continues
+ * do we open a register modal (email or Google) to start the session.
  */
 export function WelcomeCreateHook() {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setModalOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modalOpen]);
 
   function stashIntent() {
     try {
@@ -24,19 +35,25 @@ export function WelcomeCreateHook() {
     }
   }
 
-  function goSignup() {
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const value = prompt.trim();
+    if (!value) {
+      setError("Describe your beat or track to continue.");
+      return;
+    }
+    setError(null);
     stashIntent();
+    setModalOpen(true);
+  }
+
+  function authHref(mode: "signup" | "login") {
     const q = new URLSearchParams({
-      mode: "signup",
+      mode,
       next: "/onboarding",
     });
     if (prompt.trim()) q.set("intent", prompt.trim().slice(0, 120));
-    router.push(`/auth?${q.toString()}`);
-  }
-
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    goSignup();
+    return `/auth?${q.toString()}`;
   }
 
   async function continueWithGoogle() {
@@ -74,7 +91,10 @@ export function WelcomeCreateHook() {
           id="create-prompt"
           type="text"
           value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          onChange={(e) => {
+            setPrompt(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder="Upload a beat or describe your track…"
           autoComplete="off"
           maxLength={200}
@@ -84,26 +104,71 @@ export function WelcomeCreateHook() {
             +
           </span>
           <button type="submit" className="create-btn">
-            <span aria-hidden>♪</span> Create
+            Continue
           </button>
         </div>
       </form>
+      {error && !modalOpen && <p className="create-error">{error}</p>}
 
-      <div className="create-google-row">
-        <button
-          type="button"
-          className="google-btn"
-          onClick={() => void continueWithGoogle()}
-          disabled={busy}
+      {modalOpen && (
+        <div
+          className="reg-modal-backdrop"
+          role="presentation"
+          onClick={() => setModalOpen(false)}
         >
-          <GoogleIcon />
-          {busy ? "Connecting…" : "Continue with Google"}
-        </button>
-        <button type="button" className="create-email-link" onClick={goSignup}>
-          or sign up with email
-        </button>
-      </div>
-      {error && <p className="create-error">{error}</p>}
+          <div
+            className="reg-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reg-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="reg-modal-close"
+              aria-label="Close"
+              onClick={() => setModalOpen(false)}
+            >
+              ×
+            </button>
+            <p className="reg-modal-kicker">Your session is ready</p>
+            <h2 id="reg-modal-title">Create a free account to continue</h2>
+            <p className="reg-modal-body">
+              {prompt.trim() ? (
+                <>
+                  We’ll start from <strong>“{prompt.trim().slice(0, 80)}
+                  {prompt.trim().length > 80 ? "…" : ""}”</strong> — register to
+                  open the booth and produce with your real voice.
+                </>
+              ) : (
+                <>Register to open the booth and produce with your real voice.</>
+              )}
+            </p>
+
+            <button
+              type="button"
+              className="google-btn reg-modal-google"
+              onClick={() => void continueWithGoogle()}
+              disabled={busy}
+            >
+              <GoogleIcon />
+              {busy ? "Connecting…" : "Continue with Google"}
+            </button>
+
+            <div className="reg-modal-or">
+              <span>or</span>
+            </div>
+
+            <Link href={authHref("signup")} className="reg-modal-primary">
+              Sign up with email
+            </Link>
+            <Link href={authHref("login")} className="reg-modal-secondary">
+              Already have an account? Log in
+            </Link>
+            {error && <p className="create-error">{error}</p>}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
