@@ -181,6 +181,10 @@ export type ApProduceResult = {
   retryCount: number;
   durationMs: number;
   engineVersion: string;
+  /** Per-stage wall times in ms (observability). */
+  stageTimingsMs?: Record<string, number>;
+  /** Per-stage outcome: ok | fallback | skipped | error */
+  stageStatus?: Record<string, string>;
 };
 
 export type ApProduceFailure = {
