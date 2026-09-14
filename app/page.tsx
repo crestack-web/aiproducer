@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RotatingHeadline } from "@/components/rotating-headline";
+import { WelcomeCreateHook } from "@/components/welcome-create-hook";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -37,6 +38,7 @@ export default function WelcomePage() {
           <div className="eyebrow"><span /> AI Music Producer</div>
           <h1>
             <RotatingHeadline />
+          <WelcomeCreateHook />
             <br />
             <em>With your real voice.</em>
           </h1>
@@ -609,6 +611,82 @@ html[data-theme="light"] .chip{
   @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:420px;margin:0 auto}.compare,.cost-compare{grid-template-columns:1fr}}
   @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.showcase-body{grid-template-columns:1fr}.panel-producer{border-left:none;border-top:1px solid var(--border)}footer{flex-direction:column;align-items:flex-start}}
   @media (max-width:400px){.wrap{padding-left:14px;padding-right:14px}}
+
+
+  .create-hook{
+    max-width:560px;margin:28px auto 8px;text-align:center;
+  }
+  .create-hook-lead{
+    font-size:15px;line-height:1.55;color:var(--muted);margin:0 0 18px;
+  }
+  .create-bar{
+    display:flex;flex-direction:column;gap:12px;
+    padding:14px 14px 12px;
+    border-radius:20px;
+    background:rgba(255,255,255,.04);
+    border:1px solid var(--border-hi);
+    box-shadow:0 16px 40px rgba(0,0,0,.25);
+    text-align:left;
+  }
+  .create-bar input{
+    width:100%;box-sizing:border-box;
+    background:transparent;border:none;outline:none;
+    color:var(--text);font-size:16px;padding:8px 6px;
+    font-family:inherit;
+  }
+  .create-bar input::placeholder{color:var(--faint)}
+  .create-bar-actions{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+  }
+  .create-bar-hint{
+    width:36px;height:36px;border-radius:999px;
+    display:grid;place-items:center;
+    background:rgba(255,255,255,.06);color:var(--muted);font-size:20px;
+  }
+  .create-btn{
+    border:none;cursor:pointer;font-family:inherit;font-weight:700;
+    font-size:14.5px;padding:11px 20px;border-radius:999px;
+    color:#1A1208;
+    background:linear-gradient(135deg,#F0BC80 0%,#E7A961 40%,#E85D4C 100%);
+    box-shadow:0 8px 22px rgba(231,169,97,.28);
+    display:inline-flex;align-items:center;gap:8px;
+  }
+  .create-btn:hover{filter:brightness(1.05)}
+  .create-google-row{
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+    margin-top:16px;
+  }
+  .google-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:10px;
+    width:100%;max-width:320px;
+    padding:12px 16px;border-radius:999px;
+    border:1px solid var(--border-hi);
+    background:rgba(255,255,255,.06);
+    color:var(--text);font-weight:600;font-size:14px;
+    font-family:inherit;cursor:pointer;
+  }
+  .google-btn:hover{background:rgba(255,255,255,.1)}
+  .google-btn:disabled{opacity:.6;cursor:wait}
+  .create-email-link{
+    background:none;border:none;color:var(--muted);font-size:13px;
+    cursor:pointer;font-family:inherit;text-decoration:underline;
+    text-underline-offset:3px;
+  }
+  .create-error{color:#F07167;font-size:13px;margin-top:10px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+  html[data-theme="light"] .create-bar{
+    background:#fff;border-color:var(--border);box-shadow:var(--shadow);
+  }
+  html[data-theme="light"] .create-bar-hint{background:var(--brass-soft);color:var(--brass)}
+  html[data-theme="light"] .google-btn{
+    background:#fff;border-color:var(--border);color:var(--text);
+  }
+  @media (min-width:900px){
+    .create-hook{max-width:640px;margin:36px auto 12px}
+    .create-hook-lead{font-size:16px}
+    .create-bar{padding:16px 16px 14px;border-radius:22px}
+    .create-bar input{font-size:17px}
+  }
 
   @media (min-width:1100px){
     .wrap{max-width:1240px;padding:0 40px 96px}
