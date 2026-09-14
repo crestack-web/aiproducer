@@ -38,19 +38,15 @@ export default function WelcomePage() {
           <div className="eyebrow"><span /> AI Music Producer</div>
           <h1>
             <RotatingHeadline />
-          <WelcomeCreateHook />
             <br />
             <em>With your real voice.</em>
           </h1>
-          <p className="hero-sub">
-            Create a beat, follow a clear recording plan, and let Studio assemble, mix, and master —
-            so you leave with a <strong>finished, professional-sounding track</strong>, not a rough freestyle.
-          </p>
           <div className="cta-row">
             <Link href={START_HREF} className="primary lg">Create a song</Link>
             <a href="#how" className="secondary">See the 5 steps</a>
           </div>
           <p className="trust">No music theory · Pay per finished song · Your voice stays the lead</p>
+          <WelcomeCreateHook />
         </section>
 
         <div className="showcase" aria-label="Product preview">
@@ -479,7 +475,7 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
   .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%}
-  .header{display:flex;align-items:center;justify-content:space-between;padding:22px 0;gap:12px}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:0;gap:12px;min-height:56px}
   .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none}
   .logo-img{border-radius:6px;flex-shrink:0;display:block}
   .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
@@ -614,7 +610,7 @@ html[data-theme="light"] .chip{
 
 
   .create-hook{
-    max-width:560px;margin:28px auto 8px;text-align:center;
+    max-width:560px;margin:28px auto 0;text-align:center;
   }
   .create-hook-lead{
     font-size:15px;line-height:1.55;color:var(--muted);margin:0 0 18px;
