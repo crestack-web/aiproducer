@@ -13,6 +13,26 @@ import {
 import { runApArrangement } from "../index";
 import type { ApStage } from "../types";
 import { collectVocalsForProduce } from "./collect-vocals";
+import { runFastArrangement } from "./fast-produce";
+
+const AP_STAGES: ReadonlySet<string> = new Set([
+  "queued",
+  "analyzing",
+  "restoring",
+  "polishing",
+  "producing",
+  "mixing",
+  "mastering",
+  "quality_check",
+  "completed",
+  "failed",
+]);
+
+function asApStage(s: string): ApStage | null {
+  if (s === "exporting") return "mastering";
+  if (AP_STAGES.has(s)) return s as ApStage;
+  return null;
+}
 
 export async function runInternalApProduceJob(opts: {
   jobId: string;
@@ -133,11 +153,12 @@ export async function runInternalApProduceJob(opts: {
         beatPath: beat.audio_path,
         vocals,
         onStage: async (s) => {
-          await report(s);
+          const stage = asApStage(s);
+          if (stage) await report(stage);
         },
       });
       engineVersion = "ap-fast-1";
-      await report("exporting");
+      await report("mastering");
       await uploadBuffer(masterPath, fast.wav, "audio/wav");
       await uploadBuffer(mixPath, fast.wav, "audio/wav");
       metaExtra = {
