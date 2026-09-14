@@ -25,6 +25,7 @@ export default function WelcomePage() {
           <nav className="nav desktop-nav">
             <a href="#how">How it works</a>
             <a href="#value">Why Studio</a>
+            <a href="#faq">FAQ</a>
             <a href="#pricing">Pricing</a>
             <span className="theme-slot" aria-label="Theme">
               <ThemeToggle compact />
@@ -232,53 +233,115 @@ export default function WelcomePage() {
           </p>
         </section>
 
+
+        <section className="section" id="faq">
+          <div className="section-head">
+            <h2>Frequently asked questions</h2>
+            <p>Straight answers before you open the booth.</p>
+          </div>
+          <div className="faq-list">
+            <details className="faq-item" open>
+              <summary>Is this my real voice or AI singing for me?</summary>
+              <p>
+                Your voice stays the lead. AP is the producer — cleanup, arrangement,
+                mix, and master around the performance you record on your device.
+              </p>
+            </details>
+            <details className="faq-item">
+              <summary>Do I need music theory or a studio?</summary>
+              <p>
+                No. You upload or pick a beat, follow a clear recording plan section by section,
+                and AP handles the technical production decisions.
+              </p>
+            </details>
+            <details className="faq-item">
+              <summary>What do I need to start?</summary>
+              <p>
+                A phone or computer with a mic, headphones if you can, and a beat (or a short
+                description of the track you want to make). You can start from the create bar on this page.
+              </p>
+            </details>
+            <details className="faq-item">
+              <summary>How does pricing work?</summary>
+              <p>
+                Pay per finished song with a single session, or use a monthly plan for more songs.
+                You can preview the produced track before you unlock download.
+              </p>
+            </details>
+            <details className="faq-item">
+              <summary>Can I record harmonies and ad-libs?</summary>
+              <p>
+                Yes. The plan can include lead, doubles, harmonies, and ad-libs. Record what you need;
+                AP mixes layers according to their role.
+              </p>
+            </details>
+            <details className="faq-item">
+              <summary>Who owns the song?</summary>
+              <p>
+                You keep rights to your performance and the finished song under the terms of your plan.
+                We don’t claim your voice as a generative model replacement.
+              </p>
+            </details>
+          </div>
+        </section>
+
         <section className="bottom-cta">
           <h2>Your next song can be radio-ready today</h2>
           <p>Beat → plan → guided vocals → mix & master.</p>
           <Link href={START_HREF} className="primary lg">Create your first song</Link>
         </section>
 
-        <footer>
-          <div className="footer-brand">
-            <Link href="/" className="footer-logo">
-              <img
-                src="/logo.svg"
-                alt="AP Studio"
-                width={32}
-                height={32}
-                className="logo-img"
-              />
-              <span>AP Studio</span>
-            </Link>
-            <span className="footer-tag">Your voice. Produced.</span>
+                <footer>
+          <div className="footer-top">
+            <div className="footer-brand">
+              <Link href="/" className="footer-logo">
+                <img
+                  src="/logo.svg"
+                  alt="AP Studio"
+                  width={32}
+                  height={32}
+                  className="logo-img"
+                />
+                <span>AP Studio</span>
+              </Link>
+              <span className="footer-tag">Your voice. Produced.</span>
+            </div>
+            <div className="footer-nav">
+              <a href="#how" className="footer-btn">How it works</a>
+              <a href="#faq" className="footer-btn">FAQ</a>
+              <a href="#pricing" className="footer-btn">Pricing</a>
+              <Link href="/auth?mode=login&next=/onboarding" className="footer-btn">Log in</Link>
+              <Link href={START_HREF} className="footer-btn footer-btn-primary">Start free</Link>
+            </div>
           </div>
-          <div className="footer-socials">
-            <a
-              href="https://www.instagram.com/Apstudio.site"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="social-link"
-              aria-label="AP Studio on Instagram"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.75" />
-                <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.75" />
-                <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" />
-              </svg>
-              <span>Instagram</span>
-            </a>
-            <a
-              href="https://www.tiktok.com/@Apstudio.site"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="social-link"
-              aria-label="AP Studio on TikTok"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .56.04.82.12v-3.4a6.22 6.22 0 0 0-.82-.05A6.34 6.34 0 0 0 3.15 15.4 6.34 6.34 0 0 0 9.49 21.7a6.34 6.34 0 0 0 6.34-6.34V8.92a8.2 8.2 0 0 0 4.76 1.52V7.02a4.84 4.84 0 0 1-1-.33z" />
-              </svg>
-              <span>TikTok</span>
-            </a>
+          <div className="footer-bottom">
+            <div className="footer-social">
+              <a
+                href="https://instagram.com/apstudio.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Instagram"
+                className="footer-social-link"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.8"/>
+                  <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.8"/>
+                  <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor"/>
+                </svg>
+              </a>
+              <a
+                href="https://www.tiktok.com/@apstudio.site"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="TikTok"
+                className="footer-social-link"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 0 0-.79-.05A6.34 6.34 0 0 0 3.16 15.2 6.34 6.34 0 0 0 9.5 21.54a6.34 6.34 0 0 0 6.34-6.34V8.83a8.2 8.2 0 0 0 4.76 1.52V6.9a4.85 4.85 0 0 1-.99-.21z"/>
+                </svg>
+              </a>
+            </div>
+            <p className="footer-copy">© {new Date().getFullYear()} AP Studio. All rights reserved.</p>
           </div>
         </footer>
       </div>
@@ -371,7 +434,65 @@ html[data-theme="light"] .chip{
     border-color:rgba(196,120,32,.35);
     box-shadow:0 12px 36px rgba(196,120,32,.14),var(--shadow);
   }
-  html[data-theme="light"] .footer{
+  html[data-theme="light"] .
+  .faq-list{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+  .faq-item{
+    border:1px solid var(--border);
+    border-radius:14px;
+    background:var(--surface);
+    padding:0 18px;
+  }
+  .faq-item summary{
+    cursor:pointer;list-style:none;
+    padding:16px 0;
+    font-weight:600;font-size:15px;color:var(--text);
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+  }
+  .faq-item summary::-webkit-details-marker{display:none}
+  .faq-item summary::after{
+    content:"+";font-weight:500;color:var(--brass);font-size:18px;line-height:1;
+  }
+  .faq-item[open] summary::after{content:"–"}
+  .faq-item p{
+    margin:0 0 16px;padding-bottom:4px;
+    font-size:14.5px;line-height:1.55;color:var(--muted);
+  }
+  html[data-theme="light"] .faq-item{
+    background:#fff;box-shadow:var(--shadow);
+  }
+  .footer-top{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    gap:20px;width:100%;margin-bottom:20px;
+  }
+  .footer-nav{
+    display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+  }
+  .footer-btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    padding:8px 14px;border-radius:999px;
+    font-size:13px;font-weight:600;text-decoration:none;
+    color:var(--muted);border:1px solid var(--border);
+    background:transparent;
+  }
+  .footer-btn:hover{color:var(--text);border-color:var(--border-hi)}
+  .footer-btn-primary{
+    background:linear-gradient(135deg,#F0BC80,#E7A961);
+    color:#1A1208;border:none;
+  }
+  .footer-btn-primary:hover{filter:brightness(1.05);color:#1A1208}
+  .footer-bottom{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    gap:12px;width:100%;padding-top:16px;border-top:1px solid var(--border);
+  }
+  .footer-social{display:flex;gap:10px}
+  .footer-social-link{
+    display:grid;place-items:center;width:36px;height:36px;border-radius:999px;
+    color:var(--muted);border:1px solid var(--border);text-decoration:none;
+  }
+  .footer-social-link:hover{color:var(--brass);border-color:var(--brass)}
+  .footer-copy{margin:0;font-size:12.5px;color:var(--faint)}
+
+  footer{
     border-top:1px solid var(--border);
     background:linear-gradient(180deg,#FFFBF6,var(--bg));
   }
