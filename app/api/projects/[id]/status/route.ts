@@ -7,6 +7,8 @@ import { getRoexEnv } from "@/lib/env";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+export const maxDuration = 300;
+
 /** GET /api/projects/:id/status — project + latest job; advances produce jobs while polling. */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
@@ -30,7 +32,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const { data: produceJob } = await service
     .from("jobs")
-    .select("id, status, stage, type")
+    .select("id, status, stage, type, started_at, created_at, output_data, error")
     .eq("project_id", id)
     .eq("type", "PRODUCE_SONG")
     .in("status", ["queued", "processing"])
@@ -38,11 +40,53 @@ export async function GET(_req: Request, ctx: Ctx) {
     .limit(1)
     .maybeSingle();
 
-  if (produceJob) {
-    try {
-      await tickProduceJob(produceJob.id, { maxWorkMs: 20_000 });
-    } catch (e) {
-      console.error("status poll tick", e);
+  if (produceJob?.id) {
+    const out = (produceJob.output_data || {}) as Record<string, unknown>;
+    const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
+    const lockFresh = Boolean(lockAt && Date.now() - lockAt < 45_000);
+    const started = produceJob.started_at
+      ? Date.parse(String(produceJob.started_at))
+      : Date.parse(String(produceJob.created_at || "")) || Date.now();
+    const ageMs = Date.now() - started;
+
+    if (ageMs > 8 * 60_000) {
+      await service
+        .from("jobs")
+        .update({
+          status: "failed",
+          stage: "failed",
+          progress: 100,
+          error: "Production timed out. Tap Produce again — a new job will retry.",
+          completed_at: new Date().toISOString(),
+          output_data: { ...out, error: "timeout_8m" },
+        })
+        .eq("id", produceJob.id);
+    } else if (!lockFresh) {
+      try {
+        await service
+          .from("jobs")
+          .update({
+            status: "processing",
+            started_at: produceJob.started_at || new Date().toISOString(),
+            output_data: { ...out, tick_lock_at: new Date().toISOString() },
+          })
+          .eq("id", produceJob.id);
+        await tickProduceJob(produceJob.id, { maxWorkMs: 55_000 });
+      } catch (e) {
+        console.error("status poll tick", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        await service
+          .from("jobs")
+          .update({
+            status: "failed",
+            stage: "failed",
+            progress: 100,
+            error: msg.slice(0, 500),
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", produceJob.id)
+          .in("status", ["queued", "processing"]);
+      }
     }
   }
 
