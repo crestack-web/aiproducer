@@ -10,8 +10,8 @@ export default function WelcomePage() {
     <>
       <style>{css}</style>
       <div className="ambient" aria-hidden />
-      <div className="wrap">
-        <header className="header">
+            <header className="header">
+        <div className="header-inner">
           <Link href="/" className="logo">
             <img
               src="/logo.svg"
@@ -33,9 +33,11 @@ export default function WelcomePage() {
             <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>
-        </header>
+        </div>
+      </header>
 
-        <section className="hero">
+<div className="wrap">
+<section className="hero">
           <div className="eyebrow"><span /> AI Music Producer</div>
           <h1>
             <RotatingHeadline />
@@ -291,57 +293,47 @@ export default function WelcomePage() {
           <Link href={START_HREF} className="primary lg">Create your first song</Link>
         </section>
 
-                <footer>
-          <div className="footer-top">
-            <div className="footer-brand">
-              <Link href="/" className="footer-logo">
-                <img
-                  src="/logo.svg"
-                  alt="AP Studio"
-                  width={32}
-                  height={32}
-                  className="logo-img"
-                />
-                <span>AP Studio</span>
-              </Link>
-              <span className="footer-tag">Your voice. Produced.</span>
-            </div>
-            <div className="footer-nav">
-              <a href="#how" className="footer-btn">How it works</a>
-              <a href="#faq" className="footer-btn">FAQ</a>
-              <a href="#pricing" className="footer-btn">Pricing</a>
-              <Link href="/auth?mode=login&next=/onboarding" className="footer-btn">Log in</Link>
-              <Link href={START_HREF} className="footer-btn footer-btn-primary">Start free</Link>
-            </div>
+                        <footer>
+          <div className="footer-brand">
+            <Link href="/" className="footer-logo">
+              <img
+                src="/logo.svg"
+                alt="AP Studio"
+                width={32}
+                height={32}
+                className="logo-img"
+              />
+              <span>AP Studio</span>
+            </Link>
+            <span className="footer-tag">Your voice. Produced.</span>
           </div>
-          <div className="footer-bottom">
-            <div className="footer-social">
-              <a
-                href="https://instagram.com/apstudio.site"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Instagram"
-                className="footer-social-link"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.8"/>
-                  <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.8"/>
-                  <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor"/>
-                </svg>
-              </a>
-              <a
-                href="https://www.tiktok.com/@apstudio.site"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="TikTok"
-                className="footer-social-link"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 0 0-.79-.05A6.34 6.34 0 0 0 3.16 15.2 6.34 6.34 0 0 0 9.5 21.54a6.34 6.34 0 0 0 6.34-6.34V8.83a8.2 8.2 0 0 0 4.76 1.52V6.9a4.85 4.85 0 0 1-.99-.21z"/>
-                </svg>
-              </a>
-            </div>
-            <p className="footer-copy">© {new Date().getFullYear()} AP Studio. All rights reserved.</p>
+          <div className="footer-socials">
+            <a
+              href="https://www.instagram.com/Apstudio.site"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="AP Studio on Instagram"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.75" />
+                <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.75" />
+                <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" />
+              </svg>
+              <span>Instagram</span>
+            </a>
+            <a
+              href="https://www.tiktok.com/@apstudio.site"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="AP Studio on TikTok"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .56.04.82.12v-3.4a6.22 6.22 0 0 0-.82-.05A6.34 6.34 0 0 0 3.15 15.4 6.34 6.34 0 0 0 9.49 21.7a6.34 6.34 0 0 0 6.34-6.34V8.92a8.2 8.2 0 0 0 4.76 1.52V7.02a4.84 4.84 0 0 1-1-.33z" />
+              </svg>
+              <span>TikTok</span>
+            </a>
           </div>
         </footer>
       </div>
@@ -592,7 +584,15 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
   .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%}
-  .header{display:flex;align-items:center;justify-content:space-between;padding:0;gap:12px;min-height:56px}
+  .header{
+    position:relative;z-index:30;width:100%;
+    box-sizing:border-box;
+  }
+  .header-inner{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    max-width:1200px;margin:0 auto;width:100%;
+    padding:12px 24px;min-height:56px;box-sizing:border-box;
+  }
   .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none}
   .logo-img{border-radius:6px;flex-shrink:0;display:block}
   .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
@@ -864,6 +864,7 @@ html[data-theme="light"] .chip{
 
   @media (min-width:1100px){
     .wrap{max-width:1240px;padding:0 40px 96px}
+    .header-inner{max-width:1240px;padding:12px 40px}
     .hero{padding:72px 0 48px;max-width:880px}
     .hero h1{font-size:clamp(2.6rem,4vw,3.4rem);letter-spacing:-0.03em}
     .hero-sub{font-size:1.2rem;max-width:620px}
@@ -878,6 +879,7 @@ html[data-theme="light"] .chip{
   }
   @media (min-width:1400px){
     .wrap{max-width:1320px}
+    .header-inner{max-width:1320px}
     .nav-inner{max-width:1320px}
   }
 `;
