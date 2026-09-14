@@ -282,33 +282,60 @@ export async function POST(
     }
 
     interpret = agent.interpret;
-    if (!interpret || interpret.confirmation_needed || !interpret.interpreted_edits.length) {
+
+    // Always try toolkit parametric tools as well (EQ, reverb type, etc.)
+    toolkitDecision = promptToToolCalls({
+      request: prompt,
+      sections,
+      playbackMs: body.playbackMs ?? null,
+    });
+
+    const hasFieldEdits =
+      Boolean(interpret && !interpret.confirmation_needed && interpret.interpreted_edits.length);
+    const hasToolCalls = Boolean(toolkitDecision?.tool_calls?.length);
+
+    // Only ask for clarification when *neither* path can act
+    if (!hasFieldEdits && !hasToolCalls) {
       return NextResponse.json({
         ok: false,
         interpret,
         needsClarification: true,
         loopNote: agent.loopNote,
+        toolkit: toolkitDecision,
       });
     }
 
-    // Explicit request wins — apply edits; log taste after
-    adjustments = buildSectionAdjustments(
-      sections,
-      interpret.interpreted_edits,
-      currentAdjustments(history)
-    );
+    // Field-level adjustments (loudness / presence / reverb scale)
+    if (hasFieldEdits && interpret) {
+      adjustments = buildSectionAdjustments(
+        sections,
+        interpret.interpreted_edits,
+        currentAdjustments(history)
+      );
+    } else {
+      // Toolkit-only: keep previous cumulative adjustments, still version history
+      adjustments = currentAdjustments(history);
+    }
+
+    const summaryParts: string[] = [];
+    if (hasFieldEdits && interpret?.plain_summary) summaryParts.push(interpret.plain_summary);
+    if (hasToolCalls && toolkitDecision?.plain_summary) summaryParts.push(toolkitDecision.plain_summary);
+    const summary = summaryParts.join(" ") || "Applied mix changes.";
+
     history = pushVersion(history, {
       prompt,
-      edits: interpret.interpreted_edits,
-      summary: interpret.plain_summary,
+      edits: interpret?.interpreted_edits || [],
+      summary,
       sectionAdjustments: adjustments,
     });
 
-    const newSession = !meta.tweak_taste_session;
-    const nextTaste = applyTasteLog(tasteRaw, interpret, newSession);
-    profileMeta.taste_profile = nextTaste;
-    meta.tweak_taste_session = true;
-    await service.from("profiles").update({ metadata: profileMeta }).eq("id", user.id);
+    if (hasFieldEdits && interpret) {
+      const newSession = !meta.tweak_taste_session;
+      const nextTaste = applyTasteLog(tasteRaw, interpret, newSession);
+      profileMeta.taste_profile = nextTaste;
+      meta.tweak_taste_session = true;
+      await service.from("profiles").update({ metadata: profileMeta }).eq("id", user.id);
+    }
   } else if (action === "revert") {
     adjustments = currentAdjustments(history);
   }

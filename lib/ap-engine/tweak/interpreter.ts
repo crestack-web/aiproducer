@@ -12,23 +12,23 @@ export type SectionHint = {
 };
 
 const LOUD_UP =
-  /\b(loud(er|er)?|boost|push|hotter|bigger|more energy|turn up|raise|hit harder|more volume)\b/i;
+  /\b(loud(er)?|boost|push(\s+it)?|hotter|bigger|more energy|turn\s+up|raise|volume\s*up|more volume|increase (the )?(volume|level)|bring up|more level)\b/i;
 const LOUD_DOWN =
-  /\b(quiet(er)?|softer|pull back|turn down|lower|less loud|reduce volume|quieter)\b/i;
+  /\b(quiet(er)?|softer|pull\s+back|turn\s+down|lower|less loud|reduce volume|quieter|too loud|volume\s*down|decrease (the )?(volume|level))\b/i;
 const PRESENCE_UP =
-  /\b(forward|presence|up front|clear(er)?|crisp(er)?|intelligib|more vocal|vocal up)\b/i;
+  /\b(forward|presence|up front|upfront|clear(er)?|crisp(er)?|intelligib|more vocal|vocal up|bring the vocal|pull the vocal|vocal forward|more air|brighter|in front)\b/i;
 const PRESENCE_DOWN =
-  /\b(back( in the mix)?|recess|less presence|vocal down|drown)\b/i;
+  /\b(back( in the mix)?|recess|less presence|vocal down|drown|too present|sit back|blend (in|more))\b/i;
 const REVERB_UP =
-  /\b(more reverb|wetter|more space|more room|ambient|wash(y)?)\b/i;
+  /\b(more reverb|wetter|more space|more room|ambient|wash(y)?|spacious|more echo|add (some )?space|add reverb)\b/i;
 const REVERB_DOWN =
-  /\b(less reverb|drier|dry(er)?|less space|less room|too wet|too much reverb)\b/i;
-const CHORUS = /\b(chorus|hook|drop)\b/i;
-const VERSE = /\b(verse)\b/i;
+  /\b(less reverb|drier|dry(er)?|less space|less room|too wet|too much reverb|remove reverb|no reverb|less echo)\b/i;
+const CHORUS = /\b(chorus|hook|drop|choruses)\b/i;
+const VERSE = /\b(verse|verses)\b/i;
 const BRIDGE = /\b(bridge)\b/i;
 const INTRO = /\b(intro)\b/i;
-const OUTRO = /\b(outro|ending)\b/i;
-const ALL = /\b(whole (song|track)|everything|overall|all (of )?it|the mix)\b/i;
+const OUTRO = /\b(outro|ending|end)\b/i;
+const ALL = /\b(whole (song|track)|everything|overall|all (of )?it|the mix|the song|the track|everywhere)\b/i;
 
 const MAX_GAIN_DB = 3.5;
 const MIN_GAIN_DB = -4;
@@ -45,19 +45,16 @@ function matchSections(
   playbackMs?: number | null
 ): SectionHint[] {
   const p = prompt.toLowerCase();
-  if (ALL.test(p) || (!CHORUS.test(p) && !VERSE.test(p) && !BRIDGE.test(p) && !INTRO.test(p) && !OUTRO.test(p))) {
-    // If specific section words missing but playback position given for "this part"
-    if (/\b(this part|that part|here|this bit)\b/i.test(p) && playbackMs != null) {
-      const hit = sections.find(
-        (s) => playbackMs >= s.startMs && playbackMs <= s.endMs
-      );
-      if (hit) return [hit];
-    }
+  if (ALL.test(p)) return [];
+
+  if (/\b(this part|that part|here|this bit)\b/i.test(p) && playbackMs != null) {
+    const hit = sections.find((s) => playbackMs >= s.startMs && playbackMs <= s.endMs);
+    if (hit) return [hit];
   }
 
   const picked: SectionHint[] = [];
   if (CHORUS.test(p)) {
-    picked.push(...sections.filter((s) => /chorus|hook/i.test(s.label)));
+    picked.push(...sections.filter((s) => /chorus|hook|drop/i.test(s.label)));
   }
   if (VERSE.test(p)) {
     picked.push(...sections.filter((s) => /verse/i.test(s.label)));
@@ -73,7 +70,6 @@ function matchSections(
   }
 
   if (picked.length) {
-    // unique by id
     const seen = new Set<string>();
     return picked.filter((s) => {
       if (seen.has(s.id)) return false;
@@ -82,7 +78,6 @@ function matchSections(
     });
   }
 
-  // Default: song-level if no section keyword
   return [];
 }
 
@@ -110,15 +105,25 @@ export function interpretTweakPrompt(opts: {
   }
 
   const targets = matchSections(request, opts.sections, opts.playbackMs);
+  // If user named a section but we have no matching section labels, still apply song-level
+  const namedSection =
+    CHORUS.test(request) ||
+    VERSE.test(request) ||
+    BRIDGE.test(request) ||
+    INTRO.test(request) ||
+    OUTRO.test(request);
   const songLevel = targets.length === 0;
+  if (namedSection && targets.length === 0) {
+    ambiguity_flags.push("section_not_found_applied_song_level");
+  }
 
   let gainDb = 0;
   if (LOUD_UP.test(request)) gainDb += 1.5;
   if (LOUD_DOWN.test(request)) gainDb -= 1.5;
-  if (/\ba lot\b|\bmuch\b|\bway\b/i.test(request) && gainDb !== 0) {
+  if (/\ba lot\b|\bmuch\b|\bway\b|\breally\b/i.test(request) && gainDb !== 0) {
     gainDb *= 1.4;
   }
-  if (/\ba (little|bit|touch)\b|\bslightly\b/i.test(request) && gainDb !== 0) {
+  if (/\ba (little|bit|touch)\b|\bslightly\b|\bsomewhat\b/i.test(request) && gainDb !== 0) {
     gainDb *= 0.55;
   }
   gainDb = clamp(gainDb, MIN_GAIN_DB, MAX_GAIN_DB);
@@ -133,11 +138,18 @@ export function interpretTweakPrompt(opts: {
   if (REVERB_DOWN.test(request)) reverbDelta -= 0.2;
   reverbDelta = clamp(reverbDelta, -MAX_REVERB_DELTA, MAX_REVERB_DELTA);
 
-  // "hit harder" ambiguity → mild loudness + slight presence, report it
-  if (/\bhit harder\b|\bmore punch\b/i.test(request) && gainDb === 0 && presenceDb === 0) {
+  // Common creative shorthand
+  if (/\bhit harder\b|\bmore punch\b|\bmore power\b|\bmore impact\b/i.test(request) && gainDb === 0) {
     gainDb = 1.0;
-    presenceDb = 0.6;
+    presenceDb = presenceDb || 0.6;
     ambiguity_flags.push("hit_harder_defaulted_to_loudness_and_presence");
+  }
+  if (/\bwarm(er)?\b|\bfatter\b|\bthicker\b/i.test(request) && presenceDb === 0 && gainDb === 0) {
+    presenceDb = 0.8;
+    gainDb = 0.5;
+  }
+  if (/\bthin(ner)?\b|\btoo bright\b/i.test(request) && presenceDb === 0) {
+    presenceDb = -0.8;
   }
 
   if (gainDb === 0 && presenceDb === 0 && reverbDelta === 0) {
@@ -152,7 +164,12 @@ export function interpretTweakPrompt(opts: {
     };
   }
 
-  const applyToTargets = (field: InterpretedEdit["field"], change: string, deltaDb?: number, deltaScale?: number) => {
+  const applyToTargets = (
+    field: InterpretedEdit["field"],
+    change: string,
+    deltaDb?: number,
+    deltaScale?: number
+  ) => {
     if (songLevel) {
       edits.push({
         scope: "song",
@@ -182,7 +199,6 @@ export function interpretTweakPrompt(opts: {
     applyToTargets("loudness_target", `${sign}${gainDb.toFixed(1)}dB`, gainDb);
   }
   if (presenceDb !== 0) {
-    const sign = presenceDb > 0 ? "+" : "";
     applyToTargets(
       "vocal_presence_bias",
       presenceDb > 0 ? "+moderate" : "-moderate",
@@ -202,7 +218,9 @@ export function interpretTweakPrompt(opts: {
   if (gainDb !== 0) {
     parts.push(
       `${gainDb > 0 ? "raised" : "lowered"} loudness by ${Math.abs(gainDb).toFixed(1)} dB` +
-        (songLevel ? " overall" : ` on ${targets.map((t) => t.label).join(", ")}`)
+        (songLevel
+          ? " overall"
+          : ` on ${targets.map((t) => t.label).join(", ")}`)
     );
   }
   if (presenceDb !== 0) {
@@ -212,6 +230,9 @@ export function interpretTweakPrompt(opts: {
   }
   if (reverbDelta !== 0) {
     parts.push(reverbDelta > 0 ? "added a touch of space" : "dried the reverb a bit");
+  }
+  if (ambiguity_flags.includes("section_not_found_applied_song_level")) {
+    parts.push("applied across the whole track (section labels weren’t available)");
   }
   parts.push("true peak held for safety");
 
