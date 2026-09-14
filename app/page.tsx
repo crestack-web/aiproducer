@@ -365,7 +365,10 @@ const css = `
     --shadow:0 2px 4px rgba(40,28,12,.05),0 12px 32px rgba(40,28,12,.08);
     --header-bg:#FFFBF6;
   }
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;max-width:100%}
+  body{min-width:0}
+
   .theme-slot{display:inline-flex;align-items:center;margin:0 4px}
   html[data-theme="light"] .ambient{
     opacity:1;
@@ -432,10 +435,11 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .
   
   .site-footer{
-    width:100%;
+    width:100%;max-width:100%;
     margin-top:48px;
     border-top:1px solid var(--border);
     background:transparent;
+    box-sizing:border-box;overflow-x:clip;
   }
   .site-footer-inner{
     max-width:1200px;margin:0 auto;width:100%;
@@ -563,7 +567,7 @@ html[data-theme="light"] .chip{
     box-shadow:var(--shadow);
     border-color:var(--border);
   }
-  html[data-theme="light"] .showcase{border:1px solid var(--border)}
+  html[data-theme="light"] .showcase{overflow:hidden;max-width:100%;border:1px solid var(--border)}
   html[data-theme="light"] .showcase-bar{
     background:linear-gradient(180deg,#FBF8F3,#F3EDE4);
     border-bottom:1px solid var(--border);
@@ -647,7 +651,7 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel h3{color:var(--text)}
   html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
-  .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%}
+  .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
   .header{
     position:relative;z-index:30;width:100%;
     box-sizing:border-box;
@@ -656,10 +660,11 @@ html[data-theme="light"] .chip{
     display:flex;align-items:center;justify-content:space-between;gap:12px;
     max-width:1200px;margin:0 auto;width:100%;
     padding:12px 24px;min-height:56px;box-sizing:border-box;
+    min-width:0;
   }
-  .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none}
+  .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none;flex-shrink:0;min-width:0}
   .logo-img{border-radius:6px;flex-shrink:0;display:block}
-  .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0;max-width:100%}
   .nav a{color:var(--muted);font-size:14px;font-weight:500;padding:8px 12px;border-radius:999px;text-decoration:none}
   .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#F0BC80,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none}
   .primary.lg{font-size:16px;padding:14px 28px}.primary.block,.secondary.block{width:100%;text-align:center}
@@ -787,17 +792,24 @@ html[data-theme="light"] .chip{
   .social-link svg{flex-shrink:0}
   @media (max-width:900px){.pricing{grid-template-columns:1fr;max-width:420px;margin:0 auto}.compare,.cost-compare{grid-template-columns:1fr}}
   @media (max-width:720px){.wrap{padding-left:16px;padding-right:16px}.desktop-nav a:not(.primary):not(.ghost){display:none}.hero{padding:28px 0 20px}.section{margin-top:56px}.cta-row{flex-direction:column;align-items:stretch}.cta-row .primary,.cta-row .secondary{width:100%}.showcase-body{grid-template-columns:1fr}.panel-producer{border-left:none;border-top:1px solid var(--border)}footer{flex-direction:column;align-items:flex-start}}
+  
+  @media (max-width:720px){
+    .desktop-nav a:not(.primary):not(.ghost){display:none}
+    .header-inner{padding:10px 16px;gap:8px}
+    .nav{gap:6px}
+    .wrap{padding-left:16px;padding-right:16px}
+  }
   @media (max-width:400px){.wrap{padding-left:14px;padding-right:14px}}
 
 
   .create-hook{
-    max-width:560px;margin:28px auto 0;text-align:center;
+    max-width:min(560px,100%);margin:28px auto 0;text-align:center;width:100%;box-sizing:border-box;
   }
   .create-hook-lead{
     font-size:15px;line-height:1.55;color:var(--muted);margin:0 0 18px;
   }
   .create-bar{
-    display:flex;flex-direction:column;gap:12px;
+    display:flex;flex-direction:column;gap:12px;width:100%;max-width:100%;box-sizing:border-box;
     padding:14px 14px 12px;
     border-radius:20px;
     background:rgba(255,255,255,.04);
