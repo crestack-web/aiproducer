@@ -302,7 +302,21 @@ function AppInner() {
 
   return (
     <AppShell active={activeNav} userName={userName} onSignOut={signOut}>
-<div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}>
+<div
+        className="dash-content"
+        style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
+      >
+        <style>{`
+          @media (min-width: 900px) {
+            .dash-content { padding: 32px 8px 56px !important; }
+            .dash-project-grid { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 18px !important; }
+          }
+          @media (min-width: 1200px) {
+            .dash-content { max-width: 1200px !important; padding: 36px 12px 64px !important; }
+            .dash-project-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+          }
+        `}</style>
+
         {tab === "home" && (
           <>
             <div style={eyebrow}>◆ STUDIO</div>
@@ -433,7 +447,7 @@ function AppInner() {
               </div>
             )}
             {libraryTab === "beats" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="dash-project-grid" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading && projects.length === 0 && (
                   <EmptyState

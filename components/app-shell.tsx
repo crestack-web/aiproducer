@@ -120,7 +120,7 @@ export function AppShell({
   };
 
   const sidebar: CSSProperties = {
-    width: 232,
+    width: 248,
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
@@ -279,8 +279,22 @@ export function AppShell({
         .studio-bottom-nav { display: none; }
         .studio-mobile-appbar { display: none; }
         .studio-main-pad {
-          padding-bottom: 32px;
+          padding-bottom: 40px;
           box-sizing: border-box;
+        }
+        @media (min-width:900px) {
+          .studio-main-pad {
+            padding: 28px 32px 48px;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+          }
+        }
+        @media (min-width:1280px) {
+          .studio-main-pad {
+            padding: 32px 40px 56px;
+            max-width: 1280px;
+          }
         }
         .studio-main-pad::after {
           content: "";

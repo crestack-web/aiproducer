@@ -93,7 +93,7 @@ export default function AuthPage() {
               <em>Produced.</em>
             </h1>
             <p>
-              Record on your phone. AP mixes and masters with you — so the song still sounds like you.
+              Record on your device. AP mixes and masters with you — so the song still sounds like you.
             </p>
           </div>
           <p className="auth-brand-foot">Artist-first production · Not another AI singer</p>
