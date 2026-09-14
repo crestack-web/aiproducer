@@ -142,7 +142,7 @@ export async function runInternalApProduceJob(opts: {
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
     let mp3Path: string | null = null;
-    let engineVersion = "ap-fast-1";
+    let engineVersion = "ap-fast-stopgap-2";
     let metaExtra: Record<string, unknown> = {
       vocal_layers: vocals.length,
       placements: placementLog,
@@ -157,14 +157,17 @@ export async function runInternalApProduceJob(opts: {
           if (stage) await report(stage);
         },
       });
-      engineVersion = "ap-fast-1";
+      engineVersion = "ap-fast-stopgap-2";
       await report("mastering");
       await uploadBuffer(masterPath, fast.wav, "audio/wav");
       await uploadBuffer(mixPath, fast.wav, "audio/wav");
       metaExtra = {
         ...metaExtra,
         duration_ms: fast.durationMs,
-        path: "fast",
+        path: "fast-stopgap",
+        engineVersion: "ap-fast-stopgap-2",
+        fast_diagnostics: fast.diagnostics,
+        note: "STOPGAP fast path (Vercel). Set AP_FULL_ENGINE=1 for full restoration/QC.",
       };
     } else {
       const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
@@ -185,7 +188,7 @@ export async function runInternalApProduceJob(opts: {
         await patch("failed", 100, {
           error: result.error,
           detail: result.detail,
-          engineVersion,
+          engineVersion: "ap-full",
           placementLog,
         });
         await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
