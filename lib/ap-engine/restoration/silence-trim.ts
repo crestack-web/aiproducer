@@ -1,14 +1,13 @@
 /**
- * Gentle empty-edge cleanup only.
+ * Preserve take timing and intentional quiet (space, hum, breaths).
  *
- * Internal gap silencing was disabled — it was eating quiet phrases / breaths
- * and creating clicks, pumping, and “weird” vocal artifacts after FX.
+ * We do NOT zero lead/tail or apply musical fades here — that was eating
+ * empty space, room hum, and phrase attacks. Timing vs the beat stays intact.
  *
- * We only soft-fade obvious head/tail noise. Timing vs the beat is unchanged.
+ * Optional micro click-guard only at absolute buffer edges (a few ms).
  */
-import { rmsOf, stereoToMono } from "../dsp";
+import { cloneStereo } from "../dsp";
 import type { PcmStereo } from "../types";
-import { cleanTakeEdges } from "./edge-fade";
 
 export type SilenceTrimQC = {
   applied: boolean;
@@ -19,41 +18,36 @@ export type SilenceTrimQC = {
 };
 
 /**
- * Soft lead/tail edge clean only. No internal muting.
+ * Pass-through with optional micro edge fade (click guard only).
+ * No content-bound detection, no silence zeroing.
  */
 export function trimVocalSilence(
   pcm: PcmStereo,
   _intensity: "normal" | "aggressive" = "normal"
 ): { pcm: PcmStereo; qc: SilenceTrimQC } {
-  // Conservative bounds — only clear obvious pre-roll / tail junk
-  const edged = cleanTakeEdges(pcm, {
-    maxLeadMs: 450,
-    maxTailMs: 500,
-    fadeInMs: 50,
-    fadeOutMs: 100,
-    contentRatio: 0.1,
-  });
-
-  const mono0 = stereoToMono(pcm);
-  const mono1 = stereoToMono(edged);
-  const thr = Math.max(rmsOf(mono0) * 0.08, 1e-5);
-  let lead = 0;
-  let tail = 0;
-  for (let i = 0; i < mono1.length; i++) {
-    if (Math.abs(mono1[i] || 0) > thr) break;
-    lead++;
+  const out = cloneStereo(pcm);
+  const sr = out.sampleRate;
+  // ~3 ms only — prevent hard buffer discontinuity, not a musical fade
+  const micro = Math.max(1, Math.floor((3 / 1000) * sr));
+  const n = out.left.length;
+  for (let i = 0; i < micro && i < n; i++) {
+    const g = i / micro;
+    out.left[i] *= g;
+    out.right[i] *= g;
   }
-  for (let i = mono1.length - 1; i >= 0; i--) {
-    if (Math.abs(mono1[i] || 0) > thr) break;
-    tail++;
+  for (let i = 0; i < micro && i < n; i++) {
+    const idx = n - 1 - i;
+    const g = i / micro;
+    out.left[idx] *= g;
+    out.right[idx] *= g;
   }
 
   return {
-    pcm: edged,
+    pcm: out,
     qc: {
-      applied: true,
-      leadTrimMs: Math.round((lead / pcm.sampleRate) * 1000),
-      tailTrimMs: Math.round((tail / pcm.sampleRate) * 1000),
+      applied: false,
+      leadTrimMs: 0,
+      tailTrimMs: 0,
       internalGaps: 0,
       internalSilentMs: 0,
     },
