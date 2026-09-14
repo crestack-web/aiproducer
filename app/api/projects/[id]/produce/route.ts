@@ -7,6 +7,9 @@ import { getRoexEnv } from "@/lib/env";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+export const maxDuration = 300;
+
+
 /**
  * POST /api/projects/:id/produce
  * Authenticates, verifies ownership, enqueues job, returns 202 immediately.

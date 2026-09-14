@@ -176,8 +176,8 @@ function asSessionTask(t: {
   };
 }
 
-const PRODUCE_POLL_MS = 4000;
-const PRODUCE_MAX_MS = 15 * 60 * 1000;
+const PRODUCE_POLL_MS = 3500;
+const PRODUCE_MAX_MS = 10 * 60 * 1000;
 
 function humanTitle(type: string) {
   const t = (type || "").toLowerCase();
