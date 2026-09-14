@@ -1,7 +1,7 @@
 /**
  * Reliable produce path for serverless — timeline assembly + light polish.
- * Skips heavy Producer Mind / fullness / multi-pass restoration so jobs finish
- * within Vercel time limits. Full engine remains available via AP_FULL_ENGINE=1.
+ * Vocals are level-matched aggressively so phone takes sit clearly above the beat.
+ * Full engine remains available via AP_FULL_ENGINE=1.
  */
 import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
 import {
@@ -33,26 +33,30 @@ export type FastVocalLayer = {
   sectionLabel?: string | null;
 };
 
+/** Post level-match fader — lead must own the mix. */
 const ROLE_GAIN: Record<string, number> = {
-  lead: 1.15,
-  double: 0.65,
-  harmony: 0.55,
-  harmony_high: 0.5,
-  harmony_mid: 0.55,
-  harmony_low: 0.58,
-  adlib: 0.5,
-  background: 0.4,
-  intro: 0.85,
-  outro: 0.85,
+  lead: 1.85,
+  double: 1.05,
+  harmony: 0.95,
+  harmony_high: 0.9,
+  harmony_mid: 0.95,
+  harmony_low: 0.95,
+  adlib: 0.9,
+  background: 0.7,
+  intro: 1.4,
+  outro: 1.4,
 };
 
 function roleGain(type: string): number {
   const k = (type || "lead").toLowerCase().replace(/\s+/g, "_");
   if (ROLE_GAIN[k] != null) return ROLE_GAIN[k];
-  if (k.includes("harmon")) return 0.55;
-  if (k.includes("adlib") || k.includes("ad-lib")) return 0.5;
-  if (k.includes("double")) return 0.65;
-  return 0.9;
+  if (k.includes("harmon")) return 0.95;
+  if (k.includes("adlib") || k.includes("ad-lib")) return 0.9;
+  if (k.includes("double")) return 1.05;
+  if (k.includes("lead") || k.includes("main") || k.includes("verse") || k.includes("chorus")) {
+    return 1.85;
+  }
+  return 1.5;
 }
 
 function mixOnto(
@@ -70,14 +74,14 @@ function mixOnto(
   }
 }
 
-/** Soft duck instrumental under a vocal region so the take is not buried. */
+/** Duck instrumental under a vocal region so the take is not buried. */
 function duckRegion(
   mix: PcmStereo,
   startSample: number,
   lengthSamples: number,
-  amount = 0.55
+  amount = 0.32
 ): void {
-  const fade = Math.min(Math.floor(mix.sampleRate * 0.02), Math.floor(lengthSamples / 4));
+  const fade = Math.min(Math.floor(mix.sampleRate * 0.025), Math.floor(lengthSamples / 4));
   for (let i = 0; i < lengthSamples; i++) {
     const j = startSample + i;
     if (j < 0 || j >= mix.left.length) continue;
@@ -92,18 +96,28 @@ function duckRegion(
   }
 }
 
-/** Match vocal loudness to the beat so quiet phone mics still sit up front. */
+/**
+ * Match vocal loudness to the beat so quiet phone mics sit clearly in front.
+ * Lead targets ~2.2× beat RMS; supporting roles slightly lower.
+ */
 function levelMatchToBeat(vocal: PcmStereo, beatRms: number, role: string): void {
   const vRms = Math.max(rmsOf(vocal.left), rmsOf(vocal.right), 1e-8);
-  // Lead targets ~1.25× beat RMS; supporting roles a bit lower.
-  const targetRatio = role.includes("lead") || role === "intro" || role === "outro" ? 1.25 : 0.85;
-  const target = Math.max(beatRms * targetRatio, 0.04);
+  const isLead =
+    role.includes("lead") ||
+    role.includes("main") ||
+    role.includes("verse") ||
+    role.includes("chorus") ||
+    role === "intro" ||
+    role === "outro";
+  const targetRatio = isLead ? 2.2 : 1.4;
+  // Floor target so even quiet takes get pushed up hard
+  const target = Math.max(beatRms * targetRatio, 0.08);
   let g = target / vRms;
-  // Clamp so we don't explode noise floors or clip before limiter
-  g = Math.min(8, Math.max(0.35, g));
+  // Allow strong boost for phone mics; still clamp noise explosions
+  g = Math.min(20, Math.max(0.5, g));
   applyGainStereo(vocal, g);
   const pk = Math.max(peakOf(vocal.left), peakOf(vocal.right), 1e-6);
-  if (pk > 0.92) applyGainStereo(vocal, 0.92 / pk);
+  if (pk > 0.95) applyGainStereo(vocal, 0.95 / pk);
 }
 
 function asNodeBuffer(data: unknown): Buffer | null {
@@ -121,7 +135,6 @@ function asNodeBuffer(data: unknown): Buffer | null {
 async function loadVocalBuffer(v: FastVocalLayer): Promise<{ raw: Buffer; hint: string }> {
   const fromBuf = asNodeBuffer(v.buffer);
   if (fromBuf) {
-    // Strip #comp suffix so format sniffers still see .wav/.webm
     const hint = String(v.pathHint || v.audio_path || "vocal.wav").split("#")[0];
     return { raw: fromBuf, hint };
   }
@@ -137,6 +150,7 @@ export async function runFastArrangement(opts: {
   onStage?: (stage: string) => Promise<void>;
 }): Promise<{ wav: Buffer; layerCount: number; durationMs: number }> {
   const report = opts.onStage || (async () => undefined);
+
   await report("analyzing");
 
   const beatRaw = await downloadStorageOrUrl(opts.beatPath);
@@ -166,21 +180,29 @@ export async function runFastArrangement(opts: {
         right: new Float32Array(vocalNorm.pcm.right),
         sampleRate: vocalNorm.pcm.sampleRate,
       };
+      // Presence-focused vocal chain
       applyEqStereo(pcm, [
         { type: "highpass", freq: 80, q: 0.7 },
-        { type: "peak", freq: 3200, gainDb: 2.0, q: 1.0 },
-        { type: "highshelf", freq: 10000, gainDb: 1.5, q: 0.7 },
+        { type: "peak", freq: 2800, gainDb: 3.5, q: 1.0 },
+        { type: "peak", freq: 5000, gainDb: 2.0, q: 1.2 },
+        { type: "highshelf", freq: 9000, gainDb: 2.5, q: 0.7 },
       ]);
       compressStereo(pcm, {
-        thresholdDb: -18,
-        ratio: 2.8,
-        attackMs: 12,
-        releaseMs: 100,
-        makeupDb: 2.5,
+        thresholdDb: -20,
+        ratio: 3.2,
+        attackMs: 8,
+        releaseMs: 90,
+        makeupDb: 4.5,
       });
       const type = String(v.taskType || v.type || v.role || "lead").toLowerCase();
       levelMatchToBeat(pcm, beatRms, type);
+      // Extra presence boost after match so quiet phones still cut
+      applyGainStereo(pcm, 1.25);
+      const pk2 = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-6);
+      if (pk2 > 0.95) applyGainStereo(pcm, 0.95 / pk2);
+
       const startMs = Math.max(0, Number(v.startMs) || 0);
+      const vRmsAfter = Math.max(rmsOf(pcm.left), rmsOf(pcm.right));
       layers.push({
         pcm,
         startMs,
@@ -195,6 +217,8 @@ export async function runFastArrangement(opts: {
           startMs,
           durationMs: vocalNorm.durationMs,
           bytes: raw.length,
+          rmsAfter: Number(vRmsAfter.toFixed(4)),
+          roleGain: roleGain(type),
         })
       );
     } catch (e) {
@@ -225,26 +249,28 @@ export async function runFastArrangement(opts: {
   }
 
   const mix = cloneStereo(beat);
-  // Overall instrumental bed slightly down so vocals own the foreground
-  applyGainStereo(mix, 0.72);
+  // Instrumental bed down hard so vocals own the foreground
+  applyGainStereo(mix, 0.48);
 
   for (const L of layers) {
     const start = Math.floor((L.startMs / 1000) * mix.sampleRate);
-    duckRegion(mix, start, L.pcm.left.length, 0.5);
+    // Duck beat under each take (0.32 ≈ −10 dB bed under vocals)
+    duckRegion(mix, start, L.pcm.left.length, 0.32);
     mixOnto(mix, L.pcm, start, L.gain);
   }
 
   await report("mastering");
   compressStereo(mix, {
-    thresholdDb: -14,
-    ratio: 2.2,
-    attackMs: 20,
-    releaseMs: 150,
-    makeupDb: 2,
+    thresholdDb: -12,
+    ratio: 2.4,
+    attackMs: 15,
+    releaseMs: 120,
+    makeupDb: 2.5,
   });
   applyEqStereo(mix, [
     { type: "highpass", freq: 30, q: 0.7 },
-    { type: "highshelf", freq: 12000, gainDb: 0.8, q: 0.7 },
+    { type: "peak", freq: 3000, gainDb: 1.2, q: 1.0 },
+    { type: "highshelf", freq: 11000, gainDb: 1.0, q: 0.7 },
   ]);
   limitStereo(mix, -1.0);
   const peak = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-6);
@@ -254,7 +280,12 @@ export async function runFastArrangement(opts: {
   const durationMs = Math.round((mix.left.length / mix.sampleRate) * 1000);
   console.info(
     "[fast-produce] done",
-    JSON.stringify({ layerCount: layers.length, durationMs, placements: layers.map((l) => l.startMs) })
+    JSON.stringify({
+      layerCount: layers.length,
+      durationMs,
+      placements: layers.map((l) => l.startMs),
+      roleGains: layers.map((l) => l.gain),
+    })
   );
   return { wav, layerCount: layers.length, durationMs };
 }
