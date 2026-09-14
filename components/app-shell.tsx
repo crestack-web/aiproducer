@@ -234,9 +234,7 @@ export function AppShell({
     padding: "8px 14px",
     paddingTop: "calc(8px + env(safe-area-inset-top, 0px))",
     borderBottom: `1px solid ${C.border}`,
-    background: mode === "light" ? (C.surfaceRaised || C.surface) : (C.navGlass || C.surface || C.bg),
-    backdropFilter: "blur(18px)",
-    WebkitBackdropFilter: "blur(18px)",
+    background: mode === "light" ? (C.surfaceRaised || C.bg || "#F7F1E8") : (C.bgDeep || C.bg || "#0B0A0F"),
     boxSizing: "border-box",
   };
 
