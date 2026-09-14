@@ -147,6 +147,7 @@ export async function patchJob(
 
 /**
  * Enqueue PRODUCE_SONG. Caller must already have verified project ownership.
+ * Re-produce is allowed after complete/failed — only in-flight jobs are deduped.
  */
 export async function enqueueProduceSong(projectId: string, userId: string) {
   const supabase = createServiceClient();
@@ -184,25 +185,8 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     return { job_id: existing.id, status: existing.status, deduped: true };
   }
 
-  const { data: completed } = await supabase
-    .from("jobs")
-    .select("id, status")
-    .eq("project_id", projectId)
-    .eq("type", "PRODUCE_SONG")
-    .eq("status", "complete")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (completed) {
-    logProduce({
-      event: "enqueue_deduped_complete",
-      jobId: completed.id,
-      projectId,
-      status: completed.status,
-    });
-    return { job_id: completed.id, status: completed.status, deduped: true };
-  }
+  // Allow re-produce after complete/failed — only dedupe in-flight jobs above.
+  // Artists re-run when mix levels / processing did not sound right.
 
   const { count: priorCount } = await supabase
     .from("jobs")
@@ -360,6 +344,14 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
   }
 
   await supabase.from("projects").update({ status: "processing" }).eq("id", projectId);
-  logProduce({ event: "enqueued", jobId: job.id, projectId, mode, status: "queued", active_artist_plan: true });
+  logProduce({
+    event: "enqueued",
+    jobId: job.id,
+    projectId,
+    mode,
+    status: "queued",
+    active_artist_plan: true,
+    attempt,
+  });
   return { job_id: job.id, status: job.status, deduped: false, recording_count: rows.length };
 }
