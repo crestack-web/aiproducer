@@ -49,16 +49,16 @@ export async function GET(_req: Request, ctx: Ctx) {
       : Date.parse(String(produceJob.created_at || "")) || Date.now();
     const ageMs = Date.now() - started;
 
-    if (ageMs > 8 * 60_000) {
+    if (ageMs > 12 * 60_000) {
       await service
         .from("jobs")
         .update({
           status: "failed",
           stage: "failed",
           progress: 100,
-          error: "Production timed out. Tap Produce again — a new job will retry.",
+          error: "Production timed out on the server. Tap Produce again — the fast engine will retry.",
           completed_at: new Date().toISOString(),
-          output_data: { ...out, error: "timeout_8m" },
+          output_data: { ...out, error: "timeout_12m" },
         })
         .eq("id", produceJob.id);
     } else if (!lockFresh) {

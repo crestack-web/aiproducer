@@ -117,49 +117,85 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
-
-    const result = await runApArrangement(
-      {
-        jobId,
-        projectId,
-        userId,
-        beatBuffer,
-        beatPathHint: beat.audio_path,
-        vocals,
-        genre: project?.genre,
-      },
-      report
-    );
-
-    if (!result.ok) {
-      await patch("failed", 100, {
-        error: result.error,
-        detail: result.detail,
-        engineVersion: result.engineVersion,
-        placementLog,
-      });
-      await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-      return { complete: false, error: result.error };
-    }
+    const useFull = process.env.AP_FULL_ENGINE === "1" || process.env.AP_FULL_ENGINE === "true";
 
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
-    const processedVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-processed.wav`;
-    const restoredVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-restored.wav`;
-
-    await uploadBuffer(mixPath, result.mixWav, "audio/wav");
-    await uploadBuffer(masterPath, result.masterWav, "audio/wav");
-    await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
-    await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
-
     let mp3Path: string | null = null;
-    if (result.masterMp3) {
-      mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
-      await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
-    }
+    let engineVersion = "ap-fast-1";
+    let metaExtra: Record<string, unknown> = {
+      vocal_layers: vocals.length,
+      placements: placementLog,
+    };
 
-    const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
+    if (!useFull) {
+      const fast = await runFastArrangement({
+        beatPath: beat.audio_path,
+        vocals,
+        onStage: async (s) => {
+          await report(s);
+        },
+      });
+      engineVersion = "ap-fast-1";
+      await report("exporting");
+      await uploadBuffer(masterPath, fast.wav, "audio/wav");
+      await uploadBuffer(mixPath, fast.wav, "audio/wav");
+      metaExtra = {
+        ...metaExtra,
+        duration_ms: fast.durationMs,
+        path: "fast",
+      };
+    } else {
+      const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
+      const result = await runApArrangement(
+        {
+          jobId,
+          projectId,
+          userId,
+          beatBuffer,
+          beatPathHint: beat.audio_path,
+          vocals,
+          genre: project?.genre,
+        },
+        report
+      );
+
+      if (!result.ok) {
+        await patch("failed", 100, {
+          error: result.error,
+          detail: result.detail,
+          engineVersion,
+          placementLog,
+        });
+        await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
+        return { complete: false, error: result.error };
+      }
+
+      engineVersion = result.engineVersion || "ap-full";
+      const processedVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-processed.wav`;
+      const restoredVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-restored.wav`;
+      await uploadBuffer(mixPath, result.mixWav, "audio/wav");
+      await uploadBuffer(masterPath, result.masterWav, "audio/wav");
+      await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
+      await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
+      if (result.masterMp3) {
+        mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
+        await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
+      }
+      const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
+      metaExtra = {
+        ...metaExtra,
+        mix_storage_path: mixPath,
+        master_mp3_path: mp3Path,
+        processed_vocal_path: processedVocalPath,
+        restored_vocal_path: restoredVocalPath,
+        decision: result.decision,
+        roles: roleNote || null,
+        qc: result.qc,
+        retryCount: result.retryCount,
+        path: "full",
+      };
+    }
 
     await supabase.from("songs").insert({
       project_id: projectId,
@@ -169,17 +205,8 @@ export async function runInternalApProduceJob(opts: {
       metadata: {
         mode: "ap",
         provider: "ap-internal",
-        engineVersion: result.engineVersion,
-        mix_storage_path: mixPath,
-        master_mp3_path: mp3Path,
-        processed_vocal_path: processedVocalPath,
-        restored_vocal_path: restoredVocalPath,
-        decision: result.decision,
-        vocal_layers: vocals.length,
-        placements: placementLog,
-        roles: roleNote || null,
-        qc: result.qc,
-        retryCount: result.retryCount,
+        engineVersion,
+        ...metaExtra,
       },
     });
 
@@ -198,7 +225,7 @@ export async function runInternalApProduceJob(opts: {
         metadata: {
           mode: "ap",
           provider: "ap-internal",
-          engineVersion: result.engineVersion,
+          engineVersion,
           mix_storage_path: mixPath,
           master_mp3_path: mp3Path,
           vocal_layers: vocals.length,
@@ -219,18 +246,13 @@ export async function runInternalApProduceJob(opts: {
         output_data: {
           mode: "ap",
           provider: "ap-internal",
-          engineVersion: result.engineVersion,
+          engineVersion,
           mix_storage_path: mixPath,
           master_storage_path: masterPath,
           master_mp3_path: mp3Path,
-          processed_vocal_path: processedVocalPath,
-          restored_vocal_path: restoredVocalPath,
           vocal_layers: vocals.length,
           placements: placementLog,
-          decision_notes: result.decision.notes,
-          qc: result.qc,
-          retryCount: result.retryCount,
-          processing_ms: result.durationMs,
+          ...metaExtra,
         },
         completed_at: new Date().toISOString(),
       })
