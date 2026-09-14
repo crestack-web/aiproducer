@@ -301,12 +301,52 @@ const css = `
 .auth-primary:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
 .auth-foot-mobile{display:block;margin-top:28px;text-align:center;font-size:12px;color:#5C5866;line-height:1.5}
 @media (min-width:900px){
-  .auth-root{grid-template-columns:minmax(0,1.05fr) minmax(0,0.95fr)}
-  .auth-brand-panel{display:flex}
-  .auth-form-panel{padding:48px 44px;min-height:auto;border-left:1px solid rgba(255,255,255,.06)}
+  .auth-root{grid-template-columns:minmax(0,1.1fr) minmax(420px,0.9fr)}
+  .auth-brand-panel{display:flex;padding:56px 52px}
+  .auth-form-panel{
+    padding:56px 48px 56px;
+    min-height:auto;
+    border-left:1px solid rgba(255,255,255,.06);
+    align-items:center;
+  }
+  .auth-form-inner{max-width:420px}
   .auth-top-mobile{display:none}
-  .auth-card{background:transparent;border:none;box-shadow:none;padding:0}
+  .auth-card{
+    background:rgba(255,255,255,.03);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:20px;
+    box-shadow:0 20px 50px rgba(0,0,0,.28);
+    padding:36px 32px 32px;
+  }
+  .auth-card h2{font-size:1.85rem;margin-bottom:10px}
+  .auth-sub{font-size:14.5px;margin-bottom:24px}
+  .auth-tabs{margin-bottom:26px}
+  .auth-field{margin-bottom:16px;gap:9px}
+  .auth-field input{
+    padding:15px 16px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.12);
+    background:#0E0C14;
+    transition:border-color .15s,box-shadow .15s,background .15s;
+  }
+  .auth-field input:hover{border-color:rgba(255,255,255,.18)}
+  .auth-field input:focus{
+    border-color:rgba(240,188,128,.55);
+    box-shadow:0 0 0 4px rgba(240,188,128,.12);
+    background:#12101A;
+  }
+  .auth-primary{
+    margin-top:14px;
+    padding:15px 18px;
+    font-size:15px;
+  }
   .auth-foot-mobile{display:none}
+}
+@media (min-width:1200px){
+  .auth-root{grid-template-columns:minmax(0,1.15fr) minmax(440px,0.85fr)}
+  .auth-form-panel{padding:64px 56px}
+  .auth-form-inner{max-width:440px}
+  .auth-card{padding:40px 36px 36px}
 }
 @media (max-width:400px){
   .auth-form-panel{padding:20px 16px 32px}

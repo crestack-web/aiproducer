@@ -323,8 +323,40 @@ const css = `
 .ob-next:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 @media (min-width:520px){
   .ob-shell{padding:32px 28px 40px;min-height:auto;margin:40px 0;border-radius:24px;
-    border:1px solid rgba(255,255,255,.07);background:rgba(12,11,16,.85);
+    border:1px solid rgba(255,255,255,.07);background:rgba(12,11,16,.9);
     box-shadow:0 24px 64px rgba(0,0,0,.35)}
   .ob-root{align-items:center;padding:0 20px}
+}
+@media (min-width:900px){
+  .ob-root{padding:48px 24px}
+  .ob-shell{
+    max-width:520px;
+    padding:40px 40px 44px;
+    margin:24px 0;
+    border-radius:22px;
+  }
+  .ob-title{font-size:2.05rem}
+  .ob-sub{font-size:15px;margin-bottom:32px}
+  .ob-field{gap:10px;margin-bottom:8px}
+  .ob-field input{
+    padding:16px 18px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.12);
+    background:#0E0C14;
+  }
+  .ob-field input:hover{border-color:rgba(255,255,255,.18)}
+  .ob-field input:focus{
+    outline:none;
+    border-color:rgba(240,188,128,.55);
+    box-shadow:0 0 0 4px rgba(240,188,128,.12);
+  }
+  .ob-choice{padding:18px 18px;border-radius:14px}
+  .ob-choice strong{font-size:15.5px}
+  .ob-chip{padding:16px 14px;border-radius:12px;font-size:14.5px}
+  .ob-next{padding:15px 20px;font-size:15px}
+  .ob-footer{padding-top:32px}
+}
+@media (min-width:1200px){
+  .ob-shell{max-width:560px;padding:44px 44px 48px}
 }
 `;
