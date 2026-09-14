@@ -220,7 +220,7 @@ export function AppShell({
     overflowY: "auto",
     background:
       mode === "light"
-        ? `radial-gradient(ellipse at 50% -20%, rgba(168,107,31,0.08), transparent 50%), linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 70%)`
+        ? `radial-gradient(ellipse at 50% -15%, rgba(10,143,122,0.12), transparent 48%), radial-gradient(ellipse at 100% 0%, rgba(196,120,32,0.10), transparent 42%), linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 75%)`
         : `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 45%)`,
     WebkitOverflowScrolling: "touch",
   };
