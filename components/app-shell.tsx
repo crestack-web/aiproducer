@@ -299,20 +299,22 @@ export function AppShell({
             left: 0 !important;
             right: 0 !important;
             bottom: 0 !important;
-            z-index: 50 !important;
+            z-index: 55 !important;
           }
           .studio-mobile-appbar {
             display: flex !important;
             visibility: visible !important;
             opacity: 1 !important;
-            position: sticky !important;
+            position: fixed !important;
             top: 0 !important;
             left: 0 !important;
             right: 0 !important;
-            z-index: 45 !important;
+            z-index: 60 !important;
             width: 100% !important;
+            transform: none !important;
           }
           .studio-main-pad {
+            padding-top: calc(52px + env(safe-area-inset-top, 0px) + 8px) !important;
             padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
           }
           .studio-main-pad::after {
