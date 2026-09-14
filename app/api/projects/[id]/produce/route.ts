@@ -13,7 +13,7 @@ export const maxDuration = 300;
 /**
  * POST /api/projects/:id/produce
  * Authenticates, verifies ownership, enqueues job, returns 202 immediately.
- * Processing continues via poll (GET this route or /status) — does not hold HTTP for RoEx.
+ * Processing continues via poll (GET this route or /status).
  */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -37,10 +37,8 @@ export async function POST(_req: Request, ctx: Ctx) {
   try {
     const result = await enqueueProduceSong(projectId, user.id);
 
-    // Fire-and-forget one tick so mock jobs finish quickly and RoEx jobs start.
-    // Never await the full mix/master lifecycle here.
     if (result.status === "queued" || result.status === "processing") {
-      void tickProduceJob(result.job_id, { maxWorkMs: 20_000 }).catch((e) => {
+      void tickProduceJob(result.job_id, { maxWorkMs: 240_000 }).catch((e) => {
         console.error("produce background tick", e);
       });
     }
@@ -64,7 +62,7 @@ export async function POST(_req: Request, ctx: Ctx) {
 }
 
 /**
- * GET — status + advance stuck produce jobs (resume/poll provider tasks).
+ * GET — status + advance stuck produce jobs (resume/poll).
  */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -93,7 +91,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   if (job && (job.status === "queued" || job.status === "processing")) {
     try {
-      await tickProduceJob(job.id, { maxWorkMs: 20_000 });
+      await tickProduceJob(job.id, { maxWorkMs: 240_000 });
       const { data: refreshed } = await service.from("jobs").select("*").eq("id", job.id).maybeSingle();
       if (refreshed) job = refreshed;
     } catch (e) {
