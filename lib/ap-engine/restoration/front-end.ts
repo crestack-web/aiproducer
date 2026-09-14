@@ -2,6 +2,7 @@
  * Restoration Front-End — first stage on raw phone/bedroom vocals.
  * Order: level → noise → de-reverb → clicks/plosives → confidence gate.
  * Never maxes out processing; artifact_risk caps how hard we push.
+ * Intentional silence, hum, and breaths are preserved (no lead/tail zeroing).
  */
 import {
   applyGainStereo,
@@ -16,7 +17,6 @@ import {
 } from "../dsp";
 import type { PcmStereo } from "../types";
 import { treatMouthNoise } from "./mouth-noise";
-import { cleanTakeEdges } from "./edge-fade";
 import { trimVocalSilence } from "./silence-trim";
 
 export type RestorationConfidence = "high" | "medium" | "low";
@@ -55,12 +55,9 @@ function estimateNoiseFloorDb(mono: Float32Array, sr: number): number {
 }
 
 function spectralFlatnessProxy(mono: Float32Array, sr: number): number {
-  // Rough: ratio of low-band energy to high (room noise often high-band hiss)
-  const frame = Math.max(128, Math.floor(sr * 0.04));
   let low = 0;
   let high = 0;
   let n = 0;
-  // Simple differentiator energy as high proxy
   for (let i = 1; i < mono.length; i++) {
     const d = (mono[i] || 0) - (mono[i - 1] || 0);
     high += d * d;
@@ -82,97 +79,60 @@ function transientPreservationScore(before: Float32Array, after: Float32Array): 
   }
   if (peakB < 1e-6) return 1;
   const ratio = peakA / peakB;
-  // 1 = preserved, 0 = smashed
-  return Math.max(0, Math.min(1, 1 - Math.abs(1 - ratio) * 0.8));
+  return Math.max(0, Math.min(1, ratio));
 }
 
-/** Soft spectral-ish NR: expand quieter frames downward (ceiling by risk). */
 function adaptiveNoiseReduce(
   pcm: PcmStereo,
-  noiseFloorDb: number,
-  maxReductionDb: number
-): { pcm: PcmStereo; appliedDb: number } {
+  noiseBeforeDb: number,
+  maxNrDb: number
+): { pcm: PcmStereo } {
+  // Spectral-ish soft expand against noise floor (gentle)
   const out = cloneStereo(pcm);
   const mono = stereoToMono(out);
-  const sr = out.sampleRate;
-  const frame = Math.max(64, Math.floor(sr * 0.012));
-  const floorLin = dbToGain(noiseFloorDb);
-  const maxRed = dbToGain(-Math.abs(maxReductionDb));
-
-  for (let i = 0; i + frame < mono.length; i += frame) {
-    let s = 0;
-    for (let j = 0; j < frame; j++) s += (mono[i + j] || 0) ** 2;
-    const rms = Math.sqrt(s / frame);
-    // Only attenuate frames near noise floor
-    if (rms < floorLin * 4.5) {
-      const excess = Math.max(0.05, rms / (floorLin * 4.5));
-      // stronger when closer to floor
-      const atten = Math.max(maxRed, excess * excess);
-      for (let j = 0; j < frame; j++) {
-        out.left[i + j] = (out.left[i + j] || 0) * atten;
-        out.right[i + j] = (out.right[i + j] || 0) * atten;
-      }
+  const thr = Math.pow(10, noiseBeforeDb / 20) * 1.8;
+  const strength = Math.min(0.85, maxNrDb / 14);
+  for (let i = 0; i < mono.length; i++) {
+    const a = Math.abs(mono[i] || 0);
+    if (a < thr) {
+      const g = 1 - strength * (1 - a / Math.max(thr, 1e-9));
+      out.left[i] = (out.left[i] || 0) * g;
+      out.right[i] = (out.right[i] || 0) * g;
     }
   }
-  // Gentle HPF to strip rumble/phone handling noise
-  highPassInPlace(out.left, sr, 70);
-  highPassInPlace(out.right, sr, 70);
-  return { pcm: out, appliedDb: maxReductionDb };
+  return { pcm: out };
 }
 
-/**
- * Light de-reverb: high-shelf cut + mild mid dip on low-energy tails.
- * Conservative — artifact risk rises quickly with aggressive de-reverb.
- */
 function lightDeReverb(pcm: PcmStereo, amount: number): PcmStereo {
-  if (amount < 0.05) return pcm;
+  if (amount <= 0.01) return pcm;
   const out = cloneStereo(pcm);
   const mono = stereoToMono(out);
+  // Mild high-shelf cut + soft mid suppress on low-energy frames
   const sr = out.sampleRate;
-  const frame = Math.max(64, Math.floor(sr * 0.02));
-  const peak = peakOf(mono) || 1e-6;
-  const thr = peak * 0.08;
-
-  // Attenuate mid-late energy in quiet frames (reflections)
+  highPassInPlace(out.left, sr, 60);
+  highPassInPlace(out.right, sr, 60);
+  const frame = Math.max(64, Math.floor(sr * 0.01));
   for (let i = 0; i + frame < mono.length; i += frame) {
-    let s = 0;
-    for (let j = 0; j < frame; j++) s += (mono[i + j] || 0) ** 2;
-    const rms = Math.sqrt(s / frame);
-    if (rms < thr) {
-      const g = 1 - amount * 0.55 * (1 - rms / thr);
+    let e = 0;
+    for (let j = 0; j < frame; j++) e += (mono[i + j] || 0) ** 2;
+    e = Math.sqrt(e / frame);
+    if (e < 0.04) {
+      const g = 1 - amount * 0.35;
       for (let j = 0; j < frame; j++) {
         out.left[i + j] = (out.left[i + j] || 0) * g;
         out.right[i + j] = (out.right[i + j] || 0) * g;
       }
     }
   }
-  // Soft HF tuck of residual wash
-  const a = 0.15 * amount;
-  let prevL = 0;
-  let prevR = 0;
-  for (let i = 0; i < out.left.length; i++) {
-    const l = out.left[i] || 0;
-    const r = out.right[i] || 0;
-    const lpL = prevL + a * (l - prevL);
-    const lpR = prevR + a * (r - prevR);
-    out.left[i] = l * (1 - amount * 0.12) + lpL * (amount * 0.12);
-    out.right[i] = r * (1 - amount * 0.12) + lpR * (amount * 0.12);
-    prevL = lpL;
-    prevR = lpR;
-  }
   return out;
 }
 
-/**
- * Run the restoration front-end on one raw vocal take.
- */
 export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResult {
   const flags: string[] = [];
   const plain: string[] = [];
   let pcm = cloneStereo(raw);
   const mono0 = stereoToMono(pcm);
 
-  // Detect clipping
   const peak0 = peakOf(mono0);
   if (peak0 > 0.98) flags.push("clipping_detected");
 
@@ -180,62 +140,52 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
   if (noiseBeforeDb > -42) flags.push("heavy_room_noise");
   else if (noiseBeforeDb > -52) flags.push("noticeable_noise");
 
-  // ——— 1. Level normalization ———
   const rms0 = rmsOf(mono0);
   const targetRms = 0.12;
   let levelGainDb = 0;
   if (rms0 > 1e-6) {
     levelGainDb = Math.max(-12, Math.min(18, gainToDb(targetRms / rms0)));
-    // Don't boost clipped material hard
     if (flags.includes("clipping_detected")) levelGainDb = Math.min(levelGainDb, 3);
     applyGainStereo(pcm, dbToGain(levelGainDb));
   }
   plain.push(`leveled ${levelGainDb >= 0 ? "+" : ""}${levelGainDb.toFixed(1)} dB`);
 
-  // Edge silence / mouth close
+  // Preserve intentional silence / hum / breaths — no content trim or musical fades.
   const trimmed = trimVocalSilence(pcm);
   pcm = trimmed.pcm;
-  pcm = cleanTakeEdges(pcm, { fadeInMs: 40, fadeOutMs: 80, maxLeadMs: 350, maxTailMs: 400 });
+  flags.push("space_preserved");
 
-  // Artifact budget: higher noise → allow a bit more NR, but never extreme
   let maxNrDb = 8;
   if (noiseBeforeDb > -40) maxNrDb = 12;
   else if (noiseBeforeDb > -48) maxNrDb = 10;
   else if (noiseBeforeDb < -58) maxNrDb = 5;
 
-  // ——— 2. Noise reduction ———
   const nr = adaptiveNoiseReduce(pcm, noiseBeforeDb, maxNrDb);
   pcm = nr.pcm;
-  // Soft gate residual
-  gateInPlace(pcm.left, pcm.sampleRate, Math.max(-50, noiseBeforeDb + 6));
-  gateInPlace(pcm.right, pcm.sampleRate, Math.max(-50, noiseBeforeDb + 6));
-  plain.push(`noise reduced (~${maxNrDb.toFixed(0)} dB ceiling)`);
+  const gateDb = Math.min(-58, noiseBeforeDb - 4);
+  gateInPlace(pcm.left, pcm.sampleRate, gateDb);
+  gateInPlace(pcm.right, pcm.sampleRate, gateDb);
+  plain.push(`noise reduced (~${maxNrDb.toFixed(0)} dB ceiling); space preserved`);
 
-  // ——— 3. De-reverb (conservative) ———
   let reverbAmount = 0;
   if (noiseBeforeDb > -50 || flags.includes("heavy_room_noise")) {
     reverbAmount = flags.includes("heavy_room_noise") ? 0.35 : 0.22;
   } else {
     reverbAmount = 0.1;
   }
-  // Cap by artifact risk later
   pcm = lightDeReverb(pcm, reverbAmount);
   if (reverbAmount > 0.12) plain.push("light room reduction");
 
-  // ——— 4. Clicks / plosives ———
   const mouth = treatMouthNoise({ pcm, role: "lead", intensity: 0.55 });
   pcm = mouth.pcm;
   if (mouth.qc?.applied) {
     plain.push("cleaned plosives/clicks");
   }
 
-  // Measure after
   const mono1 = stereoToMono(pcm);
   const noiseAfterDb = estimateNoiseFloorDb(mono1, pcm.sampleRate);
   const transientScore = transientPreservationScore(mono0, mono1);
-  const flatness = spectralFlatnessProxy(mono1, pcm.sampleRate);
 
-  // ——— Quality gate / artifact risk ———
   let artifactRisk = 0;
   artifactRisk += Math.max(0, (maxNrDb - 6) / 20) * 0.35;
   artifactRisk += reverbAmount * 0.4;
@@ -243,7 +193,6 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
   if (flags.includes("clipping_detected")) artifactRisk += 0.15;
   artifactRisk = Math.max(0, Math.min(1, artifactRisk));
 
-  // If risk high, dial back by mixing some raw (safety)
   if (artifactRisk > 0.55) {
     const blend = Math.min(0.4, (artifactRisk - 0.55) * 0.8);
     const rawN = cloneStereo(raw);
