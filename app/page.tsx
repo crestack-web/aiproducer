@@ -437,9 +437,11 @@ html[data-theme="light"] .chip{
   .site-footer{
     width:100%;max-width:100%;
     margin-top:48px;
-    border-top:1px solid var(--border);
-    background:transparent;
     box-sizing:border-box;overflow-x:clip;
+    /* Dark (default) */
+    border-top:1px solid rgba(255,255,255,.1);
+    background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(0,0,0,.25));
+    color:var(--text);
   }
   .site-footer-inner{
     max-width:1200px;margin:0 auto;width:100%;
@@ -456,18 +458,34 @@ html[data-theme="light"] .chip{
   .social-link{
     display:inline-flex;align-items:center;gap:8px;
     padding:10px 14px;border-radius:999px;
-    border:1px solid var(--border);
+    border:1px solid rgba(255,255,255,.12);
     color:var(--muted);text-decoration:none;font-size:13px;font-weight:600;
-    background:var(--surface);
+    background:rgba(255,255,255,.05);
     transition:color .15s,border-color .15s,background .15s;
   }
-  .social-link:hover{color:var(--brass);border-color:var(--brass)}
-  html[data-theme="light"] .site-footer{
-    background:linear-gradient(180deg,#FFFBF6,var(--bg));
-    border-top-color:var(--border);
+  .social-link:hover{
+    color:var(--brass);
+    border-color:rgba(231,169,97,.45);
+    background:rgba(231,169,97,.1);
   }
+  /* Light mode footer */
+  html[data-theme="light"] .site-footer{
+    border-top:1px solid var(--border);
+    background:linear-gradient(180deg,#FFFBF6,var(--bg));
+    color:var(--text);
+  }
+  html[data-theme="light"] .footer-logo{color:var(--text)}
+  html[data-theme="light"] .footer-tag{color:var(--muted)}
   html[data-theme="light"] .social-link{
-    background:#fff;box-shadow:var(--shadow);
+    background:#fff;
+    border-color:var(--border);
+    color:var(--muted);
+    box-shadow:var(--shadow);
+  }
+  html[data-theme="light"] .social-link:hover{
+    color:var(--brass);
+    border-color:var(--brass);
+    background:var(--brass-soft);
   }
   @media (min-width:1100px){
     .site-footer-inner{max-width:1240px;padding:32px 40px 40px}
@@ -495,7 +513,7 @@ html[data-theme="light"] .chip{
     background:rgba(10,143,122,.1);border-color:rgba(10,143,122,.22);
   }
 
-  .faq-list{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.faq-list{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
   .faq-item{
     border:1px solid var(--border);
     border-radius:14px;
@@ -637,8 +655,7 @@ html[data-theme="light"] .chip{
   }
   html[data-theme="light"] .bottom-cta h2{color:var(--text)}
   html[data-theme="light"] .bottom-cta p{color:var(--muted)}
-  html[data-theme="light"] footer{color:var(--faint);border-top:1px solid var(--border)}
-  html[data-theme="light"] .social-link{background:var(--surface);border-color:var(--border)}
+    html[data-theme="light"] .social-link{background:var(--surface);border-color:var(--border)}
   .footer-brand{display:flex;flex-direction:column;gap:6px}
   .footer-logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:var(--text);text-decoration:none}
   .footer-logo:hover{opacity:0.9}
