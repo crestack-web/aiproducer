@@ -61,7 +61,12 @@ export async function runFastArrangement(opts: {
   await report("analyzing");
 
   const beatRaw = await downloadStorageOrUrl(opts.beatPath);
-  let beat = await normalizeToInternalPcm(beatRaw, opts.beatPath);
+  const beatNorm = await normalizeToInternalPcm(beatRaw, opts.beatPath);
+  let beat: PcmStereo = {
+    left: new Float32Array(beatNorm.pcm.left),
+    right: new Float32Array(beatNorm.pcm.right),
+    sampleRate: beatNorm.pcm.sampleRate,
+  };
   // Ensure minimum length
   if (beat.left.length < beat.sampleRate * 2) {
     throw new Error("Beat is too short or failed to decode");
@@ -72,7 +77,12 @@ export async function runFastArrangement(opts: {
   for (const v of opts.vocals) {
     try {
       const raw = await downloadStorageOrUrl(v.audio_path);
-      let pcm = await normalizeToInternalPcm(raw, v.audio_path);
+      const vocalNorm = await normalizeToInternalPcm(raw, v.audio_path);
+      let pcm: PcmStereo = {
+        left: new Float32Array(vocalNorm.pcm.left),
+        right: new Float32Array(vocalNorm.pcm.right),
+        sampleRate: vocalNorm.pcm.sampleRate,
+      };
       // Light vocal polish
       applyEqStereo(pcm, [
         { type: "highpass", freq: 80, q: 0.7 },
