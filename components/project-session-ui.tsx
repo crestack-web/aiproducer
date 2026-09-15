@@ -4061,13 +4061,11 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             )}
-      
 
-
-                </div>
+          </div>
         )}
 
-{showProducerView && (
+      {showProducerView && (
         <ProducerView
           projectTitle={project?.title || "Session"}
           beatUrl={beatUrl}
