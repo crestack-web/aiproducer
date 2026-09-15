@@ -1,5 +1,795 @@
 /**
  * AP Audio Production Engine — multi-role arrangement (Phase 1+)
- * Restored after accidental overwrite. Includes skipRestoration + deadlineAt.
  */
-export * from "./arrangement-core";
+
+import { analyzeBeat } from "./analysis/beat";
+import { combineAnalysis } from "./analysis/combine";
+import { analyzeVocal } from "./analysis/vocal";
+import { normalizeToInternalPcm, placeOnTimeline } from "./ingestion/normalize";
+import { applyGainStereo, dbToGain, cloneStereo } from "./dsp";
+import { validateAudioBuffer } from "./ingestion/validate";
+import {
+  adjustArrangementForRetry,
+  adjustDecisionForRetry,
+  decideArrangementMix,
+  decideLayer,
+  decideProduction,
+} from "./production/decision-engine";
+import { mixVocalAndBeat } from "./mix/engine";
+import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
+import { matchVocalLevelsAcrossSong } from "./mix/level-match";
+import { processVocalBus } from "./mix/vocal-bus";
+import { masterMix } from "./master/engine";
+import { runQc } from "./qc/checks";
+import { runTranslationQc, applyTranslationFix } from "./qc/translation";
+import { shouldRetry } from "./qc/retry";
+import { exportMp3, exportWav } from "./render/export-wav-mp3";
+import { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
+import {
+  AP_ENGINE_VERSION,
+  type ApProduceFailure,
+  type ApProduceInput,
+  type ApProduceResult,
+  type ApStage,
+  type PcmStereo,
+  type ProductionDecision,
+  type StageReporter,
+} from "./types";
+import type { PitchQC } from "./pitch";
+import { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
+import { transcribeVocalLayer, toLayerLyrics } from "./transcription";
+import { runRestorationFrontEnd, restorationToLog, type RestorationReport } from "./restoration/front-end";
+import {
+  estimateKeyFromBeat,
+  decideFullnessForPhrase,
+  generateFromDecision,
+  type GeneratedLayer,
+} from "./fullness";
+import { decidePitchTimingForPhrase, aggregatePitchTiming } from "./producer-mind/pitch-timing";
+import { applyCreativeFxToPlacedVocal } from "./creative-fx/apply";
+import type { DecisionMap } from "./producer-mind";
+
+export * from "./types";
+export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
+export { runApTime } from "./timing";
+export { extractSongFingerprint, applyFeedbackTag, resolveStyleAxis, styleLabel } from "./master/engine";
+export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
+export { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
+export type { DecisionMap, PhraseDecision, SectionDecision } from "./producer-mind";
+
+export type ApVocalLayerInput = {
+  buffer: Buffer;
+  pathHint?: string;
+  taskType?: string | null;
+  sectionLabel?: string | null;
+  startMs?: number | null;
+};
+
+export type ApArrangementInput = {
+  jobId: string;
+  projectId: string;
+  userId: string;
+  beatBuffer: Buffer;
+  beatPathHint?: string;
+  vocals: ApVocalLayerInput[];
+  genre?: string | null;
+  skipRestoration?: boolean;
+  deadlineAt?: number;
+};
+
+function logAp(event: string, data: Record<string, unknown>) {
+  console.info("[ap-engine]", JSON.stringify({ event, engine: AP_ENGINE_VERSION, ...data }));
+}
+
+/**
+ * Multi-vocal arrangement produce.
+ * Lead establishes reference; supporting roles add size/depth/expression.
+ */
+export async function runApArrangement(
+  input: ApArrangementInput,
+  report?: StageReporter
+): Promise<ApProduceResult | ApProduceFailure> {
+  const t0 = Date.now();
+  const stage = async (s: ApStage, meta?: Record<string, unknown>) => {
+    logAp("stage", { jobId: input.jobId, stage: s, ...meta });
+    await report?.(s, meta);
+  };
+
+  try {
+    await stage("analyzing");
+    const bVal = validateAudioBuffer(input.beatBuffer, input.beatPathHint);
+    if (!bVal.ok) {
+      return {
+        ok: false,
+        stage: "analyzing",
+        error: "Beat validation failed",
+        detail: bVal.errors.join(","),
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
+    if (!input.vocals.length) {
+      return {
+        ok: false,
+        stage: "analyzing",
+        error: "No vocal takes provided",
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
+
+    const beatNorm = await normalizeToInternalPcm(input.beatBuffer, input.beatPathHint);
+    const beatA = analyzeBeat(beatNorm.pcm);
+
+    const normalizedLayers: {
+      pcm: PcmStereo;
+      role: VocalRole;
+      section: ReturnType<typeof resolveSectionKind>;
+      startMs: number;
+      analysis: ReturnType<typeof analyzeVocal>;
+      restoration: RestorationReport;
+    }[] = [];
+    const restoreNotes: string[] = [];
+
+    await stage("restoring", { sub: "front_end" });
+
+    for (const v of input.vocals) {
+      const val = validateAudioBuffer(v.buffer, v.pathHint);
+      if (!val.ok) continue;
+      const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
+      const role = resolveVocalRole(v.taskType, v.sectionLabel);
+      const section = resolveSectionKind(v.sectionLabel, v.taskType);
+
+      let restoredPcm = norm.pcm;
+      let restReport: RestorationReport;
+      if (input.skipRestoration) {
+        restReport = {
+          noiseFloorBeforeDb: -60,
+          noiseFloorAfterDb: -60,
+          reverbReductionApplied: 0,
+          levelGainDb: 0,
+          artifactRiskScore: 0,
+          confidence: "high",
+          flags: ["checkpoint_skip_restore"],
+          plainLanguage: ["restored in prior tick"],
+        };
+        restoreNotes.push("restore: skipped (checkpoint)");
+      } else {
+        const restored = runRestorationFrontEnd(norm.pcm);
+        restoredPcm = restored.pcm;
+        restReport = restored.report;
+        restoreNotes.push(...restorationToLog(restored.report));
+        logAp("restoration", {
+          jobId: input.jobId,
+          role,
+          section,
+          confidence: restored.report.confidence,
+          risk: restored.report.artifactRiskScore,
+          flags: restored.report.flags,
+          noiseDb: [restored.report.noiseFloorBeforeDb, restored.report.noiseFloorAfterDb],
+        });
+      }
+      const analysis = analyzeVocal(restoredPcm);
+      normalizedLayers.push({
+        pcm: restoredPcm,
+        role,
+        section,
+        startMs: v.startMs ?? 0,
+        analysis,
+        restoration: restReport,
+      });
+    }
+
+    if (!normalizedLayers.length) {
+      return {
+        ok: false,
+        stage: "analyzing",
+        error: "Vocal validation failed",
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
+
+    const hasLead = normalizedLayers.some((l) => l.role === "lead");
+    const layerCount = normalizedLayers.length;
+    const leadAnalysis =
+      normalizedLayers.find((l) => l.role === "lead")?.analysis || normalizedLayers[0].analysis;
+
+    logAp("analysis", {
+      jobId: input.jobId,
+      layers: normalizedLayers.map((l) => ({
+        role: l.role,
+        section: l.section,
+        startMs: l.startMs,
+        durationMs: l.analysis.durationMs,
+        rms: +l.analysis.rms.toFixed(4),
+      })),
+      beatRms: +beatA.rms.toFixed(4),
+      beatDurationMs: beatA.durationMs,
+    });
+
+    // Decisions per layer
+    let layerDecisions = normalizedLayers.map((l) =>
+      decideLayer(
+        {
+          role: l.role,
+          section: l.section,
+          analysis: l.analysis,
+          layerCount,
+          hasLead,
+        },
+        input.genre
+      )
+    );
+
+    let arrMix = decideArrangementMix(leadAnalysis, beatA, input.genre, layerCount);
+
+    // ——— Transcription + alignment (optional ASR) → layer.lyrics ———
+    await stage("analyzing", { sub: "transcription" });
+    const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = [];
+    for (let i = 0; i < normalizedLayers.length; i++) {
+      const layer = normalizedLayers[i];
+      if (input.deadlineAt && Date.now() > input.deadlineAt - 25_000) {
+        logAp("transcription_budget", { jobId: input.jobId, at: i, total: normalizedLayers.length });
+        for (let j = i; j < normalizedLayers.length; j++) layerLyrics.push(null);
+        break;
+      }
+      const shouldAsr =
+        layer.role === "lead" ||
+        layer.role === "double" ||
+        normalizedLayers.length <= 3;
+      if (!shouldAsr) {
+        layerLyrics.push(null);
+        continue;
+      }
+      try {
+        const tr = await transcribeVocalLayer(layer.pcm);
+        const lyrics = toLayerLyrics(tr);
+        layerLyrics.push(lyrics.length ? lyrics : null);
+        if (lyrics.length) {
+          logAp("transcription", {
+            jobId: input.jobId,
+            layer: i,
+            role: layer.role,
+            phrases: lyrics.length,
+            source: tr.source,
+          });
+        }
+      } catch (e) {
+        logAp("transcription_fail", {
+          jobId: input.jobId,
+          layer: i,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        layerLyrics.push(null);
+      }
+    }
+
+    // ——— Producer Mind: reason about intent, then DSP executes ———
+        const lowRestore = normalizedLayers.some((l) => l.restoration.confidence === "low");
+    if (lowRestore) {
+      logAp("restoration_caution", {
+        jobId: input.jobId,
+        note: "Low-confidence restoration — Producer Mind will prefer restraint",
+      });
+    }
+
+    const decisionMap: DecisionMap = buildDecisionMap(
+      {
+        genre: input.genre,
+        beatDurationMs: beatA.durationMs,
+        vocalRms: leadAnalysis.rms,
+        beatRms: beatA.rms,
+        layers: normalizedLayers.map((l, i) => ({
+          role: l.role,
+          section: l.section,
+          startMs: l.startMs,
+          durationMs: l.analysis.durationMs,
+          lyrics: layerLyrics[i],
+        })),
+      },
+      normalizedLayers.map((l, i) => ({
+        role: l.role,
+        section: l.section,
+        startMs: l.startMs,
+        pcm: l.pcm,
+        lyrics: layerLyrics[i],
+      }))
+    );
+    logAp("producer_mind", {
+      jobId: input.jobId,
+      sections: decisionMap.sections.length,
+      phrases: decisionMap.phrases.length,
+      summary: decisionMap.summary.slice(0, 8),
+    });
+
+    // ——— Pitch/timing phrase decisions → partial correction strengths ———
+    const styleIntimate = decisionMap.song.restraintVsPolish < 0.42;
+    const layerPitchPolicy: { pitchStrength: number; timingStrength: number; summary: string }[] =
+      normalizedLayers.map((layer) => {
+        const phrases = decisionMap.phrases.filter(
+          (p) => p.role === layer.role && p.section === layer.section
+        );
+        const decisions = (phrases.length ? phrases : decisionMap.phrases.filter((p) => p.role === "lead")).map(
+          (ph) =>
+            decidePitchTimingForPhrase({
+              phrase: ph,
+              song: decisionMap.song,
+              section: decisionMap.sections.find((s) => s.section === ph.section),
+              styleIntimate,
+            })
+        );
+        return aggregatePitchTiming(decisions);
+      });
+    logAp("pitch_timing_policy", {
+      jobId: input.jobId,
+      layers: layerPitchPolicy.map((p, i) => ({
+        role: normalizedLayers[i]?.role,
+        pitch: p.pitchStrength,
+        timing: p.timingStrength,
+        summary: p.summary,
+      })),
+    });
+
+    // ——— Fullness layer: doubles / gated harmonies / sparse ad-libs from real vocal ———
+    const keyEst = estimateKeyFromBeat(beatNorm.pcm);
+    logAp("fullness_key", {
+      jobId: input.jobId,
+      ...keyEst,
+    });
+    let adlibBudget = 2;
+    const generated: GeneratedLayer[] = [];
+    const fullnessNotes: string[] = [];
+
+    for (let i = 0; i < normalizedLayers.length; i++) {
+      const layer = normalizedLayers[i];
+      if (layer.role !== "lead") continue;
+      const layerPhrases = decisionMap.phrases.filter(
+        (p) => p.role === "lead" && p.section === layer.section
+      );
+      // Aggregate fullness: if any phrase wants doubles/harmony, apply to this take
+      let wantDouble = false;
+      let wantHarmony = false;
+      let harmonyInterval: "major3rd" | "minor3rd" | "perfect5th" | "none" = "none";
+      let harmConf: "high" | "medium" | "low" | "none" = "none";
+      let wantAdlib = false;
+      let phraseEndMs = layer.startMs + layer.analysis.durationMs;
+
+      for (const ph of layerPhrases.length ? layerPhrases : decisionMap.phrases.filter((p) => p.role === "lead")) {
+        const sec = decisionMap.sections.find((s) => s.section === ph.section);
+        const fd = decideFullnessForPhrase({
+          phrase: ph,
+          song: decisionMap.song,
+          section: sec,
+          keyConfidence: keyEst.confidence,
+          styleIntimate,
+        });
+        if (fd.doubles) wantDouble = true;
+        if (fd.harmony.interval !== "none") {
+          wantHarmony = true;
+          harmonyInterval = fd.harmony.interval as typeof harmonyInterval;
+          harmConf = fd.harmony.confidence;
+        }
+        if (fd.adlibs) {
+          wantAdlib = true;
+          phraseEndMs = ph.timeRangeMs[1];
+        }
+      }
+
+      // Section fallback for chorus/hook without phrases
+      if (!layerPhrases.length && (layer.section === "chorus" || layer.section === "pre_chorus")) {
+        wantDouble = !styleIntimate;
+        if (keyEst.confidence === "high" || keyEst.confidence === "medium") {
+          wantHarmony = true;
+          harmonyInterval = keyEst.confidence === "high" ? "major3rd" : "perfect5th";
+          harmConf = keyEst.confidence;
+        }
+      }
+
+      const fdAgg = {
+        doubles: wantDouble,
+        harmony: {
+          interval: wantHarmony ? harmonyInterval : ("none" as const),
+          confidence: wantHarmony ? harmConf : ("none" as const),
+        },
+        adlibs: wantAdlib && adlibBudget > 0,
+        reasoning: "aggregated_lead",
+      };
+
+      const gens = generateFromDecision({
+        leadPcm: layer.pcm,
+        startMs: layer.startMs,
+        section: layer.section,
+        decision: fdAgg,
+        minorMode: keyEst.mode === "minor",
+        phraseEndMs,
+        adlibBudgetLeft: adlibBudget,
+      });
+      for (const g of gens) {
+        if (g.kind === "adlib") adlibBudget -= 1;
+        generated.push(g);
+        fullnessNotes.push(
+          `fullness: ${g.kind} on ${layer.section} @${Math.round(g.startMs)}ms (${fdAgg.reasoning})`
+        );
+      }
+    }
+
+    logAp("fullness", {
+      jobId: input.jobId,
+      generated: generated.map((g) => g.kind),
+      notes: fullnessNotes.slice(0, 12),
+    });
+
+    // Modulate per-layer DSP params from phrase/section instructions
+    layerDecisions = layerDecisions.map((d, i) => {
+      const layer = normalizedLayers[i];
+      const inf = phraseInfluenceForLayer(decisionMap, layer.role, layer.section);
+      const vocal = { ...d.vocal };
+      vocal.reverbSend = Math.min(0.45, vocal.reverbSend * inf.reverbScale);
+      vocal.compressor = {
+        ...vocal.compressor,
+        ratio: Math.max(1.5, vocal.compressor.ratio * inf.compressionScale),
+      };
+      if (inf.preserveBreath) {
+        vocal.gateThresholdDb = Math.min(vocal.gateThresholdDb, -48);
+      }
+      vocal.deEsserAmount = Math.min(0.55, vocal.deEsserAmount * inf.deEssScale);
+      vocal.gainDb += inf.faderDb * 0.35;
+      if (lowRestore) {
+        vocal.gateThresholdDb = Math.min(vocal.gateThresholdDb, -50);
+        vocal.reverbSend = Math.min(vocal.reverbSend, vocal.reverbSend * 0.85);
+        vocal.compressor = { ...vocal.compressor, ratio: Math.max(1.8, vocal.compressor.ratio * 0.9) };
+      }
+      return {
+        ...d,
+        vocal,
+        notes: [
+          ...d.notes,
+          `mind:${inf.preserveBreath ? "preserve" : "standard"}`,
+          ...(lowRestore ? ["restore:conservative"] : []),
+        ],
+      };
+    });
+
+    logAp("decision", {
+      jobId: input.jobId,
+      genre: arrMix.notes.find((n) => n.startsWith("genre:")),
+      roles: layerDecisions.map((d) => d.role),
+      notes: [...arrMix.notes, ...layerDecisions.flatMap((d) => d.notes), ...decisionMap.summary].slice(0, 24),
+    });
+
+    await stage("restoring");
+    await stage("polishing");
+    await stage("producing");
+    await stage("mixing");
+
+    const renderStack = () => {
+      const placed: PcmStereo[] = [];
+      let leadProcessed: PcmStereo | null = null;
+      let restoredLead: PcmStereo | null = null;
+      let leadPolishedRef: PcmStereo | null = null;
+      const pitchQcAll: PitchQC[] = [];
+      const performanceNotes: string[] = [];
+
+      // Lead first so support layers can time-align to polished lead
+      const order = normalizedLayers.map((_, i) => i);
+      order.sort((a, b) => {
+        const ra = normalizedLayers[a].role === "lead" ? 0 : 1;
+        const rb = normalizedLayers[b].role === "lead" ? 0 : 1;
+        return ra - rb;
+      });
+
+      const placedByIndex: (PcmStereo | null)[] = normalizedLayers.map(() => null);
+
+      for (const i of order) {
+        const layer = normalizedLayers[i];
+        const decision = layerDecisions[i];
+        const detailed = processAndPlaceLayerDetailed(beatNorm.pcm, {
+          pcm: layer.pcm,
+          startMs: layer.startMs,
+          decision,
+          genre: input.genre,
+          leadReference: leadPolishedRef,
+          bpm: beatA?.bpm ?? null,
+          correctionStrengthBias: layerPitchPolicy[i]?.pitchStrength,
+          timingTightnessBias: layerPitchPolicy[i]?.timingStrength,
+        });
+        placedByIndex[i] = detailed.placed;
+        if (detailed.polished) pitchQcAll.push(detailed.polished.qc);
+
+        const pq = detailed.performanceQc;
+        if (pq?.mouth?.applied) {
+          performanceNotes.push(
+            `mouth_l${i}:p=${pq.mouth.plosiveEvents},c=${pq.mouth.clickEvents},b=${pq.mouth.breathEvents}`
+          );
+        }
+        if (pq?.ride?.applied) {
+          performanceNotes.push(
+            `ride_l${i}:ph=${pq.ride.phrases},boost=${pq.ride.maxBoostDb.toFixed(1)},cut=${pq.ride.maxCutDb.toFixed(1)}`
+          );
+        }
+        if (pq?.deess?.applied) {
+          performanceNotes.push(
+            `deess_l${i}:sib=${pq.deess.sibilanceRatio.toFixed(2)},duck=${pq.deess.meanDuck.toFixed(2)}`
+          );
+        }
+        if (pq?.room?.applied) {
+          performanceNotes.push(
+            `room_l${i}:red=${pq.room.reductionDb.toFixed(1)}dB,gate=${pq.room.gatedRatio.toFixed(2)}`
+          );
+        }
+
+        if (layer.role === "lead" || (!hasLead && i === 0)) {
+          restoredLead = detailed.restored;
+          leadProcessed = detailed.processed;
+          leadPolishedRef = detailed.polished?.applied
+            ? detailed.polished.pcm
+            : detailed.restored;
+        }
+      }
+
+      for (let i = 0; i < placedByIndex.length; i++) {
+        placed.push(placedByIndex[i]!);
+      }
+
+      // Producer Mind: phrase/section fader rides on placed timeline
+      for (let pi = 0; pi < placed.length; pi++) {
+        placed[pi] = applyPhraseFaderRides(placed[pi], decisionMap, normalizedLayers[pi]?.role);
+      }
+
+      // Creative FX on lead-aligned phrases (sparse, stylistic)
+      {
+        const leadIdx = normalizedLayers.findIndex((l) => l.role === "lead");
+        if (leadIdx >= 0 && placed[leadIdx]) {
+          const fxed = applyCreativeFxToPlacedVocal({
+            placed: placed[leadIdx],
+            phrases: decisionMap.phrases.filter((p) => p.role === "lead"),
+            bpm: beatA?.bpm ?? null,
+          });
+          placed[leadIdx] = fxed.pcm;
+          if (fxed.notes.length) {
+            logAp("creative_fx", { jobId: input.jobId, notes: fxed.notes.slice(0, 12) });
+          }
+        }
+      }
+
+      // Fullness stacks (doubles/harmonies/ad-libs) — place on timeline, lighter processing
+      for (const g of generated) {
+        const gPcm = cloneStereo(g.pcm);
+        applyGainStereo(gPcm, dbToGain(g.gainDb));
+        const placedG = placeOnTimeline(gPcm, beatNorm.pcm, g.startMs).vocal;
+        placed.push(placedG);
+      }
+
+      // Cross-section vocal consistency — match lead active RMS across the song
+      const rolesForMatch = normalizedLayers.map((l) => l.role);
+      const matched = matchVocalLevelsAcrossSong(placed, rolesForMatch);
+      placed.length = 0;
+      placed.push(...matched.layers);
+      if (matched.notes.length) performanceNotes.push(...matched.notes);
+
+      let vocalBus = sumVocalBus(placed);
+      vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
+      const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
+      const master = masterMix(mix, arrMix.master, { genre: input.genre, mood: null, vocalSit: "forward", platform: "both" });
+      return {
+        mix,
+        master,
+        processedVocal: leadProcessed || placed[0],
+        restoredVocal: restoredLead || placed[0],
+        pitchQcAll,
+        performanceNotes: [...performanceNotes, ...restoreNotes, ...fullnessNotes, ...layerPitchPolicy.map((p) => p.summary), ...decisionMap.summary.map((s) => `mind:${s}`)],
+      };
+    };
+
+    await stage("mastering");
+    let rendered = renderStack();
+    // Soft peak safety before QC so phone mixes rarely hard-fail on CLIPPING
+    const { safetyLimitMaster } = await import("./qc/checks");
+    rendered = {
+      ...rendered,
+      master: safetyLimitMaster(rendered.master, -1),
+    };
+    await stage("quality_check");
+    let qc = runQc(rendered.master, rendered.mix);
+    let retryCount = 0;
+
+    if (shouldRetry(qc, retryCount)) {
+      retryCount = 1;
+      logAp("qc_retry", { jobId: input.jobId, issues: qc.issues, warnings: qc.warnings });
+      arrMix = {
+        mix: adjustDecisionForRetry(
+          {
+            genre: "ap",
+            vocal: layerDecisions[0].vocal,
+            mix: arrMix.mix,
+            master: arrMix.master,
+            notes: arrMix.notes,
+          },
+          qc.issues
+        ).mix,
+        master: adjustDecisionForRetry(
+          {
+            genre: "ap",
+            vocal: layerDecisions[0].vocal,
+            mix: arrMix.mix,
+            master: arrMix.master,
+            notes: arrMix.notes,
+          },
+          qc.issues
+        ).master,
+        notes: [...arrMix.notes, "retry"],
+      };
+      // boost lead on retry if quiet (legacy issue codes may still appear pre-soft-pass)
+      if (
+        qc.issues.includes("VOCAL_TOO_QUIET") ||
+        qc.warnings.some((w) => w.includes("quiet") || w.includes("low_level"))
+      ) {
+        layerDecisions = layerDecisions.map((d) => {
+          if (d.role === "lead") {
+            return { ...d, vocal: { ...d.vocal, gainDb: d.vocal.gainDb + 1.5 } };
+          }
+          return d;
+        });
+      }
+      await stage("mixing", { retry: 1 });
+      await stage("mastering", { retry: 1 });
+      rendered = renderStack();
+      rendered = {
+        ...rendered,
+        master: safetyLimitMaster(rendered.master, -1),
+      };
+      await stage("quality_check", { retry: 1 });
+      qc = runQc(rendered.master, rendered.mix);
+    }
+
+    // Only fail on truly unusable audio (silence / broken / invalid duration).
+    // Level warnings still deliver the song — product > perfectionist QC block.
+    if (!qc.passed) {
+      logAp("qc_failed_fatal", {
+        jobId: input.jobId,
+        issues: qc.issues,
+        warnings: qc.warnings,
+        metrics: qc.metrics,
+      });
+      return {
+        ok: false,
+        stage: "quality_check",
+        error: "Production quality check failed",
+        detail: qc.issues.join(",") || qc.warnings.join(","),
+        engineVersion: AP_ENGINE_VERSION,
+      };
+    }
+    if (qc.warnings.length) {
+      logAp("qc_passed_with_warnings", {
+        jobId: input.jobId,
+        warnings: qc.warnings,
+        metrics: qc.metrics,
+      });
+    }
+
+    // Translation QC: phone / mono / quiet — auto presence lift if vocal disappears
+    try {
+      const tr = runTranslationQc(rendered.master);
+      logAp("translation_qc", {
+        jobId: input.jobId,
+        monoOk: tr.monoOk,
+        phoneOk: tr.phoneOk,
+        quietOk: tr.quietOk,
+        warnings: tr.warnings,
+        presenceBoostDb: tr.presenceBoostDb,
+      });
+      if (tr.presenceBoostDb > 0.3) {
+        rendered = {
+          ...rendered,
+          master: applyTranslationFix(rendered.master, tr.presenceBoostDb),
+        };
+        logAp("translation_fix", { jobId: input.jobId, boostDb: tr.presenceBoostDb });
+      }
+      if (tr.warnings.length) {
+        // non-fatal — attach to notes via log only
+      }
+    } catch (e) {
+      logAp("translation_qc_error", {
+        jobId: input.jobId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    const masterWav = exportWav(rendered.master);
+    const mixWav = exportWav(rendered.mix);
+    const processedVocalWav = exportWav(rendered.processedVocal);
+    const restoredVocalWav = exportWav(rendered.restoredVocal);
+    const masterMp3 = await exportMp3(rendered.master);
+
+    const durationMs = Date.now() - t0;
+    const analysis = combineAnalysis(leadAnalysis, beatA);
+    const decision: ProductionDecision = {
+      genre: arrMix.notes.find((n) => n.startsWith("genre:"))?.slice(6) || "rnb",
+      vocal: layerDecisions.find((d) => d.role === "lead")?.vocal || layerDecisions[0].vocal,
+      mix: arrMix.mix,
+      master: arrMix.master,
+      notes: [
+        ...arrMix.notes,
+        ...layerDecisions.flatMap((d) => d.notes),
+        `roles:${layerDecisions.map((d) => d.role).join("+")}`,
+      ],
+    };
+
+    const pitchSummary = (rendered.pitchQcAll || []).map((p) => ({
+      corrected: p.notesCorrected,
+      maxCents: Math.round(p.maxCorrectionCents),
+      fallback: p.usedFallback,
+      artifactRisk: Number(p.artifactRisk.toFixed(2)),
+    }));
+
+    logAp("completed", {
+      jobId: input.jobId,
+      durationMs,
+      layerCount,
+      roles: layerDecisions.map((d) => d.role),
+      masterBytes: masterWav.length,
+      mp3: Boolean(masterMp3),
+      retryCount,
+      pitch: pitchSummary,
+      performance: rendered.performanceNotes || [],
+      notes: [
+        ...decision.notes,
+        ...pitchSummary.map(
+          (p, i) =>
+            `pitch_layer${i}:corr=${p.corrected},maxCents=${p.maxCents},fallback=${p.fallback}`
+        ),
+        ...(rendered.performanceNotes || []),
+      ].slice(0, 40),
+    });
+
+    await stage("completed");
+    return {
+      ok: true,
+      masterWav,
+      masterMp3,
+      mixWav,
+      processedVocalWav,
+      restoredVocalWav,
+      decision,
+      analysis,
+      qc,
+      retryCount,
+      durationMs,
+      engineVersion: AP_ENGINE_VERSION,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logAp("failed", { jobId: input.jobId, error: msg });
+    return {
+      ok: false,
+      stage: "failed",
+      error: "Production engine failed",
+      detail: msg,
+      engineVersion: AP_ENGINE_VERSION,
+    };
+  }
+}
+
+/** Phase 1 single-vocal entry — delegates to arrangement with one layer. */
+export async function runApProduction(
+  input: ApProduceInput,
+  report?: StageReporter
+): Promise<ApProduceResult | ApProduceFailure> {
+  return runApArrangement(
+    {
+      jobId: input.jobId,
+      projectId: input.projectId,
+      userId: input.userId,
+      beatBuffer: input.beatBuffer,
+      beatPathHint: input.beatPathHint,
+      genre: input.genre,
+      vocals: [
+        {
+          buffer: input.vocalBuffer,
+          pathHint: input.vocalPathHint,
+          taskType: "lead",
+          startMs: input.vocalStartMs ?? 0,
+        },
+      ],
+    },
+    report
+  );
+}
