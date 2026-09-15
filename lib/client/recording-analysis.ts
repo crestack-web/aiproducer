@@ -131,10 +131,25 @@ export async function attachAnalysisToForm(
   }
 }
 
+export type LayerRefinementSuggestionClient = {
+  id: string;
+  kind: "skip_planned" | "add_unplanned";
+  targetType: "DOUBLE" | "HIGH_HARMONY" | "ADLIB";
+  taskId?: string;
+  message: string;
+  confidence: number;
+  reasoning?: string;
+};
+
+export type ProducerRecommendResult = {
+  tip: string | null;
+  layerSuggestion: LayerRefinementSuggestionClient | null;
+};
+
 export async function fetchProducerRecommendation(
   taskId: string,
   recordingId: string
-): Promise<string | null> {
+): Promise<ProducerRecommendResult> {
   try {
     const res = await fetch(
       `/api/recording-tasks/${taskId}/recordings/${recordingId}/analyze`,
@@ -145,9 +160,41 @@ export async function fetchProducerRecommendation(
       }
     );
     const j = await res.json().catch(() => ({}));
-    if (res.ok && j.recommendation?.message) return String(j.recommendation.message);
+    if (!res.ok) return { tip: null, layerSuggestion: null };
+    const tip = j.recommendation?.message ? String(j.recommendation.message) : null;
+    const layerSuggestion =
+      j.layer_suggestion && typeof j.layer_suggestion === "object"
+        ? (j.layer_suggestion as LayerRefinementSuggestionClient)
+        : null;
+    return { tip, layerSuggestion };
   } catch {
     /* ignore */
   }
-  return null;
+  return { tip: null, layerSuggestion: null };
+}
+
+export async function logLayerSuggestionOutcome(
+  taskId: string,
+  recordingId: string,
+  entry: { id: string; outcome: "accepted" | "dismissed" }
+): Promise<void> {
+  try {
+    await fetch(`/api/recording-tasks/${taskId}/recordings/${recordingId}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        layer_suggestion_log: { ...entry, at: new Date().toISOString() },
+      }),
+    });
+  } catch {
+    /* ignore */
+  }
+  try {
+    const key = `studio_layer_suggest_dismissed:${entry.id}`;
+    if (entry.outcome === "dismissed" || entry.outcome === "accepted") {
+      localStorage.setItem(key, entry.outcome);
+    }
+  } catch {
+    /* ignore */
+  }
 }

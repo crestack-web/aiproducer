@@ -7,6 +7,7 @@ import {
   recommendNextAction,
   buildProductionState,
 } from "@/lib/ai/production-coach";
+import { suggestPostLeadLayerRefinement } from "@/lib/ai/layer-refinement-suggest";
 
 type Ctx = { params: Promise<{ id: string; recordingId: string }> };
 
@@ -50,7 +51,7 @@ export async function POST(req: Request, ctx: Ctx) {
   if (!recording) return NextResponse.json({ error: "Recording not found" }, { status: 404 });
 
   // Skip re-analyze if already present and client did not send a new analysis
-  let body: { analysis?: AudioAnalysis; force?: boolean } = {};
+  let body: { analysis?: AudioAnalysis; force?: boolean; layer_suggestion_log?: { id?: string; outcome?: string; at?: string } } = {};
   try {
     body = await req.json();
   } catch {
@@ -61,10 +62,38 @@ export async function POST(req: Request, ctx: Ctx) {
     ? recording.metadata
     : {}) as Record<string, unknown>;
 
+  // Accept/dismiss logging only — never mutates plan tasks
+  if (body && typeof body === "object" && (body as { layer_suggestion_log?: unknown }).layer_suggestion_log) {
+    const entry = (body as { layer_suggestion_log: { id?: string; outcome?: string; at?: string } }).layer_suggestion_log;
+    const log = Array.isArray(existingMeta.layer_suggestion_log)
+      ? [...(existingMeta.layer_suggestion_log as unknown[])]
+      : [];
+    log.push({
+      id: entry.id,
+      outcome: entry.outcome, // accepted | dismissed
+      at: entry.at || new Date().toISOString(),
+    });
+    await service
+      .from("recordings")
+      .update({
+        metadata: {
+          ...existingMeta,
+          layer_suggestion_log: log.slice(-40),
+          layer_suggestion:
+            entry.outcome === "dismissed" || entry.outcome === "accepted"
+              ? null
+              : existingMeta.layer_suggestion,
+        },
+      })
+      .eq("id", recordingId);
+    return NextResponse.json({ ok: true, logged: true });
+  }
+
   if (existingMeta.analysis && !body.force && !body.analysis) {
     return NextResponse.json({
       analysis: existingMeta.analysis,
       recommendation: existingMeta.producer_recommendation || null,
+      layer_suggestion: existingMeta.layer_suggestion || null,
       reused: true,
     });
   }
@@ -96,7 +125,7 @@ export async function POST(req: Request, ctx: Ctx) {
   // Production state from all tasks + selected recordings
   const { data: allTasks } = await service
     .from("recording_tasks")
-    .select("id, type, status, metadata, start_ms, end_ms")
+    .select("id, type, status, metadata, start_ms, end_ms, section_id")
     .eq("project_id", task.project_id);
 
   const { data: selected } = await service
@@ -117,11 +146,60 @@ export async function POST(req: Request, ctx: Ctx) {
     productionState,
   });
 
+  // Post-lead only: suggest plan tweaks — never auto-mutate tasks
+  let layerSuggestion = null as ReturnType<typeof suggestPostLeadLayerRefinement>;
+  const completedType = String(task.type || "");
+  if (/lead|main/i.test(completedType)) {
+    const sectionLabel = (taskMeta.section_label as string) || null;
+    const sectionId = (task.section_id as string) || null;
+    const openPlanned = (allTasks || []).filter((row) => {
+      const st = String(row.status || "").toLowerCase();
+      if (st === "completed" || st === "skipped" || st === "done") return false;
+      if (row.id === taskId) return false;
+      const ty = String(row.type || "").toLowerCase();
+      if (ty.includes("lead") || ty === "main") return false;
+      // same section
+      if (sectionId && row.section_id && row.section_id === sectionId) return true;
+      const rm = (row.metadata || {}) as Record<string, unknown>;
+      if (sectionLabel && String(rm.section_label || "").toLowerCase() === sectionLabel.toLowerCase())
+        return true;
+      if (sectionLabel && String(rm.parent_section_label || "").toLowerCase() === sectionLabel.toLowerCase())
+        return true;
+      return false;
+    });
+    const priorLog = Array.isArray(existingMeta.layer_suggestion_log)
+      ? (existingMeta.layer_suggestion_log as { id?: string; outcome?: string }[])
+      : [];
+    const dismissedIds = priorLog
+      .filter((e) => e.outcome === "dismissed" || e.outcome === "accepted")
+      .map((e) => String(e.id || ""))
+      .filter(Boolean);
+    layerSuggestion = suggestPostLeadLayerRefinement({
+      completedTaskType: completedType,
+      sectionType: (taskMeta.section_type as string) || null,
+      sectionLabel,
+      sectionId,
+      genre: project.genre,
+      mood: project.mood,
+      energyPct: typeof taskMeta.energy_pct === "number" ? taskMeta.energy_pct : null,
+      analysis,
+      openPlannedLayers: openPlanned.map((r) => ({
+        id: r.id,
+        type: String(r.type || ""),
+        status: String(r.status || ""),
+        section_id: r.section_id,
+        metadata: (r.metadata || {}) as Record<string, unknown>,
+      })),
+      dismissedIds,
+    });
+  }
+
   const nextMeta = {
     ...existingMeta,
     analysis,
     analyzer_version: analysis.analyzerVersion,
     producer_recommendation: recommendation,
+    layer_suggestion: layerSuggestion,
   };
 
   await service
@@ -144,6 +222,7 @@ export async function POST(req: Request, ctx: Ctx) {
   return NextResponse.json({
     analysis,
     recommendation,
+    layer_suggestion: layerSuggestion,
     production_state: productionState,
     reused: false,
   });

@@ -92,7 +92,12 @@ import {
 import { isCompletedTaskStatus } from "@/lib/audio/active-plan-membership";
 import { ProjectSamplesPanel } from "@/components/project-samples-panel";
 import { useTheme } from "@/lib/theme";
-import { attachAnalysisToForm, fetchProducerRecommendation } from "@/lib/client/recording-analysis";
+import {
+  attachAnalysisToForm,
+  fetchProducerRecommendation,
+  logLayerSuggestionOutcome,
+  type LayerRefinementSuggestionClient,
+} from "@/lib/client/recording-analysis";
 import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
 import { canProduce, type PlanMode } from "@/lib/plan";
@@ -323,6 +328,7 @@ export default function ProjectDetailPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [producerTip, setProducerTip] = useState<string | null>(null);
+  const [layerSuggestion, setLayerSuggestion] = useState<LayerRefinementSuggestionClient | null>(null);
   const [producing, setProducing] = useState(false);
   const [produceStage, setProduceStage] = useState<string | null>(null);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
@@ -720,6 +726,7 @@ export default function ProjectDetailPage() {
     if (phase === "recording" || phase === "countdown") return;
     setError(null);
     setProducerTip(null);
+                    setLayerSuggestion(null);
     setLocalBlobUrl(null);
     setSavedRecordingId(null);
     setLastRecordingOffsetMs(0);
@@ -1442,6 +1449,7 @@ export default function ProjectDetailPage() {
       void loadReviewOverdubs(task);
       setUploading(true);
       setProducerTip(null);
+                    setLayerSuggestion(null);
       try {
         // Finalize timeline duration (wall-clock of MediaRecorder; not stretched)
         if (sessionTimelineRef.current) {
@@ -1642,8 +1650,10 @@ export default function ProjectDetailPage() {
           method: "POST",
         }).catch(() => undefined);
         void loadTaskTakes(task.id);
-        const tip = await fetchProducerRecommendation(task.id, j.recording.id);
-        if (tip) setProducerTip(tip);
+        const rec = await fetchProducerRecommendation(task.id, j.recording.id);
+        if (rec.tip) setProducerTip(rec.tip);
+        if (rec.layerSuggestion) setLayerSuggestion(rec.layerSuggestion);
+        else setLayerSuggestion(null);
         void markRecordingStatus();
         setError(null);
       } catch (e) {
@@ -2003,6 +2013,7 @@ export default function ProjectDetailPage() {
     if (!current) return;
     setError(null);
     setProducerTip(null);
+                    setLayerSuggestion(null);
     setSavedRecordingId(null);
     try {
       // CAPTURE: phone mic only (RecordingEngine). MONITOR: beat via setSinkId — separate graphs.
@@ -2145,6 +2156,7 @@ export default function ProjectDetailPage() {
     if (!current || !file) return;
     setError(null);
     setProducerTip(null);
+                    setLayerSuggestion(null);
     setUploading(true);
     setPhase("review");
     setLocalBlobUrl(URL.createObjectURL(file));
@@ -2169,8 +2181,10 @@ export default function ProjectDetailPage() {
         method: "POST",
       }).catch(() => undefined);
       void loadTaskTakes(current.id);
-      const tip = await fetchProducerRecommendation(current.id, j.recording.id);
-      if (tip) setProducerTip(tip);
+      const rec = await fetchProducerRecommendation(current.id, j.recording.id);
+      if (rec.tip) setProducerTip(rec.tip);
+      if (rec.layerSuggestion) setLayerSuggestion(rec.layerSuggestion);
+      else setLayerSuggestion(null);
       void markRecordingStatus();
       setError(null);
     } catch (e) {
@@ -3406,6 +3420,97 @@ export default function ProjectDetailPage() {
                 {producerTip && (
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
                 )}
+                {layerSuggestion && savedRecordingId && current && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: "12px 14px",
+                      borderRadius: 14,
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.brass }}>
+                      PRODUCER NOTE
+                    </div>
+                    <p style={{ margin: "8px 0 0", fontSize: 13.5, color: C.text, lineHeight: 1.45 }}>
+                      {layerSuggestion.message}
+                    </p>
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...btn2, flex: 1, minWidth: 120 }}
+                        disabled={uploading || skipping}
+                        onClick={() => {
+                          void (async () => {
+                            const sug = layerSuggestion;
+                            if (!sug || !savedRecordingId || !current) return;
+                            try {
+                              if (sug.kind === "skip_planned" && sug.taskId) {
+                                await fetch(`/api/recording-tasks/${sug.taskId}/skip`, { method: "POST" });
+                              } else if (sug.kind === "add_unplanned") {
+                                await fetch(`/api/projects/${id}/plan`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    action: "add",
+                                    task: {
+                                      type: sug.targetType,
+                                      title:
+                                        sug.targetType === "DOUBLE"
+                                          ? "Double"
+                                          : sug.targetType === "HIGH_HARMONY"
+                                            ? "Harmony"
+                                            : "Ad-libs",
+                                      instruction:
+                                        sug.targetType === "DOUBLE"
+                                          ? "Sing the same line again, matching your lead."
+                                          : sug.targetType === "HIGH_HARMONY"
+                                            ? "Sing a higher harmony on the lines that need lift."
+                                            : "Add free, expressive ad-libs in the open spaces.",
+                                      start_ms: current.start_ms ?? 0,
+                                      end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
+                                      section_id: current.section_id,
+                                      section_label: current.metadata?.section_label,
+                                    },
+                                  }),
+                                });
+                              }
+                              await logLayerSuggestionOutcome(current.id, savedRecordingId, {
+                                id: sug.id,
+                                outcome: "accepted",
+                              });
+                              const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+                              if (tr.ok) setTasks((await tr.json()).tasks || []);
+                            } catch {
+                              /* non-fatal */
+                            }
+                            setLayerSuggestion(null);
+                          })();
+                        }}
+                      >
+                        {layerSuggestion.kind === "skip_planned" ? "Skip it" : "Add to plan"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btn2, flex: 1, minWidth: 120 }}
+                        onClick={() => {
+                          void (async () => {
+                            if (layerSuggestion && savedRecordingId && current) {
+                              await logLayerSuggestionOutcome(current.id, savedRecordingId, {
+                                id: layerSuggestion.id,
+                                outcome: "dismissed",
+                              });
+                            }
+                            setLayerSuggestion(null);
+                          })();
+                        }}
+                      >
+                        Keep plan
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {uploading && (
                   <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 14 }}>
                     Saving take…
@@ -3617,6 +3722,7 @@ export default function ProjectDetailPage() {
                     setLocalBlobUrl(null);
                     setSavedRecordingId(null);
                     setProducerTip(null);
+                    setLayerSuggestion(null);
                     setReviewVoiceOnly(false);
                     setTaskTakes([]);
                     setPhase("ready");
