@@ -3034,7 +3034,17 @@ export default function ProjectDetailPage() {
             </button>
             <button
               type="button"
-              style={{ background: "none", border: "none", color: C.brass, cursor: "pointer", fontWeight: 600, fontSize: 13 }}
+              style={{
+                border: `1px solid ${C.brass}`,
+                background: C.brassSoft || "rgba(231,169,97,0.15)",
+                color: C.brass,
+                cursor: "pointer",
+                fontWeight: 700,
+                fontSize: 12,
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontFamily: "inherit",
+              }}
               onClick={() => setShowProducerView(true)}
               disabled={phase === "recording" || phase === "countdown"}
             >
@@ -3959,19 +3969,19 @@ export default function ProjectDetailPage() {
               style={{
                 display: "block",
                 width: "100%",
-                marginTop: 14,
-                padding: "12px 14px",
-                borderRadius: 12,
-                border: `1px solid ${C.border}`,
-                background: C.surface,
+                marginTop: 16,
+                padding: "14px 16px",
+                borderRadius: 14,
+                border: `1px solid ${C.brass}`,
+                background: `linear-gradient(180deg, rgba(231,169,97,0.2), rgba(231,169,97,0.08))`,
                 color: C.text,
-                fontWeight: 600,
-                fontSize: 14,
+                fontWeight: 700,
+                fontSize: 15,
                 cursor: "pointer",
                 fontFamily: "inherit",
               }}
             >
-              Producer View — see layers on the timeline
+              Open Producer View
             </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>
@@ -4053,14 +4063,6 @@ export default function ProjectDetailPage() {
             )}
       
       {showProducerView && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 90,
-            background: C.bg,
-          }}
-        >
           <ProducerView
             projectTitle={project?.title || "Session"}
             beatUrl={beatUrl}
@@ -4110,7 +4112,6 @@ export default function ProjectDetailPage() {
                 : undefined
             }
           />
-        </div>
       )}
 
       {paywallOpen && (
