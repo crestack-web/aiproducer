@@ -4115,7 +4115,7 @@ export default function ProjectDetailPage() {
               .map((tk) => {
                 const startMs = Number(tk.start_ms) || 0;
                 const endMs = Number(tk.end_ms) || startMs + 8000;
-                const meta = (tk as { metadata?: { track_fx?: Record<string, number> } }).metadata;
+                const meta = (tk as { metadata?: { track_fx?: Record<string, number>; track_color?: string } }).metadata;
                 const tf = meta?.track_fx;
                 return {
                   id: tk.id,
@@ -4124,6 +4124,7 @@ export default function ProjectDetailPage() {
                   sectionLabel: tk.title || undefined,
                   startMs,
                   endMs,
+                  color: typeof meta?.track_color === "string" ? meta.track_color : undefined,
                   trackFx: tf
                     ? {
                         gainDb: Number(tf.gainDb) || 0,

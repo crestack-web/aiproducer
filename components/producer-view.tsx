@@ -63,6 +63,24 @@ type Props = {
   onLayersChanged?: () => void;
 };
 
+const TRACK_COLOR_PRESETS = [
+  "#34D399",
+  "#A78BFA",
+  "#818CF8",
+  "#C084FC",
+  "#E879F9",
+  "#F472B6",
+  "#FB7185",
+  "#FBBF24",
+  "#F59E0B",
+  "#38BDF8",
+  "#67E8F9",
+  "#94A3B8",
+  "#E7A961",
+  "#4ADE80",
+  "#F87171",
+];
+
 const ROLE_COLORS: Record<string, string> = {
   lead: "#A78BFA",
   double: "#818CF8",
@@ -245,6 +263,9 @@ export function ProducerView({
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
+  const [colorById, setColorById] = useState<Record<string, string>>({});
+  const [colorPickerId, setColorPickerId] = useState<string | null>(null);
+
 
   const [addTitle, setAddTitle] = useState("");
   const [addType, setAddType] = useState("custom");
@@ -261,6 +282,29 @@ export function ProducerView({
     lastStart: number;
     lastEnd: number;
   } | null>(null);
+
+  async function persistColor(id: string, color: string) {
+    setColorById((prev) => ({ ...prev, [id]: color }));
+    setColorPickerId(null);
+    setSavingId(id);
+    try {
+      const res = await fetch(`/api/recording-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_color: color }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not save color");
+      } else {
+        onLayersChanged?.();
+      }
+    } catch {
+      setEditMsg("Network error saving color");
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   async function persistFx(id: string, fx: TrackFx) {
     setFxById((prev) => ({ ...prev, [id]: fx }));
@@ -488,6 +532,13 @@ export function ProducerView({
       }
       return next;
     });
+    setColorById((prev) => {
+      const next = { ...prev };
+      for (const l of layersProp) {
+        if (l.color) next[l.id] = l.color;
+      }
+      return next;
+    });
   }, [layersProp]);
 
   useEffect(() => {
@@ -551,7 +602,7 @@ export function ProducerView({
         id: l.id,
         label: l.label,
         kind: "vocal",
-        color: l.color || roleColor(l.role),
+        color: colorById[l.id] || l.color || roleColor(l.role),
         startMs: l.startMs,
         endMs: Math.max(l.endMs, l.startMs + 500),
         sub: l.sectionLabel,
@@ -559,7 +610,7 @@ export function ProducerView({
       });
     }
     return list;
-  }, [layers, totalMs, beatUrl]);
+  }, [layers, totalMs, beatUrl, colorById]);
 
   const getCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -1121,15 +1172,7 @@ export function ProducerView({
                     {tr.sub}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    title="Mute (monitor only)"
-                    onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
-                    style={miniChip(border, brass, isMuted, text)}
-                  >
-                    M
-                  </button>
+                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
                   <button
                     type="button"
                     title="Solo + beat (monitor only)"
@@ -1157,7 +1200,60 @@ export function ProducerView({
                   >
                     FX
                   </button>
+                  {tr.kind === "vocal" && (
+                    <button
+                      type="button"
+                      title="Track color"
+                      onClick={() =>
+                        setColorPickerId(colorPickerId === tr.id ? null : tr.id)
+                      }
+                      style={{
+                        width: 26,
+                        height: 24,
+                        borderRadius: 6,
+                        border: `2px solid ${border}`,
+                        background: tr.color,
+                        cursor: "pointer",
+                        padding: 0,
+                        boxShadow: `0 0 0 1px ${tr.color}55`,
+                      }}
+                      aria-label="Change track color"
+                    />
+                  )}
                 </div>
+                {colorPickerId === tr.id && tr.kind === "vocal" && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      maxWidth: 160,
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {TRACK_COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        title={c}
+                        onClick={() => void persistColor(tr.id, c)}
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 6,
+                          border:
+                            tr.color === c
+                              ? `2px solid ${text}`
+                              : `1px solid ${border}`,
+                          background: c,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
                 {fxOpenId === tr.id && (
                   <TrackFxPanel
                     fx={fxById[tr.id] || DEFAULT_TRACK_FX}

@@ -22,6 +22,7 @@ const PatchSchema = z.object({
   end_ms: z.number().min(0).optional(),
   status: z.enum(["completed", "pending", "skipped", "cancelled"]).optional(),
   track_fx: TrackFxSchema.optional(),
+  track_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 });
 
 /**
@@ -74,21 +75,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (parsed.data.end_ms !== undefined) patch.end_ms = Math.round(parsed.data.end_ms);
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
 
-  if (parsed.data.track_fx) {
+  if (parsed.data.track_fx || parsed.data.track_color) {
     const prevMeta =
       task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
         ? (task.metadata as Record<string, unknown>)
         : {};
-    const prevFx =
-      prevMeta.track_fx && typeof prevMeta.track_fx === "object"
-        ? (prevMeta.track_fx as Record<string, unknown>)
-        : {};
-    patch.metadata = {
-      ...prevMeta,
-      track_fx: { ...prevFx, ...parsed.data.track_fx },
-      track_fx_source: "producer_view",
-      track_fx_updated_at: new Date().toISOString(),
-    };
+    const nextMeta: Record<string, unknown> = { ...prevMeta };
+    if (parsed.data.track_fx) {
+      const prevFx =
+        prevMeta.track_fx && typeof prevMeta.track_fx === "object"
+          ? (prevMeta.track_fx as Record<string, unknown>)
+          : {};
+      nextMeta.track_fx = { ...prevFx, ...parsed.data.track_fx };
+      nextMeta.track_fx_source = "producer_view";
+      nextMeta.track_fx_updated_at = new Date().toISOString();
+    }
+    if (parsed.data.track_color) {
+      nextMeta.track_color = parsed.data.track_color;
+    }
+    patch.metadata = nextMeta;
   }
 
   if (patch.start_ms != null && patch.end_ms != null && (patch.end_ms as number) <= (patch.start_ms as number)) {
