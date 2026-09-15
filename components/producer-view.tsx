@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * Producer View — Phase 1 (read-only, mobile-first)
- * Visualizes beat + section markers + vocal layers on a timeline.
+ * Producer View — Phase 1.1
+ * Real waveforms (Web Audio decode + peak cache) + functional mute/solo mix.
+ * Playback monitoring only — does not change decision map / export.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 
 export type ProducerLayer = {
@@ -28,6 +29,7 @@ export type ProducerSection = {
 
 type Props = {
   projectTitle?: string;
+  projectId?: string;
   beatUrl: string | null;
   beatDurationMs?: number | null;
   sections: ProducerSection[];
@@ -66,60 +68,143 @@ function formatMs(ms: number) {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
-function WaveBars({
-  count,
+/** Peak buckets cached per URL — shared across zoom redraws. */
+const peakCache = new Map<string, Float32Array>();
+const bufferCache = new Map<string, AudioBuffer>();
+
+async function fetchDecode(
+  ctx: AudioContext,
+  url: string
+): Promise<AudioBuffer | null> {
+  if (bufferCache.has(url)) return bufferCache.get(url)!;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const arr = await res.arrayBuffer();
+    const buf = await ctx.decodeAudioData(arr.slice(0));
+    bufferCache.set(url, buf);
+    return buf;
+  } catch (e) {
+    console.warn("[producer-view] decode failed", url, e);
+    return null;
+  }
+}
+
+/** Downsample channel peaks into `buckets` max-abs values. */
+function computePeaks(buf: AudioBuffer, buckets: number): Float32Array {
+  const cacheKey = `${buf.length}:${buf.sampleRate}:${buckets}`;
+  // Prefer URL-level cache set by caller; this is compute-only
+  const ch = buf.getChannelData(0);
+  const peaks = new Float32Array(buckets);
+  const block = Math.max(1, Math.floor(ch.length / buckets));
+  for (let i = 0; i < buckets; i++) {
+    let max = 0;
+    const start = i * block;
+    const end = Math.min(ch.length, start + block);
+    for (let j = start; j < end; j++) {
+      const v = Math.abs(ch[j]);
+      if (v > max) max = v;
+    }
+    peaks[i] = max;
+  }
+  return peaks;
+}
+
+function peaksForUrl(url: string, buf: AudioBuffer, buckets: number): Float32Array {
+  const key = `${url}::${buckets}`;
+  const hit = peakCache.get(key);
+  if (hit) return hit;
+  // Also reuse high-res peaks by resampling if we have 2048
+  const hiKey = `${url}::2048`;
+  const hi = peakCache.get(hiKey);
+  if (hi && buckets < 2048) {
+    const out = new Float32Array(buckets);
+    const ratio = hi.length / buckets;
+    for (let i = 0; i < buckets; i++) {
+      let max = 0;
+      const a = Math.floor(i * ratio);
+      const b = Math.min(hi.length, Math.floor((i + 1) * ratio));
+      for (let j = a; j < b; j++) if (hi[j] > max) max = hi[j];
+      out[i] = max;
+    }
+    peakCache.set(key, out);
+    return out;
+  }
+  const peaks = computePeaks(buf, buckets);
+  peakCache.set(key, peaks);
+  if (buckets === 2048) peakCache.set(hiKey, peaks);
+  return peaks;
+}
+
+function WaveformCanvas({
+  peaks,
   color,
-  tall,
+  width,
+  height,
+  dimmed,
 }: {
-  count: number;
+  peaks: Float32Array | null;
   color: string;
-  tall?: boolean;
+  width: number;
+  height: number;
+  dimmed?: boolean;
 }) {
-  const n = Math.min(64, Math.max(12, count));
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        height: "100%",
-        gap: 1.5,
-        padding: "0 6px",
-        opacity: 0.9,
-      }}
-    >
-      {Array.from({ length: n }).map((_, i) => {
-        const h = 22 + ((i * 37 + i * i * 3) % (tall ? 70 : 55));
-        return (
-          <div
-            key={i}
-            style={{
-              flex: 1,
-              height: `${h}%`,
-              minWidth: 2,
-              maxWidth: 5,
-              borderRadius: 1,
-              background: "rgba(0,0,0,0.28)",
-              boxShadow: `0 0 0 1px ${color}33 inset`,
-            }}
-          />
-        );
-      })}
-    </div>
-  );
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c || width < 2) return;
+    const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1;
+    c.width = Math.floor(width * dpr);
+    c.height = Math.floor(height * dpr);
+    c.style.width = `${width}px`;
+    c.style.height = `${height}px`;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    if (!peaks || peaks.length === 0) {
+      // subtle placeholder line
+      ctx.strokeStyle = color + "55";
+      ctx.beginPath();
+      ctx.moveTo(0, height / 2);
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+      return;
+    }
+    const mid = height / 2;
+    ctx.fillStyle = dimmed ? color + "66" : color;
+    const n = peaks.length;
+    const barW = Math.max(1, width / n);
+    for (let i = 0; i < n; i++) {
+      const amp = Math.min(1, peaks[i] * 1.35);
+      const h = Math.max(1, amp * (height * 0.9));
+      const x = i * barW;
+      ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+    }
+  }, [peaks, color, width, height, dimmed]);
+  return <canvas ref={ref} style={{ display: "block", width, height, borderRadius: 6 }} />;
 }
 
 export function ProducerView({
   projectTitle,
+  projectId,
   beatUrl,
   beatDurationMs: durationProp,
   sections,
-  layers,
+  layers: layersProp,
   onClose,
   onOpenTweak,
 }: Props) {
   const { colors: C } = useTheme();
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const gainsRef = useRef<Map<string, GainNode>>(new Map());
+  const startedAtRef = useRef(0);
+  const offsetRef = useRef(0);
+  const rafRef = useRef(0);
+
+  const [layers, setLayers] = useState(layersProp);
   const [durationMs, setDurationMs] = useState(durationProp || 0);
   const [playheadMs, setPlayheadMs] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -127,6 +212,39 @@ export function ProducerView({
   const [pxPerSec, setPxPerSec] = useState(56);
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
+  const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
+  const [decodeStatus, setDecodeStatus] = useState<string>("");
+
+  // Merge URLs from session-preview if projectId given
+  useEffect(() => {
+    setLayers(layersProp);
+  }, [layersProp]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/session-preview`);
+        if (!res.ok) return;
+        const j = await res.json();
+        const recs: { task_id?: string; audio_url?: string }[] = j.recordings || j.takes || [];
+        if (!Array.isArray(recs) || cancelled) return;
+        setLayers((prev) =>
+          prev.map((l) => {
+            if (l.audioUrl) return l;
+            const hit = recs.find((r) => r.task_id === l.id && r.audio_url);
+            return hit?.audio_url ? { ...l, audioUrl: hit.audio_url } : l;
+          })
+        );
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   const totalMs = useMemo(() => {
     let max = durationMs || 0;
@@ -136,48 +254,7 @@ export function ProducerView({
   }, [durationMs, sections, layers]);
 
   const timelineW = Math.max(360, (totalMs / 1000) * pxPerSec);
-
-  useEffect(() => {
-    if (!beatUrl) return;
-    const el = audioRef.current;
-    if (!el) return;
-    function onMeta() {
-      const d = el!.duration;
-      if (Number.isFinite(d) && d > 0) setDurationMs(Math.round(d * 1000));
-    }
-    function onTime() {
-      setPlayheadMs(Math.round(el!.currentTime * 1000));
-    }
-    function onEnd() {
-      setPlaying(false);
-    }
-    el.addEventListener("loadedmetadata", onMeta);
-    el.addEventListener("timeupdate", onTime);
-    el.addEventListener("ended", onEnd);
-    return () => {
-      el.removeEventListener("loadedmetadata", onMeta);
-      el.removeEventListener("timeupdate", onTime);
-      el.removeEventListener("ended", onEnd);
-    };
-  }, [beatUrl]);
-
-  function togglePlay() {
-    const el = audioRef.current;
-    if (!el || !beatUrl) return;
-    if (playing) {
-      el.pause();
-      setPlaying(false);
-    } else {
-      void el.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-    }
-  }
-
-  function seekTo(ms: number) {
-    const el = audioRef.current;
-    const clamped = Math.max(0, Math.min(totalMs, ms));
-    if (el) el.currentTime = clamped / 1000;
-    setPlayheadMs(clamped);
-  }
+  const peakBuckets = Math.min(2048, Math.max(64, Math.floor(timelineW)));
 
   const tracks = useMemo(() => {
     const list: {
@@ -188,6 +265,7 @@ export function ProducerView({
       startMs: number;
       endMs: number;
       sub?: string;
+      url?: string | null;
     }[] = [];
     list.push({
       id: "beat",
@@ -196,6 +274,7 @@ export function ProducerView({
       color: ROLE_COLORS.beat,
       startMs: 0,
       endMs: totalMs,
+      url: beatUrl,
     });
     for (const l of layers) {
       list.push({
@@ -206,10 +285,211 @@ export function ProducerView({
         startMs: l.startMs,
         endMs: Math.max(l.endMs, l.startMs + 500),
         sub: l.sectionLabel,
+        url: l.audioUrl,
       });
     }
     return list;
-  }, [layers, totalMs]);
+  }, [layers, totalMs, beatUrl]);
+
+  const getCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      const AC =
+        typeof window !== "undefined"
+          ? window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+          : null;
+      if (!AC) return null;
+      audioCtxRef.current = new AC();
+    }
+    return audioCtxRef.current;
+  }, []);
+
+  // Decode all tracks once; cache peaks at 2048 resolution
+  useEffect(() => {
+    let cancelled = false;
+    const ctx = getCtx();
+    if (!ctx) return;
+    (async () => {
+      setDecodeStatus("Loading waveforms…");
+      const next: Record<string, Float32Array | null> = {};
+      for (const tr of tracks) {
+        if (!tr.url) {
+          next[tr.id] = null;
+          continue;
+        }
+        const buf = await fetchDecode(ctx, tr.url);
+        if (cancelled) return;
+        if (buf) {
+          if (tr.id === "beat") {
+            setDurationMs((d) => Math.max(d, Math.round(buf.duration * 1000)));
+          }
+          // store high-res peaks once
+          peaksForUrl(tr.url, buf, 2048);
+          next[tr.id] = peaksForUrl(tr.url, buf, peakBuckets);
+        } else {
+          next[tr.id] = null;
+        }
+      }
+      if (!cancelled) {
+        setPeaksById(next);
+        setDecodeStatus("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.map((t) => t.url).join("|"), getCtx]);
+
+  // Re-bucket peaks when zoom changes (from cache, no re-decode)
+  useEffect(() => {
+    setPeaksById((prev) => {
+      const next: Record<string, Float32Array | null> = { ...prev };
+      for (const tr of tracks) {
+        if (!tr.url) continue;
+        const hi = peakCache.get(`${tr.url}::2048`);
+        if (hi) {
+          next[tr.id] = peaksForUrl(tr.url, bufferCache.get(tr.url)!, peakBuckets);
+        }
+      }
+      return next;
+    });
+  }, [peakBuckets, tracks]);
+
+  function isAudible(id: string, kind: "beat" | "vocal") {
+    // Solo = selected track + beat for context (producer checking a layer against the beat)
+    if (soloId) {
+      if (id === soloId) return true;
+      if (kind === "beat") return true;
+      return false;
+    }
+    return !muted[id];
+  }
+
+  function applyGains() {
+    for (const tr of tracks) {
+      const g = gainsRef.current.get(tr.id);
+      if (!g) continue;
+      const on = isAudible(tr.id, tr.kind);
+      g.gain.setTargetAtTime(on ? 1 : 0, audioCtxRef.current?.currentTime || 0, 0.02);
+    }
+  }
+
+  useEffect(() => {
+    applyGains();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muted, soloId, tracks]);
+
+  function stopSources() {
+    for (const s of sourcesRef.current) {
+      try {
+        s.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    sourcesRef.current = [];
+    gainsRef.current.clear();
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+  }
+
+  function tickPlayhead() {
+    const ctx = audioCtxRef.current;
+    if (!ctx || !playing) return;
+    const elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+    setPlayheadMs(Math.min(totalMs, Math.max(0, elapsed)));
+    if (elapsed >= totalMs) {
+      setPlaying(false);
+      stopSources();
+      return;
+    }
+    rafRef.current = requestAnimationFrame(tickPlayhead);
+  }
+
+  async function startPlayback(fromMs: number) {
+    const ctx = getCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") await ctx.resume();
+    stopSources();
+    offsetRef.current = fromMs;
+    startedAtRef.current = ctx.currentTime;
+    const startSec = fromMs / 1000;
+
+    for (const tr of tracks) {
+      if (!tr.url) continue;
+      let buf = bufferCache.get(tr.url) || null;
+      if (!buf) buf = await fetchDecode(ctx, tr.url);
+      if (!buf) continue;
+
+      const gain = ctx.createGain();
+      const on = isAudible(tr.id, tr.kind);
+      gain.gain.value = on ? 1 : 0;
+      gain.connect(ctx.destination);
+      gainsRef.current.set(tr.id, gain);
+
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(gain);
+
+      // Vocals: offset by section start on the timeline
+      if (tr.kind === "vocal") {
+        const layerStart = tr.startMs / 1000;
+        const localOffset = startSec - layerStart;
+        if (localOffset >= buf.duration) {
+          // past this clip
+          continue;
+        }
+        if (localOffset >= 0) {
+          src.start(0, localOffset);
+        } else {
+          // playhead before clip — schedule start later
+          src.start(ctx.currentTime + -localOffset, 0);
+        }
+      } else {
+        if (startSec >= buf.duration) continue;
+        src.start(0, startSec);
+      }
+      sourcesRef.current.push(src);
+    }
+
+    setPlaying(true);
+    setPlayheadMs(fromMs);
+    rafRef.current = requestAnimationFrame(tickPlayhead);
+  }
+
+  function togglePlay() {
+    if (playing) {
+      const ctx = audioCtxRef.current;
+      if (ctx) {
+        offsetRef.current =
+          (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+      }
+      stopSources();
+      setPlaying(false);
+    } else {
+      void startPlayback(playheadMs);
+    }
+  }
+
+  function seekTo(ms: number) {
+    const clamped = Math.max(0, Math.min(totalMs, ms));
+    setPlayheadMs(clamped);
+    if (playing) {
+      void startPlayback(clamped);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      stopSources();
+      try {
+        audioCtxRef.current?.close();
+      } catch {
+        /* */
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const msToX = (ms: number) => (ms / 1000) * pxPerSec;
 
@@ -237,7 +517,6 @@ export function ProducerView({
         fontFamily: "system-ui, -apple-system, sans-serif",
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -251,24 +530,12 @@ export function ProducerView({
         }}
       >
         {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            style={iconBtn(border, surface, text)}
-            aria-label="Close Producer View"
-          >
+          <button type="button" onClick={onClose} style={iconBtn(border, surface, text)} aria-label="Close">
             ←
           </button>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 11,
-              letterSpacing: "0.1em",
-              color: brass,
-              fontWeight: 700,
-            }}
-          >
+          <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
             PRODUCER VIEW
           </div>
           <div
@@ -283,23 +550,14 @@ export function ProducerView({
             {projectTitle || "Session"}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setPxPerSec((z) => Math.max(28, z - 12))}
-          style={iconBtn(border, surface, text)}
-        >
+        <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)}>
           −
         </button>
-        <button
-          type="button"
-          onClick={() => setPxPerSec((z) => Math.min(140, z + 12))}
-          style={iconBtn(border, surface, text)}
-        >
+        <button type="button" onClick={() => setPxPerSec((z) => Math.min(140, z + 12))} style={iconBtn(border, surface, text)}>
           +
         </button>
       </div>
 
-      {/* Transport */}
       <div
         style={{
           display: "flex",
@@ -313,18 +571,17 @@ export function ProducerView({
         <button
           type="button"
           onClick={togglePlay}
-          disabled={!beatUrl}
           style={{
             width: 48,
             height: 48,
             borderRadius: 999,
             border: "none",
-            background: beatUrl ? `linear-gradient(180deg, #F0BC80, ${brass})` : faint,
+            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
             color: "#1A1208",
             fontWeight: 800,
             fontSize: 16,
-            cursor: beatUrl ? "pointer" : "not-allowed",
-            boxShadow: beatUrl ? "0 4px 14px rgba(231,169,97,0.35)" : "none",
+            cursor: "pointer",
+            boxShadow: "0 4px 14px rgba(231,169,97,0.35)",
           }}
         >
           {playing ? "❚❚" : "▶"}
@@ -333,6 +590,9 @@ export function ProducerView({
           {formatMs(playheadMs)}
           <span style={{ color: faint }}> / {formatMs(totalMs)}</span>
         </div>
+        {decodeStatus && (
+          <span style={{ fontSize: 12, color: faint }}>{decodeStatus}</span>
+        )}
         <div style={{ flex: 1 }} />
         <span
           style={{
@@ -343,32 +603,10 @@ export function ProducerView({
             padding: "4px 10px",
           }}
         >
-          Read-only
+          Monitor only
         </span>
       </div>
 
-      {beatUrl && (
-        // eslint-disable-next-line jsx-a11y/media-has-caption
-        <audio ref={audioRef} src={beatUrl} preload="metadata" />
-      )}
-
-      {!beatUrl && (
-        <div
-          style={{
-            margin: "12px 14px 0",
-            padding: 12,
-            borderRadius: 12,
-            background: "rgba(232,117,106,0.12)",
-            border: "1px solid rgba(232,117,106,0.35)",
-            color: mutedText,
-            fontSize: 13,
-          }}
-        >
-          No beat loaded for this session — timeline still shows sections and vocal layers.
-        </div>
-      )}
-
-      {/* Timeline scroll */}
       <div
         ref={scrollRef}
         style={{
@@ -379,7 +617,6 @@ export function ProducerView({
           background: bg,
         }}
       >
-        {/* Section markers */}
         <div style={{ position: "sticky", top: 0, zIndex: 6, background: bg }}>
           <div style={{ display: "flex", minWidth: timelineW + 108 }}>
             <div
@@ -405,28 +642,13 @@ export function ProducerView({
               }}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                seekTo((x / pxPerSec) * 1000);
+                seekTo(((e.clientX - rect.left) / pxPerSec) * 1000);
               }}
             >
-              {sections.length === 0 && (
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    display: "grid",
-                    placeItems: "center",
-                    fontSize: 12,
-                    color: faint,
-                  }}
-                >
-                  No section markers yet
-                </div>
-              )}
               {sections.map((s) => (
                 <div
                   key={s.id}
-                  title={`${s.label} ${formatMs(s.startMs)}–${formatMs(s.endMs)}`}
+                  title={s.label}
                   style={{
                     position: "absolute",
                     left: msToX(s.startMs),
@@ -466,12 +688,13 @@ export function ProducerView({
           </div>
         </div>
 
-        {/* Tracks */}
         {tracks.map((tr) => {
           const expanded = expandedId === tr.id;
           const isMuted = muted[tr.id];
           const isSolo = soloId === tr.id;
-          const dimmed = soloId ? !isSolo : isMuted;
+          const dimmed = !isAudible(tr.id, tr.kind);
+          const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
+          const clipH = expanded ? 64 : 36;
           return (
             <div
               key={tr.id}
@@ -479,7 +702,7 @@ export function ProducerView({
                 display: "flex",
                 minWidth: timelineW + 108,
                 borderBottom: `1px solid ${border}`,
-                opacity: dimmed ? 0.35 : 1,
+                opacity: dimmed ? 0.45 : 1,
                 background: expanded ? surface : "transparent",
               }}
             >
@@ -542,7 +765,7 @@ export function ProducerView({
                 <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
                   <button
                     type="button"
-                    title="Mute"
+                    title="Mute (monitor only)"
                     onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
                     style={miniChip(border, brass, isMuted, text)}
                   >
@@ -550,7 +773,7 @@ export function ProducerView({
                   </button>
                   <button
                     type="button"
-                    title="Solo"
+                    title="Solo + beat (monitor only)"
                     onClick={() => setSoloId(soloId === tr.id ? null : tr.id)}
                     style={miniChip(border, brass, isSolo, text)}
                   >
@@ -563,47 +786,34 @@ export function ProducerView({
                 style={{
                   position: "relative",
                   width: timelineW,
-                  height: expanded ? 88 : 52,
+                  height: expanded ? 88 : 56,
                   transition: "height 0.15s ease",
                   background: "rgba(0,0,0,0.15)",
                 }}
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  const x = e.clientX - rect.left;
-                  seekTo((x / pxPerSec) * 1000);
+                  seekTo(((e.clientX - rect.left) / pxPerSec) * 1000);
                 }}
               >
-                {Array.from({ length: Math.ceil(totalMs / 10000) + 1 }).map((_, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      position: "absolute",
-                      left: msToX(i * 10000),
-                      top: 0,
-                      bottom: 0,
-                      width: 1,
-                      background: "rgba(255,255,255,0.06)",
-                      pointerEvents: "none",
-                    }}
-                  />
-                ))}
                 <div
                   style={{
                     position: "absolute",
                     left: msToX(tr.startMs),
-                    width: Math.max(10, msToX(tr.endMs) - msToX(tr.startMs)),
-                    top: expanded ? 14 : 10,
-                    height: expanded ? 60 : 32,
+                    width: clipW,
+                    top: expanded ? 12 : 10,
+                    height: clipH,
                     borderRadius: 8,
-                    background: `linear-gradient(180deg, ${tr.color}ee, ${tr.color}99)`,
-                    boxShadow: `0 2px 12px ${tr.color}44`,
+                    background: `linear-gradient(180deg, ${tr.color}33, ${tr.color}18)`,
+                    boxShadow: `inset 0 0 0 1px ${tr.color}66`,
                     overflow: "hidden",
                   }}
                 >
-                  <WaveBars
-                    count={Math.floor((tr.endMs - tr.startMs) / 280)}
+                  <WaveformCanvas
+                    peaks={peaksById[tr.id] || null}
                     color={tr.color}
-                    tall={expanded}
+                    width={clipW}
+                    height={clipH}
+                    dimmed={dimmed}
                   />
                 </div>
                 <div
@@ -616,7 +826,6 @@ export function ProducerView({
                     background: "#F07167",
                     pointerEvents: "none",
                     zIndex: 4,
-                    boxShadow: "0 0 8px rgba(240,113,103,0.55)",
                   }}
                 />
               </div>
@@ -639,16 +848,13 @@ export function ProducerView({
           >
             <strong style={{ color: text }}>No vocal layers yet</strong>
             <p style={{ margin: "8px 0 0" }}>
-              Record sections in the booth (lead, harmony, ad-libs). Completed takes show up here as
-              colored tracks against the beat.
+              Record and save takes in the booth — completed layers appear here with real waveforms.
             </p>
           </div>
         )}
-
         <div style={{ height: 24 }} />
       </div>
 
-      {/* Bottom prompt */}
       <div
         style={{
           flexShrink: 0,
@@ -699,12 +905,7 @@ function iconBtn(border: string, surface: string, text: string): React.CSSProper
   };
 }
 
-function miniChip(
-  border: string,
-  brass: string,
-  on: boolean,
-  text: string
-): React.CSSProperties {
+function miniChip(border: string, brass: string, on: boolean, text: string): React.CSSProperties {
   return {
     width: 26,
     height: 24,

@@ -4068,6 +4068,7 @@ export default function ProjectDetailPage() {
       {showProducerView && (
         <ProducerView
           projectTitle={project?.title || "Session"}
+          projectId={id}
           beatUrl={beatUrl}
           sections={
             (tasks || [])
