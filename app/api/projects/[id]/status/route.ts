@@ -43,22 +43,22 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (produceJob?.id) {
     const out = (produceJob.output_data || {}) as Record<string, unknown>;
     const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
-    const lockFresh = Boolean(lockAt && Date.now() - lockAt < 45_000);
+    const lockFresh = Boolean(lockAt && Date.now() - lockAt < 280_000);
     const started = produceJob.started_at
       ? Date.parse(String(produceJob.started_at))
       : Date.parse(String(produceJob.created_at || "")) || Date.now();
     const ageMs = Date.now() - started;
 
-    if (ageMs > 12 * 60_000) {
+    if (ageMs > 25 * 60_000) {
       await service
         .from("jobs")
         .update({
           status: "failed",
           stage: "failed",
           progress: 100,
-          error: "Production timed out on the server. Tap Produce again — the fast engine will retry.",
+          error: "Production took too long on the server. Tap Produce again to retry with the full engine.",
           completed_at: new Date().toISOString(),
-          output_data: { ...out, error: "timeout_12m" },
+          output_data: { ...out, error: "timeout_25m" },
         })
         .eq("id", produceJob.id);
     } else if (!lockFresh) {
@@ -71,18 +71,20 @@ export async function GET(_req: Request, ctx: Ctx) {
             output_data: { ...out, tick_lock_at: new Date().toISOString() },
           })
           .eq("id", produceJob.id);
-        await tickProduceJob(produceJob.id, { maxWorkMs: 55_000 });
+        await tickProduceJob(produceJob.id, { maxWorkMs: 240_000 });
       } catch (e) {
         console.error("status poll tick", e);
         const msg = e instanceof Error ? e.message : String(e);
+        // Keep job processing so the next poll can resume from checkpoint
         await service
           .from("jobs")
           .update({
-            status: "failed",
-            stage: "failed",
-            progress: 100,
-            error: msg.slice(0, 500),
-            completed_at: new Date().toISOString(),
+            status: "processing",
+            output_data: {
+              ...out,
+              last_tick_error: msg.slice(0, 400),
+              tick_lock_at: null,
+            },
           })
           .eq("id", produceJob.id)
           .in("status", ["queued", "processing"]);

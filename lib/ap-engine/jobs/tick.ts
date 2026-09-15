@@ -11,27 +11,7 @@ import {
 } from "@/lib/storage";
 import type { ApStage } from "../types";
 import { collectVocalsForProduce } from "./collect-vocals";
-import { runFastArrangement } from "./fast-produce";
 import { runFullProduceWithCheckpoints } from "./run-full-phased";
-
-const AP_STAGES: ReadonlySet<string> = new Set([
-  "queued",
-  "analyzing",
-  "restoring",
-  "polishing",
-  "producing",
-  "mixing",
-  "mastering",
-  "quality_check",
-  "completed",
-  "failed",
-]);
-
-function asApStage(s: string): ApStage | null {
-  if (s === "exporting") return "mastering";
-  if (AP_STAGES.has(s)) return s as ApStage;
-  return null;
-}
 
 export async function runInternalApProduceJob(opts: {
   jobId: string;
@@ -136,9 +116,7 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    const useFast =
-      process.env.AP_FAST_ENGINE === "1" || process.env.AP_FAST_ENGINE === "true";
-
+    // Full AP engine only — multi-tick checkpoints (no fast path).
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
     let mp3Path: string | null = null;
@@ -148,54 +126,31 @@ export async function runInternalApProduceJob(opts: {
       placements: placementLog,
     };
 
-    if (useFast) {
-      const fast = await runFastArrangement({
-        beatPath: beat.audio_path,
-        vocals,
-        onStage: async (s) => {
-          const stage = asApStage(s);
-          if (stage) await report(stage);
-        },
-      });
-      engineVersion = "ap-fast-stopgap-2";
-      await report("mastering");
-      await uploadBuffer(masterPath, fast.wav, "audio/wav");
-      await uploadBuffer(mixPath, fast.wav, "audio/wav");
-      metaExtra = {
-        ...metaExtra,
-        duration_ms: fast.durationMs,
-        path: "fast-stopgap",
-        engineVersion: "ap-fast-stopgap-2",
-        fast_diagnostics: fast.diagnostics,
-        note: "Opt-in fast stopgap (AP_FAST_ENGINE=1). Default produce uses full engine.",
-      };
-    } else {
-      const phased = await runFullProduceWithCheckpoints({
-        jobId,
-        projectId,
-        userId,
-        beatPath: beat.audio_path,
-        vocals,
-        genre: project?.genre,
-        placementLog,
-        report,
-        patch,
-      });
-      if (!phased.complete) {
-        if (phased.error) {
-          await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-          return { complete: false, error: phased.error };
-        }
-        // In progress — checkpoint saved; wait for next poll tick
-        return { complete: false };
+    const phased = await runFullProduceWithCheckpoints({
+      jobId,
+      projectId,
+      userId,
+      beatPath: beat.audio_path,
+      vocals,
+      genre: project?.genre,
+      placementLog,
+      report,
+      patch,
+    });
+    if (!phased.complete) {
+      if (phased.error) {
+        await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
+        return { complete: false, error: phased.error };
       }
-      engineVersion = phased.engineVersion || "ap-full";
-      mp3Path = phased.mp3Path ?? null;
-      metaExtra = {
-        ...metaExtra,
-        ...(phased.metaExtra || {}),
-      };
+      // Checkpoint saved — next status poll resumes full engine
+      return { complete: false };
     }
+    engineVersion = phased.engineVersion || "ap-full";
+    mp3Path = phased.mp3Path ?? null;
+    metaExtra = {
+      ...metaExtra,
+      ...(phased.metaExtra || {}),
+    };
 
     await supabase.from("songs").insert({
       project_id: projectId,

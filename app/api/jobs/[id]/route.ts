@@ -33,7 +33,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   if (job.type === "PRODUCE_SONG" && (job.status === "queued" || job.status === "processing")) {
     try {
-      await tickProduceJob(job.id, { maxWorkMs: 20_000 });
+      await tickProduceJob(job.id, { maxWorkMs: 240_000 });
       const { data: refreshed } = await service.from("jobs").select("*").eq("id", id).maybeSingle();
       if (refreshed) job = refreshed;
     } catch (e) {
