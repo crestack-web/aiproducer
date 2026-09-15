@@ -4062,56 +4062,60 @@ export default function ProjectDetailPage() {
               </div>
             )}
       
-      {showProducerView && (
-          <ProducerView
-            projectTitle={project?.title || "Session"}
-            beatUrl={beatUrl}
-            sections={
-              (tasks || [])
-                .filter((tk) => tk.start_ms != null)
-                .reduce<ProducerSection[]>((acc, tk) => {
-                  const label =
-                    (tk.title || tk.type || "Section").replace(/\s*·.*$/, "") || "Section";
-                  const start = Number(tk.start_ms) || 0;
-                  const end = Number(tk.end_ms) || start + 8000;
-                  // group by start-end
-                  if (!acc.some((s) => s.startMs === start && s.endMs === end)) {
-                    acc.push({
-                      id: `sec-${start}-${end}`,
-                      label,
-                      startMs: start,
-                      endMs: end,
-                    });
-                  }
-                  return acc;
-                }, [])
-            }
-            layers={
-              (tasks || [])
-                .filter((tk) => tk.status === "completed" && tk.start_ms != null)
-                .map((tk) => {
-                  const start = Number(tk.start_ms) || 0;
-                  const end = Number(tk.end_ms) || start + 8000;
-                  return {
-                    id: tk.id,
-                    label: (tk.type || "lead").replace(/_/g, " "),
-                    role: tk.type || "lead",
-                    sectionLabel: tk.title || undefined,
-                    startMs: start,
-                    endMs: end,
-                  } as ProducerLayer;
-                })
-            }
-            onClose={() => setShowProducerView(false)}
-            onOpenTweak={
-              masterUrl
-                ? () => {
-                    setShowProducerView(false);
-                    setScreen("done");
-                  }
-                : undefined
-            }
-          />
+
+
+                </div>
+        )}
+
+{showProducerView && (
+        <ProducerView
+          projectTitle={project?.title || "Session"}
+          beatUrl={beatUrl}
+          sections={
+            (tasks || [])
+              .filter((tk) => tk.start_ms != null)
+              .reduce<ProducerSection[]>((acc, tk) => {
+                const label =
+                  (tk.title || tk.type || "Section").replace(/\s*·.*$/, "") || "Section";
+                const startMs = Number(tk.start_ms) || 0;
+                const endMs = Number(tk.end_ms) || startMs + 8000;
+                if (!acc.some((s) => s.startMs === startMs && s.endMs === endMs)) {
+                  acc.push({
+                    id: `sec-${startMs}-${endMs}`,
+                    label,
+                    startMs,
+                    endMs,
+                  });
+                }
+                return acc;
+              }, [])
+          }
+          layers={
+            (tasks || [])
+              .filter((tk) => tk.status === "completed" && tk.start_ms != null)
+              .map((tk) => {
+                const startMs = Number(tk.start_ms) || 0;
+                const endMs = Number(tk.end_ms) || startMs + 8000;
+                return {
+                  id: tk.id,
+                  label: (tk.type || "lead").replace(/_/g, " "),
+                  role: tk.type || "lead",
+                  sectionLabel: tk.title || undefined,
+                  startMs,
+                  endMs,
+                } as ProducerLayer;
+              })
+          }
+          onClose={() => setShowProducerView(false)}
+          onOpenTweak={
+            masterUrl
+              ? () => {
+                  setShowProducerView(false);
+                  setScreen("done");
+                }
+              : undefined
+          }
+        />
       )}
 
       {paywallOpen && (
