@@ -18,6 +18,7 @@ type Project = {
   mood: string | null;
   updated_at: string;
   has_master?: boolean;
+  has_beat?: boolean;
 };
 type Tab = "home" | "library" | "profile";
 
