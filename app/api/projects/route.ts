@@ -72,6 +72,7 @@ export async function GET() {
   const projects = data ?? [];
   const ids = projects.map((p: { id: string }) => p.id);
   const mastered = new Set<string>();
+  const withBeat = new Set<string>();
   if (ids.length) {
     const { data: songs } = await supabase
       .from("songs")
@@ -88,15 +89,23 @@ export async function GET() {
     for (const v of versions || []) {
       if (v.project_id) mastered.add(v.project_id as string);
     }
+    const { data: beats } = await supabase
+      .from("beats")
+      .select("project_id")
+      .in("project_id", ids);
+    for (const b of beats || []) {
+      if (b.project_id) withBeat.add(b.project_id as string);
+    }
   }
 
   const enriched = projects.map((p: { id: string; status?: string }) => {
     const hasMaster = mastered.has(p.id);
+    const hasBeat = withBeat.has(p.id);
     const status =
       hasMaster && p.status !== "complete" && p.status !== "completed"
         ? "complete"
         : p.status;
-    return { ...p, status, has_master: hasMaster };
+    return { ...p, status, has_master: hasMaster, has_beat: hasBeat };
   });
 
   return NextResponse.json({ projects: enriched });
