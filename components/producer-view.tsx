@@ -1495,28 +1495,32 @@ export function ProducerView({
         </div>
       </div>
 
-        {layers.length === 0 && (
-          <div
-            style={{
-              margin: 16,
-              padding: 16,
-              borderRadius: 14,
-              border: `1px dashed ${border}`,
-              color: mutedText,
-              fontSize: 14,
-              lineHeight: 1.5,
-              maxWidth: 420,
-            }}
-          >
-            <strong style={{ color: text }}>No vocal layers yet</strong>
-            <p style={{ margin: "8px 0 0" }}>
-              Record and save takes in the booth — completed layers appear here with real waveforms.
-            </p>
-          </div>
-        )}
-        <div style={{ height: 24 }} />
-      </div>
-{/* Floating AP prompt bar — Suno-style glass chip */}
+      {layers.length === 0 && (
+        <div
+          style={{
+            position: "absolute",
+            left: 140,
+            top: 120,
+            margin: 16,
+            padding: 16,
+            borderRadius: 14,
+            border: `1px dashed ${border}`,
+            color: mutedText,
+            fontSize: 14,
+            lineHeight: 1.5,
+            maxWidth: 420,
+            zIndex: 5,
+            pointerEvents: "none",
+          }}
+        >
+          <strong style={{ color: text }}>No vocal layers yet</strong>
+          <p style={{ margin: "8px 0 0" }}>
+            Record and save takes in the booth — completed layers appear here with real waveforms.
+          </p>
+        </div>
+      )}
+
+      {/* Floating AP prompt bar — Suno-style glass chip */}
       <div
         style={{
           position: "absolute",
