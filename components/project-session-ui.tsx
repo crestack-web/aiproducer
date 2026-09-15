@@ -4115,6 +4115,8 @@ export default function ProjectDetailPage() {
               .map((tk) => {
                 const startMs = Number(tk.start_ms) || 0;
                 const endMs = Number(tk.end_ms) || startMs + 8000;
+                const meta = (tk as { metadata?: { track_fx?: Record<string, number> } }).metadata;
+                const tf = meta?.track_fx;
                 return {
                   id: tk.id,
                   label: (tk.type || "lead").replace(/_/g, " "),
@@ -4122,6 +4124,18 @@ export default function ProjectDetailPage() {
                   sectionLabel: tk.title || undefined,
                   startMs,
                   endMs,
+                  trackFx: tf
+                    ? {
+                        gainDb: Number(tf.gainDb) || 0,
+                        eqLowDb: Number(tf.eqLowDb) || 0,
+                        eqMidDb: Number(tf.eqMidDb) || 0,
+                        eqHighDb: Number(tf.eqHighDb) || 0,
+                        compress: Number(tf.compress) || 0,
+                        reverb: Number(tf.reverb) || 0,
+                        delay: Number(tf.delay) || 0,
+                        saturation: Number(tf.saturation) || 0,
+                      }
+                    : null,
                 } as ProducerLayer;
               })
           }

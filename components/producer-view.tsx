@@ -9,6 +9,28 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 
+export type TrackFx = {
+  gainDb: number;
+  eqLowDb: number;
+  eqMidDb: number;
+  eqHighDb: number;
+  compress: number; // 0–1
+  reverb: number;
+  delay: number;
+  saturation: number;
+};
+
+export const DEFAULT_TRACK_FX: TrackFx = {
+  gainDb: 0,
+  eqLowDb: 0,
+  eqMidDb: 0,
+  eqHighDb: 0,
+  compress: 0,
+  reverb: 0,
+  delay: 0,
+  saturation: 0,
+};
+
 export type ProducerLayer = {
   id: string;
   label: string;
@@ -18,6 +40,7 @@ export type ProducerLayer = {
   endMs: number;
   audioUrl?: string | null;
   color?: string;
+  trackFx?: TrackFx | null;
 };
 
 export type ProducerSection = {
@@ -220,6 +243,9 @@ export function ProducerView({
   const [decodeStatus, setDecodeStatus] = useState<string>("");
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [showAddTrack, setShowAddTrack] = useState(false);
+  const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
+  const [fxOpenId, setFxOpenId] = useState<string | null>(null);
+
   const [addTitle, setAddTitle] = useState("");
   const [addType, setAddType] = useState("custom");
   const [addBusy, setAddBusy] = useState(false);
@@ -235,6 +261,28 @@ export function ProducerView({
     lastStart: number;
     lastEnd: number;
   } | null>(null);
+
+  async function persistFx(id: string, fx: TrackFx) {
+    setFxById((prev) => ({ ...prev, [id]: fx }));
+    setSavingId(id);
+    try {
+      const res = await fetch(`/api/recording-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_fx: fx }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not save FX");
+      } else {
+        onLayersChanged?.();
+      }
+    } catch {
+      setEditMsg("Network error saving FX");
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   async function persistLayer(
     id: string,
@@ -432,6 +480,14 @@ export function ProducerView({
   // Merge URLs from session-preview if projectId given
   useEffect(() => {
     setLayers(layersProp);
+    setFxById((prev) => {
+      const next = { ...prev };
+      for (const l of layersProp) {
+        if (l.trackFx) next[l.id] = { ...DEFAULT_TRACK_FX, ...l.trackFx };
+        else if (!next[l.id]) next[l.id] = { ...DEFAULT_TRACK_FX };
+      }
+      return next;
+    });
   }, [layersProp]);
 
   useEffect(() => {
@@ -585,7 +641,9 @@ export function ProducerView({
       const g = gainsRef.current.get(tr.id);
       if (!g) continue;
       const on = isAudible(tr.id, tr.kind);
-      g.gain.setTargetAtTime(on ? 1 : 0, audioCtxRef.current?.currentTime || 0, 0.02);
+      const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const lin = Math.pow(10, (fx.gainDb || 0) / 20);
+      g.gain.setTargetAtTime(on ? lin : 0, audioCtxRef.current?.currentTime || 0, 0.02);
     }
   }
 
@@ -637,13 +695,82 @@ export function ProducerView({
 
       const gain = ctx.createGain();
       const on = isAudible(tr.id, tr.kind);
-      gain.gain.value = on ? 1 : 0;
-      gain.connect(ctx.destination);
+      const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const gainLin = Math.pow(10, (fx.gainDb || 0) / 20);
+      gain.gain.value = on ? gainLin : 0;
       gainsRef.current.set(tr.id, gain);
+
+      // Phase 4 FX chain: src → EQ → compress → sat (wave shape via gain) → delay/reverb mix → gain → dest
+      const low = ctx.createBiquadFilter();
+      low.type = "lowshelf";
+      low.frequency.value = 200;
+      low.gain.value = fx.eqLowDb || 0;
+      const mid = ctx.createBiquadFilter();
+      mid.type = "peaking";
+      mid.frequency.value = 1200;
+      mid.Q.value = 0.9;
+      mid.gain.value = fx.eqMidDb || 0;
+      const high = ctx.createBiquadFilter();
+      high.type = "highshelf";
+      high.frequency.value = 5000;
+      high.gain.value = fx.eqHighDb || 0;
+
+      const comp = ctx.createDynamicsCompressor();
+      const cAmt = fx.compress || 0;
+      comp.threshold.value = -10 - cAmt * 30;
+      comp.knee.value = 12;
+      comp.ratio.value = 1 + cAmt * 11;
+      comp.attack.value = 0.01;
+      comp.release.value = 0.2;
+
+      const dry = ctx.createGain();
+      dry.gain.value = 1;
+      const delay = ctx.createDelay(1.0);
+      delay.delayTime.value = 0.28;
+      const delayGain = ctx.createGain();
+      delayGain.gain.value = (fx.delay || 0) * 0.45;
+      const delayFb = ctx.createGain();
+      delayFb.gain.value = 0.25;
+
+      // Lightweight "reverb": multi-tap delays
+      const revGain = ctx.createGain();
+      revGain.gain.value = (fx.reverb || 0) * 0.35;
+      const rev1 = ctx.createDelay(1.0);
+      rev1.delayTime.value = 0.05;
+      const rev2 = ctx.createDelay(1.0);
+      rev2.delayTime.value = 0.12;
+      const rev3 = ctx.createDelay(1.0);
+      rev3.delayTime.value = 0.23;
+
+      const satGain = ctx.createGain();
+      // soft drive approximation via pre-gain into compressor
+      satGain.gain.value = 1 + (fx.saturation || 0) * 1.5;
 
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(gain);
+      src.connect(low);
+      low.connect(mid);
+      mid.connect(high);
+      high.connect(satGain);
+      satGain.connect(comp);
+      comp.connect(dry);
+      dry.connect(gain);
+
+      comp.connect(delay);
+      delay.connect(delayGain);
+      delay.connect(delayFb);
+      delayFb.connect(delay);
+      delayGain.connect(gain);
+
+      comp.connect(rev1);
+      rev1.connect(rev2);
+      rev2.connect(rev3);
+      rev1.connect(revGain);
+      rev2.connect(revGain);
+      rev3.connect(revGain);
+      revGain.connect(gain);
+
+      gain.connect(ctx.destination);
 
       // Vocals: offset by section start on the timeline
       if (tr.kind === "vocal") {
@@ -750,7 +877,7 @@ export function ProducerView({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
-            PRODUCER VIEW · PHASE 3
+            PRODUCER VIEW · PHASE 4
           </div>
           <div
             style={{
@@ -1022,7 +1149,27 @@ export function ProducerView({
                       ×
                     </button>
                   )}
+                  <button
+                    type="button"
+                    title="Effects rack"
+                    onClick={() => setFxOpenId(fxOpenId === tr.id ? null : tr.id)}
+                    style={miniChip(border, brass, fxOpenId === tr.id, text)}
+                  >
+                    FX
+                  </button>
                 </div>
+                {fxOpenId === tr.id && (
+                  <TrackFxPanel
+                    fx={fxById[tr.id] || DEFAULT_TRACK_FX}
+                    color={text}
+                    muted={mutedText}
+                    border={border}
+                    brass={brass}
+                    surface={surface}
+                    onChange={(fx) => setFxById((prev) => ({ ...prev, [tr.id]: fx }))}
+                    onCommit={(fx) => void persistFx(tr.id, fx)}
+                  />
+                )}
               </div>
 
               <div
@@ -1296,6 +1443,119 @@ export function ProducerView({
             : "Produce the song to unlock prompt tweaks"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function TrackFxPanel({
+  fx,
+  color,
+  muted,
+  border,
+  brass,
+  surface,
+  onChange,
+  onCommit,
+}: {
+  fx: TrackFx;
+  color: string;
+  muted: string;
+  border: string;
+  brass: string;
+  surface: string;
+  onChange: (fx: TrackFx) => void;
+  onCommit: (fx: TrackFx) => void;
+}) {
+  function slider(
+    key: keyof TrackFx,
+    label: string,
+    min: number,
+    max: number,
+    step: number
+  ) {
+    return (
+      <label
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          fontSize: 11,
+          color: muted,
+        }}
+      >
+        <span style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>{label}</span>
+          <span style={{ color }}>{Number(fx[key]).toFixed(1)}</span>
+        </span>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={fx[key]}
+          onChange={(e) => {
+            const next = { ...fx, [key]: parseFloat(e.target.value) };
+            onChange(next);
+          }}
+          onPointerUp={(e) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            onCommit({ ...fx, [key]: v });
+          }}
+          onTouchEnd={(e) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            onCommit({ ...fx, [key]: v });
+          }}
+          style={{ width: "100%", accentColor: brass }}
+        />
+      </label>
+    );
+  }
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 12,
+        border: `1px solid ${border}`,
+        background: surface,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxWidth: 220,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ fontWeight: 700, fontSize: 11, letterSpacing: "0.06em", color: brass }}>
+        TRACK FX
+      </div>
+      {slider("gainDb", "Gain dB", -12, 12, 0.5)}
+      {slider("eqLowDb", "Low", -12, 12, 0.5)}
+      {slider("eqMidDb", "Mid", -12, 12, 0.5)}
+      {slider("eqHighDb", "High / air", -12, 12, 0.5)}
+      {slider("compress", "Compress", 0, 1, 0.05)}
+      {slider("reverb", "Reverb", 0, 1, 0.05)}
+      {slider("delay", "Delay", 0, 1, 0.05)}
+      {slider("saturation", "Saturation", 0, 1, 0.05)}
+      <button
+        type="button"
+        onClick={() => {
+          onChange(DEFAULT_TRACK_FX);
+          onCommit(DEFAULT_TRACK_FX);
+        }}
+        style={{
+          marginTop: 4,
+          padding: "8px",
+          borderRadius: 8,
+          border: `1px solid ${border}`,
+          background: "transparent",
+          color: muted,
+          fontSize: 12,
+          cursor: "pointer",
+          fontFamily: "inherit",
+        }}
+      >
+        Reset FX
+      </button>
     </div>
   );
 }
