@@ -4116,111 +4116,98 @@ export default function ProjectDetailPage() {
         />
       )}
 
+
       {paywallOpen && (
-              <ApPaywall
-                open={paywallOpen}
-                onClose={() => setPaywallOpen(false)}
-                songTitle={project?.title}
-                projectId={id}
-                colors={{
-                  text: C.text,
-                  textMuted: C.textMuted,
-                  surface: C.bg,
-                  border: C.border,
-                  accent: "#c17a12",
-                  bg: C.bg,
-                }}
-                onUnlocked={() => {
-                  setDownloadUnlocked(true);
-                  setPaywallOpen(false);
-                  setDownloadModalOpen(true);
-                }}
-              />
-            )}
-            {downloadModalOpen && (
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-label="Download format"
-                onClick={() => !downloadBusy && setDownloadModalOpen(false)}
-                style={{
-                  position: "fixed",
-                  inset: 0,
-                  zIndex: 80,
-                  background: "rgba(0,0,0,0.78)",
-                  display: "grid",
-                  placeItems: "center",
-                  padding: 20,
+        <ApPaywall
+          open={paywallOpen}
+          onClose={() => setPaywallOpen(false)}
+          songTitle={project?.title}
+          projectId={id}
+          colors={{
+            text: C.text,
+            textMuted: C.textMuted,
+            surface: C.bg,
+            border: C.border,
+            accent: "#c17a12",
+            bg: C.bg,
+          }}
+          onUnlocked={() => {
+            setDownloadUnlocked(true);
+            setPaywallOpen(false);
+            setDownloadModalOpen(true);
+          }}
+        />
+      )}
+      {downloadModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(0,0,0,0.55)",
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onClick={() => setDownloadModalOpen(false)}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 340,
+              borderRadius: 18,
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              padding: "22px 20px",
+              boxShadow: C.cardShadow,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Download</div>
+            <p style={{ color: C.textMuted, fontSize: 13, margin: "0 0 16px" }}>
+              Choose a format for your master.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                type="button"
+                style={{ ...btn, width: "100%" }}
+                onClick={() => {
+                  setDownloadModalOpen(false);
+                  void downloadMaster("wav");
                 }}
               >
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: "100%",
-                    maxWidth: 340,
-                    borderRadius: 18,
-                    background: C.bg,
-                    border: `1px solid ${C.border}`,
-                    padding: "22px 20px",
-                    boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
-                    color: C.text,
-                  }}
-                >
-                  <div style={{ fontFamily: "Georgia, serif", fontSize: 18, marginBottom: 6 }}>
-                    Download
-                  </div>
-                  <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 16px", lineHeight: 1.45 }}>
-                    Choose a format. The file will save to your device — it will not open in the browser player.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={downloadBusy}
-                    onClick={() => void downloadMaster("wav")}
-                    style={{ ...btn, marginBottom: 8, opacity: downloadBusy ? 0.7 : 1 }}
-                  >
-                    {downloadBusy ? "Downloading…" : "WAV — full quality"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={downloadBusy}
-                    onClick={() => void downloadMaster("mp3")}
-                    style={{ ...btn2, opacity: downloadBusy ? 0.7 : 1 }}
-                  >
-                    {downloadBusy ? "Downloading…" : "MP3 — smaller file"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={downloadBusy}
-                    onClick={() => setDownloadModalOpen(false)}
-                    style={{
-                      width: "100%",
-                      marginTop: 12,
-                      padding: 10,
-                      border: "none",
-                      background: "transparent",
-                      color: C.textMuted,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              style={{ ...btn2, marginTop: 16 }}
-              onClick={() => {
-                setScreen("session");
-                setPhase("ready");
-              }}
-            >
-              Back to session
-            </button>
+                WAV
+              </button>
+              <button
+                type="button"
+                style={{ ...btn2, width: "100%" }}
+                onClick={() => {
+                  setDownloadModalOpen(false);
+                  void downloadMaster("mp3");
+                }}
+              >
+                MP3
+              </button>
+              <button
+                type="button"
+                style={{
+                  padding: 10,
+                  border: "none",
+                  background: "transparent",
+                  color: C.textMuted,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                onClick={() => setDownloadModalOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </AppShell>
   );
 }
