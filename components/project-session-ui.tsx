@@ -16,7 +16,17 @@ import {
   MicInputPicker,
   SpeakerOutputPicker,
   routePlaybackToPreferredOutput,
-} from "@/components/mic-input-picker";
+} from "@/components/mic-input-picker"
+import {
+  readPreferredMicId,
+  readPreferredSpeakerId,
+  readAudioSetupConfirmed,
+  writePreferredMicId,
+  writePreferredSpeakerId,
+  writeAudioSetupConfirmed,
+  micSummaryLabel,
+  speakerSummaryLabel,
+} from "@/lib/audio/device-prefs";
 import {
   openRecordingStream,
   createVocalRecorder,
@@ -357,6 +367,9 @@ export default function ProjectDetailPage() {
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [selectedMicId, setSelectedMicId] = useState("");
   const [selectedSpeakerId, setSelectedSpeakerId] = useState("__handset__");
+  /** Full mic/speaker pickers: only forced until the artist confirms once on this device. */
+  const [audioSetupOpen, setAudioSetupOpen] = useState(true);
+  const audioPrefsHydrated = useRef(false);
   const [previewLayers, setPreviewLayers] = useState<SongPreviewLayer[]>([]);
   const [previewBeatUrl, setPreviewBeatUrl] = useState<string | null>(null);
   const [previewBeatDurationMs, setPreviewBeatDurationMs] = useState<number | null>(null);
@@ -452,6 +465,46 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     selectedSpeakerIdRef.current = selectedSpeakerId;
   }, [selectedSpeakerId]);
+
+  // Device-level prefs: load once, then persist every change
+  useEffect(() => {
+    if (audioPrefsHydrated.current) return;
+    audioPrefsHydrated.current = true;
+    try {
+      const mic = readPreferredMicId();
+      const spk = readPreferredSpeakerId();
+      const confirmed = readAudioSetupConfirmed();
+      setSelectedMicId(mic);
+      setSelectedSpeakerId(spk);
+      selectedMicIdRef.current = mic;
+      selectedSpeakerIdRef.current = spk;
+      setAudioSetupOpen(!confirmed);
+    } catch {
+      setAudioSetupOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!audioPrefsHydrated.current) return;
+    writePreferredMicId(selectedMicId);
+  }, [selectedMicId]);
+
+  useEffect(() => {
+    if (!audioPrefsHydrated.current) return;
+    writePreferredSpeakerId(selectedSpeakerId);
+  }, [selectedSpeakerId]);
+
+  function onMicSelect(deviceId: string) {
+    setSelectedMicId(deviceId);
+    writePreferredMicId(deviceId);
+    writeAudioSetupConfirmed(true);
+  }
+
+  function onSpeakerSelect(deviceId: string) {
+    setSelectedSpeakerId(deviceId);
+    writePreferredSpeakerId(deviceId);
+    writeAudioSetupConfirmed(true);
+  }
 
   // Recorded Section: only CompactAudioPlayer may play the beat — booth monitor stays dead
   useEffect(() => {
@@ -3083,16 +3136,83 @@ export default function ProjectDetailPage() {
 
             {phase === "ready" && (
               <div style={{ marginTop: 20 }}>
-                <MicInputPicker
-                  selectedDeviceId={selectedMicId}
-                  onSelect={setSelectedMicId}
-                  disabled={false}
-                />
-                <SpeakerOutputPicker
-                  selectedDeviceId={selectedSpeakerId}
-                  onSelect={setSelectedSpeakerId}
-                  disabled={false}
-                />
+                {!audioSetupOpen ? (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, letterSpacing: 0.4 }}>
+                        AUDIO SETUP
+                      </div>
+                      <div style={{ fontSize: 13, color: C.text, marginTop: 2, lineHeight: 1.35 }}>
+                        {micSummaryLabel(selectedMicId)} · {speakerSummaryLabel(selectedSpeakerId)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAudioSetupOpen(true)}
+                      style={{
+                        flexShrink: 0,
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.inputFill,
+                        color: C.text,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 8 }}>
+                    <MicInputPicker
+                      selectedDeviceId={selectedMicId}
+                      onSelect={onMicSelect}
+                      disabled={false}
+                    />
+                    <SpeakerOutputPicker
+                      selectedDeviceId={selectedSpeakerId}
+                      onSelect={onSpeakerSelect}
+                      disabled={false}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        writeAudioSetupConfirmed(true);
+                        setAudioSetupOpen(false);
+                      }}
+                      style={{
+                        width: "100%",
+                        marginTop: 10,
+                        minHeight: 40,
+                        borderRadius: 12,
+                        border: `1px solid ${C.brass}`,
+                        background: C.brassSoft,
+                        color: C.brass,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Done — use this setup
+                    </button>
+                  </div>
+                )}
                 {isPhoneHandsetOutput(selectedSpeakerId) && (
                   <p
                     style={{
