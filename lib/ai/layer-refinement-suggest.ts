@@ -88,9 +88,12 @@ export function suggestPostLeadLayerRefinement(opts: {
   // Re-run section fullness with analysis-informed intimacy signal
   const a = opts.analysis;
   const quiet =
-    a?.loudness?.rms != null && a.loudness.rms < 0.04
-      ? true
-      : a?.quality?.silenceRatio != null && a.quality.silenceRatio > 0.35;
+    (a?.loudness?.rms != null && a.loudness.rms < 0.04) ||
+    a?.quality?.silenceDetected === true ||
+    (a?.quality?.leadingSilenceMs != null &&
+      a.quality.leadingSilenceMs > 800 &&
+      a?.quality?.trailingSilenceMs != null &&
+      a.quality.trailingSilenceMs > 800);
   const shortVsWindow =
     a?.timeline?.expectedDurationMs != null &&
     a?.timeline?.actualDurationMs != null &&
