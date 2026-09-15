@@ -4103,7 +4103,15 @@ export default function ProjectDetailPage() {
           }
           layers={
             (tasks || [])
-              .filter((tk) => tk.status === "completed" && tk.start_ms != null)
+              .filter(
+                (tk) =>
+                  tk.start_ms != null &&
+                  (tk.status === "completed" ||
+                    tk.status === "pending" ||
+                    (tk as { type?: string }).type === "custom") &&
+                  (tk.status || "").toLowerCase() !== "skipped" &&
+                  (tk.status || "").toLowerCase() !== "cancelled"
+              )
               .map((tk) => {
                 const startMs = Number(tk.start_ms) || 0;
                 const endMs = Number(tk.end_ms) || startMs + 8000;

@@ -219,6 +219,12 @@ export function ProducerView({
 
   const [decodeStatus, setDecodeStatus] = useState<string>("");
   const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [showAddTrack, setShowAddTrack] = useState(false);
+  const [addTitle, setAddTitle] = useState("");
+  const [addType, setAddType] = useState("custom");
+  const [addBusy, setAddBusy] = useState(false);
+  const addFileRef = useRef<HTMLInputElement | null>(null);
+
   const [savingId, setSavingId] = useState<string | null>(null);
   const dragRef = useRef<{
     id: string;
@@ -331,6 +337,96 @@ export function ProducerView({
     const ok = await persistLayer(id, { status: "skipped" });
     if (ok) setLayers((prev) => prev.filter((l) => l.id !== id));
   }
+
+  async function createTrack(file?: File | null) {
+    if (!projectId) {
+      setEditMsg("Missing project — cannot add track");
+      return;
+    }
+    setAddBusy(true);
+    setEditMsg(null);
+    try {
+      const startMs = Math.round(playheadMs);
+      const res = await fetch(`/api/projects/${projectId}/recording-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: addType,
+          title: addTitle.trim() || undefined,
+          start_ms: startMs,
+          end_ms: startMs + 8000,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not create track");
+        return;
+      }
+      const task = j.task as {
+        id: string;
+        type?: string;
+        title?: string;
+        start_ms?: number;
+        end_ms?: number;
+      };
+      if (!task?.id) {
+        setEditMsg("Track created but no id returned");
+        return;
+      }
+
+      let audioUrl: string | null = null;
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const up = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
+          method: "POST",
+          body: fd,
+        });
+        const uj = await up.json().catch(() => ({}));
+        if (!up.ok) {
+          setEditMsg(
+            typeof uj.error === "string"
+              ? uj.error
+              : "Track created; upload failed — record a take in the booth"
+          );
+        } else {
+          audioUrl =
+            uj.recording?.audio_url ||
+            uj.audio_url ||
+            uj.recording?.url ||
+            null;
+          // mark completed if upload ok
+          await fetch(`/api/recording-tasks/${task.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "completed" }),
+          }).catch(() => null);
+        }
+      }
+
+      setLayers((prev) => [
+        ...prev,
+        {
+          id: task.id,
+          label: (task.type || addType).replace(/_/g, " "),
+          role: task.type || addType,
+          sectionLabel: task.title || addTitle || "Custom",
+          startMs: Number(task.start_ms) || startMs,
+          endMs: Number(task.end_ms) || startMs + 8000,
+          audioUrl,
+        },
+      ]);
+      setShowAddTrack(false);
+      setAddTitle("");
+      setAddType("custom");
+      onLayersChanged?.();
+    } catch {
+      setEditMsg("Network error creating track");
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
 
 
   // Merge URLs from session-preview if projectId given
@@ -654,7 +750,7 @@ export function ProducerView({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
-            PRODUCER VIEW · PHASE 2
+            PRODUCER VIEW · PHASE 3
           </div>
           <div
             style={{
@@ -1054,8 +1150,130 @@ export function ProducerView({
           paddingBottom: "max(12px, env(safe-area-inset-bottom))",
           borderTop: `1px solid ${border}`,
           background: surface,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
         }}
       >
+        {!showAddTrack ? (
+          <button
+            type="button"
+            onClick={() => setShowAddTrack(true)}
+            disabled={!projectId}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: `1px dashed ${brass}`,
+              background: "rgba(231,169,97,0.08)",
+              color: brass,
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: projectId ? "pointer" : "not-allowed",
+              fontFamily: "inherit",
+            }}
+          >
+            + Add Track
+          </button>
+        ) : (
+          <div
+            style={{
+              border: `1px solid ${border}`,
+              borderRadius: 14,
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              background: bg,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 14 }}>New track</div>
+            <p style={{ margin: 0, fontSize: 12, color: mutedText }}>
+              Starts at playhead ({formatMs(playheadMs)}). Same plan as the booth — not a separate mix.
+            </p>
+            <input
+              value={addTitle}
+              onChange={(e) => setAddTitle(e.target.value)}
+              placeholder="Name (optional)"
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: `1px solid ${border}`,
+                background: surface,
+                color: text,
+                fontFamily: "inherit",
+                fontSize: 14,
+              }}
+            />
+            <select
+              value={addType}
+              onChange={(e) => setAddType(e.target.value)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: `1px solid ${border}`,
+                background: surface,
+                color: text,
+                fontFamily: "inherit",
+                fontSize: 14,
+              }}
+            >
+              <option value="custom">Custom</option>
+              <option value="lead">Lead</option>
+              <option value="double">Double</option>
+              <option value="harmony">Harmony</option>
+              <option value="harmony_high">Harmony high</option>
+              <option value="harmony_low">Harmony low</option>
+              <option value="adlib">Ad-lib</option>
+              <option value="background">Background</option>
+            </select>
+            <input
+              ref={addFileRef}
+              type="file"
+              accept="audio/*,.wav,.mp3,.m4a,.webm"
+              style={{ fontSize: 13, color: mutedText }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                disabled={addBusy}
+                onClick={() => {
+                  const f = addFileRef.current?.files?.[0] || null;
+                  void createTrack(f);
+                }}
+                style={{
+                  flex: 1,
+                  padding: "12px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: brass,
+                  color: "#1A1208",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {addBusy ? "Adding…" : "Add to plan"}
+              </button>
+              <button
+                type="button"
+                disabled={addBusy}
+                onClick={() => setShowAddTrack(false)}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  border: `1px solid ${border}`,
+                  background: "transparent",
+                  color: mutedText,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <button
           type="button"
           onClick={onOpenTweak}
