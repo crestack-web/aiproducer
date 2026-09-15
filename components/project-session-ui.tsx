@@ -431,7 +431,18 @@ export default function ProjectDetailPage() {
       return k === key || (current.section_id && t.section_id === current.section_id);
     });
   })();
-  const isRetake = Boolean(current && isTaskDone(current) && (savedRecordingId || localBlobUrl || taskTakes.some((x) => x.audio_url)));
+  /** Saved take exists for this task (review / listen). Not the same as "artist chose Retake". */
+  const hasSavedTake = Boolean(
+    current &&
+      (Boolean(savedRecordingId) ||
+        Boolean(localBlobUrl) ||
+        taskTakes.some((x) => x.audio_url) ||
+        isTaskDone(current))
+  );
+  /** Ready-phase: task already has a take — offer listen / record-again, not "first Record". */
+  const canRecordAgain = Boolean(
+    current && isTaskDone(current) && (savedRecordingId || localBlobUrl || taskTakes.some((x) => x.audio_url))
+  );
   const sectionMs = current ? sectionDurationMs(current) : null;
 
   useEffect(() => {
@@ -2261,13 +2272,16 @@ export default function ProjectDetailPage() {
     }
   }
 
+  /**
+   * After a saved take: advance using clearFocusAndAdvance (same-section layers first).
+   * Never treat "task already completed / has a take" as a retake short-circuit.
+   */
   async function keepAndContinue() {
     if (!current) return;
     if (!savedRecordingId) {
       setError("Take is not saved yet. Wait until it says Saved, or press Retake.");
       return;
     }
-    const wasRetake = isRetake;
     const completedId = current.id;
     const completedSnapshot: Task = { ...current, status: "completed" };
     setError(null);
@@ -2288,13 +2302,6 @@ export default function ProjectDetailPage() {
     setTasks((prev) =>
       prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
     );
-
-    if (wasRetake) {
-      setActiveTaskId(null);
-      setPhase("ready");
-      setScreen("session");
-      return;
-    }
 
     // Authoritative list from server — never trust stale client-only layer membership
     let pool: Task[] = [];
@@ -2364,6 +2371,161 @@ export default function ProjectDetailPage() {
     }
 
     clearFocusAndAdvance(pool, completedSnapshot);
+  }
+
+  /** Explicit: jump to the next section's lead only (artist chose "Next section"). */
+  async function goToNextSectionLead() {
+    if (!current) return;
+    if (!savedRecordingId && !isTaskDone(current)) {
+      setError("Save a take for this part first, or skip it.");
+      return;
+    }
+    const completedId = current.id;
+    const completedSnapshot: Task = { ...current, status: "completed" };
+    setError(null);
+    setSavedRecordingId(null);
+    setLocalBlobUrl(null);
+    setReviewOverdubSrcs([]);
+    stopLayerMonitors();
+    try {
+      beatAudioRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+    setPlanTasks((prev) =>
+      prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
+    );
+    setTasks((prev) =>
+      prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
+    );
+
+    let pool: Task[] = tasks.map((t) =>
+      t.id === completedId ? { ...t, status: "completed" } : t
+    );
+    try {
+      const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+      if (tr.ok) {
+        const sessionRows: Task[] = (await tr.json()).tasks || [];
+        pool = sessionRows.map((t) =>
+          t.id === completedId ? { ...t, status: "completed" } : t
+        );
+        setTasks(pool.filter((t) => (t.status || "").toLowerCase() !== "skipped"));
+      }
+    } catch {
+      /* use local pool */
+    }
+
+    const nextCore = nextCoreForward(pool, completedSnapshot);
+    if (nextCore) {
+      stopLayerMonitors();
+      setReviewOverdubSrcs([]);
+      setActiveTaskId(nextCore.id);
+      setPhase("ready");
+      setScreen("session");
+      setError(null);
+      return;
+    }
+    setActiveTaskId(null);
+    setPhase("ready");
+    setScreen("assemble");
+    void loadSongPreview();
+  }
+
+  /**
+   * Explicit: stay on this section and open the next planned layer
+   * (or no-op with message if none planned).
+   */
+  async function goToSameSectionLayer() {
+    if (!current) return;
+    if (!savedRecordingId) {
+      setError("Take is not saved yet. Wait until it says Saved, or press Retake.");
+      return;
+    }
+    const completedId = current.id;
+    const completedSnapshot: Task = { ...current, status: "completed" };
+    const keptRecordingId = savedRecordingId;
+    const keptBlob = localBlobUrl;
+    setError(null);
+    setReviewOverdubSrcs([]);
+    stopLayerMonitors();
+    try {
+      beatAudioRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+    setPlanTasks((prev) =>
+      prev.map((t) => (t.id === completedId ? { ...t, status: "completed" } : t))
+    );
+
+    let pool: Task[] = tasks.map((t) =>
+      t.id === completedId ? { ...t, status: "completed" } : t
+    );
+    try {
+      const [tr, pr] = await Promise.all([
+        fetch(`/api/projects/${id}/recording-tasks`),
+        fetch(`/api/projects/${id}/plan`),
+      ]);
+      const sessionRows: Task[] = tr.ok ? ((await tr.json()).tasks || []) : [];
+      let planRows: PlanEditorTask[] = [];
+      if (pr.ok) {
+        const pj = await pr.json();
+        planRows = Array.isArray(pj.tasks) ? (pj.tasks as PlanEditorTask[]) : [];
+        if (planRows.length) setPlanTasks(planRows);
+      }
+      const byId = new Map<string, Task>();
+      for (const row of sessionRows) {
+        byId.set(row.id, {
+          ...row,
+          status: row.id === completedId ? "completed" : row.status,
+        });
+      }
+      for (const plan of planRows) {
+        if (plan.active === false || plan.selected_in_plan === false) continue;
+        if ((plan.status || "").toLowerCase() === "skipped") continue;
+        if (!byId.has(plan.id)) {
+          byId.set(
+            plan.id,
+            asSessionTask({
+              id: plan.id,
+              type: plan.type,
+              title: plan.title,
+              instruction: plan.instruction,
+              reason: plan.reason,
+              status: plan.id === completedId ? "completed" : plan.status || "pending",
+              required: plan.required,
+              start_ms: plan.start_ms,
+              end_ms: plan.end_ms,
+              section_id: plan.section_id,
+              metadata: (plan.metadata as Task["metadata"] | null) ?? undefined,
+            })
+          );
+        }
+      }
+      const done = byId.get(completedId);
+      if (done) byId.set(completedId, { ...done, status: "completed" });
+      else byId.set(completedId, completedSnapshot);
+      pool = Array.from(byId.values());
+      setTasks(pool.filter((row) => (row.status || "").toLowerCase() !== "skipped"));
+    } catch {
+      /* local pool */
+    }
+
+    const rec = nextProductionRecommendation(pool, completedSnapshot);
+    if (rec) {
+      setSavedRecordingId(null);
+      setLocalBlobUrl(null);
+      setActiveTaskId(rec.id);
+      setPhase("ready");
+      setScreen("session");
+      setError(null);
+      return;
+    }
+    // No planned open layer — keep review state so artist can add a layer or go next section
+    setSavedRecordingId(keptRecordingId);
+    if (keptBlob) setLocalBlobUrl(keptBlob);
+    setActiveTaskId(completedId);
+    setPhase("review");
+    setError(null);
   }
 
   async function skipCurrent() {
@@ -2948,7 +3110,7 @@ export default function ProjectDetailPage() {
                     near your ear. Keep the bottom microphone unobstructed.
                   </p>
                 )}
-                {isRetake && (
+                {canRecordAgain && (
                   <button
                     type="button"
                     style={{ ...btn2, marginTop: 14 }}
@@ -2964,9 +3126,9 @@ export default function ProjectDetailPage() {
                     Listen to take
                   </button>
                 )}
-                <button type="button" style={{ ...btn, marginTop: isRetake ? 10 : 14 }} onClick={startRecording}>
-                  {isRetake
-                    ? "Retake"
+                <button type="button" style={{ ...btn, marginTop: canRecordAgain ? 10 : 14 }} onClick={startRecording}>
+                  {canRecordAgain
+                    ? "Record again"
                     : currentIsLayer
                       ? layerRecommendationCopy(current.type).cta
                       : "Record"}
@@ -3041,7 +3203,7 @@ export default function ProjectDetailPage() {
                   {uploading
                     ? "Saving take…"
                     : savedRecordingId
-                      ? "Saved automatically · play to review, retake, or record next"
+                      ? "Saved automatically · play to review, retake, add a layer, or go to the next section"
                       : localBlobUrl
                         ? "Play to review · saving may still be in progress"
                         : "Loading take…"}
@@ -3164,46 +3326,151 @@ export default function ProjectDetailPage() {
                     Take saved
                   </p>
                 )}
-                {!uploading && current && savedRecordingId && (() => {
+                {!uploading && savedRecordingId && current && (() => {
                   const nextLayer = nextProductionRecommendation(
                     [
-                      ...tasks.map((t) =>
-                        t.id === current.id ? { ...t, status: "completed" as const } : t
+                      ...tasks.map((row) =>
+                        row.id === current.id ? { ...row, status: "completed" as const } : row
                       ),
                       ...planTasks
                         .filter(
-                          (p) =>
-                            p.active !== false &&
-                            p.selected_in_plan !== false &&
-                            p.status !== "skipped" &&
-                            !tasks.some((x) => x.id === p.id)
+                          (plan) =>
+                            plan.active !== false &&
+                            plan.selected_in_plan !== false &&
+                            plan.status !== "skipped" &&
+                            !tasks.some((x) => x.id === plan.id)
                         )
-                        .map((p) => ({
-                          id: p.id,
-                          type: p.type,
-                          title: p.title,
-                          instruction: p.instruction || "",
-                          status: p.status || "pending",
-                          required: Boolean(p.required),
-                          start_ms: p.start_ms,
-                          end_ms: p.end_ms,
-                          section_id: p.section_id,
-                          metadata: p.metadata as Task["metadata"],
+                        .map((plan) => ({
+                          id: plan.id,
+                          type: plan.type,
+                          title: plan.title,
+                          instruction: plan.instruction || "",
+                          status: plan.status || "pending",
+                          required: Boolean(plan.required),
+                          start_ms: plan.start_ms,
+                          end_ms: plan.end_ms,
+                          section_id: plan.section_id,
+                          metadata: plan.metadata as Task["metadata"],
                         })),
                     ],
                     { ...current, status: "completed" }
                   );
-                  if (!nextLayer) return null;
-                  const copy = layerRecommendationCopy(nextLayer.type);
+                  const layerLabel = nextLayer
+                    ? layerRecommendationCopy(nextLayer.type).cta || `Add ${nextLayer.type}`
+                    : null;
                   return (
-                    <p style={{ textAlign: "center", color: C.brass, fontSize: 13, marginTop: 8, fontWeight: 600 }}>
-                      Next on this section: {copy.cta}
-                    </p>
+                    <div style={{ marginTop: 16 }}>
+                      {nextLayer ? (
+                        <p style={{ textAlign: "center", color: C.brass, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                          More on this section: {layerLabel}
+                        </p>
+                      ) : (
+                        <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginBottom: 8 }}>
+                          No more layers planned for this section
+                        </p>
+                      )}
+                      {nextLayer ? (
+                        <button
+                          type="button"
+                          style={{ ...btn, marginTop: 4, width: "100%" }}
+                          disabled={uploading || phase !== "review"}
+                          onClick={() => void goToSameSectionLayer()}
+                        >
+                          {layerLabel}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={{ ...btn, marginTop: 4, width: "100%" }}
+                          disabled={uploading || phase !== "review" || skipping}
+                          onClick={() => {
+                            void (async () => {
+                              if (!current) return;
+                              try {
+                                const res = await fetch(`/api/projects/${id}/plan`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    action: "add",
+                                    task: {
+                                      type: "DOUBLE",
+                                      title: "Double",
+                                      instruction:
+                                        "Sing the same line again, matching your lead as closely as you can.",
+                                      start_ms: current.start_ms ?? 0,
+                                      end_ms:
+                                        current.end_ms ?? (current.start_ms ?? 0) + 8000,
+                                      section_id: current.section_id,
+                                      section_label: current.metadata?.section_label,
+                                    },
+                                  }),
+                                });
+                                const j = await res.json().catch(() => ({}));
+                                const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+                                let list: Task[] = [];
+                                if (tr.ok) {
+                                  list = (await tr.json()).tasks || [];
+                                  setTasks(list);
+                                }
+                                // Focus the new double: prefer API-returned id, else newest open DOUBLE same section
+                                const newId =
+                                  (j && (j.task?.id || j.id || j.created?.id)) || null;
+                                let focus =
+                                  (newId && list.find((x) => x.id === newId)) ||
+                                  list
+                                    .filter(
+                                      (x) =>
+                                        isTaskOpen(x) &&
+                                        (x.type || "").toUpperCase().includes("DOUBLE") &&
+                                        sameMusicalSection(current, x)
+                                    )
+                                    .sort((a, b) => Number(b.start_ms || 0) - Number(a.start_ms || 0))[0];
+                                if (!focus) {
+                                  // Fallback: any open non-core same section
+                                  focus =
+                                    nextProductionRecommendation(
+                                      list.map((x) =>
+                                        x.id === current.id ? { ...x, status: "completed" } : x
+                                      ),
+                                      { ...current, status: "completed" }
+                                    ) || undefined;
+                                }
+                                if (focus) {
+                                  setSavedRecordingId(null);
+                                  setLocalBlobUrl(null);
+                                  setActiveTaskId(focus.id);
+                                  setPhase("ready");
+                                  setScreen("session");
+                                }
+                              } catch {
+                                /* non-fatal */
+                              }
+                            })();
+                          }}
+                        >
+                          Add a double on this section
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        style={{
+                          ...btn2,
+                          marginTop: 10,
+                          width: "100%",
+                          opacity: 0.95,
+                          borderStyle: "dashed",
+                        }}
+                        disabled={uploading || phase !== "review"}
+                        onClick={() => void goToNextSectionLead()}
+                      >
+                        Next section →
+                      </button>
+                    </div>
                   );
                 })()}
                 <button
                   type="button"
-                  style={{ ...btn, marginTop: 16 }}
+                  style={{ ...btn2, marginTop: 12 }}
                   disabled={uploading}
                   onClick={() => {
                     setError(null);
@@ -3217,84 +3484,6 @@ export default function ProjectDetailPage() {
                 >
                   Retake
                 </button>
-                <button
-                  type="button"
-                  style={{ ...btn2, marginTop: 8 }}
-                  disabled={uploading || !savedRecordingId || phase !== "review"}
-                  onClick={() => void keepAndContinue()}
-                >
-                  {(() => {
-                    if (!current) return "Record next part";
-                    const nextLayer = nextProductionRecommendation(
-                      [
-                        ...tasks.map((t) =>
-                          t.id === current.id ? { ...t, status: "completed" as const } : t
-                        ),
-                        ...planTasks
-                          .filter(
-                            (p) =>
-                              p.active !== false &&
-                              p.selected_in_plan !== false &&
-                              p.status !== "skipped" &&
-                              !tasks.some((x) => x.id === p.id)
-                          )
-                          .map((p) => ({
-                            id: p.id,
-                            type: p.type,
-                            title: p.title,
-                            instruction: p.instruction || "",
-                            status: p.status || "pending",
-                            required: Boolean(p.required),
-                            start_ms: p.start_ms,
-                            end_ms: p.end_ms,
-                            section_id: p.section_id,
-                            metadata: p.metadata as Task["metadata"],
-                          })),
-                      ],
-                      { ...current, status: "completed" }
-                    );
-                    if (nextLayer) {
-                      const copy = layerRecommendationCopy(nextLayer.type);
-                      return copy.cta || `Record ${nextLayer.type || "next"}`;
-                    }
-                    return "Next part";
-                  })()}
-                </button>
-{savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (
-                  <button
-                    type="button"
-                    style={{ ...btn2, marginTop: 8 }}
-                    disabled={uploading || skipping}
-                    onClick={() => {
-                      void (async () => {
-                        try {
-                          await fetch(`/api/projects/${id}/plan`, {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              action: "add",
-                              task: {
-                                type: "DOUBLE",
-                                title: "Double",
-                                instruction: "Sing the same line again, matching your lead as closely as you can.",
-                                start_ms: current.start_ms ?? 0,
-                                end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
-                                section_id: current.section_id,
-                                section_label: current.metadata?.section_label,
-                              },
-                            }),
-                          });
-                          const tr = await fetch(`/api/projects/${id}/recording-tasks`);
-                          if (tr.ok) setTasks((await tr.json()).tasks || []);
-                        } catch {
-                          /* non-fatal */
-                        }
-                      })();
-                    }}
-                  >
-                    Add a double (optional)
-                  </button>
-                )}
                 {savedRecordingId && (
                   <button
                     type="button"
@@ -3309,6 +3498,7 @@ export default function ProjectDetailPage() {
                     I&apos;m done — preview song
                   </button>
                 )}
+
 
               </div>
             )}
