@@ -3014,37 +3014,6 @@ export default function ProjectDetailPage() {
             <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
               ← Plan
             </button>
-            {current && (() => {
-              // Single compact CTA: next open layer on this section (harmony / double / …)
-              const nextLayer =
-                nextProductionRecommendation(tasks, current) ||
-                openLayersForSection(tasks, current).find((l) => isTaskOpen(l)) ||
-                null;
-              if (!nextLayer || nextLayer.id === current.id) return null;
-              const label = humanTitle(nextLayer.type || nextLayer.title || "layer");
-              return (
-                <button
-                  type="button"
-                  onClick={() => selectTask(nextLayer.id)}
-                  disabled={phase === "recording" || phase === "countdown"}
-                  style={{
-                    ...btn2,
-                    width: "100%",
-                    marginTop: 8,
-                    marginBottom: 4,
-                    padding: "10px 14px",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                >
-                  Next: record {label}
-                </button>
-              );
-            })()}
             <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
             <p style={{ textAlign: "center", fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>
               {coreDone(tasks).length}/{coreTasks(tasks).length} core sections
