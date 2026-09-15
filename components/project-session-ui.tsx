@@ -3041,7 +3041,7 @@ export default function ProjectDetailPage() {
                   {uploading
                     ? "Saving take…"
                     : savedRecordingId
-                      ? "Saved · play to review, keep, or retake"
+                      ? "Saved automatically · play to review, retake, or record next"
                       : localBlobUrl
                         ? "Play to review · saving may still be in progress"
                         : "Loading take…"}
@@ -3154,12 +3154,21 @@ export default function ProjectDetailPage() {
                 {producerTip && (
                   <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
                 )}
-                <button type="button" style={{ ...btn, marginTop: 16 }} disabled={uploading || !savedRecordingId || phase !== "review"} onClick={keepAndContinue}>
-                {!uploading && current && (() => {
+                {uploading && (
+                  <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 14 }}>
+                    Saving take…
+                  </p>
+                )}
+                {!uploading && savedRecordingId && (
+                  <p style={{ textAlign: "center", color: C.signal, fontSize: 13, marginTop: 14, fontWeight: 600 }}>
+                    Take saved
+                  </p>
+                )}
+                {!uploading && current && savedRecordingId && (() => {
                   const nextLayer = nextProductionRecommendation(
                     [
                       ...tasks.map((t) =>
-                        t.id === current.id ? { ...t, status: "completed" } : t
+                        t.id === current.id ? { ...t, status: "completed" as const } : t
                       ),
                       ...planTasks
                         .filter(
@@ -3167,7 +3176,7 @@ export default function ProjectDetailPage() {
                             p.active !== false &&
                             p.selected_in_plan !== false &&
                             p.status !== "skipped" &&
-                            !tasks.some((t) => t.id === p.id)
+                            !tasks.some((x) => x.id === p.id)
                         )
                         .map((p) => ({
                           id: p.id,
@@ -3192,16 +3201,72 @@ export default function ProjectDetailPage() {
                     </p>
                   );
                 })()}
-                  {uploading ? "Saving…" : isRetake ? "Keep retake & continue" : "Keep take & continue"}
+                <button
+                  type="button"
+                  style={{ ...btn, marginTop: 16 }}
+                  disabled={uploading}
+                  onClick={() => {
+                    setError(null);
+                    setLocalBlobUrl(null);
+                    setSavedRecordingId(null);
+                    setProducerTip(null);
+                    setReviewVoiceOnly(false);
+                    setTaskTakes([]);
+                    setPhase("ready");
+                  }}
+                >
+                  Retake
                 </button>
-                {savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (
+                <button
+                  type="button"
+                  style={{ ...btn2, marginTop: 8 }}
+                  disabled={uploading || !savedRecordingId || phase !== "review"}
+                  onClick={() => void keepAndContinue()}
+                >
+                  {(() => {
+                    if (!current) return "Record next part";
+                    const nextLayer = nextProductionRecommendation(
+                      [
+                        ...tasks.map((t) =>
+                          t.id === current.id ? { ...t, status: "completed" as const } : t
+                        ),
+                        ...planTasks
+                          .filter(
+                            (p) =>
+                              p.active !== false &&
+                              p.selected_in_plan !== false &&
+                              p.status !== "skipped" &&
+                              !tasks.some((x) => x.id === p.id)
+                          )
+                          .map((p) => ({
+                            id: p.id,
+                            type: p.type,
+                            title: p.title,
+                            instruction: p.instruction || "",
+                            status: p.status || "pending",
+                            required: Boolean(p.required),
+                            start_ms: p.start_ms,
+                            end_ms: p.end_ms,
+                            section_id: p.section_id,
+                            metadata: p.metadata as Task["metadata"],
+                          })),
+                      ],
+                      { ...current, status: "completed" }
+                    );
+                    if (nextLayer) {
+                      const copy = layerRecommendationCopy(nextLayer.type);
+                      return copy.cta || `Record ${nextLayer.type || "next"}`;
+                    }
+                    return "Next part";
+                  })()}
+                </button>
+{savedRecordingId && current && (current.type || "").toUpperCase().includes("LEAD") && (
                   <button
                     type="button"
                     style={{ ...btn2, marginTop: 8 }}
                     disabled={uploading || skipping}
                     onClick={() => {
                       void (async () => {
-                        keepAndContinue();
                         try {
                           await fetch(`/api/projects/${id}/plan`, {
                             method: "PATCH",
@@ -3230,37 +3295,21 @@ export default function ProjectDetailPage() {
                     Add a double (optional)
                   </button>
                 )}
-                <button
-                  type="button"
-                  style={{ ...btn2, marginTop: 8 }}
-                  disabled={uploading}
-                  onClick={() => {
-                    setError(null);
-                    setLocalBlobUrl(null);
-                    setSavedRecordingId(null);
-                    setProducerTip(null);
-                    setReviewVoiceOnly(false);
-                    setTaskTakes([]);
-                    setPhase("ready");
-                  }}
-                >
-                  Retake
-                </button>
                 {savedRecordingId && (
                   <button
                     type="button"
                     style={{ ...btn2, marginTop: 8 }}
                     disabled={uploading}
                     onClick={() => {
-                      if (savedRecordingId) keepAndContinue();
                       setSectionPreviewOnly(false);
                       setScreen("assemble");
                       void loadSongPreview();
                     }}
                   >
-                    I'm done — preview song
+                    I&apos;m done — preview song
                   </button>
                 )}
+
               </div>
             )}
           </div>
