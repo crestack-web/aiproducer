@@ -245,6 +245,31 @@ export function ProducerView({
 }: Props) {
   const { colors: C } = useTheme();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const headerScrollRef = useRef<HTMLDivElement | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncingScroll = useRef(false);
+
+  function onHeaderScroll() {
+    if (syncingScroll.current) return;
+    const h = headerScrollRef.current;
+    const tl = timelineScrollRef.current;
+    if (!h || !tl) return;
+    syncingScroll.current = true;
+    tl.scrollTop = h.scrollTop;
+    syncingScroll.current = false;
+  }
+
+  function onTimelineScroll() {
+    if (syncingScroll.current) return;
+    const h = headerScrollRef.current;
+    const tl = timelineScrollRef.current;
+    if (!h || !tl) return;
+    syncingScroll.current = true;
+    h.scrollTop = tl.scrollTop;
+    syncingScroll.current = false;
+  }
+
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const gainsRef = useRef<Map<string, GainNode>>(new Map());
@@ -949,7 +974,7 @@ export function ProducerView({
         flexDirection: "column",
         height: "100dvh",
         width: "100vw",
-        maxWidth: "100%",
+        maxWidth: undefined as unknown as number,
         background: bg,
         color: text,
         fontFamily: "system-ui, -apple-system, sans-serif",
@@ -1063,44 +1088,252 @@ export function ProducerView({
         </div>
       )}
 
+
+      {/* Suno-style dual scroller: pinned headers | timeline, synced vertical scroll */}
       <div
-        ref={scrollRef}
         style={{
           flex: 1,
-          overflowX: "auto",
-          overflowY: "auto",
-          WebkitOverflowScrolling: "touch",
-          position: "relative",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "row",
           background: bg,
-          overscrollBehavior: "contain",
+          borderBottom: `1px solid ${border}`,
         }}
       >
-        <div style={{ position: "sticky", top: 0, zIndex: 6, background: bg }}>
-          <div style={{ display: "flex", minWidth: timelineW + 120 }}>
+        {/* LEFT: track headers — vertical scroll only */}
+        <div
+          ref={headerScrollRef}
+          onScroll={onHeaderScroll}
+          style={{
+            width: 128,
+            flexShrink: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+            WebkitOverflowScrolling: "touch",
+            borderRight: `1px solid ${border}`,
+            background: bg,
+            overscrollBehavior: "contain",
+          }}
+        >
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 5,
+              height: 40,
+              display: "flex",
+              alignItems: "center",
+              padding: "0 10px",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.06em",
+              color: faint,
+              background: bg,
+              borderBottom: `1px solid ${border}`,
+            }}
+          >
+            TRACKS
+          </div>
+          {tracks.map((tr, trackIdx) => {
+            const isMuted = muted[tr.id];
+            const isSolo = soloId === tr.id;
+            const rowH = expandedId === tr.id ? 92 : 48;
+            return (
+              <div
+                key={`h-${tr.id}`}
+                style={{
+                  height: rowH,
+                  boxSizing: "border-box",
+                  borderBottom: `1px solid rgba(255,255,255,0.06)`,
+                  borderLeft: `3px solid ${tr.color}`,
+                  padding: "6px 8px",
+                  background:
+                    selectedTrackId === tr.id ? "rgba(255,255,255,0.05)" : "transparent",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedId(expandedId === tr.id ? null : tr.id);
+                    setSelectedTrackId(tr.id);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: text,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    padding: 0,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    width: "100%",
+                    fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <span
+                    style={{
+                      color: faint,
+                      fontSize: 10,
+                      fontVariantNumeric: "tabular-nums",
+                      minWidth: 14,
+                    }}
+                  >
+                    {trackIdx + 1}
+                  </span>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1,
+                    }}
+                  >
+                    {tr.label}
+                  </span>
+                </button>
+                {tr.sub && (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: faint,
+                      paddingLeft: 20,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {tr.sub}
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 4,
+                    marginTop: 4,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    paddingLeft: 4,
+                  }}
+                >
+                  <button
+                    type="button"
+                    title={isMuted ? "Unmute" : "Mute"}
+                    onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
+                    style={{ ...miniChip(border, brass, isMuted, text), fontSize: 11 }}
+                  >
+                    {isMuted ? "🔇" : "🔊"}
+                  </button>
+                  <button
+                    type="button"
+                    title="Solo"
+                    onClick={() => setSoloId(soloId === tr.id ? null : tr.id)}
+                    style={miniChip(border, brass, isSolo, text)}
+                  >
+                    S
+                  </button>
+                  <button
+                    type="button"
+                    title="Effects"
+                    onClick={() => {
+                      setSelectedTrackId(tr.id);
+                      setFxOpenId(tr.id);
+                    }}
+                    style={miniChip(border, brass, fxOpenId === tr.id, text)}
+                  >
+                    FX
+                  </button>
+                  {tr.kind === "vocal" && (
+                    <>
+                      <button
+                        type="button"
+                        title="Color"
+                        onClick={() =>
+                          setColorPickerId(colorPickerId === tr.id ? null : tr.id)
+                        }
+                        style={{
+                          width: 22,
+                          height: 20,
+                          borderRadius: 5,
+                          border: `1px solid ${border}`,
+                          background: tr.color,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                      <button
+                        type="button"
+                        title="Remove"
+                        onClick={() => void deleteLayer(tr.id)}
+                        style={miniChip(border, "#E8756A", false, text)}
+                      >
+                        ×
+                      </button>
+                    </>
+                  )}
+                </div>
+                {colorPickerId === tr.id && tr.kind === "vocal" && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 4,
+                    }}
+                  >
+                    {TRACK_COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => void persistColor(tr.id, c)}
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 4,
+                          border: tr.color === c ? `2px solid ${text}` : `1px solid ${border}`,
+                          background: c,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* RIGHT: timeline — horizontal + vertical scroll (vertical synced with headers) */}
+        <div
+          ref={timelineScrollRef}
+          onScroll={onTimelineScroll}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflowX: "auto",
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            overscrollBehavior: "contain",
+            position: "relative",
+          }}
+        >
+          <div style={{ minWidth: timelineW, position: "relative" }}>
             <div
               style={{
-                width: 108,
-                flexShrink: 0,
-                padding: "10px 8px",
-                fontSize: 11,
-                fontWeight: 700,
-                color: faint,
-                letterSpacing: "0.04em",
-              }}
-            >
-              SECTIONS
-            </div>
-            <div
-              style={{
-                position: "relative",
+                position: "sticky",
+                top: 0,
+                zIndex: 6,
                 height: 40,
-                width: timelineW,
                 borderBottom: `1px solid ${border}`,
                 background: surface,
               }}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
-                seekTo(((e.clientX - rect.left) / pxPerSec) * 1000);
+                const x = e.clientX - rect.left + (timelineScrollRef.current?.scrollLeft || 0);
+                seekTo((x / pxPerSec) * 1000);
               }}
             >
               {sections.map((s) => (
@@ -1143,312 +1376,123 @@ export function ProducerView({
                 }}
               />
             </div>
-          </div>
-        </div>
 
-        {tracks.map((tr, trackIdx) => {
-          const expanded = expandedId === tr.id;
-          const isMuted = muted[tr.id];
-          const isSolo = soloId === tr.id;
-          const dimmed = !isAudible(tr.id, tr.kind);
-          const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
-          const clipH = expanded ? 68 : 32;
-          return (
-            <div
-              key={tr.id}
-              style={{
-                display: "flex",
-                flexDirection: fxOpenId === tr.id ? "column" : "row",
-                flexWrap: fxOpenId === tr.id ? "wrap" : "nowrap",
-                minWidth: timelineW + 120,
-                borderBottom: `1px solid rgba(255,255,255,0.06)`,
-                background: selectedTrackId === tr.id
-                  ? "rgba(255,255,255,0.04)"
-                  : expanded
-                    ? surface
-                    : "transparent",
-              }}
-            >
-              <div style={{ display: "flex", minWidth: timelineW + 120, width: "100%" }}>
-              <div
-                style={{
-                  width: 120,
-                  flexShrink: 0,
-                  padding: "8px 8px 8px 0",
-                  position: "sticky",
-                  left: 0,
-                  zIndex: 3,
-                  background: bg,
-                  borderRight: `1px solid ${border}`,
-                  borderLeft: `3px solid ${tr.color}`,
-                  boxSizing: "border-box",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExpandedId(expanded ? null : tr.id);
+            {tracks.map((tr) => {
+              const expanded = expandedId === tr.id;
+              const dimmed = !isAudible(tr.id, tr.kind);
+              const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
+              const clipH = expanded ? 68 : 32;
+              const rowH = expanded ? 92 : 48;
+              return (
+                <div
+                  key={`tl-${tr.id}`}
+                  style={{
+                    position: "relative",
+                    height: rowH,
+                    boxSizing: "border-box",
+                    borderBottom: `1px solid rgba(255,255,255,0.06)`,
+                    background:
+                      selectedTrackId === tr.id ? "rgba(255,255,255,0.04)" : "transparent",
+                  }}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x =
+                      e.clientX - rect.left + (timelineScrollRef.current?.scrollLeft || 0);
+                    seekTo((x / pxPerSec) * 1000);
                     setSelectedTrackId(tr.id);
                   }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: text,
-                    fontWeight: 700,
-                    fontSize: 12,
-                    padding: "0 0 0 8px",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    width: "100%",
-                    fontFamily: "inherit",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
                 >
-                  <span style={{ color: faint, fontSize: 10, fontVariantNumeric: "tabular-nums", minWidth: 14 }}>
-                    {trackIdx + 1}
-                  </span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                    }}
-                  >
-                    {tr.label}
-                  </span>
-                </button>
-                {tr.sub && (
                   <div
+                    data-layer-id={tr.id}
+                    onPointerMove={onClipPointerMove}
+                    onPointerUp={onClipPointerUp}
+                    onPointerCancel={onClipPointerUp}
                     style={{
-                      fontSize: 10,
-                      color: faint,
-                      marginTop: 3,
-                      paddingLeft: 16,
+                      position: "absolute",
+                      left: msToX(tr.startMs),
+                      width: clipW,
+                      top: expanded ? 12 : 8,
+                      height: clipH,
+                      borderRadius: 6,
+                      background: tr.color,
+                      boxShadow:
+                        selectedTrackId === tr.id
+                          ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
+                          : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      cursor: tr.kind === "vocal" ? "grab" : "default",
+                      touchAction: "none",
+                      opacity: dimmed ? 0.4 : 1,
                     }}
+                    onPointerDown={
+                      tr.kind === "vocal"
+                        ? (e) => {
+                            setSelectedTrackId(tr.id);
+                            onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
+                          }
+                        : () => setSelectedTrackId(tr.id)
+                    }
                   >
-                    {tr.sub}
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", alignItems: "center", paddingLeft: 8 }}>
-                  <button
-                    type="button"
-                    title={isMuted ? "Unmute" : "Mute"}
-                    onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
-                    style={{
-                      ...miniChip(border, brass, isMuted, text),
-                      fontSize: 12,
-                    }}
-                    aria-label={isMuted ? "Unmute" : "Mute"}
-                  >
-                    {isMuted ? "🔇" : "🔊"}
-                  </button>
-                  <button
-                    type="button"
-                    title="Solo + beat (monitor only)"
-                    onClick={() => setSoloId(soloId === tr.id ? null : tr.id)}
-                    style={miniChip(border, brass, isSolo, text)}
-                  >
-                    S
-                  </button>
-                  {tr.kind === "vocal" && (
-                    <button
-                      type="button"
-                      title="Remove from plan"
-                      disabled={savingId === tr.id}
-                      onClick={() => void deleteLayer(tr.id)}
-                      style={miniChip(border, "#E8756A", false, text)}
-                    >
-                      ×
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    title="Effects rack"
-                    onClick={() => setFxOpenId(fxOpenId === tr.id ? null : tr.id)}
-                    style={miniChip(border, brass, fxOpenId === tr.id, text)}
-                  >
-                    FX
-                  </button>
-                  {tr.kind === "vocal" && (
-                    <button
-                      type="button"
-                      title="Track color"
-                      onClick={() =>
-                        setColorPickerId(colorPickerId === tr.id ? null : tr.id)
-                      }
-                      style={{
-                        width: 26,
-                        height: 24,
-                        borderRadius: 6,
-                        border: `2px solid ${border}`,
-                        background: tr.color,
-                        cursor: "pointer",
-                        padding: 0,
-                        boxShadow: `0 0 0 1px ${tr.color}55`,
-                      }}
-                      aria-label="Change track color"
+                    <WaveformCanvas
+                      peaks={peaksById[tr.id] || null}
+                      color={tr.color}
+                      width={clipW}
+                      height={clipH}
+                      dimmed={dimmed}
                     />
-                  )}
-                </div>
-                {colorPickerId === tr.id && tr.kind === "vocal" && (
+                    {tr.kind === "vocal" && (
+                      <>
+                        <div
+                          onPointerDown={(e) =>
+                            onClipPointerDown(e, tr.id, "trim-start", tr.startMs, tr.endMs)
+                          }
+                          style={{
+                            position: "absolute",
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: 14,
+                            background: "rgba(255,255,255,0.35)",
+                            cursor: "ew-resize",
+                            touchAction: "none",
+                          }}
+                        />
+                        <div
+                          onPointerDown={(e) =>
+                            onClipPointerDown(e, tr.id, "trim-end", tr.startMs, tr.endMs)
+                          }
+                          style={{
+                            position: "absolute",
+                            right: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: 14,
+                            background: "rgba(255,255,255,0.35)",
+                            cursor: "ew-resize",
+                            touchAction: "none",
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
                   <div
                     style={{
-                      marginTop: 8,
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      maxWidth: 160,
+                      position: "absolute",
+                      left: msToX(playheadMs),
+                      top: 0,
+                      bottom: 0,
+                      width: 2,
+                      background: "#F07167",
+                      pointerEvents: "none",
+                      zIndex: 4,
                     }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {TRACK_COLOR_PRESETS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        title={c}
-                        onClick={() => void persistColor(tr.id, c)}
-                        style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: 6,
-                          border:
-                            tr.color === c
-                              ? `2px solid ${text}`
-                              : `1px solid ${border}`,
-                          background: c,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div
-                style={{
-                  position: "relative",
-                  width: timelineW,
-                  height: expanded ? 92 : 48,
-                  transition: "height 0.15s ease",
-                  background: "rgba(0,0,0,0.15)",
-                }}
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  seekTo(((e.clientX - rect.left) / pxPerSec) * 1000);
-                }}
-              >
-                <div
-                  data-layer-id={tr.id}
-                  onPointerMove={onClipPointerMove}
-                  onPointerUp={onClipPointerUp}
-                  onPointerCancel={onClipPointerUp}
-                  style={{
-                    position: "absolute",
-                    left: msToX(tr.startMs),
-                    width: clipW,
-                    top: expanded ? 12 : 10,
-                    height: clipH,
-                    borderRadius: 6,
-                    background: tr.color,
-                    boxShadow: selectedTrackId === tr.id
-                      ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
-                      : `0 1px 0 rgba(0,0,0,0.35)`,
-                    overflow: "hidden",
-                    cursor: tr.kind === "vocal" ? "grab" : "default",
-                    touchAction: "none",
-                    opacity: dimmed ? 0.4 : 1,
-                  }}
-                  onPointerDown={
-                    tr.kind === "vocal"
-                      ? (e) => {
-                          setSelectedTrackId(tr.id);
-                          onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
-                        }
-                      : (e) => {
-                          setSelectedTrackId(tr.id);
-                        }
-                  }
-                >
-                  <WaveformCanvas
-                    peaks={peaksById[tr.id] || null}
-                    color={tr.color}
-                    width={clipW}
-                    height={clipH}
-                    dimmed={dimmed}
-                  />
-                  {tr.kind === "vocal" && (
-                    <>
-                      <div
-                        onPointerDown={(e) =>
-                          onClipPointerDown(e, tr.id, "trim-start", tr.startMs, tr.endMs)
-                        }
-                        style={{
-                          position: "absolute",
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 14,
-                          background: "rgba(255,255,255,0.35)",
-                          cursor: "ew-resize",
-                          touchAction: "none",
-                        }}
-                      />
-                      <div
-                        onPointerDown={(e) =>
-                          onClipPointerDown(e, tr.id, "trim-end", tr.startMs, tr.endMs)
-                        }
-                        style={{
-                          position: "absolute",
-                          right: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 14,
-                          background: "rgba(255,255,255,0.35)",
-                          cursor: "ew-resize",
-                          touchAction: "none",
-                        }}
-                      />
-                    </>
-                  )}
-                </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    left: msToX(playheadMs),
-                    top: 0,
-                    bottom: 0,
-                    width: 2,
-                    background: "#F07167",
-                    pointerEvents: "none",
-                    zIndex: 4,
-                  }}
-                />
-              </div>
-              </div>
-              {fxOpenId === tr.id && (
-                <div style={{ width: "100%", padding: "8px 12px 12px 12px", boxSizing: "border-box", background: "rgba(0,0,0,0.25)" }}>
-                  <TrackFxPanel
-                    fx={fxById[tr.id] || DEFAULT_TRACK_FX}
-                    color={text}
-                    muted={mutedText}
-                    border={border}
-                    brass={brass}
-                    surface={surface}
-                    onChange={(fx) => setFxById((prev) => ({ ...prev, [tr.id]: fx }))}
-                    onCommit={(fx) => void persistFx(tr.id, fx)}
                   />
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
         {layers.length === 0 && (
           <div
@@ -1730,6 +1774,92 @@ export function ProducerView({
   );
 }
 
+
+      {/* FX modal — Suno-style plugin sheet */}
+      {fxOpenId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10050,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => setFxOpenId(null)}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 480,
+              maxHeight: "72dvh",
+              overflowY: "auto",
+              borderRadius: "18px 18px 0 0",
+              background: surface,
+              border: `1px solid ${border}`,
+              borderBottom: "none",
+              padding: "16px 16px max(16px, env(safe-area-inset-bottom))",
+              boxShadow: "0 -8px 40px rgba(0,0,0,0.45)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.08em",
+                    color: brass,
+                  }}
+                >
+                  TRACK FX
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 16, color: text }}>
+                  {tracks.find((x) => x.id === fxOpenId)?.label || "Track"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFxOpenId(null)}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  border: `1px solid ${border}`,
+                  background: bg,
+                  color: text,
+                  cursor: "pointer",
+                  fontSize: 16,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <TrackFxPanel
+              fx={fxById[fxOpenId] || DEFAULT_TRACK_FX}
+              color={text}
+              muted={mutedText}
+              border={border}
+              brass={brass}
+              surface={bg}
+              onChange={(fx) => setFxById((prev) => ({ ...prev, [fxOpenId]: fx }))}
+              onCommit={(fx) => void persistFx(fxOpenId, fx)}
+            />
+          </div>
+        </div>
+      )}
+
 function TrackFxPanel({
   fx,
   color,
@@ -1804,7 +1934,7 @@ function TrackFxPanel({
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        maxWidth: "100%",
+        maxWidth: undefined as unknown as number,
       }}
       onClick={(e) => e.stopPropagation()}
     >
