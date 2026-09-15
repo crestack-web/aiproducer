@@ -4,16 +4,15 @@
  */
 
 import { createServiceClient } from "@/lib/supabase/server";
-import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
 import {
   productionMasterPath,
   productionMixPath,
   uploadBuffer,
 } from "@/lib/storage";
-import { runApArrangement } from "../index";
 import type { ApStage } from "../types";
 import { collectVocalsForProduce } from "./collect-vocals";
 import { runFastArrangement } from "./fast-produce";
+import { runFullProduceWithCheckpoints } from "./run-full-phased";
 
 const AP_STAGES: ReadonlySet<string> = new Set([
   "queued",
@@ -137,8 +136,6 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    // Full engine is the default produce path (restoration + QC + proper gain staging).
-    // Opt into the fast stopgap only with AP_FAST_ENGINE=1 (e.g. emergency Vercel timeouts).
     const useFast =
       process.env.AP_FAST_ENGINE === "1" || process.env.AP_FAST_ENGINE === "true";
 
@@ -173,54 +170,30 @@ export async function runInternalApProduceJob(opts: {
         note: "Opt-in fast stopgap (AP_FAST_ENGINE=1). Default produce uses full engine.",
       };
     } else {
-      const beatBuffer = await downloadStorageOrUrl(beat.audio_path);
-      const result = await runApArrangement(
-        {
-          jobId,
-          projectId,
-          userId,
-          beatBuffer,
-          beatPathHint: beat.audio_path,
-          vocals,
-          genre: project?.genre,
-        },
-        report
-      );
-
-      if (!result.ok) {
-        await patch("failed", 100, {
-          error: result.error,
-          detail: result.detail,
-          engineVersion: "ap-full",
-          placementLog,
-        });
-        await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-        return { complete: false, error: result.error };
+      const phased = await runFullProduceWithCheckpoints({
+        jobId,
+        projectId,
+        userId,
+        beatPath: beat.audio_path,
+        vocals,
+        genre: project?.genre,
+        placementLog,
+        report,
+        patch,
+      });
+      if (!phased.complete) {
+        if (phased.error) {
+          await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
+          return { complete: false, error: phased.error };
+        }
+        // In progress — checkpoint saved; wait for next poll tick
+        return { complete: false };
       }
-
-      engineVersion = result.engineVersion || "ap-full";
-      const processedVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-processed.wav`;
-      const restoredVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-restored.wav`;
-      await uploadBuffer(mixPath, result.mixWav, "audio/wav");
-      await uploadBuffer(masterPath, result.masterWav, "audio/wav");
-      await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
-      await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
-      if (result.masterMp3) {
-        mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
-        await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
-      }
-      const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
+      engineVersion = phased.engineVersion || "ap-full";
+      mp3Path = phased.mp3Path ?? null;
       metaExtra = {
         ...metaExtra,
-        mix_storage_path: mixPath,
-        master_mp3_path: mp3Path,
-        processed_vocal_path: processedVocalPath,
-        restored_vocal_path: restoredVocalPath,
-        decision: result.decision,
-        roles: roleNote || null,
-        qc: result.qc,
-        retryCount: result.retryCount,
-        path: "full",
+        ...(phased.metaExtra || {}),
       };
     }
 
