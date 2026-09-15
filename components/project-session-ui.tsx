@@ -4070,6 +4070,18 @@ export default function ProjectDetailPage() {
           projectTitle={project?.title || "Session"}
           projectId={id}
           beatUrl={beatUrl}
+          onLayersChanged={() => {
+            void (async () => {
+              try {
+                const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+                if (!tr.ok) return;
+                const tj = await tr.json();
+                if (Array.isArray(tj.tasks)) setTasks(tj.tasks);
+              } catch {
+                /* ignore */
+              }
+            })();
+          }}
           sections={
             (tasks || [])
               .filter((tk) => tk.start_ms != null)

@@ -36,6 +36,8 @@ type Props = {
   layers: ProducerLayer[];
   onClose?: () => void;
   onOpenTweak?: () => void;
+  /** Parent refreshes tasks after a timeline edit is saved */
+  onLayersChanged?: () => void;
 };
 
 const ROLE_COLORS: Record<string, string> = {
@@ -194,6 +196,7 @@ export function ProducerView({
   layers: layersProp,
   onClose,
   onOpenTweak,
+  onLayersChanged,
 }: Props) {
   const { colors: C } = useTheme();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -213,7 +216,122 @@ export function ProducerView({
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
+
   const [decodeStatus, setDecodeStatus] = useState<string>("");
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const dragRef = useRef<{
+    id: string;
+    mode: "move" | "trim-start" | "trim-end";
+    originX: number;
+    originStart: number;
+    originEnd: number;
+    lastStart: number;
+    lastEnd: number;
+  } | null>(null);
+
+  async function persistLayer(
+    id: string,
+    patch: { start_ms?: number; end_ms?: number; status?: string }
+  ) {
+    setSavingId(id);
+    setEditMsg(null);
+    try {
+      const res = await fetch(`/api/recording-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not save edit");
+        return false;
+      }
+      onLayersChanged?.();
+      return true;
+    } catch {
+      setEditMsg("Network error saving edit");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  function updateLocalLayer(id: string, startMs: number, endMs: number) {
+    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, startMs, endMs } : l)));
+  }
+
+  function onClipPointerDown(
+    e: React.PointerEvent,
+    id: string,
+    mode: "move" | "trim-start" | "trim-end",
+    startMs: number,
+    endMs: number
+  ) {
+    if (id === "beat") return;
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* */
+    }
+    dragRef.current = {
+      id,
+      mode,
+      originX: e.clientX,
+      originStart: startMs,
+      originEnd: endMs,
+      lastStart: startMs,
+      lastEnd: endMs,
+    };
+  }
+
+  function onClipPointerMove(e: React.PointerEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    const dxMs = ((e.clientX - d.originX) / pxPerSec) * 1000;
+    let start = d.originStart;
+    let end = d.originEnd;
+    const minLen = 400;
+    if (d.mode === "move") {
+      const dur = d.originEnd - d.originStart;
+      start = Math.max(0, d.originStart + dxMs);
+      end = start + dur;
+      if (end > totalMs) {
+        end = totalMs;
+        start = Math.max(0, end - dur);
+      }
+    } else if (d.mode === "trim-start") {
+      start = Math.max(0, Math.min(d.originEnd - minLen, d.originStart + dxMs));
+    } else {
+      end = Math.min(totalMs, Math.max(d.originStart + minLen, d.originEnd + dxMs));
+    }
+    const s = Math.round(start);
+    const en = Math.round(end);
+    d.lastStart = s;
+    d.lastEnd = en;
+    updateLocalLayer(d.id, s, en);
+  }
+
+  function onClipPointerUp() {
+    const d = dragRef.current;
+    if (!d || d.id === "beat") {
+      dragRef.current = null;
+      return;
+    }
+    const { id, lastStart, lastEnd } = d;
+    dragRef.current = null;
+    void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
+  }
+
+  async function deleteLayer(id: string) {
+    if (id === "beat") return;
+    if (!window.confirm("Remove this layer from the plan? The recorded take stays saved.")) return;
+    const ok = await persistLayer(id, { status: "skipped" });
+    if (ok) setLayers((prev) => prev.filter((l) => l.id !== id));
+  }
+
 
   // Merge URLs from session-preview if projectId given
   useEffect(() => {
@@ -536,7 +654,7 @@ export function ProducerView({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
-            PRODUCER VIEW
+            PRODUCER VIEW · PHASE 2
           </div>
           <div
             style={{
@@ -603,9 +721,27 @@ export function ProducerView({
             padding: "4px 10px",
           }}
         >
-          Monitor only
+          Edit · monitor
         </span>
       </div>
+      {editMsg && (
+        <div
+          style={{
+            padding: "8px 14px",
+            fontSize: 12,
+            color: "#E8756A",
+            background: "rgba(232,117,106,0.1)",
+            borderBottom: `1px solid ${border}`,
+          }}
+        >
+          {editMsg}
+        </div>
+      )}
+      {savingId && (
+        <div style={{ padding: "6px 14px", fontSize: 12, color: faint, borderBottom: `1px solid ${border}` }}>
+          Saving edit…
+        </div>
+      )}
 
       <div
         ref={scrollRef}
@@ -762,7 +898,7 @@ export function ProducerView({
                     {tr.sub}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
                   <button
                     type="button"
                     title="Mute (monitor only)"
@@ -779,6 +915,17 @@ export function ProducerView({
                   >
                     S
                   </button>
+                  {tr.kind === "vocal" && (
+                    <button
+                      type="button"
+                      title="Remove from plan"
+                      disabled={savingId === tr.id}
+                      onClick={() => void deleteLayer(tr.id)}
+                      style={miniChip(border, "#E8756A", false, text)}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -796,6 +943,10 @@ export function ProducerView({
                 }}
               >
                 <div
+                  data-layer-id={tr.id}
+                  onPointerMove={onClipPointerMove}
+                  onPointerUp={onClipPointerUp}
+                  onPointerCancel={onClipPointerUp}
                   style={{
                     position: "absolute",
                     left: msToX(tr.startMs),
@@ -806,7 +957,14 @@ export function ProducerView({
                     background: `linear-gradient(180deg, ${tr.color}33, ${tr.color}18)`,
                     boxShadow: `inset 0 0 0 1px ${tr.color}66`,
                     overflow: "hidden",
+                    cursor: tr.kind === "vocal" ? "grab" : "default",
+                    touchAction: "none",
                   }}
+                  onPointerDown={
+                    tr.kind === "vocal"
+                      ? (e) => onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs)
+                      : undefined
+                  }
                 >
                   <WaveformCanvas
                     peaks={peaksById[tr.id] || null}
@@ -815,6 +973,40 @@ export function ProducerView({
                     height={clipH}
                     dimmed={dimmed}
                   />
+                  {tr.kind === "vocal" && (
+                    <>
+                      <div
+                        onPointerDown={(e) =>
+                          onClipPointerDown(e, tr.id, "trim-start", tr.startMs, tr.endMs)
+                        }
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 14,
+                          background: "rgba(255,255,255,0.35)",
+                          cursor: "ew-resize",
+                          touchAction: "none",
+                        }}
+                      />
+                      <div
+                        onPointerDown={(e) =>
+                          onClipPointerDown(e, tr.id, "trim-end", tr.startMs, tr.endMs)
+                        }
+                        style={{
+                          position: "absolute",
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 14,
+                          background: "rgba(255,255,255,0.35)",
+                          cursor: "ew-resize",
+                          touchAction: "none",
+                        }}
+                      />
+                    </>
+                  )}
                 </div>
                 <div
                   style={{
