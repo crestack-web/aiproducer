@@ -6,7 +6,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 type Ctx = { params: Promise<{ id: string }> };
 
 /** Phase 4 — per-track monitor/production FX (decision-map compatible) */
-export const TrackFxSchema = z.object({
+const TrackFxSchema = z.object({
   gainDb: z.number().min(-24).max(24).optional(),
   eqLowDb: z.number().min(-12).max(12).optional(),
   eqMidDb: z.number().min(-12).max(12).optional(),
@@ -16,8 +16,6 @@ export const TrackFxSchema = z.object({
   delay: z.number().min(0).max(1).optional(),
   saturation: z.number().min(0).max(1).optional(),
 });
-
-export type TrackFx = z.infer<typeof TrackFxSchema>;
 
 const PatchSchema = z.object({
   start_ms: z.number().min(0).optional(),
