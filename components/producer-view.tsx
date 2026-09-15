@@ -83,16 +83,17 @@ const TRACK_COLOR_PRESETS = [
 
 const ROLE_COLORS: Record<string, string> = {
   lead: "#A78BFA",
-  double: "#818CF8",
-  harmony: "#C084FC",
+  double: "#6366F1",
+  harmony: "#D946EF",
   harmony_high: "#E879F9",
-  harmony_mid: "#C084FC",
-  harmony_low: "#A855F7",
-  adlib: "#F472B6",
-  background: "#94A3B8",
-  intro: "#67E8F9",
-  outro: "#67E8F9",
-  beat: "#34D399",
+  harmony_mid: "#C026D3",
+  harmony_low: "#9333EA",
+  adlib: "#F43F5E",
+  background: "#64748B",
+  intro: "#22D3EE",
+  outro: "#06B6D4",
+  beat: "#22C55E",
+  custom: "#F59E0B",
 };
 
 function roleColor(role: string) {
@@ -215,14 +216,17 @@ function WaveformCanvas({
       return;
     }
     const mid = height / 2;
-    ctx.fillStyle = dimmed ? color + "66" : color;
+    // Solid clip fill + dense waveform (Suno-style)
+    ctx.fillStyle = dimmed ? color + "44" : color + "CC";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = dimmed ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.92)";
     const n = peaks.length;
-    const barW = Math.max(1, width / n);
+    const barW = Math.max(1.2, width / n);
     for (let i = 0; i < n; i++) {
-      const amp = Math.min(1, peaks[i] * 1.35);
-      const h = Math.max(1, amp * (height * 0.9));
+      const amp = Math.min(1, peaks[i] * 1.55);
+      const h = Math.max(2, amp * (height * 0.82));
       const x = i * barW;
-      ctx.fillRect(x, mid - h / 2, Math.max(1, barW - 0.5), h);
+      ctx.fillRect(x, mid - h / 2, Math.max(1.2, barW - 0.35), h);
     }
   }, [peaks, color, width, height, dimmed]);
   return <canvas ref={ref} style={{ display: "block", width, height, borderRadius: 6 }} />;
@@ -265,6 +269,10 @@ export function ProducerView({
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [trackPrompt, setTrackPrompt] = useState("");
+  const [trackPromptBusy, setTrackPromptBusy] = useState(false);
+
 
 
   const [addTitle, setAddTitle] = useState("");
@@ -282,6 +290,44 @@ export function ProducerView({
     lastStart: number;
     lastEnd: number;
   } | null>(null);
+
+  async function submitTrackPrompt() {
+    if (!projectId || !selectedTrackId || !trackPrompt.trim()) return;
+    setTrackPromptBusy(true);
+    setEditMsg(null);
+    try {
+      const tr = tracks.find((x) => x.id === selectedTrackId);
+      const scoped = tr
+        ? `[track:${tr.label}] ${trackPrompt.trim()}`
+        : trackPrompt.trim();
+      const res = await fetch(`/api/projects/${projectId}/tweak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: scoped,
+          track_id: selectedTrackId === "beat" ? undefined : selectedTrackId,
+          scope: selectedTrackId === "beat" ? "song" : "section",
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditMsg(
+          typeof j.error === "string"
+            ? j.error
+            : "Tweak failed — produce the song first if needed"
+        );
+      } else {
+        setTrackPrompt("");
+        setEditMsg(null);
+        onLayersChanged?.();
+        onOpenTweak?.();
+      }
+    } catch {
+      setEditMsg("Network error sending prompt");
+    } finally {
+      setTrackPromptBusy(false);
+    }
+  }
 
   async function persistColor(id: string, color: string) {
     setColorById((prev) => ({ ...prev, [id]: color }));
@@ -928,7 +974,7 @@ export function ProducerView({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
-            PRODUCER VIEW · PHASE 4
+            PRODUCER VIEW
           </div>
           <div
             style={{
@@ -1028,7 +1074,7 @@ export function ProducerView({
         }}
       >
         <div style={{ position: "sticky", top: 0, zIndex: 6, background: bg }}>
-          <div style={{ display: "flex", minWidth: timelineW + 108 }}>
+          <div style={{ display: "flex", minWidth: timelineW + 120 }}>
             <div
               style={{
                 width: 108,
@@ -1098,64 +1144,76 @@ export function ProducerView({
           </div>
         </div>
 
-        {tracks.map((tr) => {
+        {tracks.map((tr, trackIdx) => {
           const expanded = expandedId === tr.id;
           const isMuted = muted[tr.id];
           const isSolo = soloId === tr.id;
           const dimmed = !isAudible(tr.id, tr.kind);
           const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
-          const clipH = expanded ? 64 : 36;
+          const clipH = expanded ? 68 : 32;
           return (
             <div
               key={tr.id}
               style={{
                 display: "flex",
-                minWidth: timelineW + 108,
-                borderBottom: `1px solid ${border}`,
-                opacity: dimmed ? 0.45 : 1,
-                background: expanded ? surface : "transparent",
+                minWidth: timelineW + 120,
+                borderBottom: `1px solid rgba(255,255,255,0.06)`,
+                background: selectedTrackId === tr.id
+                  ? "rgba(255,255,255,0.04)"
+                  : expanded
+                    ? surface
+                    : "transparent",
               }}
             >
               <div
                 style={{
-                  width: 108,
+                  width: 120,
                   flexShrink: 0,
-                  padding: "10px 8px",
+                  padding: "8px 8px 8px 0",
                   position: "sticky",
                   left: 0,
                   zIndex: 3,
                   background: bg,
                   borderRight: `1px solid ${border}`,
+                  borderLeft: `3px solid ${tr.color}`,
+                  boxSizing: "border-box",
                 }}
               >
                 <button
                   type="button"
-                  onClick={() => setExpandedId(expanded ? null : tr.id)}
+                  onClick={() => {
+                    setExpandedId(expanded ? null : tr.id);
+                    setSelectedTrackId(tr.id);
+                  }}
                   style={{
                     background: "none",
                     border: "none",
                     color: text,
                     fontWeight: 700,
                     fontSize: 12,
-                    padding: 0,
+                    padding: "0 0 0 8px",
                     textAlign: "left",
                     cursor: "pointer",
                     width: "100%",
                     fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
+                  <span style={{ color: faint, fontSize: 10, fontVariantNumeric: "tabular-nums", minWidth: 14 }}>
+                    {trackIdx + 1}
+                  </span>
                   <span
                     style={{
-                      display: "inline-block",
-                      width: 10,
-                      height: 10,
-                      borderRadius: 3,
-                      background: tr.color,
-                      marginRight: 6,
-                      boxShadow: `0 0 8px ${tr.color}88`,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1,
                     }}
-                  />
-                  {tr.label}
+                  >
+                    {tr.label}
+                  </span>
                 </button>
                 {tr.sub && (
                   <div
@@ -1172,7 +1230,19 @@ export function ProducerView({
                     {tr.sub}
                   </div>
                 )}
-                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", alignItems: "center", paddingLeft: 8 }}>
+                  <button
+                    type="button"
+                    title={isMuted ? "Unmute" : "Mute"}
+                    onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
+                    style={{
+                      ...miniChip(border, brass, isMuted, text),
+                      fontSize: 12,
+                    }}
+                    aria-label={isMuted ? "Unmute" : "Mute"}
+                  >
+                    {isMuted ? "🔇" : "🔊"}
+                  </button>
                   <button
                     type="button"
                     title="Solo + beat (monitor only)"
@@ -1272,7 +1342,7 @@ export function ProducerView({
                 style={{
                   position: "relative",
                   width: timelineW,
-                  height: expanded ? 88 : 56,
+                  height: expanded ? 92 : 48,
                   transition: "height 0.15s ease",
                   background: "rgba(0,0,0,0.15)",
                 }}
@@ -1292,17 +1362,25 @@ export function ProducerView({
                     width: clipW,
                     top: expanded ? 12 : 10,
                     height: clipH,
-                    borderRadius: 8,
-                    background: `linear-gradient(180deg, ${tr.color}33, ${tr.color}18)`,
-                    boxShadow: `inset 0 0 0 1px ${tr.color}66`,
+                    borderRadius: 6,
+                    background: tr.color,
+                    boxShadow: selectedTrackId === tr.id
+                      ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
+                      : `0 1px 0 rgba(0,0,0,0.35)`,
                     overflow: "hidden",
                     cursor: tr.kind === "vocal" ? "grab" : "default",
                     touchAction: "none",
+                    opacity: dimmed ? 0.4 : 1,
                   }}
                   onPointerDown={
                     tr.kind === "vocal"
-                      ? (e) => onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs)
-                      : undefined
+                      ? (e) => {
+                          setSelectedTrackId(tr.id);
+                          onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
+                        }
+                      : (e) => {
+                          setSelectedTrackId(tr.id);
+                        }
                   }
                 >
                   <WaveformCanvas
@@ -1398,6 +1476,100 @@ export function ProducerView({
           gap: 10,
         }}
       >
+        {selectedTrackId && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              padding: 10,
+              borderRadius: 14,
+              border: `1px solid ${border}`,
+              background: bg,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: (tracks.find((x) => x.id === selectedTrackId)?.color || brass) + "33",
+                  border: `1px solid ${(tracks.find((x) => x.id === selectedTrackId)?.color || brass)}88`,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: text,
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 2,
+                    background: tracks.find((x) => x.id === selectedTrackId)?.color || brass,
+                  }}
+                />
+                {tracks.find((x) => x.id === selectedTrackId)?.label || "Track"}
+                <button
+                  type="button"
+                  onClick={() => setSelectedTrackId(null)}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: mutedText,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                  aria-label="Clear track scope"
+                >
+                  ×
+                </button>
+              </span>
+              <span style={{ fontSize: 11, color: faint }}>scoped prompt</span>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={trackPrompt}
+                onChange={(e) => setTrackPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitTrackPrompt();
+                }}
+                placeholder="e.g. add a gritty delay on this track"
+                style={{
+                  flex: 1,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: surface,
+                  color: text,
+                  fontSize: 14,
+                  fontFamily: "inherit",
+                }}
+              />
+              <button
+                type="button"
+                disabled={trackPromptBusy || !trackPrompt.trim()}
+                onClick={() => void submitTrackPrompt()}
+                style={{
+                  width: 44,
+                  borderRadius: 12,
+                  border: "none",
+                  background: brass,
+                  color: "#1A1208",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontSize: 16,
+                }}
+              >
+                ↑
+              </button>
+            </div>
+          </div>
+        )}
         {!showAddTrack ? (
           <button
             type="button"
