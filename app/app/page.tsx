@@ -449,7 +449,7 @@ function AppInner() {
             {libraryTab === "beats" && (
               <div className="dash-project-grid" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
-                {!loading && projects.length === 0 && (
+                {!loading && projects.filter((p) => p.has_beat && !isFinishedSong(p)).length === 0 && (
                   <EmptyState
                     scene="beats"
                     title="No beats on the shelf"
@@ -461,21 +461,27 @@ function AppInner() {
                     }
                   />
                 )}
-                {projects.map((p) => (
-                  <ProjectRow
-                    key={p.id}
-                    p={p}
-                    meta={`Beat · ${[p.genre, p.mood].filter(Boolean).join(" · ") || p.status}`}
-                  />
-                ))}
+                {projects
+                  .filter((p) => p.has_beat && !isFinishedSong(p))
+                  .map((p) => (
+                    <ProjectRow
+                      key={p.id}
+                      p={p}
+                      meta={`Beat · ${[p.genre, p.mood].filter(Boolean).join(" · ") || p.status}`}
+                    />
+                  ))}
               </div>
             )}
             {libraryTab === "recordings" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading &&
-                  projects.filter((p) =>
-                    ["recording", "in_progress", "blueprint_ready", "complete", "beat_ready"].includes(p.status)
+                  projects.filter(
+                    (p) =>
+                      !isFinishedSong(p) &&
+                      ["recording", "in_progress", "blueprint_ready", "planned", "beat_ready"].includes(
+                        p.status
+                      )
                   ).length === 0 && (
                     <EmptyState
                       scene="recordings"
@@ -489,8 +495,12 @@ function AppInner() {
                     />
                   )}
                 {projects
-                  .filter((p) =>
-                    ["recording", "in_progress", "blueprint_ready", "complete", "beat_ready"].includes(p.status)
+                  .filter(
+                    (p) =>
+                      !isFinishedSong(p) &&
+                      ["recording", "in_progress", "blueprint_ready", "planned", "beat_ready"].includes(
+                        p.status
+                      )
                   )
                   .map((p) => (
                     <ProjectRow key={p.id} p={p} meta={`Session · ${p.status}`} />
