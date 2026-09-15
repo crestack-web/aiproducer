@@ -76,6 +76,7 @@ import {
   coreTasks,
   productionLayersAdded,
   nextProductionRecommendation,
+  openProductionLayersForSection,
   nextCoreForward,
   openLayersForSection,
   type SessionTask,
@@ -3416,129 +3417,179 @@ export default function ProjectDetailPage() {
                   </p>
                 )}
                 {!uploading && savedRecordingId && current && (() => {
-                  const nextLayer = nextProductionRecommendation(
-                    [
-                      ...tasks.map((row) =>
-                        row.id === current.id ? { ...row, status: "completed" as const } : row
-                      ),
-                      ...planTasks
-                        .filter(
-                          (plan) =>
-                            plan.active !== false &&
-                            plan.selected_in_plan !== false &&
-                            plan.status !== "skipped" &&
-                            !tasks.some((x) => x.id === plan.id)
-                        )
-                        .map((plan) => ({
-                          id: plan.id,
-                          type: plan.type,
-                          title: plan.title,
-                          instruction: plan.instruction || "",
-                          status: plan.status || "pending",
-                          required: Boolean(plan.required),
-                          start_ms: plan.start_ms,
-                          end_ms: plan.end_ms,
-                          section_id: plan.section_id,
-                          metadata: plan.metadata as Task["metadata"],
-                        })),
-                    ],
-                    { ...current, status: "completed" }
-                  );
-                  const layerLabel = nextLayer
-                    ? layerRecommendationCopy(nextLayer.type).cta || `Add ${nextLayer.type}`
-                    : null;
+                  const poolForSection = [
+                    ...tasks.map((row) =>
+                      row.id === current.id ? { ...row, status: "completed" as const } : row
+                    ),
+                    ...planTasks
+                      .filter(
+                        (plan) =>
+                          plan.active !== false &&
+                          plan.selected_in_plan !== false &&
+                          plan.status !== "skipped" &&
+                          !tasks.some((x) => x.id === plan.id)
+                      )
+                      .map((plan) => ({
+                        id: plan.id,
+                        type: plan.type,
+                        title: plan.title,
+                        instruction: plan.instruction || "",
+                        status: plan.status || "pending",
+                        required: Boolean(plan.required),
+                        start_ms: plan.start_ms,
+                        end_ms: plan.end_ms,
+                        section_id: plan.section_id,
+                        metadata: plan.metadata as Task["metadata"],
+                      })),
+                  ];
+                  const openLayers = openProductionLayersForSection(poolForSection, {
+                    ...current,
+                    status: "completed",
+                  });
+                  const nextLayer = openLayers[0] ?? null;
+
+                  async function focusLayerTask(taskId: string) {
+                    setSavedRecordingId(null);
+                    setLocalBlobUrl(null);
+                    setActiveTaskId(taskId);
+                    setPhase("ready");
+                    setScreen("session");
+                    setError(null);
+                  }
+
+                  async function addLayerType(type: "DOUBLE" | "HIGH_HARMONY" | "ADLIB") {
+                    if (!current) return;
+                    try {
+                      const res = await fetch(`/api/projects/${id}/plan`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          action: "add",
+                          task: {
+                            type,
+                            title:
+                              type === "DOUBLE"
+                                ? "Double"
+                                : type === "HIGH_HARMONY"
+                                  ? "Harmony"
+                                  : "Ad-libs",
+                            instruction:
+                              type === "DOUBLE"
+                                ? "Sing the same line again, matching your lead as closely as you can."
+                                : type === "HIGH_HARMONY"
+                                  ? "Sing a higher harmony on the lines that need lift."
+                                  : "Add free, expressive ad-libs in the open spaces.",
+                            start_ms: current.start_ms ?? 0,
+                            end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
+                            section_id: current.section_id,
+                            section_label: current.metadata?.section_label,
+                          },
+                        }),
+                      });
+                      const j = await res.json().catch(() => ({}));
+                      const tr = await fetch(`/api/projects/${id}/recording-tasks`);
+                      let list: Task[] = [];
+                      if (tr.ok) {
+                        list = (await tr.json()).tasks || [];
+                        setTasks(list);
+                      }
+                      const newId = (j && (j.task?.id || j.id || j.created?.id)) || null;
+                      const typeNeedle = type.toLowerCase().replace("_", "");
+                      let focus =
+                        (newId && list.find((x) => x.id === newId)) ||
+                        list
+                          .filter(
+                            (x) =>
+                              isTaskOpen(x) &&
+                              (x.type || "").toLowerCase().replace(/_/g, "").includes(
+                                type === "HIGH_HARMONY" ? "harmony" : typeNeedle.replace("high", "")
+                              ) &&
+                              sameMusicalSection(current, x)
+                          )
+                          .sort((a, b) => Number(b.start_ms || 0) - Number(a.start_ms || 0))[0];
+                      if (!focus) {
+                        focus =
+                          nextProductionRecommendation(
+                            list.map((x) =>
+                              x.id === current.id ? { ...x, status: "completed" } : x
+                            ),
+                            { ...current, status: "completed" }
+                          ) || undefined;
+                      }
+                      if (focus) await focusLayerTask(focus.id);
+                    } catch {
+                      /* non-fatal */
+                    }
+                  }
+
                   return (
                     <div style={{ marginTop: 16 }}>
-                      {nextLayer ? (
-                        <p style={{ textAlign: "center", color: C.brass, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                          More on this section: {layerLabel}
-                        </p>
+                      {openLayers.length > 0 ? (
+                        <>
+                          <p
+                            style={{
+                              textAlign: "center",
+                              color: C.brass,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              marginBottom: 8,
+                            }}
+                          >
+                            Planned layers left on this section
+                          </p>
+                          {openLayers.map((layer) => {
+                            const copy = layerRecommendationCopy(layer.type);
+                            return (
+                              <button
+                                key={layer.id}
+                                type="button"
+                                style={{ ...btn, marginTop: 6, width: "100%" }}
+                                disabled={uploading || phase !== "review"}
+                                onClick={() => void focusLayerTask(layer.id)}
+                              >
+                                {copy.cta || `Record ${layer.type}`}
+                              </button>
+                            );
+                          })}
+                        </>
                       ) : (
-                        <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginBottom: 8 }}>
-                          No more layers planned for this section
-                        </p>
-                      )}
-                      {nextLayer ? (
-                        <button
-                          type="button"
-                          style={{ ...btn, marginTop: 4, width: "100%" }}
-                          disabled={uploading || phase !== "review"}
-                          onClick={() => void goToSameSectionLayer()}
-                        >
-                          {layerLabel}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          style={{ ...btn, marginTop: 4, width: "100%" }}
-                          disabled={uploading || phase !== "review" || skipping}
-                          onClick={() => {
-                            void (async () => {
-                              if (!current) return;
-                              try {
-                                const res = await fetch(`/api/projects/${id}/plan`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    action: "add",
-                                    task: {
-                                      type: "DOUBLE",
-                                      title: "Double",
-                                      instruction:
-                                        "Sing the same line again, matching your lead as closely as you can.",
-                                      start_ms: current.start_ms ?? 0,
-                                      end_ms:
-                                        current.end_ms ?? (current.start_ms ?? 0) + 8000,
-                                      section_id: current.section_id,
-                                      section_label: current.metadata?.section_label,
-                                    },
-                                  }),
-                                });
-                                const j = await res.json().catch(() => ({}));
-                                const tr = await fetch(`/api/projects/${id}/recording-tasks`);
-                                let list: Task[] = [];
-                                if (tr.ok) {
-                                  list = (await tr.json()).tasks || [];
-                                  setTasks(list);
-                                }
-                                // Focus the new double: prefer API-returned id, else newest open DOUBLE same section
-                                const newId =
-                                  (j && (j.task?.id || j.id || j.created?.id)) || null;
-                                let focus =
-                                  (newId && list.find((x) => x.id === newId)) ||
-                                  list
-                                    .filter(
-                                      (x) =>
-                                        isTaskOpen(x) &&
-                                        (x.type || "").toUpperCase().includes("DOUBLE") &&
-                                        sameMusicalSection(current, x)
-                                    )
-                                    .sort((a, b) => Number(b.start_ms || 0) - Number(a.start_ms || 0))[0];
-                                if (!focus) {
-                                  // Fallback: any open non-core same section
-                                  focus =
-                                    nextProductionRecommendation(
-                                      list.map((x) =>
-                                        x.id === current.id ? { ...x, status: "completed" } : x
-                                      ),
-                                      { ...current, status: "completed" }
-                                    ) || undefined;
-                                }
-                                if (focus) {
-                                  setSavedRecordingId(null);
-                                  setLocalBlobUrl(null);
-                                  setActiveTaskId(focus.id);
-                                  setPhase("ready");
-                                  setScreen("session");
-                                }
-                              } catch {
-                                /* non-fatal */
-                              }
-                            })();
-                          }}
-                        >
-                          Add a double on this section
-                        </button>
+                        <>
+                          <p
+                            style={{
+                              textAlign: "center",
+                              color: C.textMuted,
+                              fontSize: 13,
+                              marginBottom: 8,
+                            }}
+                          >
+                            No more layers planned for this section — add one if you want
+                          </p>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 6,
+                            }}
+                          >
+                            {(
+                              [
+                                ["DOUBLE", "Add a double"],
+                                ["HIGH_HARMONY", "Add a harmony"],
+                                ["ADLIB", "Add ad-libs"],
+                              ] as const
+                            ).map(([ty, label]) => (
+                              <button
+                                key={ty}
+                                type="button"
+                                style={{ ...btn2, width: "100%" }}
+                                disabled={uploading || phase !== "review" || skipping}
+                                onClick={() => void addLayerType(ty)}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </>
                       )}
                       <button
                         type="button"

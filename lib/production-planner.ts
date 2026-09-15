@@ -7,6 +7,13 @@
  * User never sees stems, busses, EQ, or multitrack UI.
  */
 
+import {
+  decideSectionFullness,
+  layerSpecsFromSectionFullness,
+} from "@/lib/production-fullness-plan";
+
+
+
 import type { SectionType } from "./blueprint";
 
 export type ProductionTaskType =
@@ -261,7 +268,24 @@ export function planProduction(input: PlannerInput): ProductionBlueprint {
     const sec = sections[i];
     const energyPct = energy_curve[i].energy_pct;
     const budget = budgetFor(sec.type, energyPct);
-    const candidates = candidateLayers(sec.type, genre, energyPct).slice(0, budget);
+    // Prefer section-level fullness (Producer Mind-shaped restraint) for layer tasks;
+    // fall back to candidateLayers() rule table if fullness yields nothing beyond lead.
+    const leadSpec = { type: "LEAD" as const, required: true, priority: 100 };
+    const fullnessDec = decideSectionFullness({
+      sectionType: sec.type,
+      energyPct,
+      genre: input.genre,
+      mood: input.mood,
+    });
+    const fromFullness = layerSpecsFromSectionFullness(fullnessDec, sec.type);
+    const ruleLayers = candidateLayers(sec.type, genre, energyPct).filter(
+      (l) => l.type !== "LEAD"
+    );
+    const layerPart =
+      fromFullness.length > 0
+        ? fromFullness
+        : ruleLayers;
+    const candidates = [leadSpec, ...layerPart].slice(0, budget);
     if (candidates.length === 0 && sec.type !== "intro" && sec.type !== "outro") {
       candidates.push({ type: "LEAD", required: true, priority: 100 });
     }
@@ -311,6 +335,7 @@ export function planProduction(input: PlannerInput): ProductionBlueprint {
 
   notes.push(
     `Genre family: ${genre}`,
+    "Layer tasks: section-level fullness (fallback: candidateLayers rules)",
     `Tasks: ${tasks.length} (required: ${tasks.filter((t) => t.required).length})`,
     "Plan optimizes for contrast: sparse verses, fuller choruses, intimate bridge."
   );

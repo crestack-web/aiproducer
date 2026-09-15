@@ -137,51 +137,50 @@ function layerRank(type: string) {
  * Prefers production layers (double → harmony → …) but will also return any
  * other open non-lead task so Continue never jumps sections early.
  */
-export function nextProductionRecommendation(
+/**
+ * All open production-layer tasks on the same musical section as parent,
+ * ordered double → harmony → background → adlib (same rank as next recommendation).
+ */
+export function openProductionLayersForSection(
   tasks: SessionTask[],
   parent: SessionTask
-): SessionTask | null {
+): SessionTask[] {
   const openOthers = tasks.filter((t) => t.id !== parent.id && isTaskOpen(t));
-  if (!openOthers.length) return null;
-
-  const parentSid =
-    parent.section_id ||
-    (parent.metadata && (parent.metadata as { section_id?: string }).section_id) ||
-    null;
-  const parentStart = parent.start_ms != null ? Number(parent.start_ms) : null;
+  if (!openOthers.length) return [];
 
   const sameSection = openOthers.filter((t) => {
-    // 1) Shared section_id is the real plan link (analyze inserts section_id per section)
+    // Align with sameMusicalSection (section_id, label, onset-in-window) —
+    // do not use a narrower ±4s-only window that missed mid-section adlibs.
+    if (sameMusicalSection(parent, t)) return true;
+    const parentSid =
+      parent.section_id ||
+      (parent.metadata && (parent.metadata as { section_id?: string }).section_id) ||
+      null;
     const sid =
       t.section_id ||
       (t.metadata && (t.metadata as { section_id?: string }).section_id) ||
       null;
     if (parentSid && sid && parentSid === sid) return true;
-    // 2) Label / group key
-    if (sameMusicalSection(parent, t)) return true;
-    // 3) Near-identical start_ms only (layers share the lead's start)
-    if (parentStart != null && t.start_ms != null) {
-      if (Math.abs(Number(t.start_ms) - parentStart) <= 4000) return true;
-    }
     return false;
   });
 
-  if (!sameSection.length) return null;
+  return sameSection
+    .filter((t) => !isCoreTask(t))
+    .sort((a, b) => {
+      const lr = layerRank(a.type) - layerRank(b.type);
+      if (lr !== 0) return lr;
+      const as = a.start_ms != null ? Number(a.start_ms) : 0;
+      const bs = b.start_ms != null ? Number(b.start_ms) : 0;
+      return as - bs;
+    });
+}
 
-  // Production layers only — never another section's lead here
-  const layers = sameSection
-    .filter((t) => isProductionLayer(t) || isProductionLayerTask(t) || !isCoreTask(t))
-    .filter((t) => !isCoreTask(t));
-  layers.sort((a, b) => {
-    const lr = layerRank(a.type) - layerRank(b.type);
-    if (lr !== 0) return lr;
-    const as = a.start_ms != null ? Number(a.start_ms) : 0;
-    const bs = b.start_ms != null ? Number(b.start_ms) : 0;
-    return as - bs;
-  });
-  if (layers[0]) return layers[0];
-
-  return null;
+export function nextProductionRecommendation(
+  tasks: SessionTask[],
+  parent: SessionTask
+): SessionTask | null {
+  const layers = openProductionLayersForSection(tasks, parent);
+  return layers[0] ?? null;
 }
 
 /** Next open lead AFTER the completed task in timeline order (never go backward first). */
