@@ -6,6 +6,7 @@ import { useEffect, type CSSProperties, type ReactNode } from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { PwaInstallButton } from "@/components/pwa-install";
 import { ProductTour, useProductTour } from "@/components/product-tour";
 
 function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
@@ -347,7 +348,10 @@ export function AppShell({
             />
             STUDIO
           </div>
-          <ThemeToggle compact />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <PwaInstallButton compact />
+            <ThemeToggle compact />
+          </div>
         </div>
         <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }} aria-label="Main">
           {NAV.map(({ key, label, href, Icon }) => {
