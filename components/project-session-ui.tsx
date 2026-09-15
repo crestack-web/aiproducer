@@ -3032,25 +3032,29 @@ export default function ProjectDetailPage() {
             <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
               ← Plan
             </button>
+            </div>
             <button
               type="button"
               style={{
+                width: "100%",
+                marginTop: 10,
                 border: `1px solid ${C.brass}`,
                 background: C.brassSoft || "rgba(231,169,97,0.15)",
                 color: C.brass,
                 cursor: "pointer",
                 fontWeight: 700,
-                fontSize: 12,
-                padding: "6px 12px",
-                borderRadius: 999,
+                fontSize: 14,
+                padding: "12px 14px",
+                borderRadius: 12,
                 fontFamily: "inherit",
+                minHeight: 44,
+                display: phase === "recording" || phase === "countdown" ? "none" : "block",
               }}
               onClick={() => setShowProducerView(true)}
               disabled={phase === "recording" || phase === "countdown"}
             >
               Producer View
             </button>
-            </div>
             {current && (() => {
               // Single compact CTA: next open layer on this section (harmony / double / …)
               const nextLayer =

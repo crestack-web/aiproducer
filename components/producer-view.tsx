@@ -1067,10 +1067,12 @@ export function ProducerView({
         ref={scrollRef}
         style={{
           flex: 1,
-          overflow: "auto",
+          overflowX: "auto",
+          overflowY: "auto",
           WebkitOverflowScrolling: "touch",
           position: "relative",
           background: bg,
+          overscrollBehavior: "contain",
         }}
       >
         <div style={{ position: "sticky", top: 0, zIndex: 6, background: bg }}>
@@ -1156,6 +1158,8 @@ export function ProducerView({
               key={tr.id}
               style={{
                 display: "flex",
+                flexDirection: fxOpenId === tr.id ? "column" : "row",
+                flexWrap: fxOpenId === tr.id ? "wrap" : "nowrap",
                 minWidth: timelineW + 120,
                 borderBottom: `1px solid rgba(255,255,255,0.06)`,
                 background: selectedTrackId === tr.id
@@ -1165,6 +1169,7 @@ export function ProducerView({
                     : "transparent",
               }}
             >
+              <div style={{ display: "flex", minWidth: timelineW + 120, width: "100%" }}>
               <div
                 style={{
                   width: 120,
@@ -1324,18 +1329,6 @@ export function ProducerView({
                     ))}
                   </div>
                 )}
-                {fxOpenId === tr.id && (
-                  <TrackFxPanel
-                    fx={fxById[tr.id] || DEFAULT_TRACK_FX}
-                    color={text}
-                    muted={mutedText}
-                    border={border}
-                    brass={brass}
-                    surface={surface}
-                    onChange={(fx) => setFxById((prev) => ({ ...prev, [tr.id]: fx }))}
-                    onCommit={(fx) => void persistFx(tr.id, fx)}
-                  />
-                )}
               </div>
 
               <div
@@ -1438,6 +1431,21 @@ export function ProducerView({
                   }}
                 />
               </div>
+              </div>
+              {fxOpenId === tr.id && (
+                <div style={{ width: "100%", padding: "8px 12px 12px 12px", boxSizing: "border-box", background: "rgba(0,0,0,0.25)" }}>
+                  <TrackFxPanel
+                    fx={fxById[tr.id] || DEFAULT_TRACK_FX}
+                    color={text}
+                    muted={mutedText}
+                    border={border}
+                    brass={brass}
+                    surface={surface}
+                    onChange={(fx) => setFxById((prev) => ({ ...prev, [tr.id]: fx }))}
+                    onCommit={(fx) => void persistFx(tr.id, fx)}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
@@ -1480,157 +1488,183 @@ export function ProducerView({
           <div
             style={{
               display: "flex",
-              flexDirection: "column",
+              alignItems: "center",
               gap: 8,
-              padding: 10,
-              borderRadius: 14,
-              border: `1px solid ${border}`,
-              background: bg,
+              padding: "8px 0 4px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                maxWidth: "42%",
+                padding: "5px 10px",
+                borderRadius: 999,
+                background: (tracks.find((x) => x.id === selectedTrackId)?.color || brass) + "28",
+                border: `1px solid ${(tracks.find((x) => x.id === selectedTrackId)?.color || brass)}66`,
+                fontSize: 12,
+                fontWeight: 650,
+                color: text,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               <span
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "4px 10px",
-                  borderRadius: 999,
-                  background: (tracks.find((x) => x.id === selectedTrackId)?.color || brass) + "33",
-                  border: `1px solid ${(tracks.find((x) => x.id === selectedTrackId)?.color || brass)}88`,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: text,
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
-                    background: tracks.find((x) => x.id === selectedTrackId)?.color || brass,
-                  }}
-                />
-                {tracks.find((x) => x.id === selectedTrackId)?.label || "Track"}
-                <button
-                  type="button"
-                  onClick={() => setSelectedTrackId(null)}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: mutedText,
-                    cursor: "pointer",
-                    fontSize: 14,
-                    padding: 0,
-                    lineHeight: 1,
-                  }}
-                  aria-label="Clear track scope"
-                >
-                  ×
-                </button>
-              </span>
-              <span style={{ fontSize: 11, color: faint }}>scoped prompt</span>
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={trackPrompt}
-                onChange={(e) => setTrackPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void submitTrackPrompt();
-                }}
-                placeholder="e.g. add a gritty delay on this track"
-                style={{
-                  flex: 1,
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: `1px solid ${border}`,
-                  background: surface,
-                  color: text,
-                  fontSize: 14,
-                  fontFamily: "inherit",
+                  width: 7,
+                  height: 7,
+                  borderRadius: 2,
+                  flexShrink: 0,
+                  background: tracks.find((x) => x.id === selectedTrackId)?.color || brass,
                 }}
               />
+              {tracks.find((x) => x.id === selectedTrackId)?.label || "Track"}
               <button
                 type="button"
-                disabled={trackPromptBusy || !trackPrompt.trim()}
-                onClick={() => void submitTrackPrompt()}
+                onClick={() => setSelectedTrackId(null)}
                 style={{
-                  width: 44,
-                  borderRadius: 12,
                   border: "none",
-                  background: brass,
-                  color: "#1A1208",
-                  fontWeight: 800,
+                  background: "transparent",
+                  color: mutedText,
                   cursor: "pointer",
-                  fontSize: 16,
+                  fontSize: 13,
+                  padding: 0,
+                  lineHeight: 1,
                 }}
+                aria-label="Clear track scope"
               >
-                ↑
+                ×
               </button>
-            </div>
+            </span>
+            <input
+              value={trackPrompt}
+              onChange={(e) => setTrackPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitTrackPrompt();
+              }}
+              placeholder={
+                onOpenTweak
+                  ? "Tweak this track…"
+                  : "Produce first to tweak"
+              }
+              disabled={!onOpenTweak || trackPromptBusy}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: bg,
+                color: text,
+                fontSize: 13,
+                fontFamily: "inherit",
+                opacity: onOpenTweak ? 1 : 0.55,
+              }}
+            />
+            <button
+              type="button"
+              disabled={!onOpenTweak || trackPromptBusy || !trackPrompt.trim()}
+              onClick={() => void submitTrackPrompt()}
+              style={{
+                width: 40,
+                height: 40,
+                flexShrink: 0,
+                borderRadius: 12,
+                border: "none",
+                background: onOpenTweak ? brass : border,
+                color: "#1A1208",
+                fontWeight: 800,
+                cursor: onOpenTweak ? "pointer" : "default",
+                fontSize: 15,
+              }}
+            >
+              ↑
+            </button>
           </div>
         )}
-        {!showAddTrack ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             type="button"
-            onClick={() => setShowAddTrack(true)}
+            onClick={() => setShowAddTrack((v) => !v)}
             disabled={!projectId}
             style={{
-              width: "100%",
-              padding: "12px 14px",
-              borderRadius: 12,
-              border: `1px dashed ${brass}`,
-              background: "rgba(231,169,97,0.08)",
-              color: brass,
-              fontWeight: 700,
-              fontSize: 14,
+              padding: "8px 12px",
+              borderRadius: 10,
+              border: `1px solid ${border}`,
+              background: "transparent",
+              color: mutedText,
+              fontWeight: 600,
+              fontSize: 12,
               cursor: projectId ? "pointer" : "not-allowed",
               fontFamily: "inherit",
+              whiteSpace: "nowrap",
             }}
           >
-            + Add Track
+            + Track
           </button>
-        ) : (
+          {!selectedTrackId && (
+            <button
+              type="button"
+              onClick={onOpenTweak}
+              disabled={!onOpenTweak}
+              style={{
+                flex: 1,
+                textAlign: "left",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: bg,
+                color: onOpenTweak ? mutedText : faint,
+                fontSize: 13,
+                fontFamily: "inherit",
+                cursor: onOpenTweak ? "pointer" : "default",
+              }}
+            >
+              {onOpenTweak
+                ? "Ask AP to tweak song…"
+                : "Produce to unlock tweaks"}
+            </button>
+          )}
+        </div>
+        {showAddTrack && (
           <div
             style={{
               border: `1px solid ${border}`,
-              borderRadius: 14,
-              padding: 12,
+              borderRadius: 12,
+              padding: 10,
               display: "flex",
               flexDirection: "column",
-              gap: 10,
+              gap: 8,
               background: bg,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 14 }}>New track</div>
-            <p style={{ margin: 0, fontSize: 12, color: mutedText }}>
-              Starts at playhead ({formatMs(playheadMs)}). Same plan as the booth — not a separate mix.
-            </p>
             <input
               value={addTitle}
               onChange={(e) => setAddTitle(e.target.value)}
               placeholder="Name (optional)"
               style={{
-                padding: "10px 12px",
-                borderRadius: 10,
+                padding: "8px 10px",
+                borderRadius: 8,
                 border: `1px solid ${border}`,
                 background: surface,
                 color: text,
                 fontFamily: "inherit",
-                fontSize: 14,
+                fontSize: 13,
               }}
             />
             <select
               value={addType}
               onChange={(e) => setAddType(e.target.value)}
               style={{
-                padding: "10px 12px",
-                borderRadius: 10,
+                padding: "8px 10px",
+                borderRadius: 8,
                 border: `1px solid ${border}`,
                 background: surface,
                 color: text,
                 fontFamily: "inherit",
-                fontSize: 14,
+                fontSize: 13,
               }}
             >
               <option value="custom">Custom</option>
@@ -1646,7 +1680,7 @@ export function ProducerView({
               ref={addFileRef}
               type="file"
               accept="audio/*,.wav,.mp3,.m4a,.webm"
-              style={{ fontSize: 13, color: mutedText }}
+              style={{ fontSize: 12, color: mutedText }}
             />
             <div style={{ display: "flex", gap: 8 }}>
               <button
@@ -1658,30 +1692,32 @@ export function ProducerView({
                 }}
                 style={{
                   flex: 1,
-                  padding: "12px",
-                  borderRadius: 10,
+                  padding: "10px",
+                  borderRadius: 8,
                   border: "none",
                   background: brass,
                   color: "#1A1208",
-                  fontWeight: 800,
+                  fontWeight: 700,
                   cursor: "pointer",
                   fontFamily: "inherit",
+                  fontSize: 13,
                 }}
               >
-                {addBusy ? "Adding…" : "Add to plan"}
+                {addBusy ? "Adding…" : "Add"}
               </button>
               <button
                 type="button"
                 disabled={addBusy}
                 onClick={() => setShowAddTrack(false)}
                 style={{
-                  padding: "12px 14px",
-                  borderRadius: 10,
+                  padding: "10px 12px",
+                  borderRadius: 8,
                   border: `1px solid ${border}`,
                   background: "transparent",
                   color: mutedText,
                   cursor: "pointer",
                   fontFamily: "inherit",
+                  fontSize: 13,
                 }}
               >
                 Cancel
@@ -1689,27 +1725,6 @@ export function ProducerView({
             </div>
           </div>
         )}
-        <button
-          type="button"
-          onClick={onOpenTweak}
-          disabled={!onOpenTweak}
-          style={{
-            width: "100%",
-            textAlign: "left",
-            padding: "14px 16px",
-            borderRadius: 14,
-            border: `1px solid ${border}`,
-            background: bg,
-            color: onOpenTweak ? mutedText : faint,
-            fontSize: 14,
-            fontFamily: "inherit",
-            cursor: onOpenTweak ? "pointer" : "default",
-          }}
-        >
-          {onOpenTweak
-            ? "Ask AP to tweak… (e.g. “make the chorus louder”)"
-            : "Produce the song to unlock prompt tweaks"}
-        </button>
       </div>
     </div>
   );
@@ -1789,7 +1804,7 @@ function TrackFxPanel({
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        maxWidth: 220,
+        maxWidth: "100%",
       }}
       onClick={(e) => e.stopPropagation()}
     >
