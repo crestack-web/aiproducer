@@ -11,6 +11,7 @@ import {
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { PromptTweakPanel } from "@/components/prompt-tweak-panel";
+import { ProducerView, type ProducerLayer, type ProducerSection } from "@/components/producer-view";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
   MicInputPicker,
@@ -331,6 +332,7 @@ export default function ProjectDetailPage() {
   const [layerSuggestion, setLayerSuggestion] = useState<LayerRefinementSuggestionClient | null>(null);
   const [producing, setProducing] = useState(false);
   const [produceStage, setProduceStage] = useState<string | null>(null);
+  const [showProducerView, setShowProducerView] = useState(false);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
@@ -3910,6 +3912,26 @@ export default function ProjectDetailPage() {
             <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
               Full produced master — play below or download WAV / MP3.
             </p>
+            <button
+              type="button"
+              onClick={() => setShowProducerView(true)}
+              style={{
+                display: "block",
+                width: "100%",
+                marginTop: 14,
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: C.surface,
+                color: C.text,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Producer View — see layers on the timeline
+            </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>
                 <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed={project?.title || "master"} accent="signal" />
@@ -3988,7 +4010,69 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             )}
-            {paywallOpen && (
+      
+      {showProducerView && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 90,
+            background: C.bg,
+          }}
+        >
+          <ProducerView
+            projectTitle={project?.title || "Session"}
+            beatUrl={beatUrl}
+            sections={
+              (tasks || [])
+                .filter((tk) => tk.start_ms != null)
+                .reduce<ProducerSection[]>((acc, tk) => {
+                  const label =
+                    (tk.title || tk.type || "Section").replace(/\s*·.*$/, "") || "Section";
+                  const start = Number(tk.start_ms) || 0;
+                  const end = Number(tk.end_ms) || start + 8000;
+                  // group by start-end
+                  if (!acc.some((s) => s.startMs === start && s.endMs === end)) {
+                    acc.push({
+                      id: `sec-${start}-${end}`,
+                      label,
+                      startMs: start,
+                      endMs: end,
+                    });
+                  }
+                  return acc;
+                }, [])
+            }
+            layers={
+              (tasks || [])
+                .filter((tk) => tk.status === "completed" && tk.start_ms != null)
+                .map((tk) => {
+                  const start = Number(tk.start_ms) || 0;
+                  const end = Number(tk.end_ms) || start + 8000;
+                  return {
+                    id: tk.id,
+                    label: (tk.type || "lead").replace(/_/g, " "),
+                    role: tk.type || "lead",
+                    sectionLabel: tk.title || undefined,
+                    startMs: start,
+                    endMs: end,
+                  } as ProducerLayer;
+                })
+            }
+            onClose={() => setShowProducerView(false)}
+            onOpenTweak={
+              masterUrl
+                ? () => {
+                    setShowProducerView(false);
+                    setScreen("done");
+                  }
+                : undefined
+            }
+          />
+        </div>
+      )}
+
+      {paywallOpen && (
               <ApPaywall
                 open={paywallOpen}
                 onClose={() => setPaywallOpen(false)}
