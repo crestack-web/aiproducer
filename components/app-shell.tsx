@@ -549,7 +549,22 @@ export function AppShell({
             </div>
           </div>
           <Link href="/app/studio" style={{ ...sideCta, display: "block", textAlign: "center", textDecoration: "none" }}>
-            New session
+            New session (Booth)
+          </Link>
+          <Link
+            href="/app/studio?mode=console"
+            style={{
+              ...sideCta,
+              display: "block",
+              textAlign: "center",
+              textDecoration: "none",
+              marginTop: 8,
+              background: "transparent",
+              border: `1px solid ${C.brassLine || C.border}`,
+              color: C.brass,
+            }}
+          >
+            New in Studio
           </Link>
         </div>
       </aside>

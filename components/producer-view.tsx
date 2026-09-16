@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
+import { openRecordingStream, createVocalRecorder } from "@/lib/audio/recording-engine";
 
 export type TrackFx = {
   gainDb: number;
@@ -333,6 +334,20 @@ export function ProducerView({
   const [decodeStatus, setDecodeStatus] = useState<string>("");
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [showAddTrack, setShowAddTrack] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [isConsoleRecording, setIsConsoleRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [planBusy, setPlanBusy] = useState(false);
+  const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const consoleRecRef = useRef<{
+    recorder: MediaRecorder;
+    chunks: BlobPart[];
+    stream: MediaStream;
+    dispose: () => void;
+    taskId: string;
+    startedAt: number;
+  } | null>(null);
+  const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
@@ -542,6 +557,233 @@ export function ProducerView({
     if (!window.confirm("Remove this layer from the plan? The recorded take stays saved.")) return;
     const ok = await persistLayer(id, { status: "skipped" });
     if (ok) setLayers((prev) => prev.filter((l) => l.id !== id));
+  }
+
+
+  async function ensureRecordTargetTask(): Promise<string | null> {
+    if (!projectId) return null;
+    // Prefer selected vocal track that is not the beat
+    if (selectedTrackId && selectedTrackId !== "beat") {
+      const exists = layers.some((l) => l.id === selectedTrackId) || tracks.some((tr) => tr.id === selectedTrackId);
+      if (exists) return selectedTrackId;
+    }
+    // Create a new lead at playhead
+    setAddType("lead");
+    const startMs = Math.round(playheadMs);
+    const res = await fetch(`/api/projects/${projectId}/recording-tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "lead",
+        title: "Lead (Console)",
+        start_ms: startMs,
+        end_ms: startMs + 30000,
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.task?.id) {
+      setEditMsg(typeof j.error === "string" ? j.error : "Could not create record target");
+      return null;
+    }
+    const task = j.task;
+    setLayers((prev) => [
+      ...prev,
+      {
+        id: task.id,
+        label: "lead",
+        role: "lead",
+        sectionLabel: task.title || "Lead",
+        startMs: Number(task.start_ms) || startMs,
+        endMs: Number(task.end_ms) || startMs + 30000,
+      },
+    ]);
+    setSelectedTrackId(task.id);
+    return task.id as string;
+  }
+
+  async function stopConsoleRecord() {
+    const rec = consoleRecRef.current;
+    if (!rec) {
+      setIsConsoleRecording(false);
+      return;
+    }
+    if (recordTickRef.current) {
+      clearInterval(recordTickRef.current);
+      recordTickRef.current = null;
+    }
+    try {
+      if (monitorAudioRef.current) {
+        monitorAudioRef.current.pause();
+        monitorAudioRef.current = null;
+      }
+      stopSources();
+      setPlaying(false);
+    } catch {
+      /* ignore */
+    }
+    await new Promise<void>((resolve) => {
+      rec.recorder.onstop = () => resolve();
+      try {
+        if (rec.recorder.state !== "inactive") rec.recorder.stop();
+        else resolve();
+      } catch {
+        resolve();
+      }
+    });
+    rec.stream.getTracks().forEach((tr) => tr.stop());
+    try {
+      rec.dispose();
+    } catch {
+      /* ignore */
+    }
+    const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
+    const durationMs = Math.max(500, Date.now() - rec.startedAt);
+    const taskId = rec.taskId;
+    consoleRecRef.current = null;
+    setIsConsoleRecording(false);
+    setRecordSeconds(0);
+
+    if (blob.size < 100) {
+      setEditMsg("Recording too short — try again");
+      return;
+    }
+
+    setEditMsg("Saving take…");
+    try {
+      const fd = new FormData();
+      fd.append("file", blob, `console-take-${Date.now()}.webm`);
+      fd.append("duration_ms", String(durationMs));
+      const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+        method: "POST",
+        body: fd,
+      });
+      const uj = await up.json().catch(() => ({}));
+      if (!up.ok) {
+        setEditMsg(typeof uj.error === "string" ? uj.error : "Upload failed");
+        return;
+      }
+      await fetch(`/api/recording-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "completed",
+          end_ms: Math.round((layers.find((l) => l.id === taskId)?.startMs || playheadMs) + durationMs),
+        }),
+      }).catch(() => null);
+
+      const audioUrl =
+        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+      if (audioUrl) {
+        setLayers((prev) =>
+          prev.map((l) =>
+            l.id === taskId
+              ? {
+                  ...l,
+                  audioUrl,
+                  endMs: Math.max(l.endMs, l.startMs + durationMs),
+                }
+              : l
+          )
+        );
+      }
+      setEditMsg("Take saved — same pipeline as Booth");
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Save failed");
+    }
+  }
+
+  async function startConsoleRecord() {
+    if (!projectId) {
+      setEditMsg("Missing project");
+      return;
+    }
+    if (isConsoleRecording) return;
+    setEditMsg(null);
+    const taskId = await ensureRecordTargetTask();
+    if (!taskId) return;
+
+    try {
+      const opened = await openRecordingStream({
+        preferredInputId: "",
+        outputPreference: "__headphones__",
+      });
+      const { recorder, mimeType } = createVocalRecorder(opened.recordStream);
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      consoleRecRef.current = {
+        recorder,
+        chunks,
+        stream: opened.stream,
+        dispose: opened.dispose,
+        taskId,
+        startedAt: Date.now(),
+      };
+      recorder.start(250);
+      setIsConsoleRecording(true);
+      setRecordSeconds(0);
+      recordTickRef.current = setInterval(() => {
+        setRecordSeconds((s) => s + 1);
+      }, 1000);
+
+      // Monitor beat on a separate <audio> (never connected to MediaRecorder)
+      const layer = layers.find((l) => l.id === taskId);
+      const fromMs = layer?.startMs ?? playheadMs;
+      setPlayheadMs(fromMs);
+      if (beatUrl) {
+        try {
+          const a = new Audio(beatUrl);
+          a.currentTime = Math.max(0, fromMs / 1000);
+          monitorAudioRef.current = a;
+          void a.play();
+        } catch {
+          /* ignore */
+        }
+      }
+      setEditMsg(`Recording into track… (${mimeType.split(";")[0]})`);
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Mic permission failed");
+      setIsConsoleRecording(false);
+    }
+  }
+
+  async function toggleConsoleRecord() {
+    if (isConsoleRecording) await stopConsoleRecord();
+    else await startConsoleRecord();
+  }
+
+  async function uploadBeatAndPlan(file: File) {
+    if (!projectId) {
+      setEditMsg("Missing project");
+      return;
+    }
+    setPlanBusy(true);
+    setEditMsg("Uploading beat…");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const up = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: fd });
+      const uj = await up.json().catch(() => ({}));
+      if (!up.ok) {
+        setEditMsg(typeof uj.error === "string" ? uj.error : "Beat upload failed");
+        return;
+      }
+      setEditMsg("Building producer plan (same as Booth)…");
+      const ar = await fetch(`/api/projects/${projectId}/analyze`, { method: "POST" });
+      const aj = await ar.json().catch(() => ({}));
+      if (!ar.ok) {
+        setEditMsg(typeof aj.error === "string" ? aj.error : "Plan generation failed");
+        return;
+      }
+      setEditMsg("Plan ready — record into tracks or open Booth");
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Beat / plan failed");
+    } finally {
+      setPlanBusy(false);
+    }
   }
 
   async function createTrack(file?: File | null) {
@@ -1073,16 +1315,34 @@ export function ProducerView({
 
         <button
           type="button"
-          title="Record in Studio timeline is coming soon — use Booth to capture vocals"
-          onClick={() => {
-            if (boothHref) window.location.href = boothHref;
-            else onClose?.();
+          title={isConsoleRecording ? "Stop recording" : "Record vocal into selected track (raw capture, same as Booth)"}
+          onClick={() => void toggleConsoleRecord()}
+          style={{
+            ...iconBtn(border, surface, text),
+            width: 40,
+            height: 40,
+            borderRadius: 999,
+            color: "#F07167",
+            boxShadow: isConsoleRecording ? "0 0 0 3px rgba(240,113,103,0.35)" : undefined,
+            background: isConsoleRecording ? "rgba(240,113,103,0.2)" : undefined,
           }}
-          style={{ ...iconBtn(border, surface, text), width: 40, height: 40, borderRadius: 999, color: "#F07167" }}
-          aria-label="Record (opens Booth)"
+          aria-label={isConsoleRecording ? "Stop recording" : "Record vocal"}
         >
-          <span style={{ width: 12, height: 12, borderRadius: 999, background: "#F07167", display: "inline-block" }} />
+          <span
+            style={{
+              width: isConsoleRecording ? 10 : 12,
+              height: isConsoleRecording ? 10 : 12,
+              borderRadius: isConsoleRecording ? 2 : 999,
+              background: "#F07167",
+              display: "inline-block",
+            }}
+          />
         </button>
+        {isConsoleRecording && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#F07167", fontVariantNumeric: "tabular-nums", minWidth: 36 }}>
+            {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}
+          </span>
+        )}
 
         <button
           type="button"
@@ -1146,6 +1406,55 @@ export function ProducerView({
         </div>
       )}
 
+
+      
+      {!beatUrl && projectId && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "42%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 20,
+            width: "min(360px, 92vw)",
+            padding: 20,
+            borderRadius: 16,
+            background: surface,
+            border: `1px solid ${border}`,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Start in Studio</div>
+          <p style={{ color: mutedText, fontSize: 13, lineHeight: 1.45, marginBottom: 14 }}>
+            Upload a beat to run the same AI plan Booth uses, then record vocals here or switch to Booth.
+          </p>
+          <label
+            style={{
+              display: "inline-block",
+              padding: "12px 18px",
+              borderRadius: 999,
+              background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+              color: "#1A1208",
+              fontWeight: 800,
+              cursor: planBusy ? "wait" : "pointer",
+              opacity: planBusy ? 0.7 : 1,
+            }}
+          >
+            {planBusy ? "Working…" : "Upload beat"}
+            <input
+              type="file"
+              accept="audio/*"
+              hidden
+              disabled={planBusy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) void uploadBeatAndPlan(f);
+              }}
+            />
+          </label>
+        </div>
+      )}
 
       {/* Suno-style dual scroller: pinned headers | timeline, synced vertical scroll */}
       <div
@@ -1671,7 +1980,7 @@ export function ProducerView({
         >
           <strong style={{ color: text }}>No vocal layers yet</strong>
           <p style={{ margin: "8px 0 0" }}>
-            Record and save takes in the booth — completed layers appear here with real waveforms.
+            Upload a beat to generate a plan, then Record Vocal here — same capture path as Booth. Or open Booth for guided flow.
           </p>
         </div>
       )}
@@ -1708,7 +2017,7 @@ export function ProducerView({
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <button
               type="button"
-              onClick={() => setShowAddTrack(true)}
+              onClick={() => setAddMenuOpen(true)}
               title="Add track"
               style={{
                 width: 28,
@@ -1912,7 +2221,97 @@ export function ProducerView({
           )}
         </div>
 
-        {showAddTrack && (
+        
+      {addMenuOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10040,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => setAddMenuOpen(false)}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: "16px 16px 0 0",
+              background: surface,
+              border: `1px solid ${border}`,
+              padding: "16px 16px max(20px, env(safe-area-inset-bottom))",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>Add track</div>
+            <button
+              type="button"
+              onClick={() => {
+                setAddMenuOpen(false);
+                setShowAddTrack(true);
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "14px 12px",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: "rgba(255,255,255,0.04)",
+                color: text,
+                marginBottom: 8,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              Audio — upload beat or vocal file
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAddMenuOpen(false);
+                void startConsoleRecord();
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "14px 12px",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: "rgba(255,255,255,0.04)",
+                color: text,
+                marginBottom: 8,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              Record Vocal — live capture into a new/selected track
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddMenuOpen(false)}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: 12,
+                border: "none",
+                background: "transparent",
+                color: mutedText,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showAddTrack && (
           <div
             style={{
               width: "100%",

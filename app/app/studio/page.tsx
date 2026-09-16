@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
@@ -52,6 +52,8 @@ function statusLabel(s: string) {
 
 export default function StudioPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const startInConsole = searchParams.get("mode") === "console";
   const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -231,7 +233,19 @@ export default function StudioPage() {
         }
       }
 
-      router.push(`/app/studio/${project.id}`);
+      // Same analyze/planProduction pipeline as Booth
+      const analyzeRes = await fetch(`/api/projects/${project.id}/analyze`, { method: "POST" });
+      if (!analyzeRes.ok) {
+        const j = await analyzeRes.json().catch(() => ({}));
+        // Still open session — plan can be retried
+        console.warn("analyze", j);
+      }
+
+      if (startInConsole) {
+        router.push(`/app/console/${project.id}`);
+      } else {
+        router.push(`/app/studio/${project.id}`);
+      }
     } catch (e) {
       if (projectId) await discardFailedProject(projectId);
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -277,7 +291,7 @@ export default function StudioPage() {
           Create your beat
         </h1>
         <p style={{ color: C.textMuted, fontSize: 14.5, lineHeight: 1.5, margin: "0 0 24px", maxWidth: 520 }}>
-          Describe the sound, pick genre and mood, set tempo — then your AI producer guides the session section by section.
+          Describe the sound, pick genre and mood, set tempo — then open Booth (guided) or Studio (timeline). Same AI plan either way.
         </p>
 
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "24px 22px 22px" }}>
@@ -398,12 +412,18 @@ export default function StudioPage() {
             onClick={createAndGenerate}
           >
             {creating
-              ? beatMode === "upload"
-                ? "Analyzing beat…"
-                : "Creating beat…"
-              : beatMode === "upload"
-                ? "Start with my beat"
-                : "Create beat"}
+              ? startInConsole
+                ? "Building plan…"
+                : beatMode === "upload"
+                  ? "Analyzing beat…"
+                  : "Creating beat…"
+              : startInConsole
+                ? beatMode === "upload"
+                  ? "Start in Studio timeline"
+                  : "Create beat & open Studio"
+                : beatMode === "upload"
+                  ? "Start with my beat"
+                  : "Create beat"}
           </button>
         </div>
 
@@ -416,9 +436,8 @@ export default function StudioPage() {
               {inProgress.slice(0, 6).map((p) => {
                 const g = coverFor(p.id + (p.title || ""));
                 return (
-                  <Link
+                  <div
                     key={p.id}
-                    href={`/app/studio/${p.id}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -427,7 +446,6 @@ export default function StudioPage() {
                       borderRadius: 14,
                       background: C.surface,
                       border: `1px solid ${C.border}`,
-                      textDecoration: "none",
                       color: C.text,
                     }}
                   >
@@ -439,8 +457,9 @@ export default function StudioPage() {
                         {[p.genre, p.mood].filter(Boolean).length ? ` · ${[p.genre, p.mood].filter(Boolean).join(" · ")}` : ""}
                       </div>
                     </div>
-                    <span style={{ color: C.brass, fontSize: 13, fontWeight: 600 }}>Open</span>
-                  </Link>
+                    <Link href={`/app/studio/${p.id}`} style={{ color: C.brass, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Booth</Link>
+                    <Link href={`/app/console/${p.id}`} style={{ color: C.textMuted, fontSize: 12, fontWeight: 600, textDecoration: "none", marginLeft: 8 }}>Studio</Link>
+                  </div>
                 );
               })}
             </div>
