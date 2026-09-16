@@ -33,6 +33,7 @@ function errMessage(e: unknown, fallback = "Analyze failed"): string {
   return fallback;
 }
 
+/** Shared plan generation for Booth + Console — planProduction() only; no parallel planner. */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
   const { user, supabase, error } = await requireUser();

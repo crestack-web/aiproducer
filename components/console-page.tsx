@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Console (producer/mixing) — standalone page for a project.
- * Shares the same task/section data model as Booth.
+ * Console page loader — /app/console/[id]
+ * Reads recording_tasks + beat; same source of truth as Booth (/app/studio/[id]).
  */
 
 import React, { useCallback, useEffect, useState } from "react";
@@ -119,7 +119,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         setSections(Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load Studio");
+      setError(e instanceof Error ? e.message : "Failed to load Console");
     } finally {
       setLoading(false);
     }
@@ -132,7 +132,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#0B0A0F", color: "#9B96A3", fontFamily: "system-ui, sans-serif" }}>
-        Opening Studio…
+        Opening Console…
       </div>
     );
   }

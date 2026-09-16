@@ -1,9 +1,12 @@
 "use client";
 
 /**
- * Console (producer / mixing view).
- * Standalone page at /app/console/[id]; Booth is the guided recording flow.
- * Real waveforms + mute/solo mix. Playback monitoring only.
+ * Console — AI-DAW timeline for a project (/app/console/[id]).
+ *
+ * Naming: Booth = guided record (/app/studio/[id]); Studio = hub (/app/studio).
+ * Shared: same recording_tasks / takes as Booth. Capture uses Booth live pipeline
+ * (openRecordingStream + createVocalRecorder) — never a parallel recorder.
+ * Offline AP (restore/pitch/mix/master) only after save, same as Booth.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -686,7 +689,7 @@ export function ProducerView({
           )
         );
       }
-      setEditMsg("Take saved — same pipeline as Booth");
+      setEditMsg("Take saved — shared with Booth (same recording_tasks)");
       onLayersChanged?.();
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Save failed");
@@ -1303,7 +1306,7 @@ export function ProducerView({
             height={28}
             style={{ borderRadius: 8, objectFit: "cover", display: "block" }}
           />
-          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>STUDIO</span>
+          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>CONSOLE</span>
         </a>
 
         <input
@@ -1424,7 +1427,7 @@ export function ProducerView({
             textAlign: "center",
           }}
         >
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Start in Studio</div>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Start in Console</div>
           <p style={{ color: mutedText, fontSize: 13, lineHeight: 1.45, marginBottom: 14 }}>
             Upload a beat to run the same AI plan Booth uses, then record vocals here or switch to Booth.
           </p>
@@ -1549,7 +1552,7 @@ export function ProducerView({
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {sidebarCollapsed ? "ST" : "STUDIO"}
+                  {sidebarCollapsed ? "CO" : "CONSOLE"}
                 </span>
                 <button
                   type="button"

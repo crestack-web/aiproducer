@@ -27,7 +27,7 @@ const PatchSchema = z.object({
 
 /**
  * PATCH recording task timing / status / track_fx.
- * Producer View Phase 2–4 — single source of truth on recording_tasks.
+ * Console timeline edits — single source of truth on recording_tasks (shared with Booth).
  */
 export async function PATCH(req: Request, ctx: Ctx) {
   const { user, error } = await requireUser();

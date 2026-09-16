@@ -1,5 +1,13 @@
 "use client";
 
+/**
+ * Naming (do not drift):
+ * - Studio  = product hub / session list (/app/studio) — top-level nav
+ * - Booth   = guided recording for a project (/app/studio/[id])
+ * - Console = AI-DAW timeline for a project (/app/console/[id])
+ * Shared data: recording_tasks, sections, takes — one source of truth.
+ */
+
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
@@ -496,7 +504,7 @@ export function AppShell({
             </button>
             <button
               type="button"
-              title="Studio — timeline / mix"
+              title="Console — AI timeline / mix"
               onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
               style={{
                 ...navItem,
@@ -507,7 +515,7 @@ export function AppShell({
               }}
             >
               <IconStudio size={18} color={onStudioPage ? C.brass : C.textMuted} />
-              {!sidebarCollapsed && "Studio"}
+              {!sidebarCollapsed && "Console"}
             </button>
           </div>
         )}
@@ -550,6 +558,7 @@ export function AppShell({
           </Link>
           <Link
             href="/app/studio?mode=console"
+            title="Create a project and open Console (AI timeline)"
             style={{
               ...sideCta,
               display: "block",
@@ -561,7 +570,7 @@ export function AppShell({
               color: C.brass,
             }}
           >
-            New in Studio
+            New in Console
           </Link>
         </div>
       </aside>
@@ -675,7 +684,7 @@ export function AppShell({
             </button>
             <button
               type="button"
-              title="Studio — AI timeline"
+              title="Console — AI timeline"
               onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
               style={{
                 ...bottomItem,
@@ -685,7 +694,7 @@ export function AppShell({
               aria-current={onStudioPage ? "page" : undefined}
             >
               <IconStudio size={22} color={onStudioPage ? C.brass : C.textFaint} />
-              Studio
+              Console
             </button>
             <button
               type="button"

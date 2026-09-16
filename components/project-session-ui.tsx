@@ -3133,7 +3133,7 @@ export default function ProjectDetailPage() {
               <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: `1px solid ${C.signal}`, background: C.surface }}>
                 <div style={{ fontSize: 11, letterSpacing: "0.08em", fontWeight: 700, color: C.signal }}>
                   <img src={STUDIO_LOGO_URL} alt="" width={18} height={18} style={{ borderRadius: 4, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }} />
-                  STUDIO · BOOTH
+                  BOOTH
                 </div>
                 <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
                   {sectionLabel(current)} · optional layer
@@ -3985,7 +3985,7 @@ export default function ProjectDetailPage() {
                 fontFamily: "inherit",
               }}
             >
-              Open Studio
+              Open Console
             </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>

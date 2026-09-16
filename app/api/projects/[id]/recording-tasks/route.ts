@@ -131,7 +131,7 @@ export async function POST(req: Request, ctx: Ctx) {
     title,
     instruction:
       parsed.data.instruction ||
-      "Artist-added track from Producer View. Upload or record a take for this layer.",
+      "Artist-added track from Console. Upload or record a take for this layer.",
     status: "pending",
     required: false,
     recommendation: "optional",

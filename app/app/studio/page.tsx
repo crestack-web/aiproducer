@@ -291,7 +291,7 @@ function StudioPageInner() {
           Create your beat
         </h1>
         <p style={{ color: C.textMuted, fontSize: 14.5, lineHeight: 1.5, margin: "0 0 24px", maxWidth: 520 }}>
-          Describe the sound, pick genre and mood, set tempo — then open Booth (guided) or Studio (timeline). Same AI plan either way.
+          Describe the sound, pick genre and mood, set tempo — then open Booth (guided) or Console (AI timeline). Same plan either way.
         </p>
 
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "24px 22px 22px" }}>
@@ -419,8 +419,8 @@ function StudioPageInner() {
                   : "Creating beat…"
               : startInConsole
                 ? beatMode === "upload"
-                  ? "Start in Studio timeline"
-                  : "Create beat & open Studio"
+                  ? "Start in Console"
+                  : "Create beat & open Console"
                 : beatMode === "upload"
                   ? "Start with my beat"
                   : "Create beat"}
@@ -458,7 +458,7 @@ function StudioPageInner() {
                       </div>
                     </div>
                     <Link href={`/app/studio/${p.id}`} style={{ color: C.brass, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Booth</Link>
-                    <Link href={`/app/console/${p.id}`} style={{ color: C.textMuted, fontSize: 12, fontWeight: 600, textDecoration: "none", marginLeft: 8 }}>Studio</Link>
+                    <Link href={`/app/console/${p.id}`} style={{ color: C.textMuted, fontSize: 12, fontWeight: 600, textDecoration: "none", marginLeft: 8 }}>Console</Link>
                   </div>
                 );
               })}
