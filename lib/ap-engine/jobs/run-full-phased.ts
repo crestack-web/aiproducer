@@ -33,6 +33,7 @@ export async function runFullProduceWithCheckpoints(opts: {
   beatPath: string;
   vocals: ApVocalLayerInput[];
   genre?: string | null;
+  productionDirection?: import("../direction/types").ProductionDirection | null;
   placementLog: PlacementLog[];
   report: ReportFn;
   patch: PatchFn;
@@ -45,7 +46,7 @@ export async function runFullProduceWithCheckpoints(opts: {
   mp3Path?: string | null;
   metaExtra?: Record<string, unknown>;
 }> {
-  const { jobId, projectId, userId, beatPath, vocals, genre, placementLog, report, patch } = opts;
+  const { jobId, projectId, userId, beatPath, vocals, genre, productionDirection, placementLog, report, patch } = opts;
   const supabase = createServiceClient();
   const mixPath = productionMixPath(userId, projectId, jobId, "wav");
   const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
@@ -177,6 +178,7 @@ export async function runFullProduceWithCheckpoints(opts: {
         beatPathHint: beatPath,
         vocals: arrangedVocals,
         genre,
+        productionDirection: productionDirection ?? null,
         skipRestoration: true,
         deadlineAt,
       },
