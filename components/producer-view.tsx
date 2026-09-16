@@ -3533,9 +3533,18 @@ export function ProducerView({
                 ? tr.startMs + Math.max(400, recordSeconds * 1000)
                 : tr.endMs;
               const displayEndMs = isLiveRec ? Math.max(tr.endMs, liveEndMs) : tr.endMs;
+              const isTakeEditing = takeEditId === tr.id;
               const clipW = Math.max(10, msToX(displayEndMs) - msToX(tr.startMs));
-              const rowH = expanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
-              const clipH = expanded ? Math.min(96, rowH - 20) : Math.min(48, rowH - 16);
+              const rowH = isTakeEditing
+                ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+                : expanded
+                  ? TRACK_ROW_H_EXPANDED
+                  : TRACK_ROW_H;
+              const clipH = isTakeEditing
+                ? Math.min(88, 96)
+                : expanded
+                  ? Math.min(96, rowH - 20)
+                  : Math.min(48, rowH - 16);
               return (
                 <div
                   key={`tl-${tr.id}`}
@@ -3596,12 +3605,63 @@ export function ProducerView({
                         ? (e) => {
                             setSelectedTrackId(tr.id);
                             setArmedTrackId(tr.id);
-                            // Mock/unrecorded: arm only (no drag). Recorded: move/trim as before.
+                            if (isTakeEditing && takeDurationMs > 0) {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+                              const ms = x * takeDurationMs;
+                              takeSelDragRef.current = {
+                                mode: "create",
+                                originX: e.clientX,
+                                originStart: ms,
+                                originEnd: ms,
+                              };
+                              setTakeSel({ startMs: ms, endMs: ms });
+                              try {
+                                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                              } catch {
+                                /* */
+                              }
+                              return;
+                            }
                             if (!isMock && !isLiveRec) {
                               onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
                             }
                           }
                         : () => setSelectedTrackId(tr.id)
+                    }
+                    onPointerMove={
+                      isTakeEditing
+                        ? (e) => {
+                            const d = takeSelDragRef.current;
+                            if (!d || takeDurationMs <= 0) return;
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+                            const ms = x * takeDurationMs;
+                            setTakeSel({
+                              startMs: Math.min(d.originStart, ms),
+                              endMs: Math.max(d.originStart, ms),
+                            });
+                          }
+                        : onClipPointerMove
+                    }
+                    onPointerUp={
+                      isTakeEditing
+                        ? () => {
+                            takeSelDragRef.current = null;
+                            setTakeSel((sel) =>
+                              sel && takeDurationMs > 0 ? normalizeRegion(sel, takeDurationMs) : sel
+                            );
+                          }
+                        : onClipPointerUp
+                    }
+                    onPointerCancel={
+                      isTakeEditing
+                        ? () => {
+                            takeSelDragRef.current = null;
+                          }
+                        : onClipPointerUp
                     }
                   >
                     {isLiveRec ? (
