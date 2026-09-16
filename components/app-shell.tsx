@@ -643,14 +643,55 @@ export function AppShell({
                 ...bottomItem,
                 color: isActive ? C.brass : C.textFaint,
                 fontWeight: isActive ? 600 : 500,
+                ...(projectIdFromPath ? { fontSize: 9, minWidth: 0, flex: 1, padding: "6px 2px" } : null),
               }}
               aria-current={isActive ? "page" : undefined}
             >
-              <Icon size={22} color={isActive ? C.brass : C.textFaint} />
+              <Icon size={projectIdFromPath ? 20 : 22} color={isActive ? C.brass : C.textFaint} />
               {label}
             </button>
           );
         })}
+        {projectIdFromPath ? (
+          <>
+            <button
+              type="button"
+              title="Booth — record vocals"
+              onClick={() => router.push(`/app/studio/${projectIdFromPath}`)}
+              style={{
+                ...bottomItem,
+                color: onBoothPage ? C.brass : C.textFaint,
+                fontWeight: onBoothPage ? 600 : 500,
+                fontSize: 9,
+                minWidth: 0,
+                flex: 1,
+                padding: "6px 2px",
+              }}
+              aria-current={onBoothPage ? "page" : undefined}
+            >
+              <IconBooth size={20} color={onBoothPage ? C.brass : C.textFaint} />
+              Booth
+            </button>
+            <button
+              type="button"
+              title="Studio — timeline / mix"
+              onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
+              style={{
+                ...bottomItem,
+                color: onStudioPage ? C.brass : C.textFaint,
+                fontWeight: onStudioPage ? 600 : 500,
+                fontSize: 9,
+                minWidth: 0,
+                flex: 1,
+                padding: "6px 2px",
+              }}
+              aria-current={onStudioPage ? "page" : undefined}
+            >
+              <IconStudio size={20} color={onStudioPage ? C.brass : C.textFaint} />
+              Studio
+            </button>
+          </>
+        ) : null}
       </nav>
     </div>
   );
