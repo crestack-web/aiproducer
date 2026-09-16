@@ -11,6 +11,7 @@ import { editVocalPerformance, type VocalEditQC } from "../edit/vocal-edit";
 import { type RoomToneQC } from "../restoration/room-tone";
 import { reduceNaturalRoom, type SpaceQC } from "../restoration/intentional-space";
 import { planMusicalSpace, applyMusicalSpace } from "../production/musical-space";
+import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "../space";
 import { applyTimingIntelligence } from "../production/timing-intelligence";
 import { runApTime } from "../timing";
 import { sectionEnergyDb } from "../production/vocal-automation";
@@ -185,21 +186,45 @@ export function processAndPlaceLayerDetailed(
   const chain = processVocalChainDetailed(v, vocalDec, role);
   v = chain.pcm;
 
-  // Musical space: ER + short/long + tempo delay + throws (producer space, not generic verb)
+  // AP SPACE: performance + role + section + genre → musical space (not generic verb)
   try {
-    const plan = planMusicalSpace(role, layer.decision.section, layer.bpm ?? null, layer.genre ?? null);
-    const spaced = applyMusicalSpace(v, plan);
+    const perf = analyzePerformance(v);
+    const spaceDec = decideVocalSpace({
+      performance: perf,
+      roleType: role,
+      sectionLabel: layer.decision.section,
+      genre: layer.genre ?? null,
+      bpm: layer.bpm ?? null,
+    });
+    const spaced = applyVocalSpace(v, spaceDec);
     v = spaced.pcm;
     spaceQc = {
       room: roomQc,
       deReverbApplied: true,
       section: layer.decision.section,
-      reverbWet: plan.shortWet + plan.longWet,
-      delayWet: plan.delayWet,
+      character: spaceDec.character,
+      reverbWet: spaceDec.plan.shortWet + spaceDec.plan.longWet,
+      delayWet: spaceDec.plan.delayWet,
+      confidence: spaceDec.confidence,
+      notes: spaceDec.notes.slice(0, 10),
       reverted: roomQc?.reverted ?? false,
     };
   } catch {
-    spaceQc = null;
+    try {
+      const plan = planMusicalSpace(role, layer.decision.section, layer.bpm ?? null, layer.genre ?? null);
+      const spaced = applyMusicalSpace(v, plan);
+      v = spaced.pcm;
+      spaceQc = {
+        room: roomQc,
+        deReverbApplied: true,
+        section: layer.decision.section,
+        reverbWet: plan.shortWet + plan.longWet,
+        delayWet: plan.delayWet,
+        reverted: roomQc?.reverted ?? false,
+      };
+    } catch {
+      spaceQc = null;
+    }
   }
 
   const processed = cloneStereo(v);
