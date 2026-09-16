@@ -22,6 +22,18 @@ import { forceDownloadFromApi } from "@/lib/download-audio";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
 import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
+import {
+  decodeAudioUrl,
+  deleteRegionFromBuffer,
+  keepRegionFromBuffer,
+  spliceReplacementIntoBuffer,
+  encodeWavBlob,
+  bufferDurationMs,
+  peaksFromBuffer,
+  isValidRegion,
+  normalizeRegion,
+  type TakeRegion,
+} from "@/lib/client/take-edit";
 
 export type TrackFx = {
   gainDb: number;
@@ -515,6 +527,28 @@ export function ProducerView({
   const [pxPerSec, setPxPerSec] = useState(56);
   const [loopOn, setLoopOn] = useState(false);
   const loopOnRef = useRef(false);
+
+  // —— Take edit (non-destructive; original recording stays on server) ——
+  const [takeEditId, setTakeEditId] = useState<string | null>(null);
+  const [takeSel, setTakeSel] = useState<TakeRegion | null>(null);
+  const [takeDurationMs, setTakeDurationMs] = useState(0);
+  const [takePeaks, setTakePeaks] = useState<number[]>([]);
+  const [takeEditBusy, setTakeEditBusy] = useState(false);
+  const [takeUndoDepth, setTakeUndoDepth] = useState(0);
+  const [retakeTarget, setRetakeTarget] = useState<{
+    taskId: string;
+    startMs: number;
+    endMs: number;
+  } | null>(null);
+  const takeWorkingRef = useRef<AudioBuffer | null>(null);
+  const takeUndoStackRef = useRef<AudioBuffer[]>([]);
+  const takeSelDragRef = useRef<{
+    mode: "create" | "start" | "end";
+    originX: number;
+    originStart: number;
+    originEnd: number;
+  } | null>(null);
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -1156,6 +1190,19 @@ export function ProducerView({
       return;
     }
 
+    // Retake path: merge into working take buffer (do not upload as full replacement yet)
+    if (
+      retakeTarget &&
+      retakeTarget.taskId === taskId &&
+      takeEditId === taskId &&
+      takeWorkingRef.current
+    ) {
+      setEditMsg("Merging retake…");
+      const ok = await finishRetakeWithBlob(taskId, blob);
+      if (ok) return;
+      // fall through to normal save if merge failed
+    }
+
     setEditMsg("Saving take…");
     try {
       const fd = new FormData();
@@ -1259,6 +1306,215 @@ export function ProducerView({
       setEditMsg(e instanceof Error ? e.message : "Mic permission failed");
       setIsConsoleRecording(false);
       stopLiveMeter();
+    }
+  }
+
+
+  function getEditAudioCtx(): AudioContext | null {
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return null;
+      if (!audioCtxRef.current) audioCtxRef.current = new AC();
+      return audioCtxRef.current;
+    } catch {
+      return null;
+    }
+  }
+
+  function pushTakeUndo(buf: AudioBuffer) {
+    takeUndoStackRef.current = [...takeUndoStackRef.current.slice(-11), buf];
+    setTakeUndoDepth(takeUndoStackRef.current.length);
+  }
+
+  function refreshTakePeaks(buf: AudioBuffer) {
+    setTakePeaks(peaksFromBuffer(buf, 96));
+    setTakeDurationMs(bufferDurationMs(buf));
+  }
+
+  async function beginTakeEdit(taskId: string, audioUrl: string | null | undefined) {
+    if (!audioUrl || takeEditBusy) return;
+    const ctx = getEditAudioCtx();
+    if (!ctx) {
+      setEditMsg("Audio not available in this browser");
+      return;
+    }
+    setTakeEditBusy(true);
+    setEditMsg(null);
+    try {
+      if (ctx.state === "suspended") await ctx.resume();
+      const buf = await decodeAudioUrl(ctx, audioUrl);
+      takeWorkingRef.current = buf;
+      takeUndoStackRef.current = [];
+    setTakeUndoDepth(0);
+      setTakeSel(null);
+      setRetakeTarget(null);
+      refreshTakePeaks(buf);
+      setTakeEditId(taskId);
+      setExpandedId(taskId);
+      setSelectedTrackId(taskId);
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Could not open take for editing");
+    } finally {
+      setTakeEditBusy(false);
+    }
+  }
+
+  function cancelTakeEdit() {
+    takeWorkingRef.current = null;
+    takeUndoStackRef.current = [];
+    setTakeUndoDepth(0);
+    setTakeEditId(null);
+    setTakeSel(null);
+    setTakePeaks([]);
+    setTakeDurationMs(0);
+    setRetakeTarget(null);
+    setEditMsg(null);
+  }
+
+  function applyTakeDelete() {
+    const ctx = getEditAudioCtx();
+    const buf = takeWorkingRef.current;
+    if (!ctx || !buf || !isValidRegion(takeSel, bufferDurationMs(buf))) return;
+    const region = normalizeRegion(takeSel!, bufferDurationMs(buf));
+    pushTakeUndo(buf);
+    const next = deleteRegionFromBuffer(ctx, buf, region);
+    takeWorkingRef.current = next;
+    refreshTakePeaks(next);
+    setTakeSel(null);
+  }
+
+  function applyTakeKeep() {
+    const ctx = getEditAudioCtx();
+    const buf = takeWorkingRef.current;
+    if (!ctx || !buf || !isValidRegion(takeSel, bufferDurationMs(buf))) return;
+    const region = normalizeRegion(takeSel!, bufferDurationMs(buf));
+    pushTakeUndo(buf);
+    const next = keepRegionFromBuffer(ctx, buf, region);
+    takeWorkingRef.current = next;
+    refreshTakePeaks(next);
+    setTakeSel(null);
+  }
+
+  function undoTakeEdit() {
+    const prev = takeUndoStackRef.current.pop();
+    if (!prev) return;
+    takeWorkingRef.current = prev;
+    setTakeUndoDepth(takeUndoStackRef.current.length);
+    refreshTakePeaks(prev);
+    setTakeSel(null);
+  }
+
+  function playTakeSelection() {
+    const ctx = getEditAudioCtx();
+    const buf = takeWorkingRef.current;
+    if (!ctx || !buf) return;
+    stopSources();
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    sourcesRef.current.push(src);
+    if (takeSel && isValidRegion(takeSel, bufferDurationMs(buf))) {
+      const r = normalizeRegion(takeSel, bufferDurationMs(buf));
+      const start = r.startMs / 1000;
+      const dur = (r.endMs - r.startMs) / 1000;
+      src.start(0, start, dur);
+    } else {
+      src.start(0);
+    }
+  }
+
+  function startRetakeRegion() {
+    const buf = takeWorkingRef.current;
+    if (!takeEditId || !buf || !takeSel || !isValidRegion(takeSel, bufferDurationMs(buf))) return;
+    const r = normalizeRegion(takeSel, bufferDurationMs(buf));
+    setRetakeTarget({ taskId: takeEditId, startMs: r.startMs, endMs: r.endMs });
+    setArmedTrackId(takeEditId);
+    setSelectedTrackId(takeEditId);
+    setEditMsg(
+      `Retake ${Math.round(r.startMs)}–${Math.round(r.endMs)} ms — tap Record when ready`
+    );
+  }
+
+  async function commitTakeEdit() {
+    if (!takeEditId || !takeWorkingRef.current || takeEditBusy) return;
+    const buf = takeWorkingRef.current;
+    setTakeEditBusy(true);
+    setEditMsg("Saving edited take…");
+    try {
+      const blob = encodeWavBlob(buf);
+      const fd = new FormData();
+      fd.append("file", blob, "edited-take.wav");
+      fd.append("source", "take_edit");
+      const up = await fetch(`/api/recording-tasks/${takeEditId}/recordings`, {
+        method: "POST",
+        body: fd,
+      });
+      const uj = await up.json().catch(() => ({}));
+      if (!up.ok) {
+        throw new Error(
+          typeof uj.error === "string" ? uj.error : "Could not save edited take"
+        );
+      }
+      const newId = uj?.recording?.id as string | undefined;
+      if (newId) {
+        await fetch(`/api/recording-tasks/${takeEditId}/recordings/${newId}/select`, {
+          method: "POST",
+        }).catch(() => undefined);
+      }
+      await fetch(`/api/recording-tasks/${takeEditId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      }).catch(() => null);
+
+      const audioUrl =
+        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+      if (audioUrl) {
+        setLayers((prev) =>
+          prev.map((l) =>
+            l.id === takeEditId
+              ? {
+                  ...l,
+                  audioUrl,
+                  endMs: l.startMs + bufferDurationMs(buf),
+                }
+              : l
+          )
+        );
+        // clear decode cache for old url
+        bufferCache.clear();
+      }
+      cancelTakeEdit();
+      setEditMsg("Edited take saved — original recording kept");
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Could not save edited take");
+    } finally {
+      setTakeEditBusy(false);
+    }
+  }
+
+  async function finishRetakeWithBlob(taskId: string, blob: Blob) {
+    const ctx = getEditAudioCtx();
+    const working = takeWorkingRef.current;
+    const region = retakeTarget;
+    if (!ctx || !working || !region || region.taskId !== taskId) return false;
+    try {
+      const ab = await blob.arrayBuffer();
+      const rep = await ctx.decodeAudioData(ab.slice(0));
+      pushTakeUndo(working);
+      const next = spliceReplacementIntoBuffer(ctx, working, region, rep);
+      takeWorkingRef.current = next;
+      refreshTakePeaks(next);
+      setRetakeTarget(null);
+      setTakeSel(null);
+      setEditMsg("Retake applied — tap Done to save");
+      return true;
+    } catch {
+      setEditMsg("Retake recorded but could not merge — try again");
+      return false;
     }
   }
 
@@ -2968,6 +3224,25 @@ export function ProducerView({
                   >
                     S
                   </button>
+                  {isExpanded && tr.url && tr.id !== "beat" && takeEditId !== tr.id ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void beginTakeEdit(tr.id, tr.url);
+                      }}
+                      style={{
+                        ...miniChip(border, brass, false, text),
+                        padding: "0 8px",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        width: "auto",
+                      }}
+                      title="Edit take — delete, keep, or retake a region"
+                    >
+                      Edit
+                    </button>
+                  ) : null}
                   {isExpanded ? (
                     <>
                   <div
@@ -3404,6 +3679,274 @@ export function ProducerView({
 
 
       {/* Produce status — compact, non-blocking */}
+      
+      {/* Take edit — performance region tools */}
+      {takeEditId ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            right: 12,
+            bottom: promptBarOpen ? 140 : 72,
+            zIndex: 40,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              pointerEvents: "auto",
+              width: "100%",
+              maxWidth: 480,
+              borderRadius: 14,
+              padding: "12px 14px",
+              background: "rgba(18,18,24,0.96)",
+              border: `1px solid ${brass}`,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: brass }}>
+                Edit take
+                {retakeTarget ? " · Retake armed" : ""}
+              </div>
+              <div style={{ fontSize: 11, color: mutedText }}>
+                {takeDurationMs > 0 ? `${(takeDurationMs / 1000).toFixed(1)}s` : ""}
+              </div>
+            </div>
+
+            {/* Simple peak strip + selection */}
+            <div
+              style={{
+                position: "relative",
+                height: 56,
+                borderRadius: 8,
+                background: "rgba(0,0,0,0.35)",
+                border: `1px solid ${border}`,
+                overflow: "hidden",
+                touchAction: "none",
+                marginBottom: 10,
+              }}
+              onPointerDown={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const ms = x * takeDurationMs;
+                takeSelDragRef.current = {
+                  mode: "create",
+                  originX: e.clientX,
+                  originStart: ms,
+                  originEnd: ms,
+                };
+                setTakeSel({ startMs: ms, endMs: ms });
+                try {
+                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                } catch {
+                  /* */
+                }
+              }}
+              onPointerMove={(e) => {
+                const d = takeSelDragRef.current;
+                if (!d || takeDurationMs <= 0) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const ms = x * takeDurationMs;
+                if (d.mode === "create") {
+                  setTakeSel({
+                    startMs: Math.min(d.originStart, ms),
+                    endMs: Math.max(d.originStart, ms),
+                  });
+                }
+              }}
+              onPointerUp={() => {
+                takeSelDragRef.current = null;
+                if (takeSel && takeDurationMs > 0) {
+                  setTakeSel(normalizeRegion(takeSel, takeDurationMs));
+                }
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-end", height: "100%", gap: 1, padding: "4px 2px" }}>
+                {takePeaks.map((p, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      flex: 1,
+                      height: `${Math.max(6, p * 100)}%`,
+                      background: brass,
+                      opacity: 0.55,
+                      borderRadius: 1,
+                    }}
+                  />
+                ))}
+              </div>
+              {takeSel && takeDurationMs > 0 ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    bottom: 0,
+                    left: `${(Math.min(takeSel.startMs, takeSel.endMs) / takeDurationMs) * 100}%`,
+                    width: `${(Math.abs(takeSel.endMs - takeSel.startMs) / takeDurationMs) * 100}%`,
+                    background: "rgba(231,169,97,0.28)",
+                    borderLeft: `2px solid ${brass}`,
+                    borderRight: `2px solid ${brass}`,
+                    pointerEvents: "none",
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <div style={{ fontSize: 11, color: mutedText, marginBottom: 8 }}>
+              {takeSel && isValidRegion(takeSel, takeDurationMs)
+                ? `Selected ${(Math.min(takeSel.startMs, takeSel.endMs) / 1000).toFixed(2)}s – ${(Math.max(takeSel.startMs, takeSel.endMs) / 1000).toFixed(2)}s`
+                : "Drag on the waveform to select a region"}
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              <button
+                type="button"
+                onClick={playTakeSelection}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.06)",
+                  color: text,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                ▶ Play
+              </button>
+              <button
+                type="button"
+                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
+                onClick={applyTakeDelete}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(240,113,103,0.4)",
+                  background: "rgba(240,113,103,0.12)",
+                  color: "#F07167",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
+                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
+                  fontFamily: "inherit",
+                }}
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
+                onClick={applyTakeKeep}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.06)",
+                  color: text,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
+                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
+                  fontFamily: "inherit",
+                }}
+              >
+                Keep
+              </button>
+              <button
+                type="button"
+                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy || isConsoleRecording}
+                onClick={startRetakeRegion}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${brass}`,
+                  background: retakeTarget ? "rgba(231,169,97,0.2)" : "rgba(255,255,255,0.04)",
+                  color: brass,
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
+                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
+                  fontFamily: "inherit",
+                }}
+              >
+                Retake
+              </button>
+              <button
+                type="button"
+                disabled={takeUndoDepth === 0 || takeEditBusy}
+                onClick={undoTakeEdit}
+                style={{
+                  height: 34,
+                  padding: "0 12px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.06)",
+                  color: text,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Undo
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={cancelTakeEdit}
+                disabled={takeEditBusy}
+                style={{
+                  flex: 1,
+                  height: 36,
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: "transparent",
+                  color: mutedText,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void commitTakeEdit()}
+                disabled={takeEditBusy}
+                style={{
+                  flex: 1,
+                  height: 36,
+                  borderRadius: 999,
+                  border: "none",
+                  background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                  color: "#1A1208",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  cursor: takeEditBusy ? "default" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {takeEditBusy ? "…" : "Done"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {projectId && produceUi !== "idle" ? (
         <div
           style={{
