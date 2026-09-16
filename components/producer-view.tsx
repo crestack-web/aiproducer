@@ -19,6 +19,8 @@ import {
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
 import { forceDownloadFromApi } from "@/lib/download-audio";
+import { produceReadinessFromTasks } from "@/lib/production/readiness";
+import type { PlanTaskRow } from "@/lib/plan";
 
 export type TrackFx = {
   gainDb: number;
@@ -530,7 +532,7 @@ export function ProducerView({
   const [apSummary, setApSummary] = useState<string | null>(null);
 
   // —— Produce (shared job API — same as Booth) ——
-  type ProduceUi = "idle" | "producing" | "complete" | "failed";
+  type ProduceUi = "idle" | "starting" | "producing" | "complete" | "failed";
   const [produceUi, setProduceUi] = useState<ProduceUi>("idle");
   const [produceStage, setProduceStage] = useState<string | null>(null);
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
@@ -1861,6 +1863,16 @@ export function ProducerView({
           !String(st.master.audio_path).startsWith("http") &&
           !String(st.master.audio_path).startsWith("mock://"));
 
+      // Prefer the job we started when present — avoid attaching an older complete job’s master mid-flight
+      if (
+        produceJobId &&
+        produceJob?.id &&
+        String(produceJob.id) !== String(produceJobId) &&
+        (jobStatus === "queued" || jobStatus === "processing" || jobStatus === "running")
+      ) {
+        // Different in-flight job — still track latest PRODUCE_SONG
+      }
+
       if (
         (jobStatus === "complete" ||
           jobStatus === "completed" ||
@@ -1869,13 +1881,31 @@ export function ProducerView({
           projectStatus === "produced") &&
         (st.master_url || masterReady)
       ) {
-        if (st.master_url) {
-          setMasterUrl(String(st.master_url));
-        } else {
-          // fallback: download route will resolve; try session signed url fields
-          const alt = st.master?.url || st.audio_url;
-          if (alt) setMasterUrl(String(alt));
+        // If we have a tracked job id, only accept complete for that job or latest PRODUCE_SONG when ours finished
+        if (
+          produceJobId &&
+          produceJob?.id &&
+          String(produceJob.id) !== String(produceJobId) &&
+          (jobStatus === "queued" || jobStatus === "processing")
+        ) {
+          return "pending";
         }
+        let url = st.master_url ? String(st.master_url) : null;
+        if (!url) {
+          const alt = st.master?.url || st.audio_url;
+          if (alt) url = String(alt);
+        }
+        // One more status pass for signed URL lag
+        if (!url) {
+          try {
+            const sr2 = await fetch(`/api/projects/${projectId}/status`);
+            const st2 = await sr2.json().catch(() => ({}));
+            if (st2.master_url) url = String(st2.master_url);
+          } catch {
+            /* ignore */
+          }
+        }
+        if (url) setMasterUrl(url);
         if (produceJob?.id) setMasterJobId(String(produceJob.id));
         setProduceStage("complete");
         setProduceUi("complete");
@@ -1884,7 +1914,7 @@ export function ProducerView({
       }
 
       if (jobStatus === "complete" || jobStatus === "completed") {
-        // Job done but URL lag — keep pending briefly
+        // Job done but URL lag — keep pending briefly; next poll refreshes signed URL
         setProduceStage(produceJob?.stage || "complete");
         return "pending";
       }
@@ -1948,6 +1978,10 @@ export function ProducerView({
           setProduceStage(produceJob?.stage || "processing");
           produceStartedAtRef.current = Date.now();
           scheduleProducePoll();
+        } else if (js === "failed") {
+          setProduceUi("failed");
+          setProduceError("AP couldn’t finish this production.");
+          setProduceStage("failed");
         } else if (st.master_url) {
           setMasterUrl(String(st.master_url));
           if (produceJob?.id) setMasterJobId(String(produceJob.id));
@@ -1966,32 +2000,87 @@ export function ProducerView({
   }, [projectId]);
 
   async function startConsoleProduce() {
-    if (!projectId || produceUi === "producing") return;
-    const hasTake = layers.some((l) => Boolean(l.audioUrl));
-    if (!hasTake) {
-      setProduceError("Record at least one take before Produce.");
-      setProduceUi("failed");
-      return;
+    if (!projectId) return;
+    if (produceUi === "producing" || produceUi === "starting") return;
+
+    setProduceUi("starting");
+    setProduceError(null);
+
+    // Shared readiness (same rules as Booth canProduce) via task list
+    try {
+      const tr = await fetch(`/api/projects/${projectId}/recording-tasks?all=1`);
+      const tj = await tr.json().catch(() => ({}));
+      if (tr.ok && Array.isArray(tj.tasks)) {
+        const planTasks: PlanTaskRow[] = (tj.tasks as Record<string, unknown>[]).map((tk) => ({
+          id: String(tk.id),
+          type: String(tk.type || "lead"),
+          title: (tk.title as string) || null,
+          status: String(tk.status || "pending"),
+          start_ms: (tk.start_ms as number) ?? null,
+          end_ms: (tk.end_ms as number) ?? null,
+          required: (tk.required as boolean) ?? null,
+          active: (tk.active as boolean) ?? null,
+          selected_in_plan: (tk.selected_in_plan as boolean) ?? null,
+        }));
+        const ready = produceReadinessFromTasks(planTasks);
+        if (!ready.canProduce) {
+          setProduceUi("failed");
+          setProduceError(ready.reason);
+          return;
+        }
+      } else {
+        // Fallback: need any completed take on layers
+        const hasTake = layers.some((l) => Boolean(l.audioUrl));
+        if (!hasTake) {
+          setProduceUi("failed");
+          setProduceError("Record at least one selected part before producing.");
+          return;
+        }
+      }
+    } catch {
+      const hasTake = layers.some((l) => Boolean(l.audioUrl));
+      if (!hasTake) {
+        setProduceUi("failed");
+        setProduceError("Record at least one selected part before producing.");
+        return;
+      }
     }
+
     // New intentional produce — clear previous master until this job completes
     setMasterUrl(null);
     setMasterJobId(null);
     setMasterPlaying(false);
-    setProduceError(null);
+    setProduceStage("queued");
     setProduceUi("producing");
-    setProduceStage("preparing takes");
+
     try {
       const res = await fetch(`/api/projects/${projectId}/produce`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(
-          typeof j.error === "string" ? j.error : "AP couldn’t start production."
-        );
+        const msg =
+          typeof j.error === "string"
+            ? j.error
+            : typeof j.message === "string"
+              ? j.message
+              : "AP couldn’t start production.";
+        throw new Error(msg.replace(/\bRoEx\b/gi, "AP"));
       }
       const jid = j.jobId || j.job_id;
       if (jid) setProduceJobId(String(jid));
 
-      if (j.master_url && res.status === 200 && (j.status === "complete" || j.status === "completed")) {
+      // Deduped in-flight job — resume poll, do not treat as new complete
+      if (j.deduped && (j.status === "queued" || j.status === "processing")) {
+        setProduceStage(j.stage || "queued");
+        produceStartedAtRef.current = Date.now();
+        scheduleProducePoll();
+        return;
+      }
+
+      if (
+        j.master_url &&
+        res.status === 200 &&
+        (j.status === "complete" || j.status === "completed")
+      ) {
         setMasterUrl(String(j.master_url));
         if (jid) setMasterJobId(String(jid));
         setProduceUi("complete");
@@ -2011,6 +2100,7 @@ export function ProducerView({
       );
     }
   }
+
 
   async function downloadMaster(format: "wav" | "mp3" = "wav") {
     if (!projectId) return;
@@ -2254,7 +2344,7 @@ export function ProducerView({
           <button
             type="button"
             onClick={() => void startConsoleProduce()}
-            disabled={produceUi === "producing"}
+            disabled={produceUi === "producing" || produceUi === "starting"}
             title="Produce finished song with AP"
             style={{
               flexShrink: 0,
@@ -2263,30 +2353,37 @@ export function ProducerView({
               borderRadius: 999,
               border: "none",
               background:
-                produceUi === "producing"
+                produceUi === "producing" || produceUi === "starting"
                   ? "rgba(255,255,255,0.1)"
                   : produceUi === "complete"
                     ? "rgba(52,211,153,0.2)"
-                    : `linear-gradient(180deg, #F0BC80, ${brass})`,
+                    : produceUi === "failed"
+                      ? `linear-gradient(180deg, #F0BC80, ${brass})`
+                      : `linear-gradient(180deg, #F0BC80, ${brass})`,
               color:
-                produceUi === "producing"
+                produceUi === "producing" || produceUi === "starting"
                   ? mutedText
                   : produceUi === "complete"
                     ? "#6EE7B7"
                     : "#1A1208",
               fontWeight: 800,
               fontSize: isNarrow ? 12 : 13,
-              cursor: produceUi === "producing" ? "default" : "pointer",
+              cursor:
+                produceUi === "producing" || produceUi === "starting" ? "default" : "pointer",
               fontFamily: "inherit",
               letterSpacing: "0.02em",
               whiteSpace: "nowrap",
             }}
           >
-            {produceUi === "producing"
-              ? "Producing…"
-              : produceUi === "complete"
-                ? "Produce again"
-                : "Produce"}
+            {produceUi === "starting"
+              ? "Starting…"
+              : produceUi === "producing"
+                ? "Producing…"
+                : produceUi === "complete"
+                  ? "Produce again"
+                  : produceUi === "failed"
+                    ? "Try again"
+                    : "Produce"}
           </button>
         ) : null}
 
