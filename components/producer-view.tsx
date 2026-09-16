@@ -360,6 +360,8 @@ export function ProducerView({
   }, []);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  /** Live input level 0–1 — passive analyser tap, not in monitor/capture path */
+  const [liveLevel, setLiveLevel] = useState(0);
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
@@ -371,6 +373,9 @@ export function ProducerView({
     startedAt: number;
   } | null>(null);
   const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const liveMeterRafRef = useRef<number | null>(null);
+  const liveMeterCtxRef = useRef<AudioContext | null>(null);
+  const beatFileInputRef = useRef<HTMLInputElement | null>(null);
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
@@ -691,6 +696,7 @@ export function ProducerView({
     consoleRecRef.current = null;
     setIsConsoleRecording(false);
     setRecordSeconds(0);
+    stopLiveMeter();
 
     if (blob.size < 100) {
       setEditMsg("Recording too short — try again");
@@ -773,6 +779,8 @@ export function ProducerView({
       recorder.start(250);
       setIsConsoleRecording(true);
       setRecordSeconds(0);
+      // Passive level meter on cloned mic tracks (not in capture or monitor path)
+      startLiveMeter(opened.stream);
       recordTickRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
       }, 1000);
@@ -795,6 +803,7 @@ export function ProducerView({
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Mic permission failed");
       setIsConsoleRecording(false);
+      stopLiveMeter();
     }
   }
 
@@ -833,6 +842,86 @@ export function ProducerView({
     } finally {
       setPlanBusy(false);
     }
+  }
+
+  /** Plan only — same /analyze → planProduction() as Booth; when beat exists but no tasks */
+  async function generatePlanOnly() {
+    if (!projectId) {
+      setEditMsg("Missing project");
+      return;
+    }
+    if (!beatUrl) {
+      setEditMsg("Upload a beat first");
+      return;
+    }
+    setPlanBusy(true);
+    setEditMsg("Building producer plan (same as Booth)…");
+    try {
+      const ar = await fetch(`/api/projects/${projectId}/analyze`, { method: "POST" });
+      const aj = await ar.json().catch(() => ({}));
+      if (!ar.ok) {
+        setEditMsg(typeof aj.error === "string" ? aj.error : "Plan generation failed");
+        return;
+      }
+      setEditMsg(aj.reused ? "Plan already ready" : "Plan ready — record into tracks");
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Plan generation failed");
+    } finally {
+      setPlanBusy(false);
+    }
+  }
+
+  /** Passive meter: parallel graph on a clone of the mic stream — never touches monitor or MediaRecorder */
+  function startLiveMeter(sourceStream: MediaStream) {
+    stopLiveMeter();
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return;
+      // Clone tracks so analyser graph cannot affect capture/monitor
+      const clone = new MediaStream(sourceStream.getAudioTracks().map((tr) => tr.clone()));
+      const ctx = new AC();
+      liveMeterCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(clone);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.7;
+      // analyser is a sink only — nothing connects after it to speakers
+      src.connect(analyser);
+      const data = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        setLiveLevel(Math.min(1, rms * 3.2));
+        liveMeterRafRef.current = requestAnimationFrame(tick);
+      };
+      liveMeterRafRef.current = requestAnimationFrame(tick);
+    } catch {
+      /* visualization optional */
+    }
+  }
+
+  function stopLiveMeter() {
+    if (liveMeterRafRef.current != null) {
+      cancelAnimationFrame(liveMeterRafRef.current);
+      liveMeterRafRef.current = null;
+    }
+    if (liveMeterCtxRef.current) {
+      try {
+        void liveMeterCtxRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      liveMeterCtxRef.current = null;
+    }
+    setLiveLevel(0);
   }
 
   async function createTrack(file?: File | null) {
@@ -1415,9 +1504,38 @@ export function ProducerView({
           />
         </button>
         {isConsoleRecording && (
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#F07167", fontVariantNumeric: "tabular-nums", minWidth: 36 }}>
-            {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#F07167", fontVariantNumeric: "tabular-nums" }}>
+              {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}
+            </span>
+            {/* Live input level — passive analyser (not in monitor/capture path) */}
+            <div
+              title="Input level"
+              style={{
+                width: isNarrow ? 56 : 72,
+                height: 8,
+                borderRadius: 4,
+                background: "rgba(255,255,255,0.08)",
+                overflow: "hidden",
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.round(liveLevel * 100)}%`,
+                  height: "100%",
+                  borderRadius: 4,
+                  background:
+                    liveLevel > 0.85
+                      ? "#F07167"
+                      : liveLevel > 0.35
+                        ? brass
+                        : "rgba(231,169,97,0.55)",
+                  transition: "width 50ms linear",
+                }}
+              />
+            </div>
+          </div>
         )}
 
         <button
@@ -1533,6 +1651,59 @@ export function ProducerView({
           </label>
         </div>
       )}
+
+      {beatUrl && projectId && layers.length === 0 && (
+        <div
+          style={{
+            margin: "8px 12px",
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: `1px solid ${border}`,
+            background: surface,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ color: mutedText, fontSize: 13, flex: 1, minWidth: 160 }}>
+            Beat loaded — generate a recording plan (same engine as Booth).
+          </span>
+          <button
+            type="button"
+            disabled={planBusy}
+            onClick={() => void generatePlanOnly()}
+            style={{
+              padding: "10px 16px",
+              borderRadius: 999,
+              border: "none",
+              background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+              color: "#1A1208",
+              fontWeight: 800,
+              cursor: planBusy ? "wait" : "pointer",
+              fontFamily: "inherit",
+              opacity: planBusy ? 0.7 : 1,
+            }}
+          >
+            {planBusy ? "Working…" : "Generate plan"}
+          </button>
+        </div>
+      )}
+
+
+      {/* Shared beat picker for empty state + Add Track when no beat */}
+      <input
+        ref={beatFileInputRef}
+        type="file"
+        accept="audio/*"
+        hidden
+        disabled={planBusy}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) void uploadBeatAndPlan(f);
+        }}
+      />
 
       {/* Suno-style dual scroller: pinned headers | timeline, synced vertical scroll */}
       <div
@@ -2303,28 +2474,79 @@ export function ProducerView({
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>Add track</div>
-            <button
-              type="button"
-              onClick={() => {
-                setAddMenuOpen(false);
-                setShowAddTrack(true);
-              }}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "14px 12px",
-                borderRadius: 12,
-                border: `1px solid ${border}`,
-                background: "rgba(255,255,255,0.04)",
-                color: text,
-                marginBottom: 8,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                fontWeight: 600,
-              }}
-            >
-              Audio — upload beat or vocal file
-            </button>
+            {!beatUrl ? (
+              <button
+                type="button"
+                disabled={planBusy}
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  beatFileInputRef.current?.click();
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "14px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.04)",
+                  color: text,
+                  marginBottom: 8,
+                  cursor: planBusy ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 600,
+                }}
+              >
+                Upload beat — runs AI plan (same as Booth)
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  setShowAddTrack(true);
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "14px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.04)",
+                  color: text,
+                  marginBottom: 8,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 600,
+                }}
+              >
+                Upload vocal / audio file — new track
+              </button>
+            )}
+            {beatUrl && layers.filter((l) => l.id !== "beat").length === 0 && (
+              <button
+                type="button"
+                disabled={planBusy}
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  void generatePlanOnly();
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "14px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: "rgba(255,255,255,0.04)",
+                  color: text,
+                  marginBottom: 8,
+                  cursor: planBusy ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 600,
+                }}
+              >
+                Generate plan — structure tracks from this beat
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
