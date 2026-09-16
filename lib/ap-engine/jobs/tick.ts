@@ -63,7 +63,7 @@ export async function runInternalApProduceJob(opts: {
   try {
     const { data: project } = await supabase
       .from("projects")
-      .select("id, genre, mood, tempo")
+      .select("id, genre, mood, tempo, metadata")
       .eq("id", projectId)
       .single();
 
@@ -126,6 +126,15 @@ export async function runInternalApProduceJob(opts: {
       placements: placementLog,
     };
 
+    const projectMeta =
+      project && typeof (project as { metadata?: unknown }).metadata === "object"
+        ? ((project as { metadata: Record<string, unknown> }).metadata || {})
+        : {};
+    const productionDirection =
+      projectMeta.production_direction && typeof projectMeta.production_direction === "object"
+        ? (projectMeta.production_direction as import("../direction/types").ProductionDirection)
+        : null;
+
     const phased = await runFullProduceWithCheckpoints({
       jobId,
       projectId,
@@ -133,6 +142,7 @@ export async function runInternalApProduceJob(opts: {
       beatPath: beat.audio_path,
       vocals,
       genre: project?.genre,
+      productionDirection,
       placementLog,
       report,
       patch,
