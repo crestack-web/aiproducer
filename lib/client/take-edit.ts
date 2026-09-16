@@ -62,7 +62,9 @@ function bufferFromChannels(
   const n = channels[0]?.length || 0;
   const buf = ctx.createBuffer(Math.max(1, channels.length), Math.max(1, n), sampleRate);
   for (let c = 0; c < channels.length; c++) {
-    buf.copyToChannel(channels[c], c);
+    // Copy via set() to avoid Float32Array<ArrayBufferLike> vs ArrayBuffer TS mismatch
+    const dest = buf.getChannelData(c);
+    dest.set(channels[c] as Float32Array);
   }
   return buf;
 }
