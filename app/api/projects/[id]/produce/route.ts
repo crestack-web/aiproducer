@@ -57,7 +57,16 @@ export async function POST(_req: Request, ctx: Ctx) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not start produce";
     const status = msg.includes("not owned") || msg.includes("Not found") ? 404 : 400;
-    return NextResponse.json({ error: msg }, { status });
+    const notReady =
+      /record at least|active plan|selected part|lead vocal|no recordings/i.test(msg);
+    return NextResponse.json(
+      {
+        error: msg,
+        code: notReady ? "NOT_READY" : status === 404 ? "NOT_FOUND" : "PRODUCE_ERROR",
+        canProduce: notReady ? false : undefined,
+      },
+      { status }
+    );
   }
 }
 
