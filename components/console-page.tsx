@@ -38,6 +38,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   const [beatDurationMs, setBeatDurationMs] = useState<number | null>(null);
   const [layers, setLayers] = useState<ProducerLayer[]>([]);
   const [sections, setSections] = useState<ProducerSection[]>([]);
+  const [hasMaster, setHasMaster] = useState(false);
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
     // soft=true refreshes data without unmounting Console (avoids full-page flash on small edits)
@@ -77,6 +78,14 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         const p = j.project || j;
         setTitle(p?.title || "Session");
         setTempo(typeof p?.tempo === "number" ? p.tempo : null);
+        const st = String(p?.status || "").toLowerCase();
+        setHasMaster(
+          st === "complete" ||
+            st === "mastering" ||
+            st === "mixing" ||
+            Boolean(p?.master_url) ||
+            Boolean(p?.has_master)
+        );
       }
       if (br.ok) {
         const bj = await br.json();
@@ -207,6 +216,13 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
       libraryHref="/app"
       onClose={() => router.push(`/app/studio/${projectId}`)}
       onLayersChanged={() => void load({ soft: true })}
+      onOpenTweak={() => void load({ soft: true })}
+      tweaksEnabled={hasMaster}
+      tweaksGateMessage={
+        hasMaster
+          ? "Ask AP about the mix…"
+          : "Select a track with a take to tweak it — or Produce first for song-wide tweaks"
+      }
     />
   );
 }

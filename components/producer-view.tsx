@@ -68,6 +68,9 @@ type Props = {
   libraryHref?: string | null;
   onClose?: () => void;
   onOpenTweak?: () => void;
+  /** When false, song-wide prompt stays gated; track prompts still need a take */
+  tweaksEnabled?: boolean;
+  tweaksGateMessage?: string;
   onLayersChanged?: () => void;
 };
 
@@ -273,6 +276,8 @@ export function ProducerView({
   layers: layersProp,
   onClose,
   onOpenTweak,
+  tweaksEnabled = false,
+  tweaksGateMessage = "Produce first to unlock song-wide tweaks",
   onLayersChanged,
   tempoBpm = null,
   boothHref = null,
@@ -393,21 +398,29 @@ export function ProducerView({
   } | null>(null);
 
   async function submitTrackPrompt() {
-    if (!projectId || !selectedTrackId || !trackPrompt.trim()) return;
+    if (!projectId || !trackPrompt.trim()) return;
+    const trackScope =
+      selectedTrackId && selectedTrackId !== "beat"
+        ? selectedTrackId
+        : null;
+    // Song-wide still needs produced master path (tweaksEnabled); track needs take on server
+    if (!trackScope && !tweaksEnabled) {
+      setEditMsg(tweaksGateMessage);
+      return;
+    }
     setTrackPromptBusy(true);
     setEditMsg(null);
     try {
       const tr = tracks.find((x) => x.id === selectedTrackId);
-      const scoped = tr
-        ? `[track:${tr.label}] ${trackPrompt.trim()}`
-        : trackPrompt.trim();
       const res = await fetch(`/api/projects/${projectId}/tweak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: scoped,
-          track_id: selectedTrackId === "beat" ? undefined : selectedTrackId,
-          scope: selectedTrackId === "beat" ? "song" : "section",
+          prompt: trackPrompt.trim(),
+          task_id: trackScope || undefined,
+          track_id: trackScope || undefined,
+          scope: trackScope ? "track" : "song",
+          playbackMs: playheadMs,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -415,11 +428,27 @@ export function ProducerView({
         setEditMsg(
           typeof j.error === "string"
             ? j.error
-            : "Tweak failed — produce the song first if needed"
+            : typeof j.message === "string"
+              ? j.message
+              : "Tweak failed"
+        );
+      } else if (j.needsClarification || j.needsVariationPick) {
+        setEditMsg(
+          typeof j.message === "string"
+            ? j.message
+            : typeof j.plain === "string"
+              ? j.plain
+              : "Try a more specific request"
         );
       } else {
         setTrackPrompt("");
-        setEditMsg(null);
+        setEditMsg(
+          typeof j.plain === "string"
+            ? j.plain
+            : trackScope
+              ? "Updated this track"
+              : "Song tweak applied"
+        );
         onLayersChanged?.();
         onOpenTweak?.();
       }
@@ -2176,15 +2205,20 @@ export function ProducerView({
                 value={trackPrompt}
                 onChange={(e) => setTrackPrompt(e.target.value)}
                 placeholder={
-                  onOpenTweak
-                    ? selectedTrackId
-                      ? "Ask AP about this track…"
-                      : "Ask AP anything about the mix…"
-                    : "Produce first to unlock tweaks"
+                  selectedTrackId && selectedTrackId !== "beat"
+                    ? "Ask AP about this track… (e.g. add warmth)"
+                    : tweaksEnabled
+                      ? "Ask AP about the whole song…"
+                      : tweaksGateMessage
                 }
-                disabled={!onOpenTweak}
+                disabled={
+                  selectedTrackId && selectedTrackId !== "beat"
+                    ? false
+                    : !tweaksEnabled
+                }
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && onOpenTweak && trackPrompt.trim()) {
+                  const trackOk = selectedTrackId && selectedTrackId !== "beat";
+                  if (e.key === "Enter" && trackPrompt.trim() && (trackOk || tweaksEnabled)) {
                     e.preventDefault();
                     void submitTrackPrompt().then(() => setPromptBarOpen(false));
                   }
@@ -2206,19 +2240,31 @@ export function ProducerView({
                 onClick={() => {
                   void submitTrackPrompt().then(() => setPromptBarOpen(false));
                 }}
-                disabled={!onOpenTweak || !trackPrompt.trim()}
+                disabled={
+                  !trackPrompt.trim() ||
+                  (!(selectedTrackId && selectedTrackId !== "beat") && !tweaksEnabled)
+                }
                 style={{
                   width: 34,
                   height: 34,
                   borderRadius: 999,
                   border: "none",
                   background:
-                    onOpenTweak && trackPrompt.trim()
+                    trackPrompt.trim() &&
+                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
                       ? "linear-gradient(180deg, #F0BC80, #E7A961)"
                       : "rgba(255,255,255,0.1)",
-                  color: onOpenTweak && trackPrompt.trim() ? "#1A1208" : "rgba(255,255,255,0.35)",
+                  color:
+                    trackPrompt.trim() &&
+                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
+                      ? "#1A1208"
+                      : "rgba(255,255,255,0.35)",
                   fontWeight: 800,
-                  cursor: onOpenTweak && trackPrompt.trim() ? "pointer" : "default",
+                  cursor:
+                    trackPrompt.trim() &&
+                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
+                      ? "pointer"
+                      : "default",
                   fontSize: 14,
                   flexShrink: 0,
                 }}

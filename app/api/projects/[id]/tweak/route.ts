@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isStoragePath, resolveAudioUrl, getStorageBucket } from "@/lib/storage";
 import { decodeWav } from "@/lib/audio/wav";
+import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 import type { PcmStereo } from "@/lib/ap-engine/types";
 import { exportWav } from "@/lib/ap-engine/render/export-wav-mp3";
 import {
@@ -27,7 +28,23 @@ type Body = {
   playbackMs?: number | null;
   version?: number;
   variationId?: string | null;
+  /** Console track scope — structured id, not text inference */
+  task_id?: string | null;
+  scope?: "song" | "track" | "section" | null;
 };
+
+/** Tools that are meaningful on an isolated vocal take (not full-mix context). */
+const TAKE_SAFE_TOOLS = new Set([
+  "eq",
+  "compressor",
+  "reverb",
+  "delay",
+  "saturation",
+  "deesser",
+  "filter",
+  "stereo_width",
+]);
+// limiter: full-mix loudness tool — peak safety is applied in applyToolCalls instead
 
 async function loadSectionHints(
   service: ReturnType<typeof createServiceClient>,
@@ -248,6 +265,192 @@ export async function POST(
     if (!prompt) {
       return NextResponse.json({ error: "Prompt required" }, { status: 400 });
     }
+
+    // —— Console track-scoped tweak: operate on this task's take only (not master) ——
+    // Scope enforced by task_id; does not run Producer Mind / master history.
+    const taskId = body.task_id ? String(body.task_id).trim() : "";
+    if (taskId && body.scope !== "song") {
+      const { data: task } = await service
+        .from("recording_tasks")
+        .select("id, project_id, type, title, status")
+        .eq("id", taskId)
+        .eq("project_id", projectId)
+        .maybeSingle();
+      if (!task) {
+        return NextResponse.json({ error: "Track not found" }, { status: 404 });
+      }
+
+      const { data: recs } = await service
+        .from("recordings")
+        .select("id, audio_path, original_audio_path, is_selected, take_number")
+        .eq("task_id", taskId)
+        .order("take_number", { ascending: false });
+
+      const rec =
+        (recs || []).find((r) => r.is_selected) ||
+        (recs || []).find((r) => r.audio_path) ||
+        null;
+      if (!rec?.audio_path) {
+        return NextResponse.json(
+          { error: "No recorded take on this track yet — record or upload audio first." },
+          { status: 400 }
+        );
+      }
+
+      const pathCandidates = [rec.audio_path, rec.original_audio_path].filter(
+        (p): p is string => Boolean(p)
+      );
+      let fileBuf: Buffer | null = null;
+      let usedPath: string | null = null;
+      for (const p of pathCandidates) {
+        try {
+          const { data: blob, error: dlErr } = await service.storage
+            .from(getStorageBucket())
+            .download(p);
+          if (dlErr || !blob) continue;
+          fileBuf = Buffer.from(await blob.arrayBuffer());
+          usedPath = p;
+          break;
+        } catch {
+          continue;
+        }
+      }
+      if (!fileBuf || !usedPath) {
+        return NextResponse.json({ error: "Could not load take audio" }, { status: 500 });
+      }
+
+      let wavBuf: Buffer;
+      try {
+        const ensured = await convertBufferToWav(fileBuf, usedPath);
+        wavBuf = ensured.buffer;
+      } catch (e) {
+        return NextResponse.json(
+          {
+            error:
+              e instanceof Error
+                ? e.message
+                : "Could not decode take (need WAV or server ffmpeg)",
+          },
+          { status: 415 }
+        );
+      }
+
+      let pcmStereo: PcmStereo;
+      try {
+        const decoded = decodeWav(wavBuf);
+        const ch = decoded.channels || 1;
+        const samples = decoded.samples;
+        const sr = decoded.sampleRate;
+        const frames = Math.floor(samples.length / ch);
+        if (ch >= 2) {
+          const left = new Float32Array(frames);
+          const right = new Float32Array(frames);
+          for (let i = 0; i < frames; i++) {
+            left[i] = samples[i * ch] || 0;
+            right[i] = samples[i * ch + 1] || 0;
+          }
+          pcmStereo = { left, right, sampleRate: sr };
+        } else {
+          pcmStereo = { left: samples, right: new Float32Array(samples), sampleRate: sr };
+        }
+      } catch {
+        return NextResponse.json({ error: "Invalid take WAV" }, { status: 415 });
+      }
+
+      // Strip [track:…] prefix for matching — scope is task_id
+      const cleanPrompt = prompt.replace(/^\[track:[^\]]*\]\s*/i, "").trim() || prompt;
+
+      const toolkitDecision = promptToToolCalls({
+        request: cleanPrompt,
+        sections: [],
+        playbackMs: null,
+      });
+
+      // Force song-scope tool calls on the isolated buffer; drop mix-only limiter
+      const rawCalls = (toolkitDecision.tool_calls || []).map((c) => ({
+        ...c,
+        scope: "song" as const,
+        target: "song",
+      }));
+      const skipped = rawCalls.filter((c) => !TAKE_SAFE_TOOLS.has(c.tool)).map((c) => c.tool);
+      const calls = rawCalls.filter((c) => TAKE_SAFE_TOOLS.has(c.tool));
+
+      if (!calls.length) {
+        return NextResponse.json({
+          ok: false,
+          needsClarification: true,
+          scope: "track",
+          task_id: taskId,
+          message:
+            skipped.length
+              ? `That request maps to mix-only tools (${skipped.join(", ")}). Try warmth, brightness, space, or compression on this vocal.`
+              : "Could not map that request to a vocal-take edit. Try e.g. “add warmth” or “brighten this up”.",
+          toolkit: toolkitDecision,
+        });
+      }
+
+      const { pcm: rendered, applied } = applyToolCalls(pcmStereo, calls);
+      const wavOut = exportWav(rendered);
+      const outPath = `projects/${projectId}/takes/${taskId}/tweak-${Date.now()}.wav`;
+
+      const { error: upErr } = await service.storage
+        .from(getStorageBucket())
+        .upload(outPath, wavOut, { contentType: "audio/wav", upsert: true });
+      if (upErr) {
+        return NextResponse.json({ error: upErr.message || "Upload failed" }, { status: 500 });
+      }
+
+      // New selected take for this task only — other tracks untouched
+      const nextTake =
+        Math.max(0, ...(recs || []).map((r) => Number(r.take_number) || 0)) + 1;
+      await service
+        .from("recordings")
+        .update({ is_selected: false })
+        .eq("task_id", taskId);
+
+      const insertRow: Record<string, unknown> = {
+        task_id: taskId,
+        project_id: projectId,
+        audio_path: outPath,
+        take_number: nextTake,
+        is_selected: true,
+        metadata: {
+          source: "console_track_tweak",
+          parent_recording_id: rec.id,
+          prompt: cleanPrompt,
+          tools: applied.map((a) => a.tool),
+        },
+      };
+      const { error: insErr } = await service.from("recordings").insert(insertRow);
+      if (insErr) {
+        // Fallback: point existing selected row at new path
+        await service
+          .from("recordings")
+          .update({ audio_path: outPath, is_selected: true })
+          .eq("id", rec.id);
+      }
+
+      await service
+        .from("recording_tasks")
+        .update({ status: "completed" })
+        .eq("id", taskId);
+
+      const plain =
+        applied.map((a) => a.reasoning || a.tool).filter(Boolean).join("; ") ||
+        toolkitDecision.plain_summary ||
+        "Updated this track";
+
+      return NextResponse.json({
+        ok: true,
+        scope: "track",
+        task_id: taskId,
+        plain,
+        applied: applied.map((a) => ({ tool: a.tool, reasoning: a.reasoning })),
+        skipped_tools: skipped,
+        take_path: outPath,
+      });
+    }
+
     // Load artist taste profile
     const { data: profileRow } = await service
       .from("profiles")
