@@ -1383,6 +1383,15 @@ export function ProducerView({
     takeWorkingRef.current = next;
     refreshTakePeaks(next);
     setTakeSel(null);
+    // Shrink timeline clip to match edited take length (position unchanged)
+    if (takeEditId) {
+      const dur = bufferDurationMs(next);
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === takeEditId ? { ...l, endMs: l.startMs + Math.max(400, dur) } : l
+        )
+      );
+    }
   }
 
   function applyTakeKeep() {
@@ -1395,6 +1404,14 @@ export function ProducerView({
     takeWorkingRef.current = next;
     refreshTakePeaks(next);
     setTakeSel(null);
+    if (takeEditId) {
+      const dur = bufferDurationMs(next);
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === takeEditId ? { ...l, endMs: l.startMs + Math.max(400, dur) } : l
+        )
+      );
+    }
   }
 
   function undoTakeEdit() {
@@ -1404,6 +1421,14 @@ export function ProducerView({
     setTakeUndoDepth(takeUndoStackRef.current.length);
     refreshTakePeaks(prev);
     setTakeSel(null);
+    if (takeEditId) {
+      const dur = bufferDurationMs(prev);
+      setLayers((prevL) =>
+        prevL.map((l) =>
+          l.id === takeEditId ? { ...l, endMs: l.startMs + Math.max(400, dur) } : l
+        )
+      );
+    }
   }
 
   function playTakeSelection() {
@@ -3094,7 +3119,12 @@ export function ProducerView({
             const isMuted = muted[tr.id];
             const isSolo = soloId === tr.id;
             const isExpanded = expandedId === tr.id;
-            const rowH = isExpanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
+            const isTakeEditingSide = takeEditId === tr.id;
+            const rowH = isTakeEditingSide
+              ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+              : isExpanded
+                ? TRACK_ROW_H_EXPANDED
+                : TRACK_ROW_H;
             return (
               <div
                 key={`h-${tr.id}`}
@@ -3534,9 +3564,6 @@ export function ProducerView({
                 >
                   <div
                     data-layer-id={tr.id}
-                    onPointerMove={onClipPointerMove}
-                    onPointerUp={onClipPointerUp}
-                    onPointerCancel={onClipPointerUp}
                     style={{
                       position: "absolute",
                       left: msToX(tr.startMs),
@@ -3555,10 +3582,14 @@ export function ProducerView({
                             ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
                             : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
-                      cursor: tr.kind === "vocal" ? (isMock ? "pointer" : "grab") : "default",
+                      cursor: tr.kind === "vocal" ? (isTakeEditing ? "col-resize" : isMock ? "pointer" : "grab") : "default",
                       touchAction: "none",
                       opacity: dimmed ? 0.4 : 1,
-                      outline: isArmed && !isLiveRec ? `1px dashed ${brass}` : undefined,
+                      outline: isTakeEditing
+                        ? `2px solid ${brass}`
+                        : isArmed && !isLiveRec
+                          ? `1px dashed ${brass}`
+                          : undefined,
                     }}
                     onPointerDown={
                       tr.kind === "vocal"
@@ -3576,6 +3607,13 @@ export function ProducerView({
                     {isLiveRec ? (
                       <LiveClipWave
                         peaks={livePeaks}
+                        color={tr.color}
+                        width={clipW}
+                        height={clipH}
+                      />
+                    ) : isTakeEditing && takePeaks.length > 0 ? (
+                      <LiveClipWave
+                        peaks={takePeaks}
                         color={tr.color}
                         width={clipW}
                         height={clipH}
@@ -3608,7 +3646,25 @@ export function ProducerView({
                       {tr.label}
                       {tr.sub ? ` — ${tr.sub}` : ""}
                     </div>
-                    {tr.kind === "vocal" && (
+                    {/* Region selection on the same recording waveform */}
+                    {isTakeEditing && takeSel && takeDurationMs > 0 ? (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          bottom: 0,
+                          left: `${(Math.min(takeSel.startMs, takeSel.endMs) / takeDurationMs) * 100}%`,
+                          width: `${(Math.abs(takeSel.endMs - takeSel.startMs) / takeDurationMs) * 100}%`,
+                          background: "rgba(231,169,97,0.32)",
+                          borderLeft: `2px solid #fff`,
+                          borderRight: `2px solid #fff`,
+                          boxShadow: "inset 0 0 0 1px rgba(231,169,97,0.8)",
+                          pointerEvents: "none",
+                          zIndex: 3,
+                        }}
+                      />
+                    ) : null}
+                    {tr.kind === "vocal" && !isTakeEditing && (
                       <>
                         <div
                           onPointerDown={(e) =>
@@ -3643,6 +3699,65 @@ export function ProducerView({
                       </>
                     )}
                   </div>
+                  {isTakeEditing ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: msToX(tr.startMs),
+                        top: (expanded ? 12 : 8) + clipH + 6,
+                        width: Math.max(clipW, 280),
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 6,
+                        zIndex: 6,
+                        padding: "4px 6px",
+                        borderRadius: 8,
+                        background: "rgba(12,12,16,0.92)",
+                        border: `1px solid ${brass}`,
+                        boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 800, color: brass, marginRight: 4 }}>
+                        EDIT
+                        {retakeTarget ? " · RETAKE" : ""}
+                      </span>
+                      <button type="button" onClick={playTakeSelection}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        ▶
+                      </button>
+                      <button type="button" disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
+                        onClick={applyTakeDelete}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: "1px solid rgba(240,113,103,0.45)", background: "rgba(240,113,103,0.12)", color: "#F07167", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4 }}>
+                        Delete
+                      </button>
+                      <button type="button" disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
+                        onClick={applyTakeKeep}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4 }}>
+                        Keep
+                      </button>
+                      <button type="button" disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy || isConsoleRecording}
+                        onClick={startRetakeRegion}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${brass}`, background: retakeTarget ? "rgba(231,169,97,0.22)" : "rgba(255,255,255,0.06)", color: brass, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit", opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4 }}>
+                        Retake
+                      </button>
+                      <button type="button" disabled={takeUndoDepth === 0 || takeEditBusy}
+                        onClick={undoTakeEdit}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        Undo
+                      </button>
+                      <button type="button" onClick={cancelTakeEdit} disabled={takeEditBusy}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "transparent", color: mutedText, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        Cancel
+                      </button>
+                      <button type="button" onClick={() => void commitTakeEdit()} disabled={takeEditBusy}
+                        style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        {takeEditBusy ? "…" : "Done"}
+                      </button>
+                    </div>
+                  ) : null}
                   <div
                     style={{
                       position: "absolute",
@@ -3691,274 +3806,7 @@ export function ProducerView({
 
       {/* Produce status — compact, non-blocking */}
       
-      {/* Take edit — performance region tools */}
-      {takeEditId ? (
-        <div
-          style={{
-            position: "absolute",
-            left: 12,
-            right: 12,
-            bottom: promptBarOpen ? 140 : 72,
-            zIndex: 40,
-            display: "flex",
-            justifyContent: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <div
-            style={{
-              pointerEvents: "auto",
-              width: "100%",
-              maxWidth: 480,
-              borderRadius: 14,
-              padding: "12px 14px",
-              background: "rgba(18,18,24,0.96)",
-              border: `1px solid ${brass}`,
-              boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: brass }}>
-                Edit take
-                {retakeTarget ? " · Retake armed" : ""}
-              </div>
-              <div style={{ fontSize: 11, color: mutedText }}>
-                {takeDurationMs > 0 ? `${(takeDurationMs / 1000).toFixed(1)}s` : ""}
-              </div>
-            </div>
-
-            {/* Simple peak strip + selection */}
-            <div
-              style={{
-                position: "relative",
-                height: 56,
-                borderRadius: 8,
-                background: "rgba(0,0,0,0.35)",
-                border: `1px solid ${border}`,
-                overflow: "hidden",
-                touchAction: "none",
-                marginBottom: 10,
-              }}
-              onPointerDown={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                const ms = x * takeDurationMs;
-                takeSelDragRef.current = {
-                  mode: "create",
-                  originX: e.clientX,
-                  originStart: ms,
-                  originEnd: ms,
-                };
-                setTakeSel({ startMs: ms, endMs: ms });
-                try {
-                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                } catch {
-                  /* */
-                }
-              }}
-              onPointerMove={(e) => {
-                const d = takeSelDragRef.current;
-                if (!d || takeDurationMs <= 0) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                const ms = x * takeDurationMs;
-                if (d.mode === "create") {
-                  setTakeSel({
-                    startMs: Math.min(d.originStart, ms),
-                    endMs: Math.max(d.originStart, ms),
-                  });
-                }
-              }}
-              onPointerUp={() => {
-                takeSelDragRef.current = null;
-                if (takeSel && takeDurationMs > 0) {
-                  setTakeSel(normalizeRegion(takeSel, takeDurationMs));
-                }
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "flex-end", height: "100%", gap: 1, padding: "4px 2px" }}>
-                {takePeaks.map((p, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      flex: 1,
-                      height: `${Math.max(6, p * 100)}%`,
-                      background: brass,
-                      opacity: 0.55,
-                      borderRadius: 1,
-                    }}
-                  />
-                ))}
-              </div>
-              {takeSel && takeDurationMs > 0 ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    bottom: 0,
-                    left: `${(Math.min(takeSel.startMs, takeSel.endMs) / takeDurationMs) * 100}%`,
-                    width: `${(Math.abs(takeSel.endMs - takeSel.startMs) / takeDurationMs) * 100}%`,
-                    background: "rgba(231,169,97,0.28)",
-                    borderLeft: `2px solid ${brass}`,
-                    borderRight: `2px solid ${brass}`,
-                    pointerEvents: "none",
-                  }}
-                />
-              ) : null}
-            </div>
-
-            <div style={{ fontSize: 11, color: mutedText, marginBottom: 8 }}>
-              {takeSel && isValidRegion(takeSel, takeDurationMs)
-                ? `Selected ${(Math.min(takeSel.startMs, takeSel.endMs) / 1000).toFixed(2)}s – ${(Math.max(takeSel.startMs, takeSel.endMs) / 1000).toFixed(2)}s`
-                : "Drag on the waveform to select a region"}
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-              <button
-                type="button"
-                onClick={playTakeSelection}
-                style={{
-                  height: 34,
-                  padding: "0 12px",
-                  borderRadius: 999,
-                  border: `1px solid ${border}`,
-                  background: "rgba(255,255,255,0.06)",
-                  color: text,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                ▶ Play
-              </button>
-              <button
-                type="button"
-                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
-                onClick={applyTakeDelete}
-                style={{
-                  height: 34,
-                  padding: "0 12px",
-                  borderRadius: 999,
-                  border: "1px solid rgba(240,113,103,0.4)",
-                  background: "rgba(240,113,103,0.12)",
-                  color: "#F07167",
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
-                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
-                  fontFamily: "inherit",
-                }}
-              >
-                Delete
-              </button>
-              <button
-                type="button"
-                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy}
-                onClick={applyTakeKeep}
-                style={{
-                  height: 34,
-                  padding: "0 12px",
-                  borderRadius: 999,
-                  border: `1px solid ${border}`,
-                  background: "rgba(255,255,255,0.06)",
-                  color: text,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
-                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
-                  fontFamily: "inherit",
-                }}
-              >
-                Keep
-              </button>
-              <button
-                type="button"
-                disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy || isConsoleRecording}
-                onClick={startRetakeRegion}
-                style={{
-                  height: 34,
-                  padding: "0 12px",
-                  borderRadius: 999,
-                  border: `1px solid ${brass}`,
-                  background: retakeTarget ? "rgba(231,169,97,0.2)" : "rgba(255,255,255,0.04)",
-                  color: brass,
-                  fontWeight: 800,
-                  fontSize: 12,
-                  cursor: isValidRegion(takeSel, takeDurationMs) ? "pointer" : "default",
-                  opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4,
-                  fontFamily: "inherit",
-                }}
-              >
-                Retake
-              </button>
-              <button
-                type="button"
-                disabled={takeUndoDepth === 0 || takeEditBusy}
-                onClick={undoTakeEdit}
-                style={{
-                  height: 34,
-                  padding: "0 12px",
-                  borderRadius: 999,
-                  border: `1px solid ${border}`,
-                  background: "rgba(255,255,255,0.06)",
-                  color: text,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Undo
-              </button>
-            </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                onClick={cancelTakeEdit}
-                disabled={takeEditBusy}
-                style={{
-                  flex: 1,
-                  height: 36,
-                  borderRadius: 999,
-                  border: `1px solid ${border}`,
-                  background: "transparent",
-                  color: mutedText,
-                  fontWeight: 700,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void commitTakeEdit()}
-                disabled={takeEditBusy}
-                style={{
-                  flex: 1,
-                  height: 36,
-                  borderRadius: 999,
-                  border: "none",
-                  background: `linear-gradient(180deg, #F0BC80, ${brass})`,
-                  color: "#1A1208",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  cursor: takeEditBusy ? "default" : "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                {takeEditBusy ? "…" : "Done"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {projectId && produceUi !== "idle" ? (
+{projectId && produceUi !== "idle" ? (
         <div
           style={{
             position: "absolute",
