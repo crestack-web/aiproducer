@@ -62,6 +62,7 @@ import {
   type SessionTimeline,
 } from "@/lib/audio/session-timeline";
 import { AppShell } from "@/components/app-shell";
+import { STUDIO_LOGO_URL } from "@/lib/brand";
 import {
   SessionSteps,
   sectionLabel,
@@ -3051,7 +3052,7 @@ export default function ProjectDetailPage() {
               onClick={() => { window.location.href = `/app/console/${id}`; }}
               disabled={phase === "recording" || phase === "countdown"}
             >
-              Console
+              Studio
             </button>
             {current && (() => {
               // Single compact CTA: next open layer on this section (harmony / double / …)
@@ -3131,7 +3132,8 @@ export default function ProjectDetailPage() {
             {currentIsLayer ? (
               <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: `1px solid ${C.signal}`, background: C.surface }}>
                 <div style={{ fontSize: 11, letterSpacing: "0.08em", fontWeight: 700, color: C.signal }}>
-                  AI PRODUCER
+                  <img src={STUDIO_LOGO_URL} alt="" width={18} height={18} style={{ borderRadius: 4, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }} />
+                  STUDIO · BOOTH
                 </div>
                 <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
                   {sectionLabel(current)} · optional layer
@@ -3983,7 +3985,7 @@ export default function ProjectDetailPage() {
                 fontFamily: "inherit",
               }}
             >
-              Open Console
+              Open Studio
             </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>

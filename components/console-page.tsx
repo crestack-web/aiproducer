@@ -119,7 +119,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         setSections(Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load console");
+      setError(e instanceof Error ? e.message : "Failed to load Studio");
     } finally {
       setLoading(false);
     }
@@ -132,7 +132,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#0B0A0F", color: "#9B96A3", fontFamily: "system-ui, sans-serif" }}>
-        Opening Console…
+        Opening Studio…
       </div>
     );
   }

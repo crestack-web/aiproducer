@@ -8,6 +8,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
+import { STUDIO_LOGO_URL } from "@/lib/brand";
 
 export type TrackFx = {
   gainDb: number;
@@ -1050,13 +1051,17 @@ export function ProducerView({
       >
         <a
           href={libraryHref || "/app"}
-          style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none", color: text, flexShrink: 0 }}
+          style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", color: text, flexShrink: 0 }}
           title="Library"
         >
-          <span style={{ width: 28, height: 28, borderRadius: 8, background: `linear-gradient(135deg, ${brass}, #C4893A)`, display: "grid", placeItems: "center", fontWeight: 800, fontSize: 12, color: "#1A1208" }}>
-            AP
-          </span>
-          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>CONSOLE</span>
+          <img
+            src={STUDIO_LOGO_URL}
+            alt="Studio"
+            width={28}
+            height={28}
+            style={{ borderRadius: 8, objectFit: "cover", display: "block" }}
+          />
+          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>STUDIO</span>
         </a>
 
         <input
@@ -1068,7 +1073,7 @@ export function ProducerView({
 
         <button
           type="button"
-          title="Record in Console is coming soon — use Booth to capture vocals"
+          title="Record in Studio timeline is coming soon — use Booth to capture vocals"
           onClick={() => {
             if (boothHref) window.location.href = boothHref;
             else onClose?.();
@@ -1186,14 +1191,54 @@ export function ProducerView({
               borderBottom: `1px solid ${border}`,
             }}
           >
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              style={{ background: "none", border: "none", color: faint, cursor: "pointer", padding: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "inherit" }}
-              title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
-            >
-              {sidebarCollapsed ? "»" : "TRACKS «"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "space-between" }}>
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                style={{ background: "none", border: "none", color: faint, cursor: "pointer", padding: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "inherit" }}
+                title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+              >
+                {sidebarCollapsed ? "»" : "TRACKS «"}
+              </button>
+              {!sidebarCollapsed && (
+                <div style={{ display: "flex", gap: 4 }}>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 800,
+                      letterSpacing: "0.04em",
+                      color: brass,
+                      border: `1px solid ${brass}66`,
+                      borderRadius: 999,
+                      padding: "2px 7px",
+                    }}
+                  >
+                    STUDIO
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (boothHref) window.location.href = boothHref;
+                      else onClose?.();
+                    }}
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 700,
+                      letterSpacing: "0.04em",
+                      color: mutedText,
+                      border: `1px solid ${border}`,
+                      borderRadius: 999,
+                      padding: "2px 7px",
+                      background: "transparent",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    BOOTH
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];

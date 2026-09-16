@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -85,6 +85,25 @@ export function AppShell({
   const router = useRouter();
   const { colors: C, mode } = useTheme();
   const tour = useProductTour(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return sessionStorage.getItem("app_sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = () => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try {
+        sessionStorage.setItem("app_sidebar_collapsed", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   // Allow any page to open the tour: tour.start() via custom event or ?tour=1
   useEffect(() => {
@@ -121,14 +140,16 @@ export function AppShell({
   };
 
   const sidebar: CSSProperties = {
-    width: 248,
+    width: sidebarCollapsed ? 72 : 248,
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
-    padding: "20px 14px 16px",
+    padding: sidebarCollapsed ? "16px 8px 16px" : "20px 14px 16px",
     borderRight: `1px solid ${C.border}`,
     background: mode === "light" ? C.surfaceRaised : C.bgDeep,
     boxShadow: mode === "light" ? "1px 0 0 rgba(55,40,22,0.04)" : "none",
+    transition: "width 0.18s ease, padding 0.18s ease",
+    overflow: "hidden",
   };
 
   const brandRow: CSSProperties = {
@@ -337,22 +358,64 @@ export function AppShell({
       `}</style>
 
       <aside className="studio-sidebar" style={sidebar}>
-        <div style={brandRow}>
-          <div style={brand}>
+        <div style={{ ...brandRow, justifyContent: sidebarCollapsed ? "center" : "space-between", marginBottom: sidebarCollapsed ? 16 : 28 }}>
+          <div style={{ ...brand, gap: 8 }}>
             <img
               src={STUDIO_LOGO_URL}
               alt="Studio"
-              width={22}
-              height={22}
-              style={{ borderRadius: 6, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }}
+              width={sidebarCollapsed ? 28 : 22}
+              height={sidebarCollapsed ? 28 : 22}
+              style={{ borderRadius: 6, marginRight: sidebarCollapsed ? 0 : 8, verticalAlign: "middle", objectFit: "cover" }}
             />
-            STUDIO
+            {!sidebarCollapsed && <span>STUDIO</span>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <PwaInstallButton compact />
-            <ThemeToggle compact />
-          </div>
+          {!sidebarCollapsed && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <PwaInstallButton compact />
+              <ThemeToggle compact />
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                style={{
+                  background: "none",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 8,
+                  color: C.textMuted,
+                  width: 28,
+                  height: 28,
+                  cursor: "pointer",
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                «
+              </button>
+            </div>
+          )}
         </div>
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            style={{
+              background: "none",
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              color: C.textMuted,
+              width: "100%",
+              height: 32,
+              cursor: "pointer",
+              marginBottom: 12,
+              fontSize: 14,
+            }}
+          >
+            »
+          </button>
+        )}
         <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }} aria-label="Main">
           {NAV.map(({ key, label, href, Icon }) => {
             const isActive = current === key;
@@ -362,18 +425,24 @@ export function AppShell({
                 type="button"
                 data-tour-nav={key}
                 onClick={() => go(key, href)}
-                style={{ ...navItem, ...(isActive ? navActive : {}) }}
+                title={label}
+                style={{
+                  ...navItem,
+                  ...(isActive ? navActive : {}),
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  padding: sidebarCollapsed ? "12px 8px" : navItem.padding,
+                }}
                 aria-current={isActive ? "page" : undefined}
               >
                 <Icon size={18} color={isActive ? C.brass : C.textMuted} />
-                {label}
+                {!sidebarCollapsed && label}
               </button>
             );
           })}
         </nav>
 
-        <div style={sideCard}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ ...sideCard, padding: sidebarCollapsed ? 8 : 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: sidebarCollapsed ? "center" : "flex-start" }}>
             <div style={avatar}>{initials}</div>
             <div style={{ minWidth: 0 }}>
               <div
