@@ -7,17 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { useTheme } from "@/lib/theme";
+import { CoverArt } from "@/components/studio-player";
 
 const GENRES = ["R&B", "Afrobeats", "Hip-Hop", "Pop", "Amapiano", "Gospel", "Highlife"];
 const MOODS = ["Emotional", "Confident", "Dark", "Romantic", "Energetic", "Chill"];
-const GRAD = [
-  ["#3A2E52", "#0B0A0F"],
-  ["#2E4A4A", "#0B0A0F"],
-  ["#4A2E3A", "#0B0A0F"],
-  ["#39422E", "#0B0A0F"],
-  ["#2E3A4A", "#0B0A0F"],
-];
-
 type Project = {
   id: string;
   title: string;
@@ -26,12 +19,6 @@ type Project = {
   mood: string | null;
   updated_at: string;
 };
-
-function coverFor(seed: string) {
-  let n = 0;
-  for (let i = 0; i < seed.length; i++) n = (n + seed.charCodeAt(i) * (i + 1)) % GRAD.length;
-  return GRAD[n];
-}
 
 function statusLabel(s: string) {
   const m: Record<string, string> = {
@@ -434,7 +421,6 @@ function StudioPageInner() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {inProgress.slice(0, 6).map((p) => {
-                const g = coverFor(p.id + (p.title || ""));
                 return (
                   <div
                     key={p.id}
@@ -449,7 +435,7 @@ function StudioPageInner() {
                       color: C.text,
                     }}
                   >
-                    <div style={{ width: 48, height: 48, borderRadius: 10, background: `linear-gradient(145deg, ${g[0]}, ${g[1]})`, flexShrink: 0 }} />
+                    <CoverArt seed={p.id + (p.title || "")} size={48} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
                       <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>

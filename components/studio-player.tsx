@@ -88,20 +88,73 @@ export function Waveform({
   );
 }
 
+const COVER_GRADS = [
+  ["#3A2E52", "#0B0A0F"],
+  ["#2E4A4A", "#0B0A0F"],
+  ["#4A2E3A", "#0B0A0F"],
+  ["#39422E", "#0B0A0F"],
+  ["#2E3A4A", "#0B0A0F"],
+  ["#4A3A2E", "#0B0A0F"],
+  ["#3A2E4A", "#0B0A0F"],
+];
+
+function coverGrad(seed: string): [string, string] {
+  let n = 0;
+  const s = seed || "song";
+  for (let i = 0; i < s.length; i++) n = (n + s.charCodeAt(i) * (i + 1)) % COVER_GRADS.length;
+  return COVER_GRADS[n] as [string, string];
+}
+
+/** Placeholder album art — gradient + music note (used on dashboard, library, players) */
 export function CoverArt({ seed, size = 64 }: { seed: string; size?: number }) {
   const C = usePlayerColors();
+  const [a, b] = coverGrad(seed);
+  const icon = Math.max(14, Math.round(size * 0.38));
   return (
     <div
       style={{
         width: size,
         height: size,
-        borderRadius: 14,
+        borderRadius: Math.max(8, Math.round(size * 0.22)),
         flexShrink: 0,
-        background: `linear-gradient(145deg, #3A2E52, #0B0A0F)`,
+        background: `linear-gradient(145deg, ${a}, ${b})`,
         boxShadow: C.cardShadow,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+        overflow: "hidden",
       }}
       aria-hidden
-    />
+    >
+      {/* Soft vignette so the note reads on light/dark ends of the gradient */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "radial-gradient(circle at 50% 45%, rgba(0,0,0,0.15), rgba(0,0,0,0.45))",
+          pointerEvents: "none",
+        }}
+      />
+      <svg
+        width={icon}
+        height={icon}
+        viewBox="0 0 24 24"
+        fill="none"
+        style={{ position: "relative", zIndex: 1, opacity: 0.92 }}
+      >
+        {/* Music note */}
+        <path
+          d="M9 18.5a2.5 2.5 0 1 1-2.45-2.5H9V6.2l10-2.2v10.8"
+          stroke="rgba(255,248,240,0.95)"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="16.5" cy="16.5" r="2.5" fill="rgba(231,169,97,0.95)" />
+        <circle cx="6.5" cy="18.5" r="2.5" fill="rgba(255,248,240,0.9)" />
+      </svg>
+    </div>
   );
 }
 
