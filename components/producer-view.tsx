@@ -21,6 +21,7 @@ import {
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
+import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
 
 export type TrackFx = {
   gainDb: number;
@@ -1863,16 +1864,6 @@ export function ProducerView({
           !String(st.master.audio_path).startsWith("http") &&
           !String(st.master.audio_path).startsWith("mock://"));
 
-      // Prefer the job we started when present — avoid attaching an older complete job’s master mid-flight
-      if (
-        produceJobId &&
-        produceJob?.id &&
-        String(produceJob.id) !== String(produceJobId) &&
-        (jobStatus === "queued" || jobStatus === "processing" || jobStatus === "running")
-      ) {
-        // Different in-flight job — still track latest PRODUCE_SONG
-      }
-
       if (
         (jobStatus === "complete" ||
           jobStatus === "completed" ||
@@ -1881,29 +1872,13 @@ export function ProducerView({
           projectStatus === "produced") &&
         (st.master_url || masterReady)
       ) {
-        // If we have a tracked job id, only accept complete for that job or latest PRODUCE_SONG when ours finished
-        if (
-          produceJobId &&
-          produceJob?.id &&
-          String(produceJob.id) !== String(produceJobId) &&
-          (jobStatus === "queued" || jobStatus === "processing")
-        ) {
-          return "pending";
-        }
         let url = st.master_url ? String(st.master_url) : null;
         if (!url) {
           const alt = st.master?.url || st.audio_url;
           if (alt) url = String(alt);
         }
-        // One more status pass for signed URL lag
         if (!url) {
-          try {
-            const sr2 = await fetch(`/api/projects/${projectId}/status`);
-            const st2 = await sr2.json().catch(() => ({}));
-            if (st2.master_url) url = String(st2.master_url);
-          } catch {
-            /* ignore */
-          }
+          url = await resolveMasterPlayUrl();
         }
         if (url) setMasterUrl(url);
         if (produceJob?.id) setMasterJobId(String(produceJob.id));
@@ -1914,7 +1889,7 @@ export function ProducerView({
       }
 
       if (jobStatus === "complete" || jobStatus === "completed") {
-        // Job done but URL lag — keep pending briefly; next poll refreshes signed URL
+        // Job done but URL lag — keep pending briefly
         setProduceStage(produceJob?.stage || "complete");
         return "pending";
       }
@@ -1999,19 +1974,42 @@ export function ProducerView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
+  async function resolveMasterPlayUrl(): Promise<string | null> {
+    if (!projectId) return null;
+    for (let i = 0; i < 6; i++) {
+      try {
+        const sr = await fetch(`/api/projects/${projectId}/status`);
+        const st = await sr.json().catch(() => ({}));
+        if (!sr.ok) break;
+        if (st.master_url && typeof st.master_url === "string") {
+          return st.master_url;
+        }
+        const alt = st.master?.url || st.audio_url;
+        if (alt && typeof alt === "string") return alt;
+      } catch {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 900));
+    }
+    return null;
+  }
+
   async function startConsoleProduce() {
     if (!projectId) return;
     if (produceUi === "producing" || produceUi === "starting") return;
 
     setProduceUi("starting");
     setProduceError(null);
+    setMasterUrl(null);
+    setMasterJobId(null);
+    setMasterPlaying(false);
 
-    // Shared readiness (same rules as Booth canProduce) via task list
+    let planTasks: PlanTaskRow[] = [];
     try {
       const tr = await fetch(`/api/projects/${projectId}/recording-tasks?all=1`);
       const tj = await tr.json().catch(() => ({}));
       if (tr.ok && Array.isArray(tj.tasks)) {
-        const planTasks: PlanTaskRow[] = (tj.tasks as Record<string, unknown>[]).map((tk) => ({
+        planTasks = (tj.tasks as Record<string, unknown>[]).map((tk) => ({
           id: String(tk.id),
           type: String(tk.type || "lead"),
           title: (tk.title as string) || null,
@@ -2028,30 +2026,33 @@ export function ProducerView({
           setProduceError(ready.reason);
           return;
         }
-      } else {
-        // Fallback: need any completed take on layers
-        const hasTake = layers.some((l) => Boolean(l.audioUrl));
-        if (!hasTake) {
-          setProduceUi("failed");
-          setProduceError("Record at least one selected part before producing.");
-          return;
-        }
+      } else if (!layers.some((l) => Boolean(l.audioUrl))) {
+        setProduceUi("failed");
+        setProduceError("Record at least one selected part before producing.");
+        return;
       }
     } catch {
-      const hasTake = layers.some((l) => Boolean(l.audioUrl));
-      if (!hasTake) {
+      if (!layers.some((l) => Boolean(l.audioUrl))) {
         setProduceUi("failed");
         setProduceError("Record at least one selected part before producing.");
         return;
       }
     }
 
-    // New intentional produce — clear previous master until this job completes
-    setMasterUrl(null);
-    setMasterJobId(null);
-    setMasterPlaying(false);
-    setProduceStage("queued");
+    setProduceStage("preparing takes");
     setProduceUi("producing");
+
+    // Shared prep (same as Booth) — originals kept; new WAV take selected when needed
+    try {
+      if (planTasks.length) {
+        await prepareTakesForProduce({
+          tasks: planTasks,
+          onStage: (s) => setProduceStage(s),
+        });
+      }
+    } catch {
+      /* server normalizeToInternalPcm is still authoritative */
+    }
 
     try {
       const res = await fetch(`/api/projects/${projectId}/produce`, { method: "POST" });
@@ -2063,12 +2064,11 @@ export function ProducerView({
             : typeof j.message === "string"
               ? j.message
               : "AP couldn’t start production.";
-        throw new Error(msg.replace(/\bRoEx\b/gi, "AP"));
+        throw new Error(String(msg).replace(/\bRoEx\b/gi, "AP"));
       }
       const jid = j.jobId || j.job_id;
       if (jid) setProduceJobId(String(jid));
 
-      // Deduped in-flight job — resume poll, do not treat as new complete
       if (j.deduped && (j.status === "queued" || j.status === "processing")) {
         setProduceStage(j.stage || "queued");
         produceStartedAtRef.current = Date.now();
@@ -2101,7 +2101,6 @@ export function ProducerView({
     }
   }
 
-
   async function downloadMaster(format: "wav" | "mp3" = "wav") {
     if (!projectId) return;
     setDownloadBusy(true);
@@ -2112,7 +2111,14 @@ export function ProducerView({
     );
     setDownloadBusy(false);
     if (!result.ok) {
-      setProduceError(result.error || "Download not available yet.");
+      // MP3 optional — do not fail the whole production story
+      if (format === "mp3") {
+        setProduceError(
+          result.error || "MP3 is not ready yet — try Download WAV."
+        );
+      } else {
+        setProduceError(result.error || "Download not available yet.");
+      }
     }
   }
 
@@ -2353,23 +2359,20 @@ export function ProducerView({
               borderRadius: 999,
               border: "none",
               background:
-                produceUi === "producing" || produceUi === "starting"
+                produceUi === "producing"
                   ? "rgba(255,255,255,0.1)"
                   : produceUi === "complete"
                     ? "rgba(52,211,153,0.2)"
-                    : produceUi === "failed"
-                      ? `linear-gradient(180deg, #F0BC80, ${brass})`
-                      : `linear-gradient(180deg, #F0BC80, ${brass})`,
+                    : `linear-gradient(180deg, #F0BC80, ${brass})`,
               color:
-                produceUi === "producing" || produceUi === "starting"
+                produceUi === "producing"
                   ? mutedText
                   : produceUi === "complete"
                     ? "#6EE7B7"
                     : "#1A1208",
               fontWeight: 800,
               fontSize: isNarrow ? 12 : 13,
-              cursor:
-                produceUi === "producing" || produceUi === "starting" ? "default" : "pointer",
+              cursor: produceUi === "producing" || produceUi === "starting" ? "default" : "pointer",
               fontFamily: "inherit",
               letterSpacing: "0.02em",
               whiteSpace: "nowrap",
@@ -3459,19 +3462,39 @@ export function ProducerView({
                     onClick={() => void downloadMaster("wav")}
                     style={{
                       flex: 1,
-                      minWidth: 100,
+                      minWidth: 90,
                       height: 36,
                       borderRadius: 999,
                       border: "none",
                       background: `linear-gradient(180deg, #F0BC80, ${brass})`,
                       color: "#1A1208",
                       fontWeight: 800,
-                      fontSize: 13,
+                      fontSize: 12,
                       cursor: downloadBusy ? "default" : "pointer",
                       fontFamily: "inherit",
                     }}
                   >
-                    {downloadBusy ? "…" : "Download"}
+                    {downloadBusy ? "…" : "Download WAV"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={downloadBusy}
+                    onClick={() => void downloadMaster("mp3")}
+                    style={{
+                      flex: 1,
+                      minWidth: 90,
+                      height: 36,
+                      borderRadius: 999,
+                      border: `1px solid ${border}`,
+                      background: "rgba(255,255,255,0.06)",
+                      color: text,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: downloadBusy ? "default" : "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    Download MP3
                   </button>
                   <button
                     type="button"
