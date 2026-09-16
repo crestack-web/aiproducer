@@ -140,6 +140,11 @@ function roleColor(role: string) {
   return "#7BEBD4";
 }
 
+/** Locked heights so left rail rows and timeline lanes share one grid */
+const TRACK_RULER_H = 40;
+const TRACK_ROW_H = 64;
+const TRACK_ROW_H_EXPANDED = 96;
+
 function formatMs(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
@@ -1740,110 +1745,101 @@ export function ProducerView({
               position: "sticky",
               top: 0,
               zIndex: 5,
-              minHeight: 40,
-              height: "auto",
+              height: TRACK_RULER_H,
+              minHeight: TRACK_RULER_H,
+              maxHeight: TRACK_RULER_H,
+              boxSizing: "border-box",
               display: "flex",
               alignItems: "center",
-              padding: "8px 10px",
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.06em",
-              color: faint,
+              gap: 6,
+              padding: "0 8px",
               background: bg,
               borderBottom: `1px solid ${border}`,
+              overflow: "hidden",
             }}
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={toggleSidebar}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: faint,
-                    cursor: "pointer",
-                    padding: 0,
-                    fontSize: sidebarCollapsed ? 14 : 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.06em",
-                    fontFamily: "inherit",
-                    flexShrink: 0,
-                  }}
-                  title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
-                >
-                  {sidebarCollapsed ? "»" : "TRACKS «"}
-                </button>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: sidebarCollapsed ? "column" : "row",
-                  gap: 6,
-                  width: "100%",
-                }}
-              >
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              style={{
+                background: "none",
+                border: "none",
+                color: faint,
+                cursor: "pointer",
+                padding: 0,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                fontFamily: "inherit",
+                flexShrink: 0,
+              }}
+              title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+            >
+              {sidebarCollapsed ? "»" : "TRACKS"}
+            </button>
+            {!sidebarCollapsed && (
+              <div style={{ display: "flex", gap: 4, marginLeft: "auto", minWidth: 0 }}>
                 <span
                   style={{
-                    flex: sidebarCollapsed ? undefined : 1,
-                    textAlign: "center",
-                    fontSize: sidebarCollapsed ? 9 : 11,
+                    fontSize: 10,
                     fontWeight: 800,
-                    letterSpacing: "0.04em",
                     color: brass,
                     border: `1px solid ${brass}88`,
-                    borderRadius: 8,
-                    padding: sidebarCollapsed ? "6px 2px" : "6px 8px",
-                    background: "rgba(231,169,97,0.12)",
+                    borderRadius: 6,
+                    padding: "2px 6px",
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {sidebarCollapsed ? "CO" : "CONSOLE"}
+                  CONSOLE
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (boothHref) window.location.href = boothHref;
-                    else onClose?.();
-                  }}
-                  style={{
-                    flex: sidebarCollapsed ? undefined : 1,
-                    textAlign: "center",
-                    fontSize: sidebarCollapsed ? 9 : 11,
-                    fontWeight: 800,
-                    letterSpacing: "0.04em",
-                    color: text,
-                    border: `1px solid ${border}`,
-                    borderRadius: 8,
-                    padding: sidebarCollapsed ? "6px 2px" : "6px 8px",
-                    background: "rgba(255,255,255,0.06)",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    whiteSpace: "nowrap",
-                  }}
-                  title="Open Booth"
-                >
-                  {sidebarCollapsed ? "BO" : "BOOTH"}
-                </button>
+                {(boothHref || onClose) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (boothHref) window.location.href = boothHref;
+                      else onClose?.();
+                    }}
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: mutedText,
+                      border: `1px solid ${border}`,
+                      borderRadius: 6,
+                      padding: "2px 6px",
+                      background: "transparent",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    BOOTH
+                  </button>
+                )}
               </div>
-            </div>
+            )}
           </div>
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];
             const isSolo = soloId === tr.id;
-            const rowH = expandedId === tr.id ? (isNarrow ? 110 : 92) : sidebarCollapsed ? 48 : isNarrow ? 72 : 56;
+            const rowH = expandedId === tr.id ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
             return (
               <div
                 key={`h-${tr.id}`}
                 style={{
                   height: rowH,
+                  minHeight: rowH,
+                  maxHeight: rowH,
                   boxSizing: "border-box",
                   borderBottom: `1px solid rgba(255,255,255,0.06)`,
                   borderLeft: `3px solid ${tr.color}`,
-                  padding: sidebarCollapsed ? "6px 4px" : "6px 10px",
+                  padding: sidebarCollapsed ? "4px 4px" : "4px 8px",
                   background:
                     selectedTrackId === tr.id ? "rgba(255,255,255,0.05)" : "transparent",
                   overflow: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  gap: 2,
                 }}
                 onClick={
                   sidebarCollapsed
@@ -2056,7 +2052,7 @@ export function ProducerView({
                 position: "sticky",
                 top: 0,
                 zIndex: 6,
-                height: 40,
+                height: TRACK_RULER_H,
                 width: timelineW,
                 minWidth: timelineW,
                 borderBottom: `1px solid ${border}`,
@@ -2113,16 +2109,19 @@ export function ProducerView({
               const expanded = expandedId === tr.id;
               const dimmed = !isAudible(tr.id, tr.kind);
               const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
-              const clipH = expanded ? 68 : 32;
-              const rowH = expanded ? 92 : 48;
+              const rowH = expanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
+              const clipH = expanded ? Math.min(72, rowH - 16) : Math.min(40, rowH - 16);
               return (
                 <div
                   key={`tl-${tr.id}`}
                   style={{
                     position: "relative",
                     height: rowH,
+                    minHeight: rowH,
+                    maxHeight: rowH,
                     width: timelineW,
                     minWidth: timelineW,
+                    boxSizing: "border-box",
                     boxSizing: "border-box",
                     borderBottom: `1px solid rgba(255,255,255,0.06)`,
                     background:
