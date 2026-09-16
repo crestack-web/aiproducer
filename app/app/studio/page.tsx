@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -50,7 +50,7 @@ function statusLabel(s: string) {
   return m[s] || s;
 }
 
-export default function StudioPage() {
+function StudioPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const startInConsole = searchParams.get("mode") === "console";
@@ -467,5 +467,28 @@ export default function StudioPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+export default function StudioPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            minHeight: "100dvh",
+            display: "grid",
+            placeItems: "center",
+            background: "#0B0A0F",
+            color: "#9B96A3",
+            fontFamily: "system-ui, sans-serif",
+          }}
+        >
+          Loading Studio…
+        </div>
+      }
+    >
+      <StudioPageInner />
+    </Suspense>
   );
 }
