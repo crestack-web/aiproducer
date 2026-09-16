@@ -9,6 +9,8 @@ import { resolveGenreProfile } from "../profiles/genre-profiles";
 import { applyRnbMixBias } from "../profiles/rnb-production";
 import type { VocalRole, SongSectionKind } from "../roles";
 import { DEFAULT_ROLE_GAIN_DB } from "../roles";
+import type { ProductionDirection } from "../direction/types";
+import { applyDirectionToLayerDecision } from "../direction/apply";
 import type {
   CombinedAnalysis,
   EqBand,
@@ -99,7 +101,8 @@ function sectionAdjust(
 
 export function decideLayer(
   ctx: LayerContext,
-  genre?: string | null
+  genre?: string | null,
+  direction?: ProductionDirection | null
 ): LayerDecision {
   const profile = resolveGenreProfile(genre);
   const treatment = profile.roles[ctx.role];
@@ -232,7 +235,7 @@ export function decideLayer(
     notes.push("adlib_space");
   }
 
-  return {
+  const base: LayerDecision = {
     role: ctx.role,
     section: ctx.section,
     priority: ctx.role === "lead" ? 0 : 1,
@@ -256,6 +259,7 @@ export function decideLayer(
       delaySend,
     },
   };
+  return direction ? applyDirectionToLayerDecision(base, direction) : base;
 }
 
 /** Mix-level decision from full arrangement analysis. */
