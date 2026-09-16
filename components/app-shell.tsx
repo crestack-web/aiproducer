@@ -643,67 +643,87 @@ export function AppShell({
       <ProductTour open={tour.open} onClose={tour.close} index={tour.index} onIndexChange={tour.setIndex} />
 
       <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
-        {NAV.map(({ key, label, href, Icon }) => {
-          const isActive = current === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              data-tour-nav={key}
-              onClick={() => go(key, href)}
-              style={{
-                ...bottomItem,
-                color: isActive ? C.brass : C.textFaint,
-                fontWeight: isActive ? 600 : 500,
-                ...(projectIdFromPath ? { fontSize: 9, minWidth: 0, flex: 1, padding: "6px 2px" } : null),
-              }}
-              aria-current={isActive ? "page" : undefined}
-            >
-              <Icon size={projectIdFromPath ? 20 : 22} color={isActive ? C.brass : C.textFaint} />
-              {label}
-            </button>
-          );
-        })}
         {projectIdFromPath ? (
           <>
             <button
               type="button"
-              title="Booth — record vocals"
+              data-tour-nav="home"
+              onClick={() => go("home", "/app")}
+              style={{
+                ...bottomItem,
+                color: current === "home" ? C.brass : C.textFaint,
+                fontWeight: current === "home" ? 600 : 500,
+              }}
+              aria-current={current === "home" ? "page" : undefined}
+            >
+              <IconHome size={22} color={current === "home" ? C.brass : C.textFaint} />
+              Home
+            </button>
+            <button
+              type="button"
+              title="Booth — guided recording"
               onClick={() => router.push(`/app/studio/${projectIdFromPath}`)}
               style={{
                 ...bottomItem,
                 color: onBoothPage ? C.brass : C.textFaint,
                 fontWeight: onBoothPage ? 600 : 500,
-                fontSize: 9,
-                minWidth: 0,
-                flex: 1,
-                padding: "6px 2px",
               }}
               aria-current={onBoothPage ? "page" : undefined}
             >
-              <IconBooth size={20} color={onBoothPage ? C.brass : C.textFaint} />
+              <IconBooth size={22} color={onBoothPage ? C.brass : C.textFaint} />
               Booth
             </button>
             <button
               type="button"
-              title="Studio — timeline / mix"
+              title="Studio — AI timeline"
               onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
               style={{
                 ...bottomItem,
                 color: onStudioPage ? C.brass : C.textFaint,
                 fontWeight: onStudioPage ? 600 : 500,
-                fontSize: 9,
-                minWidth: 0,
-                flex: 1,
-                padding: "6px 2px",
               }}
               aria-current={onStudioPage ? "page" : undefined}
             >
-              <IconStudio size={20} color={onStudioPage ? C.brass : C.textFaint} />
+              <IconStudio size={22} color={onStudioPage ? C.brass : C.textFaint} />
               Studio
             </button>
+            <button
+              type="button"
+              data-tour-nav="library"
+              onClick={() => go("library", "/app?tab=library")}
+              style={{
+                ...bottomItem,
+                color: current === "library" ? C.brass : C.textFaint,
+                fontWeight: current === "library" ? 600 : 500,
+              }}
+              aria-current={current === "library" ? "page" : undefined}
+            >
+              <IconLibrary size={22} color={current === "library" ? C.brass : C.textFaint} />
+              Library
+            </button>
           </>
-        ) : null}
+        ) : (
+          NAV.map(({ key, label, href, Icon }) => {
+            const isActive = current === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                data-tour-nav={key}
+                onClick={() => go(key, href)}
+                style={{
+                  ...bottomItem,
+                  color: isActive ? C.brass : C.textFaint,
+                  fontWeight: isActive ? 600 : 500,
+                }}
+                aria-current={isActive ? "page" : undefined}
+              >
+                <Icon size={22} color={isActive ? C.brass : C.textFaint} />
+                {label}
+              </button>
+            );
+          })
+        )}
       </nav>
     </div>
   );
