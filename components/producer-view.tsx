@@ -1497,7 +1497,6 @@ export function ProducerView({
           flexDirection: "row",
           background: bg,
           overflow: "hidden",
-          flexDirection: "row",
         }}
       >
         {/* LEFT: track headers — collapsible sidebar */}
