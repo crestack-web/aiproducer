@@ -65,12 +65,24 @@ export async function PATCH(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let body: { status?: string; title?: string } = {};
+  let body: {
+    status?: string;
+    title?: string;
+    metadata?: Record<string, unknown>;
+    production_direction?: Record<string, unknown>;
+  } = {};
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const { data: fullProj } = await supabase
+    .from("projects")
+    .select("id, status, metadata")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   const patch: Record<string, unknown> = {};
   if (typeof body.title === "string" && body.title.trim()) {
@@ -81,6 +93,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
     patch.status = body.status;
+  }
+
+  // Merge production_direction into project.metadata (no migration)
+  if (body.production_direction && typeof body.production_direction === "object") {
+    const prev =
+      fullProj?.metadata && typeof fullProj.metadata === "object"
+        ? (fullProj.metadata as Record<string, unknown>)
+        : {};
+    patch.metadata = {
+      ...prev,
+      ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}),
+      production_direction: body.production_direction,
+    };
+  } else if (body.metadata && typeof body.metadata === "object") {
+    const prev =
+      fullProj?.metadata && typeof fullProj.metadata === "object"
+        ? (fullProj.metadata as Record<string, unknown>)
+        : {};
+    patch.metadata = { ...prev, ...body.metadata };
   }
 
   if (Object.keys(patch).length === 0) {
