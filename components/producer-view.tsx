@@ -897,8 +897,14 @@ export function ProducerView({
 
   // Merge URLs from session-preview if projectId given
   useEffect(() => {
-    // Soft parent refresh: replace from server without forcing loading shell
-    setLayers(layersProp);
+    // Soft parent refresh: keep audioUrls already resolved from session-preview
+    setLayers((prev) => {
+      const urlById = new Map(prev.map((l) => [l.id, l.audioUrl]));
+      return layersProp.map((l) => ({
+        ...l,
+        audioUrl: l.audioUrl || urlById.get(l.id) || null,
+      }));
+    });
     setFxById((prev) => {
       const next = { ...prev };
       for (const l of layersProp) {
@@ -916,6 +922,7 @@ export function ProducerView({
     });
   }, [layersProp]);
 
+  // session-preview returns { layers: [{ task_id, audio_url, ... }] } — same as Booth preview
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
@@ -924,13 +931,20 @@ export function ProducerView({
         const res = await fetch(`/api/projects/${projectId}/session-preview`);
         if (!res.ok) return;
         const j = await res.json();
-        const recs: { task_id?: string; audio_url?: string }[] = j.recordings || j.takes || [];
+        const recs: { task_id?: string; audio_url?: string; id?: string }[] =
+          j.layers || j.recordings || j.takes || [];
         if (!Array.isArray(recs) || cancelled) return;
+        const byTask = new Map<string, string>();
+        for (const r of recs) {
+          const tid = r.task_id || r.id;
+          if (tid && r.audio_url) byTask.set(tid, r.audio_url);
+        }
+        if (byTask.size === 0) return;
         setLayers((prev) =>
           prev.map((l) => {
             if (l.audioUrl) return l;
-            const hit = recs.find((r) => r.task_id === l.id && r.audio_url);
-            return hit?.audio_url ? { ...l, audioUrl: hit.audio_url } : l;
+            const url = byTask.get(l.id);
+            return url ? { ...l, audioUrl: url } : l;
           })
         );
       } catch {
@@ -940,7 +954,8 @@ export function ProducerView({
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+    // Re-merge when parent soft-reloads tasks (layersProp loses audioUrl until preview attaches)
+  }, [projectId, layersProp]);
 
   const totalMs = useMemo(() => {
     let max = durationMs || 0;

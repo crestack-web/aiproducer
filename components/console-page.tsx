@@ -44,11 +44,34 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
     if (!opts?.soft) setLoading(true);
     setError(null);
     try {
-      const [pr, br, tr] = await Promise.all([
+      const [pr, br, tr, prev] = await Promise.all([
         fetch(`/api/projects/${projectId}`),
         fetch(`/api/projects/${projectId}/beat`),
         fetch(`/api/projects/${projectId}/recording-tasks?all=1`),
+        fetch(`/api/projects/${projectId}/session-preview`),
       ]);
+      const audioByTask = new Map<string, string>();
+      if (prev.ok) {
+        try {
+          const pj = await prev.json();
+          const layersIn = (pj.layers || pj.recordings || []) as {
+            task_id?: string;
+            audio_url?: string;
+          }[];
+          for (const row of layersIn) {
+            if (row.task_id && row.audio_url) audioByTask.set(row.task_id, row.audio_url);
+          }
+          // beat may already be set from /beat; only fill gaps
+          if (pj.beat_url || pj.beatUrl) {
+            setBeatUrl((prev) => prev || pj.beat_url || pj.beatUrl);
+          }
+          if (typeof pj.beat_duration_ms === "number") {
+            setBeatDurationMs((prev) => prev ?? pj.beat_duration_ms);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       if (pr.ok) {
         const j = await pr.json();
         const p = j.project || j;
@@ -88,6 +111,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               sectionLabel,
               startMs,
               endMs,
+              audioUrl: audioByTask.get(tk.id) || null,
               color: typeof meta.track_color === "string" ? meta.track_color : undefined,
               trackFx: tf
                 ? {
