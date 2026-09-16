@@ -4,6 +4,7 @@ import { RoExMixProvider } from "@/lib/providers/roex";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";
 import { resolveAudioUrl } from "@/lib/storage";
 import { getRoexEnv } from "@/lib/env";
+import { checkProjectProduceReady } from "@/lib/production/readiness";
 
 export type RecordingRow = { id: string; task_id: string; is_selected: boolean | null };
 export type TakeRow = {
@@ -187,6 +188,11 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
 
   // Allow re-produce after complete/failed — only dedupe in-flight jobs above.
   // Artists re-run when mix levels / processing did not sound right.
+
+  const ready = await checkProjectProduceReady(projectId);
+  if (!ready.canProduce) {
+    throw new Error(ready.reason || "Record at least one selected part before producing.");
+  }
 
   const { count: priorCount } = await supabase
     .from("jobs")
