@@ -520,58 +520,75 @@ export function AppShell({
           </div>
         )}
 
-        <div style={{ ...sideCard, padding: sidebarCollapsed ? 8 : 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: sidebarCollapsed ? "center" : "flex-start" }}>
-            <div style={avatar}>{initials}</div>
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  color: C.text,
-                }}
-              >
-                {userName || "Artist"}
-              </div>
-              <button
-                type="button"
-                onClick={onSignOut}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: C.textFaint,
-                  fontSize: 11.5,
-                  padding: 0,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-          <Link href="/app/studio" style={{ ...sideCta, display: "block", textAlign: "center", textDecoration: "none" }}>
-            New session (Booth)
-          </Link>
-          <Link
-            href="/app/studio?mode=console"
-            title="Create a project and open Console (AI timeline)"
+        <div
+          style={{
+            ...sideCard,
+            padding: sidebarCollapsed ? 8 : 12,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: sidebarCollapsed ? "center" : "stretch",
+            gap: sidebarCollapsed ? 0 : 0,
+            overflow: "hidden",
+            minWidth: 0,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => go("profile", "/app?tab=profile")}
+            title={userName || "Profile"}
             style={{
-              ...sideCta,
-              display: "block",
-              textAlign: "center",
-              textDecoration: "none",
-              marginTop: 8,
-              background: "transparent",
-              border: `1px solid ${C.brassLine || C.border}`,
-              color: C.brass,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              width: "100%",
+              minWidth: 0,
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
             }}
           >
-            New in Console
-          </Link>
+            <div style={{ ...avatar, width: sidebarCollapsed ? 40 : 36, height: sidebarCollapsed ? 40 : 36 }}>{initials}</div>
+            {!sidebarCollapsed && (
+              <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color: C.text,
+                  }}
+                >
+                  {userName || "Artist"}
+                </div>
+                <span style={{ fontSize: 11.5, color: C.textFaint }}>Profile</span>
+              </div>
+            )}
+          </button>
+          {!sidebarCollapsed && onSignOut && (
+            <button
+              type="button"
+              onClick={onSignOut}
+              style={{
+                background: "none",
+                border: "none",
+                color: C.textFaint,
+                fontSize: 11.5,
+                padding: "8px 0 0",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textAlign: "left",
+                width: "100%",
+              }}
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </aside>
 

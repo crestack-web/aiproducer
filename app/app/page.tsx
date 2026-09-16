@@ -272,7 +272,41 @@ function AppInner() {
           </div>
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <IconBtn label="Play" onClick={() => router.push(`/app/studio/${p.id}`)}>
+          <button
+            type="button"
+            onClick={() => router.push(`/app/studio/${p.id}`)}
+            style={{
+              border: `1px solid ${C.border}`,
+              background: C.surface,
+              color: C.brass,
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "6px 8px",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Booth
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(`/app/console/${p.id}`)}
+            style={{
+              border: `1px solid ${C.border}`,
+              background: C.surface,
+              color: C.textMuted,
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "6px 8px",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Console
+          </button>
+          <IconBtn label="Open Booth" onClick={() => router.push(`/app/studio/${p.id}`)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M8 5.5v13l11-6.5L8 5.5Z" />
             </svg>
@@ -320,7 +354,7 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <div style={eyebrow}>◆ STUDIO</div>
+            <div style={eyebrow}>◆ HOME</div>
             <h1 style={h1}>
               {userName && userName !== "Artist" ? (
                 <>
@@ -332,28 +366,84 @@ function AppInner() {
                 <>Welcome back</>
               )}
             </h1>
-            <p style={sub}>Your sessions and songs live here.</p>
-            <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
-              <button type="button" style={primary} onClick={() => router.push("/app/studio")}>
-                Create a song
+            <p style={sub}>
+              Start a session in Booth for guided recording, or open Console for the full timeline — same projects either way.
+            </p>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 12,
+                marginTop: 28,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/app/studio")}
+                style={{
+                  ...primary,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 6,
+                  padding: "18px 18px",
+                  textAlign: "left",
+                  minHeight: 108,
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", opacity: 0.85 }}>BOOTH</span>
+                <span style={{ fontSize: 17, fontWeight: 700 }}>New session</span>
+                <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.8, lineHeight: 1.35 }}>
+                  Guided plan + record — easiest path for vocals
+                </span>
               </button>
               <button
                 type="button"
-                style={secondary}
+                onClick={() => router.push("/app/studio?mode=console")}
+                style={{
+                  ...secondary,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 6,
+                  padding: "18px 18px",
+                  textAlign: "left",
+                  minHeight: 108,
+                  borderColor: C.brassLine || C.border,
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: C.brass }}>CONSOLE</span>
+                <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>New in Console</span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: C.textMuted, lineHeight: 1.35 }}>
+                  AI timeline — arrange, record, and direct the mix
+                </span>
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
                 onClick={() => {
                   setTab("library");
                   router.replace("/app?tab=library");
                 }}
               >
-                Explore my songs
+                Library
               </button>
-              <button type="button" style={secondary} onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}>
+              <button
+                type="button"
+                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
+                onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}
+              >
                 How it works
               </button>
             </div>
+
             <div
               style={{
-                marginTop: 36,
+                marginTop: 40,
                 fontSize: 12,
                 fontWeight: 600,
                 letterSpacing: 1.2,
