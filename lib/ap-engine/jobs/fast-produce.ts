@@ -26,6 +26,8 @@ import {
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import type { PcmStereo } from "@/lib/ap-engine/types";
+import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "@/lib/ap-engine/space";
+import { resolveGenreProfile } from "@/lib/ap-engine/profiles/genre-profiles";
 
 export type FastVocalLayer = {
   buffer?: Buffer;
@@ -188,11 +190,13 @@ export async function runFastArrangement(opts: {
   beatPath: string;
   vocals: FastVocalLayer[];
   onStage?: (stage: string) => Promise<void>;
+  genre?: string | null;
+  bpm?: number | null;
 }): Promise<{
   wav: Buffer;
   layerCount: number;
   durationMs: number;
-  path: "fast-stopgap";
+  path: "fast-space" | "fast-stopgap";
   diagnostics: Record<string, unknown>;
 }> {
   const report = opts.onStage || (async () => undefined);
@@ -214,7 +218,7 @@ export async function runFastArrangement(opts: {
   const beatPeak = Math.max(peakOf(beat.left), peakOf(beat.right));
 
   await report("processing_vocals");
-  const layers: { pcm: PcmStereo; startMs: number; gain: number; type: string }[] = [];
+  const layers: { pcm: PcmStereo; startMs: number; gain: number; type: string; duckDb?: number }[] = [];
   const skipReasons: string[] = [];
   const layerDiag: Record<string, unknown>[] = [];
 
@@ -250,9 +254,32 @@ export async function runFastArrangement(opts: {
       const fader = roleGain(type);
       headroomForFader(pcm, fader, 0.85);
 
+      // —— AP SPACE: performance → space decision → integrate into arrangement ——
+      let spaceNotes: string[] = [];
+      let spaceCharacter = "present";
+      let duckDbLayer = 2.0;
+      try {
+        const perf = analyzePerformance(pcm);
+        const space = decideVocalSpace({
+          performance: perf,
+          roleType: type,
+          sectionLabel: v.sectionLabel || null,
+          genre: opts.genre ?? null,
+          bpm: opts.bpm ?? null,
+        });
+        const applied = applyVocalSpace(pcm, space);
+        pcm.left = applied.pcm.left;
+        pcm.right = applied.pcm.right;
+        spaceNotes = space.notes;
+        spaceCharacter = space.character;
+        duckDbLayer = space.duckDb;
+      } catch {
+        spaceNotes = ["space_skipped"];
+      }
+
       const startMs = Math.max(0, Number(v.startMs) || 0);
       const peakPreMix = Math.max(peakOf(pcm.left), peakOf(pcm.right));
-      layers.push({ pcm, startMs, gain: fader, type });
+      layers.push({ pcm, startMs, gain: fader, type, duckDb: duckDbLayer });
       layerDiag.push({
         label,
         type,
@@ -262,6 +289,8 @@ export async function runFastArrangement(opts: {
         rmsAfterClean: Number(rmsAfterClean.toFixed(5)),
         peakPreMix: Number(peakPreMix.toFixed(4)),
         fader,
+        spaceCharacter,
+        spaceNotes: spaceNotes.slice(0, 8),
         intoBusPeak: Number((peakPreMix * fader).toFixed(4)),
       });
       console.info("[fast-produce-stopgap] layer", JSON.stringify(layerDiag[layerDiag.length - 1]));
@@ -295,9 +324,23 @@ export async function runFastArrangement(opts: {
   const mix = cloneStereo(beat);
   applyGainStereo(mix, 0.75);
 
+  // Genre-aware default duck depth (linear amount ~ from dB)
+  let maxDuckDb = 2.0;
+  try {
+    const gp = resolveGenreProfile(opts.genre ?? null);
+    maxDuckDb = 1.2 + (1 - gp.beatRespect) * 1.5;
+  } catch {
+    /* default */
+  }
   for (const L of layers) {
     const start = Math.floor((L.startMs / 1000) * mix.sampleRate);
-    duckBeatUnderVocalEnvelope(mix, L.pcm, start, 0.68, 300, 350);
+    const duckDb = L.duckDb ?? maxDuckDb;
+    // Convert dB to linear depth for envelope duck (cap conservative)
+    const depth = Math.min(0.78, 1 - Math.pow(10, -Math.min(duckDb, 3.5) / 20));
+    // Lead drives duck stronger; supports lighter
+    const isLead = (L.type || "").includes("lead") || L.type === "main";
+    const depthUse = isLead ? depth : depth * 0.45;
+    duckBeatUnderVocalEnvelope(mix, L.pcm, start, depthUse, 280, 420);
     mixOnto(mix, L.pcm, start, L.gain);
   }
 
@@ -322,8 +365,8 @@ export async function runFastArrangement(opts: {
   const wav = encodeStereoWav(mix);
   const durationMs = Math.round((mix.left.length / mix.sampleRate) * 1000);
   const diagnostics = {
-    path: "fast-stopgap" as const,
-    engineVersion: "ap-fast-stopgap-2",
+    path: "fast-space" as const,
+    engineVersion: "ap-fast-space-3",
     duck: {
       depthLinear: 0.68,
       depthDbApprox: -3.3,
@@ -337,11 +380,11 @@ export async function runFastArrangement(opts: {
     peakBeforeLimit: Number(peakBeforeLimit.toFixed(4)),
     peakAfterLimit: Number(Math.min(peak, 0.95).toFixed(4)),
     layers: layerDiag,
-    note: "STOPGAP path for Vercel; enable AP_FULL_ENGINE=1 for full restoration/QC",
+    note: "AP SPACE integrated on fast path; enable AP_FULL_ENGINE=1 for full restoration/QC",
   };
   console.info(
     "[fast-produce-stopgap] done",
     JSON.stringify({ layerCount: layers.length, durationMs, diagnostics })
   );
-  return { wav, layerCount: layers.length, durationMs, path: "fast-stopgap", diagnostics };
+  return { wav, layerCount: layers.length, durationMs, path: "fast-space", diagnostics };
 }
