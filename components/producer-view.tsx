@@ -220,6 +220,53 @@ function peaksForUrl(url: string, buf: AudioBuffer, buckets: number): Float32Arr
   return peaks;
 }
 
+
+/** In-place live peaks while recording into a mock/planned clip — same passive analyser data */
+function LiveClipWave({
+  peaks,
+  color,
+  width,
+  height,
+}: {
+  peaks: number[];
+  color: string;
+  width: number;
+  height: number;
+}) {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.max(1, Math.floor(width * dpr));
+    c.height = Math.max(1, Math.floor(height * dpr));
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.fillRect(0, 0, width, height);
+    const n = Math.max(1, peaks.length);
+    const mid = height / 2;
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    for (let i = 0; i < n; i++) {
+      const x = (i / n) * width;
+      const amp = Math.min(1, peaks[i] || 0) * (height * 0.42);
+      const barW = Math.max(1, width / n);
+      ctx.fillRect(x, mid - amp, barW, amp * 2);
+    }
+    // recording head
+    ctx.fillStyle = "#F07167";
+    ctx.fillRect(Math.max(0, width - 2), 0, 2, height);
+  }, [peaks, color, width, height]);
+  return (
+    <canvas
+      ref={ref}
+      style={{ display: "block", width, height, borderRadius: 6 }}
+    />
+  );
+}
+
 function WaveformCanvas({
   peaks,
   color,
@@ -367,6 +414,10 @@ export function ProducerView({
   const [recordSeconds, setRecordSeconds] = useState(0);
   /** Live input level 0–1 — passive analyser tap, not in monitor/capture path */
   const [liveLevel, setLiveLevel] = useState(0);
+  /** Rolling peak samples for in-clip live waveform while recording */
+  const [livePeaks, setLivePeaks] = useState<number[]>([]);
+  /** Armed task — Record captures into this planned/mock clip */
+  const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
@@ -380,6 +431,7 @@ export function ProducerView({
   const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const liveMeterRafRef = useRef<number | null>(null);
   const liveMeterCtxRef = useRef<AudioContext | null>(null);
+  const livePeaksBufRef = useRef<number[]>([]);
   const beatFileInputRef = useRef<HTMLInputElement | null>(null);
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
@@ -621,10 +673,17 @@ export function ProducerView({
 
   async function ensureRecordTargetTask(): Promise<string | null> {
     if (!projectId) return null;
-    // Prefer selected vocal track that is not the beat
-    if (selectedTrackId && selectedTrackId !== "beat") {
-      const exists = layers.some((l) => l.id === selectedTrackId) || tracks.some((tr) => tr.id === selectedTrackId);
-      if (exists) return selectedTrackId;
+    // Prefer armed mock/planned clip, then selected vocal — never create a parallel task for those
+    const prefer = [armedTrackId, selectedTrackId].filter(
+      (id): id is string => Boolean(id) && id !== "beat"
+    );
+    for (const id of prefer) {
+      const exists = layers.some((l) => l.id === id) || tracks.some((tr) => tr.id === id);
+      if (exists) {
+        setSelectedTrackId(id);
+        setArmedTrackId(id);
+        return id;
+      }
     }
     // Create a new lead at playhead
     setAddType("lead");
@@ -702,6 +761,8 @@ export function ProducerView({
     setIsConsoleRecording(false);
     setRecordSeconds(0);
     stopLiveMeter();
+    setLivePeaks([]);
+    livePeaksBufRef.current = [];
 
     if (blob.size < 100) {
       setEditMsg("Recording too short — try again");
@@ -747,6 +808,8 @@ export function ProducerView({
         );
       }
       setEditMsg("Take saved — shared with Booth (same recording_tasks)");
+      setArmedTrackId(taskId);
+      setSelectedTrackId(taskId);
       onLayersChanged?.();
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Save failed");
@@ -880,6 +943,8 @@ export function ProducerView({
   /** Passive meter: parallel graph on a clone of the mic stream — never touches monitor or MediaRecorder */
   function startLiveMeter(sourceStream: MediaStream) {
     stopLiveMeter();
+    livePeaksBufRef.current = [];
+    setLivePeaks([]);
     try {
       const AC =
         window.AudioContext ||
@@ -892,19 +957,34 @@ export function ProducerView({
       const src = ctx.createMediaStreamSource(clone);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.7;
+      analyser.smoothingTimeConstant = 0.65;
       // analyser is a sink only — nothing connects after it to speakers
       src.connect(analyser);
       const data = new Uint8Array(analyser.fftSize);
+      let frame = 0;
       const tick = () => {
         analyser.getByteTimeDomainData(data);
+        let peak = 0;
         let sum = 0;
         for (let i = 0; i < data.length; i++) {
           const v = (data[i] - 128) / 128;
+          const a = Math.abs(v);
+          if (a > peak) peak = a;
           sum += v * v;
         }
         const rms = Math.sqrt(sum / data.length);
         setLiveLevel(Math.min(1, rms * 3.2));
+        // ~30 samples/sec into clip history (every other frame ~)
+        frame += 1;
+        if (frame % 2 === 0) {
+          livePeaksBufRef.current.push(Math.min(1, peak * 1.4));
+          if (livePeaksBufRef.current.length > 2400) {
+            livePeaksBufRef.current = livePeaksBufRef.current.slice(-2400);
+          }
+          if (frame % 4 === 0) {
+            setLivePeaks(livePeaksBufRef.current.slice());
+          }
+        }
         liveMeterRafRef.current = requestAnimationFrame(tick);
       };
       liveMeterRafRef.current = requestAnimationFrame(tick);
@@ -927,6 +1007,7 @@ export function ProducerView({
       liveMeterCtxRef.current = null;
     }
     setLiveLevel(0);
+    // keep livePeaks until save refreshes waveform; clear after stop handler
   }
 
   async function createTrack(file?: File | null) {
@@ -1834,17 +1915,22 @@ export function ProducerView({
                   borderLeft: `3px solid ${tr.color}`,
                   padding: sidebarCollapsed ? "4px 4px" : "4px 8px",
                   background:
-                    selectedTrackId === tr.id ? "rgba(255,255,255,0.05)" : "transparent",
+                    selectedTrackId === tr.id || armedTrackId === tr.id
+                      ? "rgba(255,255,255,0.05)"
+                      : "transparent",
                   overflow: "hidden",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: "center",
                   gap: 2,
+                  boxShadow:
+                    armedTrackId === tr.id ? `inset 0 0 0 1px ${brass}` : undefined,
                 }}
                 onClick={
                   sidebarCollapsed
                     ? () => {
                         setSelectedTrackId(tr.id);
+                        if (tr.kind === "vocal") setArmedTrackId(tr.id);
                         setSidebarCollapsed(false);
                       }
                     : undefined
@@ -1855,6 +1941,7 @@ export function ProducerView({
                   onClick={() => {
                     setExpandedId(expandedId === tr.id ? null : tr.id);
                     setSelectedTrackId(tr.id);
+                    if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
                   style={{
                     background: "none",
@@ -2108,7 +2195,18 @@ export function ProducerView({
             {tracks.map((tr) => {
               const expanded = expandedId === tr.id;
               const dimmed = !isAudible(tr.id, tr.kind);
-              const clipW = Math.max(10, msToX(tr.endMs) - msToX(tr.startMs));
+              const isMock = tr.kind === "vocal" && !tr.url && !peaksById[tr.id];
+              const isArmed = armedTrackId === tr.id && tr.kind === "vocal";
+              const isLiveRec =
+                isConsoleRecording &&
+                consoleRecRef.current?.taskId === tr.id &&
+                tr.kind === "vocal";
+              // Take length wins while recording: clip grows with elapsed time
+              const liveEndMs = isLiveRec
+                ? tr.startMs + Math.max(400, recordSeconds * 1000)
+                : tr.endMs;
+              const displayEndMs = isLiveRec ? Math.max(tr.endMs, liveEndMs) : tr.endMs;
+              const clipW = Math.max(10, msToX(displayEndMs) - msToX(tr.startMs));
               const rowH = expanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
               const clipH = expanded ? Math.min(72, rowH - 16) : Math.min(40, rowH - 16);
               return (
@@ -2124,7 +2222,9 @@ export function ProducerView({
                     boxSizing: "border-box",
                     borderBottom: `1px solid rgba(255,255,255,0.06)`,
                     background:
-                      selectedTrackId === tr.id ? "rgba(255,255,255,0.04)" : "transparent",
+                      selectedTrackId === tr.id || isArmed
+                        ? "rgba(255,255,255,0.04)"
+                        : "transparent",
                   }}
                   onClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -2132,6 +2232,7 @@ export function ProducerView({
                       e.clientX - rect.left + (timelineScrollRef.current?.scrollLeft || 0);
                     seekTo((x / pxPerSec) * 1000);
                     setSelectedTrackId(tr.id);
+                    if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
                 >
                   <div
@@ -2146,32 +2247,51 @@ export function ProducerView({
                       top: expanded ? 12 : 8,
                       height: clipH,
                       borderRadius: 6,
-                      background: tr.color,
-                      boxShadow:
-                        selectedTrackId === tr.id
-                          ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
-                          : `0 1px 0 rgba(0,0,0,0.35)`,
+                      background: isLiveRec
+                        ? `linear-gradient(180deg, ${tr.color}cc, ${tr.color})`
+                        : tr.color,
+                      boxShadow: isLiveRec
+                        ? `0 0 0 2px #F07167, 0 0 16px ${tr.color}aa`
+                        : isArmed
+                          ? `0 0 0 2px ${brass}, 0 0 14px ${brass}99`
+                          : selectedTrackId === tr.id
+                            ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
+                            : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
-                      cursor: tr.kind === "vocal" ? "grab" : "default",
+                      cursor: tr.kind === "vocal" ? (isMock ? "pointer" : "grab") : "default",
                       touchAction: "none",
                       opacity: dimmed ? 0.4 : 1,
+                      outline: isArmed && !isLiveRec ? `1px dashed ${brass}` : undefined,
                     }}
                     onPointerDown={
                       tr.kind === "vocal"
                         ? (e) => {
                             setSelectedTrackId(tr.id);
-                            onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
+                            setArmedTrackId(tr.id);
+                            // Mock/unrecorded: arm only (no drag). Recorded: move/trim as before.
+                            if (!isMock && !isLiveRec) {
+                              onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
+                            }
                           }
                         : () => setSelectedTrackId(tr.id)
                     }
                   >
-                    <WaveformCanvas
-                      peaks={peaksById[tr.id] || null}
-                      color={tr.color}
-                      width={clipW}
-                      height={clipH}
-                      dimmed={dimmed}
-                    />
+                    {isLiveRec ? (
+                      <LiveClipWave
+                        peaks={livePeaks}
+                        color={tr.color}
+                        width={clipW}
+                        height={clipH}
+                      />
+                    ) : (
+                      <WaveformCanvas
+                        peaks={peaksById[tr.id] || null}
+                        color={tr.color}
+                        width={clipW}
+                        height={clipH}
+                        dimmed={dimmed}
+                      />
+                    )}
                     <div
                       style={{
                         position: "absolute",
