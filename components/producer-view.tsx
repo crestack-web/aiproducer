@@ -444,6 +444,8 @@ export function ProducerView({
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [trackPrompt, setTrackPrompt] = useState("");
   const [trackPromptBusy, setTrackPromptBusy] = useState(false);
+  const [apPhase, setApPhase] = useState(0);
+  const [apLastResult, setApLastResult] = useState<"ok" | "err" | null>(null);
 
 
 
@@ -464,7 +466,7 @@ export function ProducerView({
   } | null>(null);
 
   async function submitTrackPrompt() {
-    if (!projectId || !trackPrompt.trim()) return;
+    if (!projectId || !trackPrompt.trim() || trackPromptBusy) return;
     const trackScope =
       selectedTrackId && selectedTrackId !== "beat"
         ? selectedTrackId
@@ -472,17 +474,31 @@ export function ProducerView({
     // Song-wide still needs produced master path (tweaksEnabled); track needs take on server
     if (!trackScope && !tweaksEnabled) {
       setEditMsg(tweaksGateMessage);
+      setApLastResult("err");
       return;
     }
+    // Track scope requires a take — surface early if none
+    if (trackScope) {
+      const tr = tracks.find((x) => x.id === trackScope);
+      if (tr && !tr.url) {
+        setEditMsg("Record or upload a take on this track first — AP needs audio to shape.");
+        setApLastResult("err");
+        setPromptBarOpen(true);
+        return;
+      }
+    }
     setTrackPromptBusy(true);
+    setApPhase(0);
+    setApLastResult(null);
     setEditMsg(null);
+    setPromptBarOpen(true);
+    const promptText = trackPrompt.trim();
     try {
-      const tr = tracks.find((x) => x.id === selectedTrackId);
       const res = await fetch(`/api/projects/${projectId}/tweak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: trackPrompt.trim(),
+          prompt: promptText,
           task_id: trackScope || undefined,
           track_id: trackScope || undefined,
           scope: trackScope ? "track" : "song",
@@ -491,22 +507,25 @@ export function ProducerView({
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
+        setApLastResult("err");
         setEditMsg(
           typeof j.error === "string"
             ? j.error
             : typeof j.message === "string"
               ? j.message
-              : "Tweak failed"
+              : "AP could not apply that — try again"
         );
       } else if (j.needsClarification || j.needsVariationPick) {
+        setApLastResult("err");
         setEditMsg(
           typeof j.message === "string"
             ? j.message
             : typeof j.plain === "string"
               ? j.plain
-              : "Try a more specific request"
+              : "Be more specific — e.g. “more reverb on the chorus”"
         );
       } else {
+        setApLastResult("ok");
         setTrackPrompt("");
         setEditMsg(
           typeof j.plain === "string"
@@ -514,18 +533,29 @@ export function ProducerView({
             : typeof j.summary === "string"
               ? j.summary
               : trackScope
-                ? "Updated this track"
-                : "Song tweak applied"
+                ? "AP updated this track"
+                : "AP applied your direction"
         );
         onLayersChanged?.();
         onOpenTweak?.();
       }
     } catch {
-      setEditMsg("Network error sending prompt");
+      setApLastResult("err");
+      setEditMsg("Network error — check connection and try again");
     } finally {
       setTrackPromptBusy(false);
     }
   }
+
+  // Suno-style status line while AP works
+  useEffect(() => {
+    if (!trackPromptBusy) return;
+    setApPhase(0);
+    const id = window.setInterval(() => {
+      setApPhase((p) => p + 1);
+    }, 2200);
+    return () => window.clearInterval(id);
+  }, [trackPromptBusy]);
 
   async function persistColor(id: string, color: string) {
     setColorById((prev) => ({ ...prev, [id]: color }));
@@ -2584,6 +2614,168 @@ export function ProducerView({
       )}
 
 
+      {/* AP working overlay — Suno-style generative studio */}
+      {trackPromptBusy && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 60,
+            display: "grid",
+            placeItems: "center",
+            background:
+              "radial-gradient(ellipse at 50% 40%, rgba(231,169,97,0.18), transparent 55%), rgba(6,6,10,0.72)",
+            backdropFilter: "blur(18px)",
+            pointerEvents: "all",
+          }}
+        >
+          <style>{`
+            @keyframes apPulse {
+              0%, 100% { transform: scale(1); opacity: 0.85; }
+              50% { transform: scale(1.08); opacity: 1; }
+            }
+            @keyframes apOrbit {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+            @keyframes apBar {
+              0%, 100% { height: 18%; }
+              50% { height: 92%; }
+            }
+            @keyframes apShimmer {
+              0% { background-position: 0% 50%; }
+              100% { background-position: 200% 50%; }
+            }
+          `}</style>
+          <div
+            style={{
+              width: "min(360px, 92vw)",
+              padding: "28px 24px 24px",
+              borderRadius: 20,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "rgba(18,18,24,0.92)",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                width: 88,
+                height: 88,
+                margin: "0 auto 18px",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: "50%",
+                  border: "2px solid transparent",
+                  borderTopColor: brass,
+                  borderRightColor: "rgba(231,169,97,0.35)",
+                  animation: "apOrbit 1.4s linear infinite",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 10,
+                  borderRadius: "50%",
+                  background: `linear-gradient(135deg, ${brass}, #F0BC80 40%, #A78BFA)`,
+                  backgroundSize: "200% 200%",
+                  animation: "apPulse 1.6s ease-in-out infinite, apShimmer 3s linear infinite",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#1A1208",
+                  fontWeight: 900,
+                  fontSize: 15,
+                  letterSpacing: "0.06em",
+                }}
+              >
+                AP
+              </div>
+            </div>
+            {/* mini equalizer bars */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                gap: 4,
+                height: 36,
+                marginBottom: 16,
+              }}
+            >
+              {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: 5,
+                    borderRadius: 3,
+                    background: i % 2 === 0 ? brass : "#A78BFA",
+                    animation: `apBar ${0.7 + (i % 3) * 0.15}s ease-in-out ${i * 0.08}s infinite`,
+                    height: "40%",
+                  }}
+                />
+              ))}
+            </div>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: text,
+                marginBottom: 6,
+                minHeight: 22,
+              }}
+            >
+              {
+                [
+                  "Listening to your direction…",
+                  "Reading the take…",
+                  "Shaping tone & space…",
+                  "Balancing the mix…",
+                  "Finishing the pass…",
+                ][apPhase % 5]
+              }
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: mutedText,
+                lineHeight: 1.45,
+                maxWidth: 280,
+                margin: "0 auto",
+              }}
+            >
+              {selectedTrackId && selectedTrackId !== "beat"
+                ? `Working on ${tracks.find((t) => t.id === selectedTrackId)?.label || "track"}`
+                : "Song-wide direction"}
+            </div>
+            <div
+              style={{
+                marginTop: 14,
+                height: 3,
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.08)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: "40%",
+                  borderRadius: 999,
+                  background: `linear-gradient(90deg, transparent, ${brass}, transparent)`,
+                  backgroundSize: "200% 100%",
+                  animation: "apShimmer 1.2s linear infinite",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Prompt: collapsed FAB by default — does not cover track rows */}
       {!promptBarOpen ? (
         <button
@@ -2617,14 +2809,12 @@ export function ProducerView({
             left: 0,
             right: 0,
             bottom: 0,
-            top: 0,
             zIndex: 40,
-            background: "rgba(0,0,0,0.35)",
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
+            pointerEvents: "none",
           }}
-          onClick={() => setPromptBarOpen(false)}
         >
           <div
             style={{
@@ -2633,15 +2823,14 @@ export function ProducerView({
               margin: "0 12px max(12px, env(safe-area-inset-bottom))",
               pointerEvents: "auto",
               borderRadius: 16,
-              padding: "10px 12px",
+              padding: "12px 14px 14px",
               background: "rgba(22, 22, 26, 0.96)",
               border: "1px solid rgba(255,255,255,0.1)",
               boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
               backdropFilter: "blur(16px)",
             }}
-            onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <button
                 type="button"
                 onClick={() => {
@@ -2666,17 +2855,21 @@ export function ProducerView({
                 +
               </button>
               <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>
-                {selectedTrackId ? "Track · AP" : "Song · AP"}
+                {selectedTrackId && selectedTrackId !== "beat"
+                  ? "Track · AP"
+                  : "Song · AP"}
               </span>
               <button
                 type="button"
-                onClick={() => setPromptBarOpen(false)}
+                onClick={() => {
+                  if (!trackPromptBusy) setPromptBarOpen(false);
+                }}
                 style={{
                   background: "none",
                   border: "none",
                   color: "rgba(255,255,255,0.45)",
                   fontSize: 18,
-                  cursor: "pointer",
+                  cursor: trackPromptBusy ? "default" : "pointer",
                   padding: 4,
                 }}
                 aria-label="Close prompt"
@@ -2684,27 +2877,189 @@ export function ProducerView({
                 ×
               </button>
             </div>
+
+            {/* Scope chips — tap a track to attach it here */}
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                marginBottom: 10,
+                alignItems: "center",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedTrackId(null)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border:
+                    !selectedTrackId || selectedTrackId === "beat"
+                      ? `1px solid ${brass}`
+                      : "1px solid rgba(255,255,255,0.12)",
+                  background:
+                    !selectedTrackId || selectedTrackId === "beat"
+                      ? "rgba(231,169,97,0.18)"
+                      : "rgba(255,255,255,0.05)",
+                  color:
+                    !selectedTrackId || selectedTrackId === "beat" ? brass : mutedText,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Whole song
+              </button>
+              {tracks
+                .filter((t) => t.kind === "vocal")
+                .map((t) => {
+                  const on = selectedTrackId === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setSelectedTrackId(t.id)}
+                      title={t.url ? t.label : `${t.label} (no take yet)`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 10px 4px 6px",
+                        borderRadius: 999,
+                        border: on
+                          ? `1px solid ${t.color}`
+                          : "1px solid rgba(255,255,255,0.12)",
+                        background: on ? `${t.color}33` : "rgba(255,255,255,0.05)",
+                        color: on ? text : mutedText,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        maxWidth: 140,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 3,
+                          background: t.color,
+                          flexShrink: 0,
+                          opacity: t.url ? 1 : 0.35,
+                        }}
+                      />
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t.label}
+                      </span>
+                      {!t.url ? (
+                        <span style={{ fontSize: 9, opacity: 0.6, flexShrink: 0 }}>·</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+            </div>
+
+            {selectedTrackId && selectedTrackId !== "beat" ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 8,
+                  padding: "6px 10px",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 3,
+                    background:
+                      tracks.find((t) => t.id === selectedTrackId)?.color || brass,
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ flex: 1, fontSize: 12, color: text, fontWeight: 600 }}>
+                  Directing{" "}
+                  {tracks.find((t) => t.id === selectedTrackId)?.label || "track"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTrackId(null)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: mutedText,
+                    cursor: "pointer",
+                    fontSize: 14,
+                    padding: 2,
+                  }}
+                  title="Clear track scope"
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
+
+            {editMsg ? (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                  background:
+                    apLastResult === "err"
+                      ? "rgba(240,113,103,0.12)"
+                      : "rgba(52,211,153,0.1)",
+                  color:
+                    apLastResult === "err" ? "#F07167" : "#6EE7B7",
+                  border: `1px solid ${
+                    apLastResult === "err"
+                      ? "rgba(240,113,103,0.25)"
+                      : "rgba(52,211,153,0.2)"
+                  }`,
+                }}
+              >
+                {editMsg}
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 value={trackPrompt}
                 onChange={(e) => setTrackPrompt(e.target.value)}
                 placeholder={
                   selectedTrackId && selectedTrackId !== "beat"
-                    ? "Ask AP about this track… (e.g. add warmth)"
+                    ? "e.g. warmer, more reverb, pull back…"
                     : tweaksEnabled
-                      ? "Ask AP about the whole song…"
+                      ? "e.g. louder chorus, tighter low end…"
                       : tweaksGateMessage
                 }
                 disabled={
-                  selectedTrackId && selectedTrackId !== "beat"
-                    ? false
-                    : !tweaksEnabled
+                  trackPromptBusy
+                    ? true
+                    : selectedTrackId && selectedTrackId !== "beat"
+                      ? false
+                      : !tweaksEnabled
                 }
                 onKeyDown={(e) => {
                   const trackOk = selectedTrackId && selectedTrackId !== "beat";
                   if (e.key === "Enter" && trackPrompt.trim() && (trackOk || tweaksEnabled)) {
                     e.preventDefault();
-                    void submitTrackPrompt().then(() => setPromptBarOpen(false));
+                    void submitTrackPrompt();
                   }
                 }}
                 style={{
@@ -2722,9 +3077,10 @@ export function ProducerView({
               <button
                 type="button"
                 onClick={() => {
-                  void submitTrackPrompt().then(() => setPromptBarOpen(false));
+                  void submitTrackPrompt();
                 }}
                 disabled={
+                  trackPromptBusy ||
                   !trackPrompt.trim() ||
                   (!(selectedTrackId && selectedTrackId !== "beat") && !tweaksEnabled)
                 }
@@ -2734,17 +3090,20 @@ export function ProducerView({
                   borderRadius: 999,
                   border: "none",
                   background:
+                    !trackPromptBusy &&
                     trackPrompt.trim() &&
                     ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
                       ? "linear-gradient(180deg, #F0BC80, #E7A961)"
                       : "rgba(255,255,255,0.1)",
                   color:
+                    !trackPromptBusy &&
                     trackPrompt.trim() &&
                     ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
                       ? "#1A1208"
                       : "rgba(255,255,255,0.35)",
                   fontWeight: 800,
                   cursor:
+                    !trackPromptBusy &&
                     trackPrompt.trim() &&
                     ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
                       ? "pointer"
@@ -2755,6 +3114,16 @@ export function ProducerView({
               >
                 ↑
               </button>
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 10,
+                color: faint,
+                lineHeight: 1.35,
+              }}
+            >
+              Tap a track on the timeline or a chip above to scope AP. Song-wide needs a produced master.
             </div>
           </div>
         </div>
