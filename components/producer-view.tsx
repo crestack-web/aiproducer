@@ -1501,6 +1501,17 @@ export function ProducerView({
     });
   }
 
+  function setPan(trackId: string, value: number, commit = false) {
+    if (!trackId) return;
+    const pan = Math.max(-1, Math.min(1, Math.round(value * 100) / 100));
+    setFxById((prev) => {
+      const cur = prev[trackId] || { ...DEFAULT_TRACK_FX };
+      const next = { ...cur, pan };
+      if (commit) void persistFx(trackId, next);
+      return { ...prev, [trackId]: next };
+    });
+  }
+
   // Console keyboard shortcuts (ignore when typing in inputs)
   useEffect(() => {
     function isTypingTarget(el: EventTarget | null): boolean {
@@ -2143,38 +2154,70 @@ export function ProducerView({
                   >
                     S
                   </button>
-                  <button
-                    type="button"
-                    title="Pan left (L / [)"
-                    onClick={() => {
-                      setSelectedTrackId(tr.id);
-                      nudgePan(tr.id, -0.25);
+                  <div
+                    title="Pan — drag, double-click to center (L/[ · ]/Shift+R)"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                      flex: "1 1 72px",
+                      minWidth: 72,
+                      maxWidth: 120,
+                      padding: "0 2px",
                     }}
-                    style={miniChip(
-                      border,
-                      brass,
-                      (fxById[tr.id]?.pan ?? 0) < -0.05,
-                      text
-                    )}
                   >
-                    L
-                  </button>
-                  <button
-                    type="button"
-                    title="Pan right (Shift+R / ])"
-                    onClick={() => {
-                      setSelectedTrackId(tr.id);
-                      nudgePan(tr.id, 0.25);
-                    }}
-                    style={miniChip(
-                      border,
-                      brass,
-                      (fxById[tr.id]?.pan ?? 0) > 0.05,
-                      text
-                    )}
-                  >
-                    R
-                  </button>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: (fxById[tr.id]?.pan ?? 0) < -0.05 ? brass : faint,
+                        letterSpacing: "0.02em",
+                        userSelect: "none",
+                      }}
+                    >
+                      L
+                    </span>
+                    <input
+                      type="range"
+                      min={-1}
+                      max={1}
+                      step={0.01}
+                      value={fxById[tr.id]?.pan ?? 0}
+                      aria-label={`Pan ${tr.label}`}
+                      onChange={(e) => {
+                        setSelectedTrackId(tr.id);
+                        setPan(tr.id, parseFloat(e.target.value), false);
+                      }}
+                      onPointerUp={(e) => {
+                        setSelectedTrackId(tr.id);
+                        setPan(tr.id, parseFloat((e.target as HTMLInputElement).value), true);
+                      }}
+                      onDoubleClick={() => {
+                        setSelectedTrackId(tr.id);
+                        setPan(tr.id, 0, true);
+                      }}
+                      style={{
+                        flex: 1,
+                        minWidth: 40,
+                        height: 18,
+                        margin: 0,
+                        accentColor: brass,
+                        cursor: "pointer",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: (fxById[tr.id]?.pan ?? 0) > 0.05 ? brass : faint,
+                        letterSpacing: "0.02em",
+                        userSelect: "none",
+                      }}
+                    >
+                      R
+                    </span>
+                  </div>
                   <button
                     type="button"
                     title="Effects"
