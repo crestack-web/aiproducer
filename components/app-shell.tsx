@@ -200,9 +200,6 @@ export function AppShell({
     cursor: "pointer",
     fontFamily: "inherit",
     width: "100%",
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
   };
 
   const navActive: CSSProperties = {
