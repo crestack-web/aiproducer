@@ -58,6 +58,8 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         const bj = await br.json();
         setBeatUrl(bj.audio_url || bj.url || null);
         if (typeof bj.duration_ms === "number") setBeatDurationMs(bj.duration_ms);
+        else if (typeof bj.duration_sec === "number") setBeatDurationMs(Math.round(bj.duration_sec * 1000));
+        else if (typeof bj.duration === "number") setBeatDurationMs(bj.duration > 1000 ? bj.duration : Math.round(bj.duration * 1000));
       }
       if (tr.ok) {
         const tj = await tr.json();
@@ -116,7 +118,25 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             s.endMs = Math.max(s.endMs, l.endMs);
           }
         }
-        setSections(Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs));
+        let derived = Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs);
+        try {
+          const secRes = await fetch(`/api/projects/${projectId}/blueprint`);
+          if (secRes.ok) {
+            const sj = await secRes.json();
+            const raw = sj.sections || sj.song_sections || sj.blueprint?.sections || [];
+            if (Array.isArray(raw) && raw.length) {
+              derived = raw.map((s: { id?: string; label?: string; name?: string; start_ms?: number; end_ms?: number }, i: number) => ({
+                id: String(s.id || `sec-${i}`),
+                label: s.label || s.name || `Section ${i + 1}`,
+                startMs: Number(s.start_ms) || 0,
+                endMs: Number(s.end_ms) || (Number(s.start_ms) || 0) + 8000,
+              }));
+            }
+          }
+        } catch {
+          /* keep derived from tasks */
+        }
+        setSections(derived);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load Console");

@@ -338,6 +338,7 @@ export function ProducerView({
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [promptBarOpen, setPromptBarOpen] = useState(false);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [planBusy, setPlanBusy] = useState(false);
@@ -928,12 +929,20 @@ export function ProducerView({
 
   const totalMs = useMemo(() => {
     let max = durationMs || 0;
-    for (const s of sections) max = Math.max(max, s.endMs || 0);
-    for (const l of layers) max = Math.max(max, l.endMs || 0);
-    return Math.max(max, 45_000);
+    for (const s of sections) {
+      max = Math.max(max, Number(s.endMs) || 0, (Number(s.startMs) || 0) + 1000);
+    }
+    for (const l of layers) {
+      const start = Number(l.startMs) || 0;
+      const end = Number(l.endMs) || 0;
+      max = Math.max(max, end, start + 500);
+    }
+    // Prefer real beat length when known; never cap the scroll region to the first section only
+    return Math.max(max, 60_000);
   }, [durationMs, sections, layers]);
 
-  const timelineW = Math.max(360, (totalMs / 1000) * pxPerSec);
+  // Explicit pixel width so iOS doesn't collapse absolute-positioned clip rows to viewport-only scroll
+  const timelineW = Math.max(480, Math.ceil((totalMs / 1000) * pxPerSec) + 80);
   const peakBuckets = Math.min(2048, Math.max(64, Math.floor(timelineW)));
 
   const tracks = useMemo(() => {
@@ -1768,15 +1777,25 @@ export function ProducerView({
             WebkitOverflowScrolling: "touch",
             overscrollBehavior: "contain",
             position: "relative",
+            touchAction: "pan-x pan-y",
           }}
         >
-          <div style={{ minWidth: timelineW, position: "relative" }}>
+          <div
+            style={{
+              width: timelineW,
+              minWidth: timelineW,
+              position: "relative",
+              boxSizing: "border-box",
+            }}
+          >
             <div
               style={{
                 position: "sticky",
                 top: 0,
                 zIndex: 6,
                 height: 40,
+                width: timelineW,
+                minWidth: timelineW,
                 borderBottom: `1px solid ${border}`,
                 background: surface,
               }}
@@ -1839,6 +1858,8 @@ export function ProducerView({
                   style={{
                     position: "relative",
                     height: rowH,
+                    width: timelineW,
+                    minWidth: timelineW,
                     boxSizing: "border-box",
                     borderBottom: `1px solid rgba(255,255,255,0.06)`,
                     background:
@@ -1988,243 +2009,166 @@ export function ProducerView({
         </div>
       )}
 
-      {/* Floating AP prompt bar — Suno-style glass chip */}
-      <div
-        style={{
-          position: "absolute",
-          left: 12,
-          right: 12,
-          bottom: "max(12px, env(safe-area-inset-bottom))",
-          zIndex: 40,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 10,
-          pointerEvents: "none",
-        }}
-      >
-        <div
+
+      {/* Prompt: collapsed FAB by default — does not cover track rows */}
+      {!promptBarOpen ? (
+        <button
+          type="button"
+          onClick={() => setPromptBarOpen(true)}
+          title="Open AP prompt"
           style={{
-            width: "100%",
-            maxWidth: 520,
-            pointerEvents: "auto",
-            borderRadius: 16,
-            padding: "10px 12px",
-            background: "rgba(22, 22, 26, 0.92)",
-            border: "1px solid rgba(255,255,255,0.1)",
-            boxShadow: "0 12px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
+            position: "absolute",
+            right: 14,
+            bottom: "max(14px, env(safe-area-inset-bottom))",
+            zIndex: 40,
+            width: 48,
+            height: 48,
+            borderRadius: 999,
+            border: `1px solid ${border}`,
+            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+            color: "#1A1208",
+            fontWeight: 800,
+            fontSize: 13,
+            cursor: "pointer",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+            fontFamily: "inherit",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <button
-              type="button"
-              onClick={() => setAddMenuOpen(true)}
-              title="Add track"
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.06)",
-                color: "#E8E6EF",
-                fontSize: 16,
-                fontWeight: 600,
-                cursor: "pointer",
-                lineHeight: 1,
-                flexShrink: 0,
-              }}
-            >
-              +
-            </button>
-            {selectedTrackId ? (
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  maxWidth: "55%",
-                  padding: "5px 10px",
-                  borderRadius: 999,
-                  background:
-                    (tracks.find((x) => x.id === selectedTrackId)?.color || brass) + "33",
-                  border: `1px solid ${(tracks.find((x) => x.id === selectedTrackId)?.color || brass)}55`,
-                  fontSize: 12,
-                  fontWeight: 650,
-                  color: "#F4F1EC",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 3,
-                    flexShrink: 0,
-                    background: tracks.find((x) => x.id === selectedTrackId)?.color || brass,
-                  }}
-                />
-                {tracks.find((x) => x.id === selectedTrackId)?.label || "Track"}
-                <button
-                  type="button"
-                  onClick={() => setSelectedTrackId(null)}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "rgba(255,255,255,0.55)",
-                    cursor: "pointer",
-                    fontSize: 13,
-                    padding: 0,
-                    lineHeight: 1,
-                  }}
-                  aria-label="Clear scope"
-                >
-                  ×
-                </button>
-              </span>
-            ) : (
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "rgba(255,255,255,0.45)",
-                  fontWeight: 500,
-                }}
-              >
-                Song · AP
-              </span>
-            )}
-            <div style={{ flex: 1 }} />
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedTrackId(null);
-                setTrackPrompt("");
-                setShowAddTrack(false);
-              }}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                border: "none",
-                background: "transparent",
-                color: "rgba(255,255,255,0.45)",
-                cursor: "pointer",
-                fontSize: 16,
-              }}
-              aria-label="Dismiss"
-            >
-              ×
-            </button>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              value={trackPrompt}
-              onChange={(e) => setTrackPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitTrackPrompt();
-              }}
-              placeholder={
-                selectedTrackId
-                  ? onOpenTweak
-                    ? "Describe a change for this track…"
-                    : "Produce first to unlock tweaks"
-                  : onOpenTweak
-                    ? "Ask AP anything about the mix…"
-                    : "Produce first to unlock tweaks"
-              }
-              disabled={!onOpenTweak || trackPromptBusy}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: "8px 4px",
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                color: "#F4F1EC",
-                fontSize: 14,
-                fontFamily: "inherit",
-                opacity: onOpenTweak ? 1 : 0.5,
-              }}
-            />
-            <button
-              type="button"
-              disabled={!onOpenTweak || trackPromptBusy || !trackPrompt.trim()}
-              onClick={() => void submitTrackPrompt()}
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: 999,
-                border: "none",
-                background:
-                  onOpenTweak && trackPrompt.trim()
-                    ? "linear-gradient(180deg, #F0BC80, #E7A961)"
-                    : "rgba(255,255,255,0.1)",
-                color: onOpenTweak && trackPrompt.trim() ? "#1A1208" : "rgba(255,255,255,0.35)",
-                fontWeight: 800,
-                cursor: onOpenTweak && trackPrompt.trim() ? "pointer" : "default",
-                fontSize: 14,
-                flexShrink: 0,
-              }}
-            >
-              ↑
-            </button>
-          </div>
-        </div>
-
+          AP
+        </button>
+      ) : (
         <div
           style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            top: 0,
+            zIndex: 40,
+            background: "rgba(0,0,0,0.35)",
             display: "flex",
-            gap: 8,
-            pointerEvents: "auto",
-            alignItems: "center",
+            alignItems: "flex-end",
+            justifyContent: "center",
           }}
+          onClick={() => setPromptBarOpen(false)}
         >
-          <button
-            type="button"
-            onClick={() => {
-              if (selectedTrackId) setFxOpenId(selectedTrackId);
-            }}
-            disabled={!selectedTrackId}
+          <div
             style={{
-              padding: "8px 14px",
-              borderRadius: 999,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(22,22,26,0.88)",
-              color: selectedTrackId ? "#E8E6EF" : "rgba(255,255,255,0.35)",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: selectedTrackId ? "pointer" : "default",
-              fontFamily: "inherit",
-              backdropFilter: "blur(12px)",
+              width: "100%",
+              maxWidth: 520,
+              margin: "0 12px max(12px, env(safe-area-inset-bottom))",
+              pointerEvents: "auto",
+              borderRadius: 16,
+              padding: "10px 12px",
+              background: "rgba(22, 22, 26, 0.96)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
+              backdropFilter: "blur(16px)",
             }}
+            onClick={(e) => e.stopPropagation()}
           >
-            + Track Effects
-          </button>
-          {!selectedTrackId && onOpenTweak && (
-            <button
-              type="button"
-              onClick={onOpenTweak}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 999,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(22,22,26,0.88)",
-                color: "#E8E6EF",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              Song tweaks
-            </button>
-          )}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPromptBarOpen(false);
+                  setAddMenuOpen(true);
+                }}
+                title="Add track"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#E8E6EF",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                +
+              </button>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>
+                {selectedTrackId ? "Track · AP" : "Song · AP"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPromptBarOpen(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "rgba(255,255,255,0.45)",
+                  fontSize: 18,
+                  cursor: "pointer",
+                  padding: 4,
+                }}
+                aria-label="Close prompt"
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                value={trackPrompt}
+                onChange={(e) => setTrackPrompt(e.target.value)}
+                placeholder={
+                  onOpenTweak
+                    ? selectedTrackId
+                      ? "Ask AP about this track…"
+                      : "Ask AP anything about the mix…"
+                    : "Produce first to unlock tweaks"
+                }
+                disabled={!onOpenTweak}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && onOpenTweak && trackPrompt.trim()) {
+                    e.preventDefault();
+                    void submitTrackPrompt().then(() => setPromptBarOpen(false));
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 10,
+                  color: "#F4F1EC",
+                  padding: "10px 12px",
+                  fontSize: 14,
+                  fontFamily: "inherit",
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  void submitTrackPrompt().then(() => setPromptBarOpen(false));
+                }}
+                disabled={!onOpenTweak || !trackPrompt.trim()}
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 999,
+                  border: "none",
+                  background:
+                    onOpenTweak && trackPrompt.trim()
+                      ? "linear-gradient(180deg, #F0BC80, #E7A961)"
+                      : "rgba(255,255,255,0.1)",
+                  color: onOpenTweak && trackPrompt.trim() ? "#1A1208" : "rgba(255,255,255,0.35)",
+                  fontWeight: 800,
+                  cursor: onOpenTweak && trackPrompt.trim() ? "pointer" : "default",
+                  fontSize: 14,
+                  flexShrink: 0,
+                }}
+              >
+                ↑
+              </button>
+            </div>
+          </div>
         </div>
+      )}
 
-        
       {addMenuOpen && (
         <div
           style={{
