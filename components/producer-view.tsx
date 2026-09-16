@@ -13,6 +13,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { openRecordingStream, createVocalRecorder } from "@/lib/audio/recording-engine";
+import {
+  parseConsoleCommands,
+  AP_SUGGESTIONS,
+  type DawAction,
+} from "@/lib/ap-engine/console-commands";
 
 export type TrackFx = {
   gainDb: number;
@@ -435,7 +440,7 @@ export function ProducerView({
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
-  const [promptBarOpen, setPromptBarOpen] = useState(false);
+  const [promptBarOpen, setPromptBarOpen] = useState(true);
   const [isNarrow, setIsNarrow] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 720px)");
@@ -482,6 +487,8 @@ export function ProducerView({
   const [trackPromptBusy, setTrackPromptBusy] = useState(false);
   const [apPhase, setApPhase] = useState(0);
   const [apLastResult, setApLastResult] = useState<"ok" | "err" | null>(null);
+  const [apSteps, setApSteps] = useState<{ label: string; done: boolean; active: boolean }[]>([]);
+  const [apSummary, setApSummary] = useState<string | null>(null);
 
 
 
@@ -501,85 +508,282 @@ export function ProducerView({
     lastEnd: number;
   } | null>(null);
 
+  async function runDawAction(action: DawAction) {
+    switch (action.type) {
+      case "mute":
+        setMuted((m) => ({ ...m, [action.trackId]: action.value }));
+        break;
+      case "solo":
+        setSoloId(action.trackId);
+        break;
+      case "pan":
+        setPan(action.trackId, action.value, true);
+        break;
+      case "gain": {
+        setFxById((prev) => {
+          const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
+          const next = {
+            ...cur,
+            gainDb: Math.max(-12, Math.min(12, (Number(cur.gainDb) || 0) + action.deltaDb)),
+          };
+          void persistFx(action.trackId, next);
+          return { ...prev, [action.trackId]: next };
+        });
+        break;
+      }
+      case "fx": {
+        setFxById((prev) => {
+          const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
+          const raw = Number(cur[action.key]) || 0;
+          let nextVal = raw + action.delta;
+          if (action.key === "eqLowDb" || action.key === "eqMidDb" || action.key === "eqHighDb") {
+            nextVal = Math.max(-12, Math.min(12, nextVal));
+          } else {
+            nextVal = Math.max(0, Math.min(1, nextVal));
+          }
+          const next = { ...cur, [action.key]: nextVal };
+          void persistFx(action.trackId, next);
+          return { ...prev, [action.trackId]: next };
+        });
+        break;
+      }
+      case "select":
+        setSelectedTrackId(action.trackId);
+        break;
+      case "arm":
+        setArmedTrackId(action.trackId);
+        setSelectedTrackId(action.trackId);
+        break;
+      case "play":
+        if (!playing) void startPlayback(playheadMs);
+        break;
+      case "pause":
+        if (playing) togglePlay();
+        break;
+      case "seek":
+        seekTo(action.ms);
+        break;
+      case "expand":
+        setExpandedId(action.trackId);
+        setSelectedTrackId(action.trackId);
+        break;
+      case "open_fx":
+        setSelectedTrackId(action.trackId);
+        setExpandedId(action.trackId);
+        setFxOpenId(action.trackId);
+        break;
+      default:
+        break;
+    }
+  }
+
   async function submitTrackPrompt() {
     if (!projectId || !trackPrompt.trim() || trackPromptBusy) return;
-    const trackScope =
-      selectedTrackId && selectedTrackId !== "beat"
-        ? selectedTrackId
-        : null;
-    // Song-wide still needs produced master path (tweaksEnabled); track needs take on server
-    if (!trackScope && !tweaksEnabled) {
-      setEditMsg(tweaksGateMessage);
-      setApLastResult("err");
-      return;
-    }
-    // Track scope requires a take — surface early if none
-    if (trackScope) {
-      const tr = tracks.find((x) => x.id === trackScope);
-      if (tr && !tr.url) {
-        setEditMsg("Record or upload a take on this track first — AP needs audio to shape.");
-        setApLastResult("err");
-        setPromptBarOpen(true);
-        return;
-      }
-    }
+    const promptText = trackPrompt.trim();
+    setPromptBarOpen(true);
     setTrackPromptBusy(true);
     setApPhase(0);
     setApLastResult(null);
     setEditMsg(null);
-    setPromptBarOpen(true);
-    const promptText = trackPrompt.trim();
+    setApSummary(null);
+    setApSteps([{ label: "Reading your direction…", done: false, active: true }]);
+
     try {
-      const res = await fetch(`/api/projects/${projectId}/tweak`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: promptText,
-          task_id: trackScope || undefined,
-          track_id: trackScope || undefined,
-          scope: trackScope ? "track" : "song",
-          playbackMs: playheadMs,
-        }),
+      const plan = parseConsoleCommands({
+        prompt: promptText,
+        tracks: tracks.map((t) => ({
+          id: t.id,
+          label: t.label,
+          kind: t.kind,
+          hasAudio: Boolean(t.url),
+        })),
+        sections: sections.map((s) => ({
+          id: s.id,
+          label: s.label,
+          startMs: s.startMs,
+          endMs: s.endMs,
+        })),
+        selectedTrackId,
+        playheadMs,
       });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setApLastResult("err");
-        setEditMsg(
-          typeof j.error === "string"
-            ? j.error
-            : typeof j.message === "string"
-              ? j.message
-              : "AP could not apply that — try again"
-        );
-      } else if (j.needsClarification || j.needsVariationPick) {
-        setApLastResult("err");
-        setEditMsg(
-          typeof j.message === "string"
-            ? j.message
-            : typeof j.plain === "string"
-              ? j.plain
-              : "Be more specific — e.g. “more reverb on the chorus”"
-        );
-      } else {
+
+      // Auto-scope first matched track in UI
+      if (plan.matchedTrackIds[0]) {
+        setSelectedTrackId(plan.matchedTrackIds[0]);
+      }
+
+      const stepList: { label: string; done: boolean; active: boolean }[] = [
+        { label: "Reading your direction…", done: true, active: false },
+      ];
+
+      // Execute local DAW actions with staged visuals
+      if (plan.actions.length) {
+        for (let i = 0; i < plan.actions.length; i++) {
+          const a = plan.actions[i];
+          stepList.push({ label: a.label, done: false, active: true });
+          setApSteps([...stepList]);
+          await new Promise((r) => setTimeout(r, 280));
+          await runDawAction(a);
+          stepList[stepList.length - 1] = { label: a.label, done: true, active: false };
+          setApSteps([...stepList]);
+        }
+        setApSummary(plan.summary);
+      }
+
+      // Server path for offline take/master processing
+      if (plan.needsServer) {
+        const trackScope =
+          selectedTrackId && selectedTrackId !== "beat"
+            ? selectedTrackId
+            : plan.matchedTrackIds[0] && plan.matchedTrackIds[0] !== "beat"
+              ? plan.matchedTrackIds[0]
+              : null;
+
+        if (trackScope) {
+          const tr = tracks.find((x) => x.id === trackScope);
+          if (tr && !tr.url) {
+            // Local actions may have succeeded; only block server if no take
+            if (!plan.actions.length) {
+              setApLastResult("err");
+              setEditMsg("Record or upload a take on this track first — AP needs audio to shape.");
+              setApSteps((s) => [
+                ...s.map((x) => ({ ...x, active: false, done: true })),
+                { label: "Need a take on this track", done: true, active: false },
+              ]);
+              return;
+            }
+          } else {
+            stepList.push({ label: "Processing take with AP engine…", done: false, active: true });
+            setApSteps([...stepList]);
+            const res = await fetch(`/api/projects/${projectId}/tweak`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prompt: promptText,
+                task_id: trackScope,
+                track_id: trackScope,
+                scope: "track",
+                playbackMs: playheadMs,
+              }),
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              setApLastResult("err");
+              setEditMsg(
+                typeof j.error === "string"
+                  ? j.error
+                  : typeof j.message === "string"
+                    ? j.message
+                    : "AP engine could not process the take"
+              );
+              stepList[stepList.length - 1] = {
+                label: "Engine pass failed",
+                done: true,
+                active: false,
+              };
+              setApSteps([...stepList]);
+            } else if (j.needsClarification || j.needsVariationPick) {
+              setApLastResult("err");
+              setEditMsg(
+                typeof j.message === "string"
+                  ? j.message
+                  : typeof j.plain === "string"
+                    ? j.plain
+                    : "Be more specific — e.g. “warmer lead” or “mute the beat”"
+              );
+              stepList[stepList.length - 1] = {
+                label: "Need a clearer direction",
+                done: true,
+                active: false,
+              };
+              setApSteps([...stepList]);
+            } else {
+              stepList[stepList.length - 1] = {
+                label:
+                  typeof j.plain === "string"
+                    ? j.plain
+                    : typeof j.summary === "string"
+                      ? j.summary
+                      : "Take updated",
+                done: true,
+                active: false,
+              };
+              setApSteps([...stepList]);
+              setApLastResult("ok");
+              onLayersChanged?.();
+              onOpenTweak?.();
+            }
+          }
+        } else if (!tweaksEnabled) {
+          if (!plan.actions.length) {
+            setApLastResult("err");
+            setEditMsg(tweaksGateMessage);
+            return;
+          }
+        } else {
+          stepList.push({ label: "Applying song-wide direction…", done: false, active: true });
+          setApSteps([...stepList]);
+          const res = await fetch(`/api/projects/${projectId}/tweak`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: promptText,
+              scope: "song",
+              playbackMs: playheadMs,
+            }),
+          });
+          const j = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setApLastResult("err");
+            setEditMsg(
+              typeof j.error === "string"
+                ? j.error
+                : typeof j.message === "string"
+                  ? j.message
+                  : "Song direction failed"
+            );
+            stepList[stepList.length - 1] = {
+              label: "Song pass failed",
+              done: true,
+              active: false,
+            };
+            setApSteps([...stepList]);
+          } else {
+            stepList[stepList.length - 1] = {
+              label:
+                typeof j.plain === "string"
+                  ? j.plain
+                  : typeof j.summary === "string"
+                    ? j.summary
+                    : "Song direction applied",
+              done: true,
+              active: false,
+            };
+            setApSteps([...stepList]);
+            setApLastResult("ok");
+            onLayersChanged?.();
+            onOpenTweak?.();
+          }
+        }
+      } else if (plan.actions.length) {
         setApLastResult("ok");
-        setTrackPrompt("");
+        setEditMsg(plan.summary);
+      } else {
+        setApLastResult("err");
         setEditMsg(
-          typeof j.plain === "string"
-            ? j.plain
-            : typeof j.summary === "string"
-              ? j.summary
-              : trackScope
-                ? "AP updated this track"
-                : "AP applied your direction"
+          "Try a DAW direction — e.g. “solo lead”, “pan harmony left”, “more reverb”, “go to chorus”."
         );
-        onLayersChanged?.();
-        onOpenTweak?.();
+      }
+
+      if (plan.actions.length || plan.needsServer) {
+        setTrackPrompt("");
       }
     } catch {
       setApLastResult("err");
       setEditMsg("Network error — check connection and try again");
     } finally {
       setTrackPromptBusy(false);
+      setApSteps((s) => s.map((x) => ({ ...x, active: false, done: true })));
     }
   }
 
@@ -2784,33 +2988,78 @@ export function ProducerView({
                 fontSize: 15,
                 fontWeight: 700,
                 color: text,
-                marginBottom: 6,
+                marginBottom: 10,
                 minHeight: 22,
               }}
             >
-              {
+              {apSummary ||
                 [
                   "Listening to your direction…",
-                  "Reading the take…",
-                  "Shaping tone & space…",
-                  "Balancing the mix…",
+                  "Reading the session…",
+                  "Executing DAW moves…",
+                  "Shaping the sound…",
                   "Finishing the pass…",
-                ][apPhase % 5]
-              }
+                ][apPhase % 5]}
             </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: mutedText,
-                lineHeight: 1.45,
-                maxWidth: 280,
-                margin: "0 auto",
-              }}
-            >
-              {selectedTrackId && selectedTrackId !== "beat"
-                ? `Working on ${tracks.find((t) => t.id === selectedTrackId)?.label || "track"}`
-                : "Song-wide direction"}
-            </div>
+            {apSteps.length > 0 ? (
+              <div
+                style={{
+                  textAlign: "left",
+                  maxWidth: 300,
+                  margin: "0 auto 12px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                {apSteps.map((st, i) => (
+                  <div
+                    key={`${st.label}-${i}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 12,
+                      color: st.active ? brass : st.done ? mutedText : faint,
+                      fontWeight: st.active ? 700 : 500,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 999,
+                        border: `1.5px solid ${st.done || st.active ? brass : border}`,
+                        background: st.done ? brass : "transparent",
+                        color: st.done ? "#1A1208" : brass,
+                        fontSize: 10,
+                        fontWeight: 800,
+                        display: "grid",
+                        placeItems: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {st.done ? "✓" : st.active ? "·" : ""}
+                    </span>
+                    <span>{st.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: mutedText,
+                  lineHeight: 1.45,
+                  maxWidth: 280,
+                  margin: "0 auto",
+                }}
+              >
+                {selectedTrackId && selectedTrackId !== "beat"
+                  ? `Working on ${tracks.find((t) => t.id === selectedTrackId)?.label || "track"}`
+                  : "Session direction"}
+              </div>
+            )}
             <div
               style={{
                 marginTop: 14,
@@ -2915,8 +3164,8 @@ export function ProducerView({
               </button>
               <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>
                 {selectedTrackId && selectedTrackId !== "beat"
-                  ? "Track · AP"
-                  : "Song · AP"}
+                  ? `AP · ${tracks.find((t) => t.id === selectedTrackId)?.label || "Track"}`
+                  : "AP · Session"}
               </span>
               <button
                 type="button"
@@ -3102,21 +3351,12 @@ export function ProducerView({
                 onChange={(e) => setTrackPrompt(e.target.value)}
                 placeholder={
                   selectedTrackId && selectedTrackId !== "beat"
-                    ? "e.g. warmer, more reverb, pull back…"
-                    : tweaksEnabled
-                      ? "e.g. louder chorus, tighter low end…"
-                      : tweaksGateMessage
+                    ? "e.g. solo this, pan left, more reverb, warmer…"
+                    : "e.g. mute the beat, go to chorus, louder lead…"
                 }
-                disabled={
-                  trackPromptBusy
-                    ? true
-                    : selectedTrackId && selectedTrackId !== "beat"
-                      ? false
-                      : !tweaksEnabled
-                }
+                disabled={trackPromptBusy}
                 onKeyDown={(e) => {
-                  const trackOk = selectedTrackId && selectedTrackId !== "beat";
-                  if (e.key === "Enter" && trackPrompt.trim() && (trackOk || tweaksEnabled)) {
+                  if (e.key === "Enter" && trackPrompt.trim() && !trackPromptBusy) {
                     e.preventDefault();
                     void submitTrackPrompt();
                   }
@@ -3138,33 +3378,23 @@ export function ProducerView({
                 onClick={() => {
                   void submitTrackPrompt();
                 }}
-                disabled={
-                  trackPromptBusy ||
-                  !trackPrompt.trim() ||
-                  (!(selectedTrackId && selectedTrackId !== "beat") && !tweaksEnabled)
-                }
+                disabled={trackPromptBusy || !trackPrompt.trim()}
                 style={{
                   width: 34,
                   height: 34,
                   borderRadius: 999,
                   border: "none",
                   background:
-                    !trackPromptBusy &&
-                    trackPrompt.trim() &&
-                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
+                    !trackPromptBusy && trackPrompt.trim()
                       ? "linear-gradient(180deg, #F0BC80, #E7A961)"
                       : "rgba(255,255,255,0.1)",
                   color:
-                    !trackPromptBusy &&
-                    trackPrompt.trim() &&
-                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
+                    !trackPromptBusy && trackPrompt.trim()
                       ? "#1A1208"
                       : "rgba(255,255,255,0.35)",
                   fontWeight: 800,
                   cursor:
-                    !trackPromptBusy &&
-                    trackPrompt.trim() &&
-                    ((selectedTrackId && selectedTrackId !== "beat") || tweaksEnabled)
+                    !trackPromptBusy && trackPrompt.trim()
                       ? "pointer"
                       : "default",
                   fontSize: 14,
@@ -3174,6 +3404,40 @@ export function ProducerView({
                 ↑
               </button>
             </div>
+            {/* Suggestion chips — DAW mindset */}
+            {!trackPromptBusy && !trackPrompt.trim() ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginTop: 10,
+                }}
+              >
+                {AP_SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => {
+                      setTrackPrompt(s);
+                    }}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      background: "rgba(255,255,255,0.04)",
+                      color: mutedText,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div
               style={{
                 marginTop: 8,
@@ -3182,7 +3446,7 @@ export function ProducerView({
                 lineHeight: 1.35,
               }}
             >
-              Tap a track on the timeline or a chip above to scope AP. Song-wide needs a produced master.
+              Tell AP anything — mute, solo, pan, FX, jump to chorus, process a take. Tap a track to scope.
             </div>
           </div>
         </div>
