@@ -242,7 +242,7 @@ async function buildWorkingMix(
     .select("id, type, start_ms, end_ms, status")
     .eq("project_id", projectId);
 
-  let mix = {
+  let mix: PcmStereo = {
     left: new Float32Array(beatPcm.left),
     right: new Float32Array(beatPcm.right),
     sampleRate: beatPcm.sampleRate,
