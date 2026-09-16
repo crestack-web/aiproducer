@@ -2122,7 +2122,6 @@ export function ProducerView({
                     width: timelineW,
                     minWidth: timelineW,
                     boxSizing: "border-box",
-                    boxSizing: "border-box",
                     borderBottom: `1px solid rgba(255,255,255,0.06)`,
                     background:
                       selectedTrackId === tr.id ? "rgba(255,255,255,0.04)" : "transparent",
