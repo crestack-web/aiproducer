@@ -11,7 +11,6 @@ import {
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { PromptTweakPanel } from "@/components/prompt-tweak-panel";
-import { ProducerView, type ProducerLayer, type ProducerSection } from "@/components/producer-view";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
   MicInputPicker,
@@ -332,7 +331,6 @@ export default function ProjectDetailPage() {
   const [layerSuggestion, setLayerSuggestion] = useState<LayerRefinementSuggestionClient | null>(null);
   const [producing, setProducing] = useState(false);
   const [produceStage, setProduceStage] = useState<string | null>(null);
-  const [showProducerView, setShowProducerView] = useState(false);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
@@ -3050,10 +3048,10 @@ export default function ProjectDetailPage() {
                 minHeight: 44,
                 display: phase === "recording" || phase === "countdown" ? "none" : "block",
               }}
-              onClick={() => setShowProducerView(true)}
+              onClick={() => { window.location.href = `/app/console/${id}`; }}
               disabled={phase === "recording" || phase === "countdown"}
             >
-              Producer View
+              Console
             </button>
             {current && (() => {
               // Single compact CTA: next open layer on this section (harmony / double / …)
@@ -3969,7 +3967,7 @@ export default function ProjectDetailPage() {
             </p>
             <button
               type="button"
-              onClick={() => setShowProducerView(true)}
+              onClick={() => { window.location.href = `/app/console/${id}`; }}
               style={{
                 display: "block",
                 width: "100%",
@@ -3985,7 +3983,7 @@ export default function ProjectDetailPage() {
                 fontFamily: "inherit",
               }}
             >
-              Open Producer View
+              Open Console
             </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>
@@ -4069,92 +4067,6 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-      {showProducerView && (
-        <ProducerView
-          projectTitle={project?.title || "Session"}
-          projectId={id}
-          beatUrl={beatUrl}
-          onLayersChanged={() => {
-            void (async () => {
-              try {
-                const tr = await fetch(`/api/projects/${id}/recording-tasks`);
-                if (!tr.ok) return;
-                const tj = await tr.json();
-                if (Array.isArray(tj.tasks)) setTasks(tj.tasks);
-              } catch {
-                /* ignore */
-              }
-            })();
-          }}
-          sections={
-            (tasks || [])
-              .filter((tk) => tk.start_ms != null)
-              .reduce<ProducerSection[]>((acc, tk) => {
-                const label =
-                  (tk.title || tk.type || "Section").replace(/\s*·.*$/, "") || "Section";
-                const startMs = Number(tk.start_ms) || 0;
-                const endMs = Number(tk.end_ms) || startMs + 8000;
-                if (!acc.some((s) => s.startMs === startMs && s.endMs === endMs)) {
-                  acc.push({
-                    id: `sec-${startMs}-${endMs}`,
-                    label,
-                    startMs,
-                    endMs,
-                  });
-                }
-                return acc;
-              }, [])
-          }
-          layers={
-            (tasks || [])
-              .filter(
-                (tk) =>
-                  tk.start_ms != null &&
-                  (tk.status === "completed" ||
-                    tk.status === "pending" ||
-                    (tk as { type?: string }).type === "custom") &&
-                  (tk.status || "").toLowerCase() !== "skipped" &&
-                  (tk.status || "").toLowerCase() !== "cancelled"
-              )
-              .map((tk) => {
-                const startMs = Number(tk.start_ms) || 0;
-                const endMs = Number(tk.end_ms) || startMs + 8000;
-                const meta = (tk as { metadata?: { track_fx?: Record<string, number>; track_color?: string } }).metadata;
-                const tf = meta?.track_fx;
-                return {
-                  id: tk.id,
-                  label: (tk.type || "lead").replace(/_/g, " "),
-                  role: tk.type || "lead",
-                  sectionLabel: tk.title || undefined,
-                  startMs,
-                  endMs,
-                  color: typeof meta?.track_color === "string" ? meta.track_color : undefined,
-                  trackFx: tf
-                    ? {
-                        gainDb: Number(tf.gainDb) || 0,
-                        eqLowDb: Number(tf.eqLowDb) || 0,
-                        eqMidDb: Number(tf.eqMidDb) || 0,
-                        eqHighDb: Number(tf.eqHighDb) || 0,
-                        compress: Number(tf.compress) || 0,
-                        reverb: Number(tf.reverb) || 0,
-                        delay: Number(tf.delay) || 0,
-                        saturation: Number(tf.saturation) || 0,
-                      }
-                    : null,
-                } as ProducerLayer;
-              })
-          }
-          onClose={() => setShowProducerView(false)}
-          onOpenTweak={
-            masterUrl
-              ? () => {
-                  setShowProducerView(false);
-                  setScreen("done");
-                }
-              : undefined
-          }
-        />
-      )}
 
 
       {paywallOpen && (

@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Producer View — Phase 1.1
- * Real waveforms (Web Audio decode + peak cache) + functional mute/solo mix.
- * Playback monitoring only — does not change decision map / export.
+ * Console (producer / mixing view).
+ * Standalone page at /app/console/[id]; Booth is the guided recording flow.
+ * Real waveforms + mute/solo mix. Playback monitoring only.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -57,11 +57,38 @@ type Props = {
   beatDurationMs?: number | null;
   sections: ProducerSection[];
   layers: ProducerLayer[];
+  /** BPM from project analysis when available — never invent a number */
+  tempoBpm?: number | null;
+  boothHref?: string | null;
+  libraryHref?: string | null;
   onClose?: () => void;
   onOpenTweak?: () => void;
-  /** Parent refreshes tasks after a timeline edit is saved */
   onLayersChanged?: () => void;
 };
+
+function formatPlayhead(ms: number): string {
+  const totalSec = Math.max(0, ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec - m * 60;
+  return `${String(m).padStart(2, "0")}:${s.toFixed(3).padStart(6, "0")}`;
+}
+
+function ZoomIcon({ zoomIn }: { zoomIn: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+      <path d="M20 20l-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      {zoomIn ? (
+        <>
+          <path d="M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <path d="M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </>
+      ) : (
+        <path d="M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
 
 const TRACK_COLOR_PRESETS = [
   "#34D399",
@@ -242,6 +269,9 @@ export function ProducerView({
   onClose,
   onOpenTweak,
   onLayersChanged,
+  tempoBpm = null,
+  boothHref = null,
+  libraryHref = "/app",
 }: Props) {
   const { colors: C } = useTheme();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -283,6 +313,18 @@ export function ProducerView({
   const [playing, setPlaying] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
   const [pxPerSec, setPxPerSec] = useState(56);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return sessionStorage.getItem("console_sidebar_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [titleDraft, setTitleDraft] = useState(projectTitle || "Session");
+  useEffect(() => {
+    setTitleDraft(projectTitle || "Session");
+  }, [projectTitle]);
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
@@ -964,6 +1006,19 @@ export function ProducerView({
   const faint = C.textFaint || "#5C5866";
   const brass = C.brass || "#E7A961";
 
+  const sidebarW = sidebarCollapsed ? 56 : 200;
+  const toggleSidebar = () => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try {
+        sessionStorage.setItem("console_sidebar_collapsed", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
   return (
     <div
       style={{
@@ -974,10 +1029,10 @@ export function ProducerView({
         flexDirection: "column",
         height: "100dvh",
         width: "100vw",
-        maxWidth: undefined as unknown as number,
         background: bg,
         color: text,
         fontFamily: "system-ui, -apple-system, sans-serif",
+        overflow: "hidden",
       }}
     >
       <div
@@ -985,89 +1040,87 @@ export function ProducerView({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "12px 14px",
-          paddingTop: "max(12px, env(safe-area-inset-top))",
+          padding: "8px 12px",
+          paddingTop: "max(8px, env(safe-area-inset-top))",
           borderBottom: `1px solid ${border}`,
           flexShrink: 0,
           background: surface,
+          minHeight: 56,
         }}
       >
-        {onClose && (
-          <button type="button" onClick={onClose} style={iconBtn(border, surface, text)} aria-label="Close">
-            ←
-          </button>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, letterSpacing: "0.1em", color: brass, fontWeight: 700 }}>
-            PRODUCER VIEW
-          </div>
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: 16,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {projectTitle || "Session"}
-          </div>
-        </div>
-        <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)}>
-          −
-        </button>
-        <button type="button" onClick={() => setPxPerSec((z) => Math.min(140, z + 12))} style={iconBtn(border, surface, text)}>
-          +
-        </button>
-      </div>
+        <a
+          href={libraryHref || "/app"}
+          style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none", color: text, flexShrink: 0 }}
+          title="Library"
+        >
+          <span style={{ width: 28, height: 28, borderRadius: 8, background: `linear-gradient(135deg, ${brass}, #C4893A)`, display: "grid", placeItems: "center", fontWeight: 800, fontSize: 12, color: "#1A1208" }}>
+            AP
+          </span>
+          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>CONSOLE</span>
+        </a>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "12px 14px",
-          borderBottom: `1px solid ${border}`,
-          flexShrink: 0,
-        }}
-      >
+        <input
+          value={titleDraft}
+          onChange={(e) => setTitleDraft(e.target.value)}
+          aria-label="Song title"
+          style={{ flex: 1, minWidth: 80, maxWidth: 280, background: "rgba(255,255,255,0.06)", border: `1px solid ${border}`, borderRadius: 8, color: text, fontWeight: 600, fontSize: 14, padding: "6px 10px", fontFamily: "inherit" }}
+        />
+
+        <button
+          type="button"
+          title="Record in Console is coming soon — use Booth to capture vocals"
+          onClick={() => {
+            if (boothHref) window.location.href = boothHref;
+            else onClose?.();
+          }}
+          style={{ ...iconBtn(border, surface, text), width: 40, height: 40, borderRadius: 999, color: "#F07167" }}
+          aria-label="Record (opens Booth)"
+        >
+          <span style={{ width: 12, height: 12, borderRadius: 999, background: "#F07167", display: "inline-block" }} />
+        </button>
+
         <button
           type="button"
           onClick={togglePlay}
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: 999,
-            border: "none",
-            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
-            color: "#1A1208",
-            fontWeight: 800,
-            fontSize: 16,
-            cursor: "pointer",
-            boxShadow: "0 4px 14px rgba(231,169,97,0.35)",
-          }}
+          style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 16, cursor: "pointer", flexShrink: 0 }}
+          aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? "❚❚" : "▶"}
         </button>
-        <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: mutedText }}>
-          {formatMs(playheadMs)}
-          <span style={{ color: faint }}> / {formatMs(totalMs)}</span>
+
+        <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: mutedText, minWidth: 88, fontWeight: 600 }}>
+          {formatPlayhead(playheadMs)}
         </div>
-        {decodeStatus && (
-          <span style={{ fontSize: 12, color: faint }}>{decodeStatus}</span>
-        )}
-        <div style={{ flex: 1 }} />
-        <span
-          style={{
-            fontSize: 11,
-            color: faint,
-            border: `1px solid ${border}`,
-            borderRadius: 999,
-            padding: "4px 10px",
-          }}
+
+        <div
+          style={{ fontSize: 12, color: tempoBpm != null ? text : faint, fontWeight: 600, minWidth: 64, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "rgba(255,255,255,0.04)" }}
+          title={tempoBpm != null ? "Project tempo" : "BPM not detected for this project yet"}
         >
-          Edit · monitor
-        </span>
+          {tempoBpm != null && Number.isFinite(tempoBpm) ? `${Math.round(tempoBpm)} BPM` : "— BPM"}
+        </div>
+
+        <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)} aria-label="Zoom out" title="Zoom out">
+          <ZoomIcon zoomIn={false} />
+        </button>
+        <button type="button" onClick={() => setPxPerSec((z) => Math.min(140, z + 12))} style={iconBtn(border, surface, text)} aria-label="Zoom in" title="Zoom in">
+          <ZoomIcon zoomIn={true} />
+        </button>
+
+        <a href={libraryHref || "/app"} style={{ ...iconBtn(border, surface, text), textDecoration: "none", fontSize: 12, fontWeight: 700, padding: "0 12px", width: "auto", color: text }}>
+          Library
+        </a>
+        {(boothHref || onClose) && (
+          <button
+            type="button"
+            onClick={() => {
+              if (boothHref) window.location.href = boothHref;
+              else onClose?.();
+            }}
+            style={{ ...iconBtn(border, surface, text), width: "auto", padding: "0 12px", fontSize: 12, fontWeight: 700 }}
+          >
+            Booth
+          </button>
+        )}
       </div>
       {editMsg && (
         <div
@@ -1097,17 +1150,17 @@ export function ProducerView({
           display: "flex",
           flexDirection: "row",
           background: bg,
-          borderBottom: `1px solid ${border}`,
-          paddingBottom: 120,
+          overflow: "hidden",
         }}
       >
-        {/* LEFT: track headers — vertical scroll only */}
+        {/* LEFT: track headers — collapsible sidebar */}
         <div
           ref={headerScrollRef}
           onScroll={onHeaderScroll}
           style={{
-            width: 128,
+            width: sidebarW,
             flexShrink: 0,
+            transition: "width 0.15s ease",
             overflowY: "auto",
             overflowX: "hidden",
             WebkitOverflowScrolling: "touch",
@@ -1133,7 +1186,14 @@ export function ProducerView({
               borderBottom: `1px solid ${border}`,
             }}
           >
-            TRACKS
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              style={{ background: "none", border: "none", color: faint, cursor: "pointer", padding: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "inherit" }}
+              title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+            >
+              {sidebarCollapsed ? "»" : "TRACKS «"}
+            </button>
           </div>
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];
@@ -1441,6 +1501,25 @@ export function ProducerView({
                       height={clipH}
                       dimmed={dimmed}
                     />
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 6,
+                        top: 4,
+                        right: 6,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "#0B0A0F",
+                        textShadow: "0 0 4px rgba(255,255,255,0.35)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {tr.label}
+                      {tr.sub ? ` — ${tr.sub}` : ""}
+                    </div>
                     {tr.kind === "vocal" && (
                       <>
                         <div
