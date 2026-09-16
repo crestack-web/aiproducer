@@ -148,6 +148,57 @@ function ZoomIcon({ zoomIn }: { zoomIn: boolean }) {
   );
 }
 
+/** Fit entire timeline into the visible scroll area */
+function FitViewIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="8" y="8" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M17 1l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 11V9a4 4 0 014-4h14"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 23l-4-4 4-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M21 13v2a4 4 0 01-4 4H3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 const TRACK_COLOR_PRESETS = [
   "#34D399",
   "#A78BFA",
@@ -462,6 +513,8 @@ export function ProducerView({
   const [playing, setPlaying] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
   const [pxPerSec, setPxPerSec] = useState(56);
+  const [loopOn, setLoopOn] = useState(false);
+  const loopOnRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -1660,12 +1713,21 @@ export function ProducerView({
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
   }
 
+  useEffect(() => {
+    loopOnRef.current = loopOn;
+  }, [loopOn]);
+
   function tickPlayhead() {
     const ctx = audioCtxRef.current;
     if (!ctx || !playing) return;
     const elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
     setPlayheadMs(Math.min(totalMs, Math.max(0, elapsed)));
     if (elapsed >= totalMs) {
+      if (loopOnRef.current && totalMs > 0) {
+        // Restart from start without dropping loop state
+        void startPlayback(0);
+        return;
+      }
       setPlaying(false);
       stopSources();
       return;
@@ -1796,6 +1858,18 @@ export function ProducerView({
     setPlaying(true);
     setPlayheadMs(fromMs);
     rafRef.current = requestAnimationFrame(tickPlayhead);
+  }
+
+
+  function fitTimelineToView() {
+    const el = timelineScrollRef.current;
+    if (!el || totalMs <= 0) return;
+    const usable = Math.max(160, el.clientWidth - 16);
+    const sec = Math.max(0.5, totalMs / 1000);
+    // Allow slightly wider range than +/- buttons so long songs can fit
+    const next = Math.max(8, Math.min(160, usable / sec));
+    setPxPerSec(next);
+    el.scrollLeft = 0;
   }
 
   function togglePlay() {
@@ -2475,6 +2549,30 @@ export function ProducerView({
         </button>
         <button type="button" onClick={() => setPxPerSec((z) => Math.min(140, z + 12))} style={iconBtn(border, surface, text)} aria-label="Zoom in" title="Zoom in">
           <ZoomIcon zoomIn={true} />
+        </button>
+        <button
+          type="button"
+          onClick={() => fitTimelineToView()}
+          style={iconBtn(border, surface, text)}
+          aria-label="Fit to view"
+          title="Fit song to view"
+        >
+          <FitViewIcon />
+        </button>
+        <button
+          type="button"
+          onClick={() => setLoopOn((v) => !v)}
+          style={{
+            ...iconBtn(border, surface, text),
+            color: loopOn ? brass : text,
+            borderColor: loopOn ? brass : border,
+            background: loopOn ? "rgba(231,169,97,0.15)" : surface,
+          }}
+          aria-label={loopOn ? "Loop on" : "Loop off"}
+          title={loopOn ? "Loop on — click to disable" : "Loop session"}
+          aria-pressed={loopOn}
+        >
+          <LoopIcon />
         </button>
 
         {!isNarrow && (
