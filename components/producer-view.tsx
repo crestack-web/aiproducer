@@ -3219,6 +3219,7 @@ export function ProducerView({
             pointerEvents: "none",
           }}
         >
+          <style>{`@keyframes apShimmer { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }`}</style>
           <div
             style={{
               pointerEvents: "auto",
@@ -3269,7 +3270,7 @@ export function ProducerView({
               </>
             ) : null}
 
-            {produceUi === "complete" && masterUrl ? (
+            {produceUi === "complete" ? (
               <>
                 <div
                   style={{
@@ -3281,71 +3282,79 @@ export function ProducerView({
                 >
                   Your song is ready
                 </div>
-                <audio
-                  ref={masterAudioRef}
-                  src={masterUrl}
-                  preload="metadata"
-                  onTimeUpdate={(e) =>
-                    setMasterTime((e.target as HTMLAudioElement).currentTime)
-                  }
-                  onLoadedMetadata={(e) =>
-                    setMasterDur((e.target as HTMLAudioElement).duration || 0)
-                  }
-                  onEnded={() => setMasterPlaying(false)}
-                  onPlay={() => setMasterPlaying(true)}
-                  onPause={() => setMasterPlaying(false)}
-                  style={{ display: "none" }}
-                />
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                  <button
-                    type="button"
-                    onClick={toggleMasterPlay}
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 999,
-                      border: "none",
-                      background: `linear-gradient(180deg, #F0BC80, ${brass})`,
-                      color: "#1A1208",
-                      fontWeight: 800,
-                      fontSize: 14,
-                      cursor: "pointer",
-                      flexShrink: 0,
-                    }}
-                    aria-label={masterPlaying ? "Pause" : "Play"}
-                  >
-                    {masterPlaying ? "❚❚" : "▶"}
-                  </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        height: 4,
-                        borderRadius: 999,
-                        background: "rgba(255,255,255,0.1)",
-                        overflow: "hidden",
-                        marginBottom: 4,
-                      }}
-                    >
-                      <div
+                {masterUrl ? (
+                  <>
+                    <audio
+                      ref={masterAudioRef}
+                      src={masterUrl}
+                      preload="metadata"
+                      onTimeUpdate={(e) =>
+                        setMasterTime((e.target as HTMLAudioElement).currentTime)
+                      }
+                      onLoadedMetadata={(e) =>
+                        setMasterDur((e.target as HTMLAudioElement).duration || 0)
+                      }
+                      onEnded={() => setMasterPlaying(false)}
+                      onPlay={() => setMasterPlaying(true)}
+                      onPause={() => setMasterPlaying(false)}
+                      style={{ display: "none" }}
+                    />
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                      <button
+                        type="button"
+                        onClick={toggleMasterPlay}
                         style={{
-                          height: "100%",
-                          width: `${masterDur > 0 ? (masterTime / masterDur) * 100 : 0}%`,
-                          background: brass,
+                          width: 40,
+                          height: 40,
                           borderRadius: 999,
+                          border: "none",
+                          background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                          color: "#1A1208",
+                          fontWeight: 800,
+                          fontSize: 14,
+                          cursor: "pointer",
+                          flexShrink: 0,
                         }}
-                      />
+                        aria-label={masterPlaying ? "Pause" : "Play"}
+                      >
+                        {masterPlaying ? "❚❚" : "▶"}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            height: 4,
+                            borderRadius: 999,
+                            background: "rgba(255,255,255,0.1)",
+                            overflow: "hidden",
+                            marginBottom: 4,
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${masterDur > 0 ? (masterTime / masterDur) * 100 : 0}%`,
+                              background: brass,
+                              borderRadius: 999,
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: faint,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {formatMs(masterTime * 1000)} / {formatMs(masterDur * 1000)}
+                        </div>
+                      </div>
                     </div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: faint,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {formatMs(masterTime * 1000)} / {formatMs(masterDur * 1000)}
-                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 12, color: mutedText, marginBottom: 10 }}>
+                    Preparing playback… Download is available.
                   </div>
-                </div>
+                )}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     type="button"
@@ -3387,12 +3396,6 @@ export function ProducerView({
                   </button>
                 </div>
               </>
-            ) : null}
-
-            {produceUi === "complete" && !masterUrl ? (
-              <div style={{ fontSize: 12, color: mutedText }}>
-                Your song is ready — preparing playback…
-              </div>
             ) : null}
 
             {produceUi === "failed" ? (
