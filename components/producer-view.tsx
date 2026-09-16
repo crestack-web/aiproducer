@@ -18,6 +18,7 @@ import {
   AP_SUGGESTIONS,
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
+import { forceDownloadFromApi } from "@/lib/download-audio";
 
 export type TrackFx = {
   gainDb: number;
@@ -81,6 +82,44 @@ type Props = {
   tweaksGateMessage?: string;
   onLayersChanged?: () => void;
 };
+
+
+/** User-facing produce stages — same language as Booth session UI */
+function humanProduceStage(stage: string | null | undefined): string {
+  if (!stage) return "AP is getting everything ready…";
+  const s = stage.toLowerCase().trim();
+  const map: Record<string, string> = {
+    queued: "AP is getting everything ready…",
+    prepare_vocals: "AP is getting everything ready…",
+    arrange: "AP is getting everything ready…",
+    render_stems: "AP is getting everything ready…",
+    "preparing takes": "AP is getting everything ready…",
+    analyzing: "AP is listening to your recording…",
+    restoring: "Cleaning up your vocal…",
+    producing: "Building your vocal sound…",
+    mixing: "Blending your voice with the beat…",
+    mix: "Blending your voice with the beat…",
+    mix_submit: "Blending your voice with the beat…",
+    mix_poll: "Blending your voice with the beat…",
+    mix_store: "Blending your voice with the beat…",
+    mastering: "Adding the final polish…",
+    master: "Adding the final polish…",
+    master_submit: "Adding the final polish…",
+    master_poll: "Adding the final polish…",
+    quality_check: "AP is checking your final mix…",
+    webhook_received: "Adding the final polish…",
+    complete: "Your song is ready.",
+    completed: "Your song is ready.",
+    failed: "Production could not finish.",
+  };
+  if (map[s]) return map[s];
+  if (s.includes("master")) return "Adding the final polish…";
+  if (s.includes("mix")) return "Blending your voice with the beat…";
+  if (s.includes("restor") || s.includes("clean")) return "Cleaning up your vocal…";
+  if (s.includes("pitch") || s.includes("timing") || s.includes("align"))
+    return "Improving vocal timing…";
+  return "AP is producing your song…";
+}
 
 function formatPlayhead(ms: number): string {
   const totalSec = Math.max(0, ms / 1000);
@@ -489,6 +528,24 @@ export function ProducerView({
   const [apLastResult, setApLastResult] = useState<"ok" | "err" | null>(null);
   const [apSteps, setApSteps] = useState<{ label: string; done: boolean; active: boolean }[]>([]);
   const [apSummary, setApSummary] = useState<string | null>(null);
+
+  // —— Produce (shared job API — same as Booth) ——
+  type ProduceUi = "idle" | "producing" | "complete" | "failed";
+  const [produceUi, setProduceUi] = useState<ProduceUi>("idle");
+  const [produceStage, setProduceStage] = useState<string | null>(null);
+  const [produceJobId, setProduceJobId] = useState<string | null>(null);
+  const [masterUrl, setMasterUrl] = useState<string | null>(null);
+  /** Job id that owns the currently shown master — avoid stale “ready” after re-produce */
+  const [masterJobId, setMasterJobId] = useState<string | null>(null);
+  const [produceError, setProduceError] = useState<string | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const produceStartedAtRef = useRef(0);
+  const produceActiveRef = useRef(false);
+  const masterAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [masterPlaying, setMasterPlaying] = useState(false);
+  const [masterTime, setMasterTime] = useState(0);
+  const [masterDur, setMasterDur] = useState(0);
 
 
 
@@ -1752,6 +1809,235 @@ export function ProducerView({
     }
   }
 
+
+  function clearProducePoll() {
+    if (producePollRef.current) {
+      clearTimeout(producePollRef.current);
+      producePollRef.current = null;
+    }
+    produceActiveRef.current = false;
+  }
+
+  const pollProduceOnce = useCallback(async (): Promise<"complete" | "failed" | "pending" | "error"> => {
+    if (!projectId) return "error";
+    try {
+      const sr = await fetch(`/api/projects/${projectId}/status`);
+      const st = await sr.json().catch(() => ({}));
+      if (!sr.ok) return "error";
+
+      const jobs = (st.jobs || []) as {
+        id?: string;
+        type?: string;
+        status?: string;
+        stage?: string;
+        error?: string;
+      }[];
+      const produceJob =
+        jobs.find((j) => j.type === "PRODUCE_SONG") ||
+        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined);
+
+      if (produceJob?.id) setProduceJobId(String(produceJob.id));
+      if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+
+      const jobStatus = (produceJob?.status || "").toLowerCase();
+      const projectStatus = String(st.project?.status || st.status || "").toLowerCase();
+
+      if (jobStatus === "failed" || projectStatus === "failed") {
+        const raw = produceJob?.error || "AP couldn’t finish producing this version.";
+        // Strip provider-ish language
+        const clean = String(raw)
+          .replace(/\bRoEx\b/gi, "AP")
+          .replace(/\bmixer\b/gi, "production")
+          .slice(0, 180);
+        setProduceError(clean || "AP couldn’t finish producing this version.");
+        setProduceUi("failed");
+        return "failed";
+      }
+
+      const masterReady =
+        Boolean(st.master_url) ||
+        (st.master?.audio_path &&
+          typeof st.master.audio_path === "string" &&
+          !String(st.master.audio_path).startsWith("http") &&
+          !String(st.master.audio_path).startsWith("mock://"));
+
+      if (
+        (jobStatus === "complete" ||
+          jobStatus === "completed" ||
+          projectStatus === "complete" ||
+          projectStatus === "completed" ||
+          projectStatus === "produced") &&
+        (st.master_url || masterReady)
+      ) {
+        if (st.master_url) {
+          setMasterUrl(String(st.master_url));
+        } else {
+          // fallback: download route will resolve; try session signed url fields
+          const alt = st.master?.url || st.audio_url;
+          if (alt) setMasterUrl(String(alt));
+        }
+        if (produceJob?.id) setMasterJobId(String(produceJob.id));
+        setProduceStage("complete");
+        setProduceUi("complete");
+        setProduceError(null);
+        return "complete";
+      }
+
+      if (jobStatus === "complete" || jobStatus === "completed") {
+        // Job done but URL lag — keep pending briefly
+        setProduceStage(produceJob?.stage || "complete");
+        return "pending";
+      }
+
+      if (jobStatus === "queued" || jobStatus === "processing" || jobStatus === "running") {
+        setProduceUi("producing");
+        return "pending";
+      }
+
+      return "pending";
+    } catch {
+      return "error";
+    }
+  }, [projectId, produceJobId]);
+
+  const scheduleProducePoll = useCallback(() => {
+    clearProducePoll();
+    produceActiveRef.current = true;
+    const PRODUCE_POLL_MS = 3500;
+    const PRODUCE_MAX_MS = 10 * 60 * 1000;
+    const tick = async () => {
+      if (!produceActiveRef.current) return;
+      if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
+        setProduceUi("failed");
+        setProduceError(
+          "This is taking longer than expected. Tap Try again — if AP is still working, production will resume."
+        );
+        produceActiveRef.current = false;
+        return;
+      }
+      const result = await pollProduceOnce();
+      if (result === "complete" || result === "failed") {
+        produceActiveRef.current = false;
+        return;
+      }
+      producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
+    };
+    producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
+  }, [pollProduceOnce]);
+
+  // Resume produce / master on open
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sr = await fetch(`/api/projects/${projectId}/status`);
+        if (!sr.ok || cancelled) return;
+        const st = await sr.json().catch(() => ({}));
+        const jobs = (st.jobs || []) as {
+          id?: string;
+          type?: string;
+          status?: string;
+          stage?: string;
+        }[];
+        const produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+        const js = (produceJob?.status || "").toLowerCase();
+        if (produceJob?.id) setProduceJobId(String(produceJob.id));
+        if (js === "queued" || js === "processing" || js === "running") {
+          setProduceUi("producing");
+          setProduceStage(produceJob?.stage || "processing");
+          produceStartedAtRef.current = Date.now();
+          scheduleProducePoll();
+        } else if (st.master_url) {
+          setMasterUrl(String(st.master_url));
+          if (produceJob?.id) setMasterJobId(String(produceJob.id));
+          setProduceUi("complete");
+          setProduceStage("complete");
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearProducePoll();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  async function startConsoleProduce() {
+    if (!projectId || produceUi === "producing") return;
+    const hasTake = layers.some((l) => Boolean(l.audioUrl));
+    if (!hasTake) {
+      setProduceError("Record at least one take before Produce.");
+      setProduceUi("failed");
+      return;
+    }
+    // New intentional produce — clear previous master until this job completes
+    setMasterUrl(null);
+    setMasterJobId(null);
+    setMasterPlaying(false);
+    setProduceError(null);
+    setProduceUi("producing");
+    setProduceStage("preparing takes");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/produce`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof j.error === "string" ? j.error : "AP couldn’t start production."
+        );
+      }
+      const jid = j.jobId || j.job_id;
+      if (jid) setProduceJobId(String(jid));
+
+      if (j.master_url && res.status === 200 && (j.status === "complete" || j.status === "completed")) {
+        setMasterUrl(String(j.master_url));
+        if (jid) setMasterJobId(String(jid));
+        setProduceUi("complete");
+        setProduceStage("complete");
+        return;
+      }
+
+      setProduceStage(j.stage || "queued");
+      produceStartedAtRef.current = Date.now();
+      scheduleProducePoll();
+    } catch (e) {
+      setProduceUi("failed");
+      setProduceError(
+        e instanceof Error
+          ? e.message.replace(/\bRoEx\b/gi, "AP")
+          : "AP couldn’t start production."
+      );
+    }
+  }
+
+  async function downloadMaster(format: "wav" | "mp3" = "wav") {
+    if (!projectId) return;
+    setDownloadBusy(true);
+    const result = await forceDownloadFromApi(
+      projectId,
+      format,
+      `${titleDraft || projectTitle || "song"}.${format}`
+    );
+    setDownloadBusy(false);
+    if (!result.ok) {
+      setProduceError(result.error || "Download not available yet.");
+    }
+  }
+
+  function toggleMasterPlay() {
+    const a = masterAudioRef.current;
+    if (!a || !masterUrl) return;
+    if (a.paused) {
+      void a.play();
+      setMasterPlaying(true);
+    } else {
+      a.pause();
+      setMasterPlaying(false);
+    }
+  }
+
   function seekTo(ms: number) {
     const clamped = Math.max(0, Math.min(totalMs, ms));
     setPlayheadMs(clamped);
@@ -1962,6 +2248,47 @@ export function ProducerView({
           aria-label="Song title"
           style={{ flex: 1, minWidth: 0, maxWidth: isNarrow ? 120 : 280, background: "rgba(255,255,255,0.06)", border: `1px solid ${border}`, borderRadius: 8, color: text, fontWeight: 600, fontSize: isNarrow ? 13 : 14, padding: "6px 10px", fontFamily: "inherit" }}
         />
+
+
+        {projectId ? (
+          <button
+            type="button"
+            onClick={() => void startConsoleProduce()}
+            disabled={produceUi === "producing"}
+            title="Produce finished song with AP"
+            style={{
+              flexShrink: 0,
+              height: 36,
+              padding: "0 14px",
+              borderRadius: 999,
+              border: "none",
+              background:
+                produceUi === "producing"
+                  ? "rgba(255,255,255,0.1)"
+                  : produceUi === "complete"
+                    ? "rgba(52,211,153,0.2)"
+                    : `linear-gradient(180deg, #F0BC80, ${brass})`,
+              color:
+                produceUi === "producing"
+                  ? mutedText
+                  : produceUi === "complete"
+                    ? "#6EE7B7"
+                    : "#1A1208",
+              fontWeight: 800,
+              fontSize: isNarrow ? 12 : 13,
+              cursor: produceUi === "producing" ? "default" : "pointer",
+              fontFamily: "inherit",
+              letterSpacing: "0.02em",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {produceUi === "producing"
+              ? "Producing…"
+              : produceUi === "complete"
+                ? "Produce again"
+                : "Produce"}
+          </button>
+        ) : null}
 
         <button
           type="button"
@@ -2877,7 +3204,232 @@ export function ProducerView({
       )}
 
 
-      {/* AP working overlay — Suno-style generative studio */}
+
+      {/* Produce status — compact, non-blocking */}
+      {projectId && produceUi !== "idle" ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            right: 12,
+            top: isNarrow ? 58 : 64,
+            zIndex: 35,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              pointerEvents: "auto",
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: 14,
+              padding: "12px 14px",
+              background: "rgba(18,18,24,0.94)",
+              border: `1px solid ${
+                produceUi === "failed"
+                  ? "rgba(240,113,103,0.35)"
+                  : produceUi === "complete"
+                    ? "rgba(52,211,153,0.35)"
+                    : "rgba(231,169,97,0.35)"
+              }`,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+              backdropFilter: "blur(12px)",
+            }}
+          >
+            {produceUi === "producing" ? (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 800, color: brass, marginBottom: 4 }}>
+                  AP is producing your song
+                </div>
+                <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+                  {humanProduceStage(produceStage)}
+                </div>
+                <div
+                  style={{
+                    marginTop: 10,
+                    height: 3,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: "45%",
+                      borderRadius: 999,
+                      background: `linear-gradient(90deg, transparent, ${brass}, transparent)`,
+                      backgroundSize: "200% 100%",
+                      animation: "apShimmer 1.2s linear infinite",
+                    }}
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {produceUi === "complete" && masterUrl ? (
+              <>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 800,
+                    color: "#6EE7B7",
+                    marginBottom: 10,
+                  }}
+                >
+                  Your song is ready
+                </div>
+                <audio
+                  ref={masterAudioRef}
+                  src={masterUrl}
+                  preload="metadata"
+                  onTimeUpdate={(e) =>
+                    setMasterTime((e.target as HTMLAudioElement).currentTime)
+                  }
+                  onLoadedMetadata={(e) =>
+                    setMasterDur((e.target as HTMLAudioElement).duration || 0)
+                  }
+                  onEnded={() => setMasterPlaying(false)}
+                  onPlay={() => setMasterPlaying(true)}
+                  onPause={() => setMasterPlaying(false)}
+                  style={{ display: "none" }}
+                />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={toggleMasterPlay}
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 999,
+                      border: "none",
+                      background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                      color: "#1A1208",
+                      fontWeight: 800,
+                      fontSize: 14,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                    aria-label={masterPlaying ? "Pause" : "Play"}
+                  >
+                    {masterPlaying ? "❚❚" : "▶"}
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        height: 4,
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.1)",
+                        overflow: "hidden",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${masterDur > 0 ? (masterTime / masterDur) * 100 : 0}%`,
+                          background: brass,
+                          borderRadius: 999,
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: faint,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {formatMs(masterTime * 1000)} / {formatMs(masterDur * 1000)}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={downloadBusy}
+                    onClick={() => void downloadMaster("wav")}
+                    style={{
+                      flex: 1,
+                      minWidth: 100,
+                      height: 36,
+                      borderRadius: 999,
+                      border: "none",
+                      background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                      color: "#1A1208",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: downloadBusy ? "default" : "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {downloadBusy ? "…" : "Download"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void startConsoleProduce()}
+                    style={{
+                      height: 36,
+                      padding: "0 14px",
+                      borderRadius: 999,
+                      border: `1px solid ${border}`,
+                      background: "rgba(255,255,255,0.06)",
+                      color: text,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    Produce again
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {produceUi === "complete" && !masterUrl ? (
+              <div style={{ fontSize: 12, color: mutedText }}>
+                Your song is ready — preparing playback…
+              </div>
+            ) : null}
+
+            {produceUi === "failed" ? (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#F07167", marginBottom: 6 }}>
+                  AP couldn’t finish producing this version
+                </div>
+                {produceError ? (
+                  <div style={{ fontSize: 12, color: mutedText, marginBottom: 10, lineHeight: 1.4 }}>
+                    {produceError}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void startConsoleProduce()}
+                  style={{
+                    height: 36,
+                    padding: "0 16px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                    color: "#1A1208",
+                    fontWeight: 800,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Try again
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+            {/* AP working overlay — Suno-style generative studio */}
       {trackPromptBusy && (
         <div
           style={{
