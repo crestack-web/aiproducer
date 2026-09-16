@@ -2259,10 +2259,23 @@ export function ProducerView({
       )}
 
       {showAddTrack && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10040,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => setShowAddTrack(false)}
+        >
           <div
             style={{
               width: "100%",
               maxWidth: 520,
+              margin: "0 12px max(12px, env(safe-area-inset-bottom))",
               pointerEvents: "auto",
               borderRadius: 14,
               padding: 12,
@@ -2273,6 +2286,7 @@ export function ProducerView({
               gap: 8,
               boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
             }}
+            onClick={(e) => e.stopPropagation()}
           >
             <input
               value={addTitle}
@@ -2358,8 +2372,8 @@ export function ProducerView({
               </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* FX modal — Suno-style plugin sheet */}
       {fxOpenId && (
