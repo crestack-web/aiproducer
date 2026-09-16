@@ -44,12 +44,19 @@ export async function GET(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Download is the paid moment — preview stays free
+  // Download gate: explicit unlock, plan, env open, or project already produced
   const projectMeta = (project as { metadata?: Record<string, unknown> }).metadata || {};
+  const status = String((project as { status?: string }).status || "").toLowerCase();
+  const produced =
+    status === "produced" ||
+    status === "complete" ||
+    status === "completed" ||
+    projectMeta.has_master === true;
   const unlocked =
     projectMeta.download_unlocked === true ||
     Boolean(projectMeta.subscription_plan) ||
-    process.env.AP_DOWNLOADS_OPEN === "1";
+    process.env.AP_DOWNLOADS_OPEN === "1" ||
+    produced;
   if (!unlocked) {
     return NextResponse.json(
       {
