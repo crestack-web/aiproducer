@@ -1,40 +1,85 @@
 /**
- * Force-download audio from a signed URL (does not open in browser player).
+ * Force-download audio from the project download API (does not rely on navigating away).
+ * Handles paywall errors and CORS-blocked signed URLs with a fallback.
  */
 export async function forceDownloadFromApi(
   projectId: string,
   format: "wav" | "mp3",
   fallbackName?: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
   try {
     const res = await fetch(
-      `/api/projects/${projectId}/download?kind=master&format=${format}`
+      `/api/projects/${projectId}/download?kind=master&format=${format}`,
+      { credentials: "same-origin" }
     );
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok || !j.download_url) {
-      return { ok: false, error: (j as { error?: string }).error || "Download not available" };
-    }
-    const filename =
-      (j as { filename?: string }).filename ||
-      fallbackName ||
-      `song.${format}`;
+    const j = (await res.json().catch(() => ({}))) as {
+      download_url?: string;
+      filename?: string;
+      error?: string;
+      message?: string;
+      code?: string;
+      available?: string[];
+    };
 
-    // Fetch as blob so the browser saves a file instead of navigating/playing
-    const fileRes = await fetch((j as { download_url: string }).download_url);
-    if (!fileRes.ok) {
-      return { ok: false, error: "Could not fetch audio file" };
+    if (res.status === 402 || j.code === "PAYWALL") {
+      return {
+        ok: false,
+        code: "PAYWALL",
+        error:
+          j.message ||
+          j.error ||
+          "Unlock this song (or a plan) to download the master.",
+      };
     }
-    const blob = await fileRes.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 2_000);
-    return { ok: true };
+
+    if (!res.ok || !j.download_url) {
+      return {
+        ok: false,
+        error: j.error || j.message || "Download not available yet.",
+      };
+    }
+
+    const filename = j.filename || fallbackName || `song.${format}`;
+    const downloadUrl = j.download_url;
+
+    // Prefer same-origin blob save; signed storage URLs often fail CORS on fetch()
+    try {
+      const fileRes = await fetch(downloadUrl);
+      if (fileRes.ok) {
+        const blob = await fileRes.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = filename;
+        a.rel = "noopener";
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 4_000);
+        return { ok: true };
+      }
+    } catch {
+      /* fall through */
+    }
+
+    // Fallback: open signed URL with download attribute / new tab
+    try {
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      a.rel = "noopener";
+      a.target = "_blank";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return { ok: true };
+    } catch {
+      // Last resort: same-origin redirect endpoint (attachment)
+      window.location.href = `/api/projects/${projectId}/download?kind=master&format=${format}&redirect=1`;
+      return { ok: true };
+    }
   } catch (e) {
     return {
       ok: false,
