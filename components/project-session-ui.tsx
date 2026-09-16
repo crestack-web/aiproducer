@@ -102,6 +102,7 @@ import {
 import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
 import { canProduce, type PlanMode } from "@/lib/plan";
+import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
 
 /** User-facing produce progress — never show raw pipeline tokens alone. */
 function humanProduceStage(stage: string | null | undefined): string {
@@ -2657,70 +2658,10 @@ export default function ProjectDetailPage() {
    * browser and re-upload so Produce never hits server-side webm without ffmpeg.
    */
   async function repairTakesToWavForProduce(): Promise<void> {
-    const completed = tasks.filter(
-      (t) =>
-        (t.status || "").toLowerCase() === "completed" ||
-        (t.status || "").toLowerCase() === "complete" ||
-        (t.status || "").toLowerCase() === "done"
-    );
-    for (const task of completed) {
-      try {
-        const res = await fetch(`/api/recording-tasks/${task.id}/recordings`);
-        if (!res.ok) continue;
-        const j = await res.json();
-        const list = (Array.isArray(j.recordings) ? j.recordings : []) as {
-          id: string;
-          is_selected?: boolean | null;
-          audio_url?: string | null;
-          audio_path?: string | null;
-        }[];
-        const selected =
-          list.find((r) => r.is_selected) || list[list.length - 1] || list[0];
-        if (!selected?.audio_url && !selected?.audio_path) continue;
-        const pathHint = (selected.audio_path || selected.audio_url || "").toLowerCase();
-        const looksWav =
-          pathHint.includes(".wav") && !pathHint.includes(".webm");
-        if (looksWav) continue;
-
-        const src = selected.audio_url;
-        if (!src) continue;
-        const audioRes = await fetch(src);
-        if (!audioRes.ok) continue;
-        const rawBlob = await audioRes.blob();
-        // Already WAV by magic? skip
-        const head = new Uint8Array(await rawBlob.slice(0, 12).arrayBuffer());
-        const isWav =
-          head.length >= 12 &&
-          String.fromCharCode(head[0], head[1], head[2], head[3]) === "RIFF" &&
-          String.fromCharCode(head[8], head[9], head[10], head[11]) === "WAVE";
-        if (isWav) continue;
-
-        setProduceStage("preparing takes");
-        const wav = await audioBlobToWavDetailed(rawBlob);
-        const form = new FormData();
-        form.append("file", wav.blob, "take.wav");
-        form.append("source", "repair_wav");
-        form.append("task_id", task.id);
-        const up = await fetch(`/api/recording-tasks/${task.id}/recordings`, {
-          method: "POST",
-          body: form,
-        });
-        if (!up.ok) {
-          const uj = await up.json().catch(() => ({}));
-          console.warn("[produce-repair] upload failed", task.id, uj);
-          continue;
-        }
-        const uj = await up.json().catch(() => ({}));
-        const newId = uj?.recording?.id as string | undefined;
-        if (newId) {
-          await fetch(`/api/recording-tasks/${task.id}/recordings/${newId}/select`, {
-            method: "POST",
-          }).catch(() => undefined);
-        }
-      } catch (e) {
-        console.warn("[produce-repair] task failed", task.id, e);
-      }
-    }
+    await prepareTakesForProduce({
+      tasks: tasks.map((task) => ({ id: task.id, status: task.status })),
+      onStage: (s) => setProduceStage(s),
+    });
   }
 
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
