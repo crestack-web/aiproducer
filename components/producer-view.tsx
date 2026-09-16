@@ -1007,7 +1007,7 @@ export function ProducerView({
   const faint = C.textFaint || "#5C5866";
   const brass = C.brass || "#E7A961";
 
-  const sidebarW = sidebarCollapsed ? 56 : 200;
+  const sidebarW = sidebarCollapsed ? 64 : 240;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -1164,7 +1164,10 @@ export function ProducerView({
           onScroll={onHeaderScroll}
           style={{
             width: sidebarW,
+            minWidth: sidebarW,
+            maxWidth: sidebarW,
             flexShrink: 0,
+            flexGrow: 0,
             transition: "width 0.15s ease",
             overflowY: "auto",
             overflowX: "hidden",
@@ -1179,11 +1182,12 @@ export function ProducerView({
               position: "sticky",
               top: 0,
               zIndex: 5,
-              height: 40,
+              minHeight: 40,
+              height: "auto",
               display: "flex",
               alignItems: "center",
-              padding: "0 10px",
-              fontSize: 10,
+              padding: "8px 10px",
+              fontSize: 11,
               fontWeight: 700,
               letterSpacing: "0.06em",
               color: faint,
@@ -1191,53 +1195,79 @@ export function ProducerView({
               borderBottom: `1px solid ${border}`,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "space-between" }}>
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                style={{ background: "none", border: "none", color: faint, cursor: "pointer", padding: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "inherit" }}
-                title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: faint,
+                    cursor: "pointer",
+                    padding: 0,
+                    fontSize: sidebarCollapsed ? 14 : 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.06em",
+                    fontFamily: "inherit",
+                    flexShrink: 0,
+                  }}
+                  title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+                >
+                  {sidebarCollapsed ? "»" : "TRACKS «"}
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: sidebarCollapsed ? "column" : "row",
+                  gap: 6,
+                  width: "100%",
+                }}
               >
-                {sidebarCollapsed ? "»" : "TRACKS «"}
-              </button>
-              {!sidebarCollapsed && (
-                <div style={{ display: "flex", gap: 4 }}>
-                  <span
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 800,
-                      letterSpacing: "0.04em",
-                      color: brass,
-                      border: `1px solid ${brass}66`,
-                      borderRadius: 999,
-                      padding: "2px 7px",
-                    }}
-                  >
-                    STUDIO
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (boothHref) window.location.href = boothHref;
-                      else onClose?.();
-                    }}
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 700,
-                      letterSpacing: "0.04em",
-                      color: mutedText,
-                      border: `1px solid ${border}`,
-                      borderRadius: 999,
-                      padding: "2px 7px",
-                      background: "transparent",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    BOOTH
-                  </button>
-                </div>
-              )}
+                <span
+                  style={{
+                    flex: sidebarCollapsed ? undefined : 1,
+                    textAlign: "center",
+                    fontSize: sidebarCollapsed ? 9 : 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    color: brass,
+                    border: `1px solid ${brass}88`,
+                    borderRadius: 8,
+                    padding: sidebarCollapsed ? "6px 2px" : "6px 8px",
+                    background: "rgba(231,169,97,0.12)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {sidebarCollapsed ? "ST" : "STUDIO"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (boothHref) window.location.href = boothHref;
+                    else onClose?.();
+                  }}
+                  style={{
+                    flex: sidebarCollapsed ? undefined : 1,
+                    textAlign: "center",
+                    fontSize: sidebarCollapsed ? 9 : 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    color: text,
+                    border: `1px solid ${border}`,
+                    borderRadius: 8,
+                    padding: sidebarCollapsed ? "6px 2px" : "6px 8px",
+                    background: "rgba(255,255,255,0.06)",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    whiteSpace: "nowrap",
+                  }}
+                  title="Open Booth"
+                >
+                  {sidebarCollapsed ? "BO" : "BOOTH"}
+                </button>
+              </div>
             </div>
           </div>
           {tracks.map((tr, trackIdx) => {
@@ -1268,15 +1298,17 @@ export function ProducerView({
                     border: "none",
                     color: text,
                     fontWeight: 700,
-                    fontSize: 12,
+                    fontSize: sidebarCollapsed ? 0 : 13,
                     padding: 0,
                     textAlign: "left",
                     cursor: "pointer",
                     width: "100%",
                     fontFamily: "inherit",
                     display: "flex",
-                    alignItems: "center",
-                    gap: 6,
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 2,
+                    overflow: "hidden",
                   }}
                 >
                   <span

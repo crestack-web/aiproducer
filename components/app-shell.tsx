@@ -25,6 +25,15 @@ function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?
 function IconStudio({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3" y="6" width="18" height="12" rx="2" stroke={color} strokeWidth="1.8" />
+      <path d="M7 10h4M7 14h6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconBooth({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
       <rect x="9" y="2" width="6" height="11" rx="3" stroke={color} strokeWidth="1.8" />
       <path d="M5 11a7 7 0 0 0 14 0" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
       <path d="M12 18v3M9 21h6" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
@@ -115,6 +124,10 @@ export function AppShell({
   }, [tour.start]);
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
+  const projectPathMatch = pathname.match(/\/app\/(studio|console)\/([^/]+)/);
+  const projectIdFromPath = projectPathMatch?.[2] || null;
+  const onBoothPage = projectPathMatch?.[1] === "studio";
+  const onStudioPage = projectPathMatch?.[1] === "console";
   const initials = (userName || "A")
     .split(/\s+/)
     .map((w) => w[0])
@@ -173,6 +186,9 @@ export function AppShell({
   };
 
   const navItem: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
     padding: "10px 12px",
     borderRadius: 10,
     fontSize: 14,
@@ -440,6 +456,64 @@ export function AppShell({
             );
           })}
         </nav>
+
+        {projectIdFromPath && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              marginTop: 12,
+              marginBottom: 12,
+              paddingTop: 12,
+              borderTop: `1px solid ${C.border}`,
+            }}
+          >
+            {!sidebarCollapsed && (
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  color: C.textFaint,
+                  padding: "0 8px 4px",
+                }}
+              >
+                THIS SONG
+              </div>
+            )}
+            <button
+              type="button"
+              title="Booth — record vocals"
+              onClick={() => router.push(`/app/studio/${projectIdFromPath}`)}
+              style={{
+                ...navItem,
+                ...(onBoothPage ? navActive : {}),
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                padding: sidebarCollapsed ? "12px 8px" : navItem.padding,
+                gap: 10,
+              }}
+            >
+              <IconBooth size={18} color={onBoothPage ? C.brass : C.textMuted} />
+              {!sidebarCollapsed && "Booth"}
+            </button>
+            <button
+              type="button"
+              title="Studio — timeline / mix"
+              onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
+              style={{
+                ...navItem,
+                ...(onStudioPage ? navActive : {}),
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                padding: sidebarCollapsed ? "12px 8px" : navItem.padding,
+                gap: 10,
+              }}
+            >
+              <IconStudio size={18} color={onStudioPage ? C.brass : C.textMuted} />
+              {!sidebarCollapsed && "Studio"}
+            </button>
+          </div>
+        )}
 
         <div style={{ ...sideCard, padding: sidebarCollapsed ? 8 : 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: sidebarCollapsed ? "center" : "flex-start" }}>
