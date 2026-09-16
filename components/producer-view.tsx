@@ -29,7 +29,6 @@ import {
   spliceReplacementIntoBuffer,
   encodeWavBlob,
   bufferDurationMs,
-  peaksFromBuffer,
   isValidRegion,
   normalizeRegion,
   type TakeRegion,
@@ -1329,8 +1328,15 @@ export function ProducerView({
   }
 
   function refreshTakePeaks(buf: AudioBuffer) {
-    setTakePeaks(peaksFromBuffer(buf, 96));
-    setTakeDurationMs(bufferDurationMs(buf));
+    const durMs = bufferDurationMs(buf);
+    setTakeDurationMs(durMs);
+    // Same peak path as the rest of Console — not a different "edit" waveform look
+    const buckets = Math.min(2048, Math.max(64, Math.floor((timelineW || 480) / 2) || 256));
+    const peaks = computePeaks(buf, buckets);
+    setTakePeaks(Array.from(peaks)); // kept for duration-only consumers; UI uses peaksById
+    if (takeEditId) {
+      setPeaksById((prev) => ({ ...prev, [takeEditId]: peaks }));
+    }
   }
 
   async function beginTakeEdit(taskId: string, audioUrl: string | null | undefined) {
@@ -3667,13 +3673,6 @@ export function ProducerView({
                     {isLiveRec ? (
                       <LiveClipWave
                         peaks={livePeaks}
-                        color={tr.color}
-                        width={clipW}
-                        height={clipH}
-                      />
-                    ) : isTakeEditing && takePeaks.length > 0 ? (
-                      <LiveClipWave
-                        peaks={takePeaks}
                         color={tr.color}
                         width={clipW}
                         height={clipH}
