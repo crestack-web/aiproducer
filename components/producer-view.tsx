@@ -145,8 +145,8 @@ function roleColor(role: string) {
 
 /** Locked heights so left rail rows and timeline lanes share one grid */
 const TRACK_RULER_H = 40;
-const TRACK_ROW_H = 64;
-const TRACK_ROW_H_EXPANDED = 96;
+const TRACK_ROW_H = 72;
+const TRACK_ROW_H_EXPANDED = 128;
 
 function formatMs(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -297,29 +297,65 @@ function WaveformCanvas({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     if (!peaks || peaks.length === 0) {
-      // subtle placeholder line
-      ctx.strokeStyle = color + "55";
+      ctx.fillStyle = dimmed ? color + "33" : color + "55";
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(0, height / 2);
       ctx.lineTo(width, height / 2);
       ctx.stroke();
+      ctx.setLineDash([]);
       return;
     }
+    // Peak-normalize so quiet takes still read clearly (errors / dropouts stand out)
+    let peakMax = 0;
+    for (let i = 0; i < peaks.length; i++) {
+      if (peaks[i] > peakMax) peakMax = peaks[i];
+    }
+    const norm = peakMax > 1e-4 ? 1 / peakMax : 1;
     const mid = height / 2;
-    // Solid clip fill + dense waveform (Suno-style)
-    ctx.fillStyle = dimmed ? color + "44" : color + "CC";
+    // Bold solid clip body (same language as beat)
+    ctx.fillStyle = dimmed ? color + "55" : color + "DD";
     ctx.fillRect(0, 0, width, height);
-    ctx.fillStyle = dimmed ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.92)";
+    // Soft top sheen
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, "rgba(255,255,255,0.14)");
+    grad.addColorStop(0.5, "rgba(255,255,255,0)");
+    grad.addColorStop(1, "rgba(0,0,0,0.18)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+    // Center reference (helps spot silence / clipping)
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(width, mid);
+    ctx.stroke();
     const n = peaks.length;
-    const barW = Math.max(1.2, width / n);
+    const barW = Math.max(1.5, width / n);
     for (let i = 0; i < n; i++) {
-      const amp = Math.min(1, peaks[i] * 1.55);
-      const h = Math.max(2, amp * (height * 0.82));
+      const raw = peaks[i] * norm;
+      // floor so true silence is a hairline; loud is full height
+      const amp = Math.min(1, raw * 1.05);
+      const h = Math.max(amp < 0.04 ? 1.5 : 3, amp * (height * 0.88));
       const x = i * barW;
-      ctx.fillRect(x, mid - h / 2, Math.max(1.2, barW - 0.35), h);
+      const bw = Math.max(1.4, barW - 0.4);
+      // Near-silence: dim so dropouts read as gaps
+      if (amp < 0.04) {
+        ctx.fillStyle = dimmed ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.2)";
+      } else {
+        ctx.fillStyle = dimmed ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.95)";
+      }
+      ctx.fillRect(x, mid - h / 2, bw, h);
     }
   }, [peaks, color, width, height, dimmed]);
-  return <canvas ref={ref} style={{ display: "block", width, height, borderRadius: 6 }} />;
+  return (
+    <canvas
+      ref={ref}
+      style={{ display: "block", width, height, borderRadius: 6 }}
+    />
+  );
 }
 
 export function ProducerView({
@@ -1657,7 +1693,7 @@ export function ProducerView({
   const brass = C.brass || "#E7A961";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
-  const sidebarW = sidebarCollapsed ? (isNarrow ? 56 : 64) : isNarrow ? 168 : 260;
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 56 : 64) : isNarrow ? 180 : 280;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -2061,7 +2097,8 @@ export function ProducerView({
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];
             const isSolo = soloId === tr.id;
-            const rowH = expandedId === tr.id ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
+            const isExpanded = expandedId === tr.id;
+            const rowH = isExpanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
             return (
               <div
                 key={`h-${tr.id}`}
@@ -2072,33 +2109,39 @@ export function ProducerView({
                   boxSizing: "border-box",
                   borderBottom: `1px solid rgba(255,255,255,0.06)`,
                   borderLeft: `3px solid ${tr.color}`,
-                  padding: sidebarCollapsed ? "4px 4px" : "4px 8px",
+                  padding: sidebarCollapsed ? "6px 4px" : isExpanded ? "8px 10px" : "6px 8px",
                   background:
                     selectedTrackId === tr.id || armedTrackId === tr.id
-                      ? "rgba(255,255,255,0.05)"
-                      : "transparent",
+                      ? "rgba(255,255,255,0.06)"
+                      : isExpanded
+                        ? "rgba(255,255,255,0.03)"
+                        : "transparent",
                   overflow: "hidden",
                   display: "flex",
                   flexDirection: "column",
-                  justifyContent: "center",
-                  gap: 2,
+                  justifyContent: isExpanded ? "flex-start" : "center",
+                  gap: isExpanded ? 6 : 4,
                   boxShadow:
                     armedTrackId === tr.id ? `inset 0 0 0 1px ${brass}` : undefined,
+                  transition: "height 0.15s ease, background 0.15s ease",
                 }}
                 onClick={
                   sidebarCollapsed
                     ? () => {
                         setSelectedTrackId(tr.id);
                         if (tr.kind === "vocal") setArmedTrackId(tr.id);
+                        setExpandedId(tr.id);
                         setSidebarCollapsed(false);
                       }
                     : undefined
                 }
               >
+                {/* Name row — always visible when panel open */}
                 <button
                   type="button"
                   onClick={() => {
-                    setExpandedId(expandedId === tr.id ? null : tr.id);
+                    // Click expands this track (and collapses others) — big panel like pre-record UX
+                    setExpandedId(isExpanded ? null : tr.id);
                     setSelectedTrackId(tr.id);
                     if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
@@ -2107,8 +2150,8 @@ export function ProducerView({
                     border: "none",
                     color: text,
                     fontWeight: 700,
-                    fontSize: sidebarCollapsed ? 11 : 13,
-                    lineHeight: 1.2,
+                    fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
+                    lineHeight: 1.25,
                     padding: 0,
                     textAlign: "left",
                     cursor: "pointer",
@@ -2116,10 +2159,11 @@ export function ProducerView({
                     minWidth: 0,
                     fontFamily: "inherit",
                     display: sidebarCollapsed ? "none" : "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-start",
-                    gap: 2,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
                     overflow: "hidden",
+                    flexShrink: 0,
                   }}
                 >
                   <span
@@ -2128,6 +2172,7 @@ export function ProducerView({
                       fontSize: 10,
                       fontVariantNumeric: "tabular-nums",
                       minWidth: 14,
+                      flexShrink: 0,
                     }}
                   >
                     {trackIdx + 1}
@@ -2138,12 +2183,19 @@ export function ProducerView({
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       flex: 1,
+                      minWidth: 0,
                     }}
+                    title={tr.label}
                   >
-                    {tr.label}
+                    {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
                   </span>
+                  {isExpanded ? (
+                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
+                  ) : (
+                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
+                  )}
                 </button>
-                {!sidebarCollapsed && tr.sub ? (
+                {!sidebarCollapsed && tr.sub && isExpanded ? (
                   <div
                     style={{
                       fontSize: 11,
@@ -2152,6 +2204,8 @@ export function ProducerView({
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       maxWidth: "100%",
+                      paddingLeft: 20,
+                      flexShrink: 0,
                     }}
                   >
                     {tr.sub}
@@ -2162,10 +2216,11 @@ export function ProducerView({
                   style={{
                     display: "flex",
                     gap: 6,
-                    marginTop: 6,
+                    marginTop: isExpanded ? 2 : 0,
                     flexWrap: "wrap",
                     alignItems: "center",
                     maxWidth: "100%",
+                    flexShrink: 0,
                   }}
                 >
                   <button
@@ -2184,6 +2239,8 @@ export function ProducerView({
                   >
                     S
                   </button>
+                  {isExpanded ? (
+                    <>
                   <div
                     title="Pan — drag, double-click to center (L/[ · ]/Shift+R)"
                     onClick={(e) => e.stopPropagation()}
@@ -2287,6 +2344,8 @@ export function ProducerView({
                       </button>
                     </>
                   )}
+                    </>
+                  ) : null}
                 </div>
                 ) : (
                   <div
@@ -2431,7 +2490,7 @@ export function ProducerView({
               const displayEndMs = isLiveRec ? Math.max(tr.endMs, liveEndMs) : tr.endMs;
               const clipW = Math.max(10, msToX(displayEndMs) - msToX(tr.startMs));
               const rowH = expanded ? TRACK_ROW_H_EXPANDED : TRACK_ROW_H;
-              const clipH = expanded ? Math.min(72, rowH - 16) : Math.min(40, rowH - 16);
+              const clipH = expanded ? Math.min(96, rowH - 20) : Math.min(48, rowH - 16);
               return (
                 <div
                   key={`tl-${tr.id}`}
