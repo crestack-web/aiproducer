@@ -39,8 +39,9 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   const [layers, setLayers] = useState<ProducerLayer[]>([]);
   const [sections, setSections] = useState<ProducerSection[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    // soft=true refreshes data without unmounting Console (avoids full-page flash on small edits)
+    if (!opts?.soft) setLoading(true);
     setError(null);
     try {
       const [pr, br, tr] = await Promise.all([
@@ -146,7 +147,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   useEffect(() => {
-    void load();
+    void load({ soft: false });
   }, [load]);
 
   if (loading) {
@@ -181,7 +182,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
       boothHref={`/app/studio/${projectId}`}
       libraryHref="/app"
       onClose={() => router.push(`/app/studio/${projectId}`)}
-      onLayersChanged={() => void load()}
+      onLayersChanged={() => void load({ soft: true })}
     />
   );
 }

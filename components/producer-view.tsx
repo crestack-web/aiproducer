@@ -339,6 +339,20 @@ export function ProducerView({
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [promptBarOpen, setPromptBarOpen] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const apply = () => {
+      const narrow = mq.matches;
+      setIsNarrow(narrow);
+      if (narrow) {
+        setSidebarCollapsed(true);
+      }
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [planBusy, setPlanBusy] = useState(false);
@@ -883,6 +897,7 @@ export function ProducerView({
 
   // Merge URLs from session-preview if projectId given
   useEffect(() => {
+    // Soft parent refresh: replace from server without forcing loading shell
     setLayers(layersProp);
     setFxById((prev) => {
       const next = { ...prev };
@@ -1261,7 +1276,8 @@ export function ProducerView({
   const faint = C.textFaint || "#5C5866";
   const brass = C.brass || "#E7A961";
 
-  const sidebarW = sidebarCollapsed ? 64 : 240;
+  // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 56 : 64) : isNarrow ? 168 : 260;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -1300,7 +1316,9 @@ export function ProducerView({
           borderBottom: `1px solid ${border}`,
           flexShrink: 0,
           background: surface,
-          minHeight: 56,
+          minHeight: isNarrow ? 48 : 56,
+          flexWrap: isNarrow ? "wrap" : "nowrap",
+          rowGap: 6,
         }}
       >
         <a
@@ -1322,7 +1340,7 @@ export function ProducerView({
           value={titleDraft}
           onChange={(e) => setTitleDraft(e.target.value)}
           aria-label="Song title"
-          style={{ flex: 1, minWidth: 80, maxWidth: 280, background: "rgba(255,255,255,0.06)", border: `1px solid ${border}`, borderRadius: 8, color: text, fontWeight: 600, fontSize: 14, padding: "6px 10px", fontFamily: "inherit" }}
+          style={{ flex: 1, minWidth: 0, maxWidth: isNarrow ? 120 : 280, background: "rgba(255,255,255,0.06)", border: `1px solid ${border}`, borderRadius: 8, color: text, fontWeight: 600, fontSize: isNarrow ? 13 : 14, padding: "6px 10px", fontFamily: "inherit" }}
         />
 
         <button
@@ -1383,10 +1401,12 @@ export function ProducerView({
           <ZoomIcon zoomIn={true} />
         </button>
 
-        <a href={libraryHref || "/app"} style={{ ...iconBtn(border, surface, text), textDecoration: "none", fontSize: 12, fontWeight: 700, padding: "0 12px", width: "auto", color: text }}>
-          Library
-        </a>
-        {(boothHref || onClose) && (
+        {!isNarrow && (
+          <a href={libraryHref || "/app"} style={{ ...iconBtn(border, surface, text), textDecoration: "none", fontSize: 12, fontWeight: 700, padding: "0 12px", width: "auto", color: text }}>
+            Library
+          </a>
+        )}
+        {(boothHref || onClose) && !isNarrow && (
           <button
             type="button"
             onClick={() => {
@@ -1477,6 +1497,7 @@ export function ProducerView({
           flexDirection: "row",
           background: bg,
           overflow: "hidden",
+          flexDirection: "row",
         }}
       >
         {/* LEFT: track headers — collapsible sidebar */}
@@ -1594,7 +1615,7 @@ export function ProducerView({
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];
             const isSolo = soloId === tr.id;
-            const rowH = expandedId === tr.id ? 92 : 48;
+            const rowH = expandedId === tr.id ? (isNarrow ? 110 : 92) : sidebarCollapsed ? 48 : isNarrow ? 72 : 56;
             return (
               <div
                 key={`h-${tr.id}`}
@@ -1603,10 +1624,19 @@ export function ProducerView({
                   boxSizing: "border-box",
                   borderBottom: `1px solid rgba(255,255,255,0.06)`,
                   borderLeft: `3px solid ${tr.color}`,
-                  padding: "6px 8px",
+                  padding: sidebarCollapsed ? "6px 4px" : "6px 10px",
                   background:
                     selectedTrackId === tr.id ? "rgba(255,255,255,0.05)" : "transparent",
+                  overflow: "hidden",
                 }}
+                onClick={
+                  sidebarCollapsed
+                    ? () => {
+                        setSelectedTrackId(tr.id);
+                        setSidebarCollapsed(false);
+                      }
+                    : undefined
+                }
               >
                 <button
                   type="button"
@@ -1619,13 +1649,15 @@ export function ProducerView({
                     border: "none",
                     color: text,
                     fontWeight: 700,
-                    fontSize: sidebarCollapsed ? 0 : 13,
+                    fontSize: sidebarCollapsed ? 11 : 13,
+                    lineHeight: 1.2,
                     padding: 0,
                     textAlign: "left",
                     cursor: "pointer",
                     width: "100%",
+                    minWidth: 0,
                     fontFamily: "inherit",
-                    display: "flex",
+                    display: sidebarCollapsed ? "none" : "flex",
                     flexDirection: "column",
                     alignItems: "flex-start",
                     gap: 2,
@@ -1653,28 +1685,29 @@ export function ProducerView({
                     {tr.label}
                   </span>
                 </button>
-                {tr.sub && (
+                {!sidebarCollapsed && tr.sub ? (
                   <div
                     style={{
-                      fontSize: 10,
+                      fontSize: 11,
                       color: faint,
-                      paddingLeft: 20,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      maxWidth: "100%",
                     }}
                   >
                     {tr.sub}
                   </div>
-                )}
+                ) : null}
+                {!sidebarCollapsed ? (
                 <div
                   style={{
                     display: "flex",
-                    gap: 4,
-                    marginTop: 4,
+                    gap: 6,
+                    marginTop: 6,
                     flexWrap: "wrap",
                     alignItems: "center",
-                    paddingLeft: 4,
+                    maxWidth: "100%",
                   }}
                 >
                   <button
@@ -1733,7 +1766,21 @@ export function ProducerView({
                     </>
                   )}
                 </div>
-                {colorPickerId === tr.id && tr.kind === "vocal" && (
+                ) : (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      width: 10,
+                      height: 10,
+                      borderRadius: 3,
+                      background: tr.color,
+                      marginLeft: "auto",
+                      marginRight: "auto",
+                    }}
+                    title={tr.label}
+                  />
+                )}
+                {colorPickerId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
                   <div
                     style={{
                       marginTop: 6,
