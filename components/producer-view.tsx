@@ -23,6 +23,11 @@ import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
 import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
 import {
+  parseProductionDirection,
+  mergeProductionDirection,
+  type ProductionDirection,
+} from "@/lib/ap-engine/direction";
+import {
   decodeAudioUrl,
   deleteRegionFromBuffer,
   keepRegionFromBuffer,
@@ -612,6 +617,8 @@ export function ProducerView({
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [trackPrompt, setTrackPrompt] = useState("");
+  const [productionDirection, setProductionDirection] = useState<ProductionDirection | null>(null);
+  const [directionNote, setDirectionNote] = useState<string | null>(null);
   const [trackPromptBusy, setTrackPromptBusy] = useState(false);
   const [apPhase, setApPhase] = useState(0);
   const [apLastResult, setApLastResult] = useState<"ok" | "err" | null>(null);
@@ -761,6 +768,30 @@ export function ProducerView({
       const stepList: { label: string; done: boolean; active: boolean }[] = [
         { label: "Reading your direction…", done: true, active: false },
       ];
+
+      // Production Direction → next Produce (Prompt = direction, Produce = render)
+      const parsedDir = parseProductionDirection(promptText);
+      if (parsedDir.matched.length > 0 || (parsedDir.confidence || 0) >= 0.4) {
+        const merged = mergeProductionDirection(productionDirection, parsedDir.direction);
+        setProductionDirection(merged);
+        setDirectionNote(parsedDir.plainSummary);
+        stepList.push({
+          label: parsedDir.plainSummary || "Production direction updated",
+          done: true,
+          active: false,
+        });
+        setApSteps([...stepList]);
+        setApSummary(parsedDir.plainSummary);
+        try {
+          await fetch(`/api/projects/${projectId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ production_direction: merged }),
+          });
+        } catch {
+          /* session still holds direction */
+        }
+      }
 
       // Execute local DAW actions with staged visuals
       if (plan.actions.length) {
