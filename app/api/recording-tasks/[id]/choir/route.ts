@@ -1,0 +1,221 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/server";
+import { createSignedDownloadUrl, uploadProjectAudio } from "@/lib/storage";
+import { encodeWavStereoFromMono } from "@/lib/audio/wav";
+import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
+import { generateChoir } from "@/lib/ap-engine/fullness";
+
+type Ctx = { params: Promise<{ id: string }> };
+
+const BodySchema = z.object({
+  intensity: z.enum(["light", "full"]).optional().default("full"),
+});
+
+/**
+ * POST /api/recording-tasks/:id/choir
+ * Build a choir from this vocal take (artist's voice only) and
+ * attach new plan layers with the generated WAVs.
+ */
+export async function POST(req: Request, ctx: Ctx) {
+  const { user, error } = await requireUser();
+  if (error || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id: taskId } = await ctx.params;
+  let intensity: "light" | "full" = "full";
+  try {
+    const body = await req.json().catch(() => ({}));
+    const parsed = BodySchema.safeParse(body || {});
+    if (parsed.success) intensity = parsed.data.intensity;
+  } catch {
+    /* default full */
+  }
+
+  const service = createServiceClient();
+  const { data: task, error: taskErr } = await service
+    .from("recording_tasks")
+    .select("id, project_id, type, title, start_ms, end_ms, status")
+    .eq("id", taskId)
+    .maybeSingle();
+
+  if (taskErr || !task) {
+    return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  const { data: project } = await service
+    .from("projects")
+    .select("id, user_id")
+    .eq("id", task.project_id)
+    .maybeSingle();
+  if (!project || project.user_id !== user.id) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { data: recs } = await service
+    .from("recordings")
+    .select("id, audio_path, content_type")
+    .eq("task_id", taskId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const rec = recs?.[0];
+  if (!rec?.audio_path) {
+    return NextResponse.json(
+      { error: "No vocal take on this track — record or upload first" },
+      { status: 400 }
+    );
+  }
+
+  let url: string;
+  try {
+    url = await createSignedDownloadUrl(rec.audio_path, 3600);
+  } catch (e) {
+    console.error("[choir] signed url", e);
+    return NextResponse.json({ error: "Could not load vocal take" }, { status: 500 });
+  }
+
+  const audioRes = await fetch(url);
+  if (!audioRes.ok) {
+    return NextResponse.json({ error: "Could not download vocal take" }, { status: 500 });
+  }
+  const raw = Buffer.from(await audioRes.arrayBuffer());
+
+  let lead;
+  try {
+    lead = await normalizeToInternalPcm(raw, rec.audio_path);
+  } catch (e) {
+    console.error("[choir] decode", e);
+    return NextResponse.json({ error: "Could not decode vocal audio" }, { status: 500 });
+  }
+
+  const leadPcm = lead.pcm;
+
+  const voices = generateChoir({
+    lead: leadPcm,
+    intensity,
+    startMs: Number(task.start_ms) || 0,
+  });
+
+  if (!voices.length) {
+    return NextResponse.json({ error: "Choir generator produced no voices" }, { status: 500 });
+  }
+
+  const created: { id: string; type: string; title: string }[] = [];
+  const startMs = Number(task.start_ms) || 0;
+  const endMs = Number(task.end_ms) || startMs + 8000;
+
+  for (const v of voices) {
+    const title = v.label;
+    const type = v.role === "double" ? "double" : v.role;
+
+    const row: Record<string, unknown> = {
+      project_id: task.project_id,
+      type,
+      title,
+      instruction: `AP choir layer generated from ${(task.title as string) || "lead"} — still your voice.`,
+      status: "pending",
+      required: false,
+      recommendation: "optional",
+      selected_in_plan: true,
+      active: false,
+      start_ms: startMs,
+      end_ms: endMs,
+      priority: 0,
+      metadata: {
+        choir_source_task_id: taskId,
+        choir_role: v.role,
+        choir_intensity: intensity,
+        generated_by: "ap_choir",
+      },
+    };
+
+    let newTask: Record<string, unknown> | null = null;
+    {
+      const res = await service.from("recording_tasks").insert(row).select("*").single();
+      newTask = res.data as Record<string, unknown> | null;
+      if (res.error) {
+        const slim = {
+          project_id: task.project_id,
+          type,
+          title,
+          instruction: row.instruction,
+          status: "pending",
+          required: false,
+          start_ms: startMs,
+          end_ms: endMs,
+        };
+        const res2 = await service.from("recording_tasks").insert(slim).select("*").single();
+        newTask = res2.data as Record<string, unknown> | null;
+        if (res2.error) {
+          console.error("[choir] task insert", res2.error);
+          continue;
+        }
+      }
+    }
+    if (!newTask?.id) continue;
+
+    // Mix L/R to mono-ish for encode helper: average
+    const n = Math.min(v.pcm.left.length, v.pcm.right.length);
+    const mono = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      // pan: -1..1 → weights
+      const pan = Math.max(-1, Math.min(1, v.pan));
+      const lW = pan <= 0 ? 1 : 1 - pan;
+      const rW = pan >= 0 ? 1 : 1 + pan;
+      mono[i] = (v.pcm.left[i] * lW + v.pcm.right[i] * rW) * 0.5;
+    }
+    const wav = encodeWavStereoFromMono(mono, v.pcm.sampleRate);
+
+    let uploaded: { path: string } | null = null;
+    try {
+      uploaded = await uploadProjectAudio(
+        user.id,
+        task.project_id as string,
+        `choir-${newTask.id}.wav`,
+        wav,
+        "audio/wav"
+      );
+    } catch (e) {
+      console.error("[choir] upload", e);
+      continue;
+    }
+
+    const { error: recErr } = await service.from("recordings").insert({
+      task_id: newTask.id,
+      project_id: task.project_id,
+      audio_path: uploaded.path,
+      status: "ready",
+      content_type: "audio/wav",
+      metadata: { generated_by: "ap_choir", choir_role: v.role },
+    });
+    if (recErr) {
+      console.error("[choir] recording insert", recErr);
+      continue;
+    }
+
+    await service
+      .from("recording_tasks")
+      .update({ status: "completed" })
+      .eq("id", newTask.id);
+
+    created.push({
+      id: newTask.id as string,
+      type: type as string,
+      title,
+    });
+  }
+
+  if (!created.length) {
+    return NextResponse.json({ error: "Could not save choir layers" }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    source_task_id: taskId,
+    intensity,
+    layers: created,
+    message: `AP built a ${created.length}-voice choir from your take.`,
+  });
+}

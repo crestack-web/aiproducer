@@ -174,6 +174,121 @@ export function generateAdlibEcho(opts: {
   };
 }
 
+
+
+
+export type ChoirVoice = {
+  role: "double" | "harmony_high" | "harmony_mid" | "harmony_low" | "background";
+  label: string;
+  gainDb: number;
+  pan: number;
+  pcm: PcmStereo;
+};
+
+/**
+ * Turn a single lead vocal into a small choir — artist's voice only
+ * (pitch-shifted / delayed layers from the real take).
+ */
+export function generateChoir(opts: {
+  lead: PcmStereo;
+  intensity?: "light" | "full";
+  startMs?: number;
+}): ChoirVoice[] {
+  const intensity = opts.intensity || "full";
+  const lead = opts.lead;
+  const startMs = opts.startMs ?? 0;
+  const section = "chorus" as SongSectionKind;
+  const voices: ChoirVoice[] = [];
+
+  const dbl = generateDouble({
+    pcm: lead,
+    startMs,
+    section,
+    side: "left",
+  });
+  applyGainStereo(dbl.pcm, dbToGain(intensity === "full" ? -5 : -7));
+  voices.push({
+    role: "double",
+    label: "Choir double",
+    gainDb: intensity === "full" ? -5 : -7,
+    pan: -0.2,
+    pcm: dbl.pcm,
+  });
+
+  const dblR = generateDouble({
+    pcm: lead,
+    startMs,
+    section,
+    side: "right",
+  });
+  applyGainStereo(dblR.pcm, dbToGain(intensity === "full" ? -6 : -8));
+  voices.push({
+    role: "double",
+    label: "Choir double R",
+    gainDb: intensity === "full" ? -6 : -8,
+    pan: 0.25,
+    pcm: dblR.pcm,
+  });
+
+  const hi = generateHarmony({
+    pcm: lead,
+    startMs,
+    section,
+    interval: "major3rd",
+    minorMode: false,
+  });
+  if (hi) {
+    applyGainStereo(hi.pcm, dbToGain(intensity === "full" ? -7 : -9));
+    voices.push({
+      role: "harmony_high",
+      label: "Choir high",
+      gainDb: intensity === "full" ? -7 : -9,
+      pan: 0.5,
+      pcm: hi.pcm,
+    });
+  }
+
+  const mid = generateHarmony({
+    pcm: lead,
+    startMs,
+    section,
+    interval: "perfect5th",
+    minorMode: false,
+  });
+  if (mid) {
+    applyGainStereo(mid.pcm, dbToGain(intensity === "full" ? -9 : -11));
+    voices.push({
+      role: "harmony_mid",
+      label: "Choir mid",
+      gainDb: intensity === "full" ? -9 : -11,
+      pan: -0.4,
+      pcm: mid.pcm,
+    });
+  }
+
+  if (intensity === "full") {
+    const low = generateHarmony({
+      pcm: lead,
+      startMs,
+      section,
+      interval: "minor3rd",
+      minorMode: true,
+    });
+    if (low) {
+      applyGainStereo(low.pcm, dbToGain(-10));
+      voices.push({
+        role: "harmony_low",
+        label: "Choir low",
+        gainDb: -10,
+        pan: 0.15,
+        pcm: low.pcm,
+      });
+    }
+  }
+
+  return voices;
+}
+
 export function generateFromDecision(opts: {
   leadPcm: PcmStereo;
   startMs: number;

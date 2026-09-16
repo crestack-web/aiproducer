@@ -1114,6 +1114,42 @@ export function ProducerView({
     void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
   }
 
+  async function makeChoir(id: string, intensity: "light" | "full" = "full") {
+    if (!projectId || id === "beat") return;
+    if (!window.confirm("Turn this vocal into a choir? AP will add harmony layers from your real take.")) return;
+    setSavingId(id);
+    setEditMsg(null);
+    try {
+      const res = await fetch(`/api/recording-tasks/${id}/choir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intensity }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not build choir");
+        return;
+      }
+      setEditMsg(null);
+      onLayersChanged?.();
+      // soft refresh layers list from parent
+      const tr = await fetch(`/api/projects/${projectId}/recording-tasks`);
+      if (tr.ok) {
+        const tj = await tr.json().catch(() => ({}));
+        // parent owns tasks; callback is enough
+      }
+      if (j.message) {
+        // brief success via editMsg cleared soon
+        setEditMsg(j.message);
+        setTimeout(() => setEditMsg(null), 4000);
+      }
+    } catch {
+      setEditMsg("Network error building choir");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function duplicateLayer(id: string) {
     if (!projectId || id === "beat") return;
     setSavingId(id);
@@ -3486,6 +3522,21 @@ export function ProducerView({
                         style={miniChip(border, brass, false, text)}
                       >
                         ⧉
+                      </button>
+                      <button
+                        type="button"
+                        title="Make choir from this vocal"
+                        disabled={savingId === tr.id}
+                        onClick={() => void makeChoir(tr.id, "full")}
+                        style={{
+                          ...miniChip(border, brass, false, text),
+                          fontSize: 9,
+                          width: "auto",
+                          padding: "0 6px",
+                          minWidth: 28,
+                        }}
+                      >
+                        Choir
                       </button>
                       <button
                         type="button"

@@ -6,4 +6,5 @@ export {
   generateHarmony,
   generateAdlibEcho,
   generateFromDecision,
+  generateChoir,
 } from "./generate";
