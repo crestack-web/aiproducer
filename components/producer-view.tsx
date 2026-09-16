@@ -2290,7 +2290,7 @@ export function ProducerView({
         } else if (st.master_url) {
           setMasterUrl(String(st.master_url));
           if (produceJob?.id) setMasterJobId(String(produceJob.id));
-          setProduceUi("complete");
+          // Keep master available but do not force the result panel open on every visit
           setProduceStage("complete");
         }
       } catch {
@@ -2431,9 +2431,21 @@ export function ProducerView({
     }
   }
 
+  function dismissProducePanel() {
+    try {
+      masterAudioRef.current?.pause();
+    } catch {
+      /* */
+    }
+    setMasterPlaying(false);
+    setProduceUi("idle");
+    setProduceError(null);
+  }
+
   async function downloadMaster(format: "wav" | "mp3" = "wav") {
     if (!projectId) return;
     setDownloadBusy(true);
+    setProduceError(null);
     const result = await forceDownloadFromApi(
       projectId,
       format,
@@ -2441,7 +2453,6 @@ export function ProducerView({
     );
     setDownloadBusy(false);
     if (!result.ok) {
-      // MP3 optional — do not fail the whole production story
       if (format === "mp3") {
         setProduceError(
           result.error || "MP3 is not ready yet — try Download WAV."
@@ -4096,6 +4107,18 @@ export function ProducerView({
                     Preparing playback… Download is available.
                   </div>
                 )}
+                {produceError ? (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#F07167",
+                      marginBottom: 10,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {produceError}
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     type="button"
@@ -4155,6 +4178,24 @@ export function ProducerView({
                   >
                     Produce again
                   </button>
+                  <button
+                    type="button"
+                    onClick={dismissProducePanel}
+                    style={{
+                      height: 36,
+                      padding: "0 14px",
+                      borderRadius: 999,
+                      border: `1px solid ${border}`,
+                      background: "transparent",
+                      color: mutedText,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    Close
+                  </button>
                 </div>
               </>
             ) : null}
@@ -4169,6 +4210,7 @@ export function ProducerView({
                     {produceError}
                   </div>
                 ) : null}
+                <div style={{ display: "flex", gap: 8 }}>
                 <button
                   type="button"
                   onClick={() => void startConsoleProduce()}
@@ -4187,6 +4229,25 @@ export function ProducerView({
                 >
                   Try again
                 </button>
+                <button
+                  type="button"
+                  onClick={dismissProducePanel}
+                  style={{
+                    height: 36,
+                    padding: "0 16px",
+                    borderRadius: 999,
+                    border: `1px solid ${border}`,
+                    background: "transparent",
+                    color: mutedText,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Close
+                </button>
+                </div>
               </>
             ) : null}
           </div>
