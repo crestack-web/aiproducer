@@ -15,6 +15,7 @@ import {
   decideLayer,
   decideProduction,
 } from "./production/decision-engine";
+import { applyDirectionToMixGains } from "./direction/apply";
 import { mixVocalAndBeat } from "./mix/engine";
 import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
 import { matchVocalLevelsAcrossSong } from "./mix/level-match";
@@ -75,6 +76,8 @@ export type ApArrangementInput = {
   genre?: string | null;
   skipRestoration?: boolean;
   deadlineAt?: number;
+  /** Structured user production direction (from Console prompts) */
+  productionDirection?: import("./direction/types").ProductionDirection | null;
 };
 
 function logAp(event: string, data: Record<string, unknown>) {
@@ -215,11 +218,24 @@ export async function runApArrangement(
           layerCount,
           hasLead,
         },
-        input.genre
+        input.genre,
+        input.productionDirection
       )
     );
 
     let arrMix = decideArrangementMix(leadAnalysis, beatA, input.genre, layerCount);
+    if (input.productionDirection) {
+      const mg = applyDirectionToMixGains(
+        arrMix.mix.vocalGainDb ?? 0,
+        arrMix.mix.beatGainDb ?? 0,
+        input.productionDirection
+      );
+      arrMix = {
+        ...arrMix,
+        mix: { ...arrMix.mix, vocalGainDb: mg.vocalGainDb, beatGainDb: mg.beatGainDb },
+        notes: [...arrMix.notes, "production_direction_applied"],
+      };
+    }
 
     // ——— Transcription + alignment (optional ASR) → layer.lyrics ———
     await stage("analyzing", { sub: "transcription" });
