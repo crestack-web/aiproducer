@@ -1114,6 +1114,68 @@ export function ProducerView({
     void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
   }
 
+  async function duplicateLayer(id: string) {
+    if (!projectId || id === "beat") return;
+    setSavingId(id);
+    setEditMsg(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/recording-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duplicate_from: id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not duplicate track");
+        return;
+      }
+      const task = j.task as {
+        id: string;
+        type?: string;
+        title?: string;
+        start_ms?: number;
+        end_ms?: number;
+        status?: string;
+      };
+      if (!task?.id) {
+        setEditMsg("Duplicate created but no id returned");
+        return;
+      }
+      const src = layers.find((l) => l.id === id);
+      setLayers((prev) => [
+        ...prev,
+        {
+          id: task.id,
+          label: (task.type || src?.role || "custom").replace(/_/g, " "),
+          role: task.type || src?.role || "custom",
+          sectionLabel: task.title || `${src?.sectionLabel || src?.label || "Track"} (copy)`,
+          startMs: Number(task.start_ms) ?? src?.startMs ?? 0,
+          endMs: Number(task.end_ms) ?? src?.endMs ?? 8000,
+          audioUrl: src?.audioUrl || null,
+          color: src?.color,
+          trackFx: src?.trackFx ? { ...src.trackFx } : null,
+        },
+      ]);
+      if (src?.color) {
+        setColorById((prev) => ({ ...prev, [task.id]: src.color! }));
+        void fetch(`/api/recording-tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track_color: src.color }),
+        }).catch(() => null);
+      }
+      if (src?.trackFx) {
+        void persistFx(task.id, { ...DEFAULT_TRACK_FX, ...src.trackFx });
+      }
+      setSelectedTrackId(task.id);
+      onLayersChanged?.();
+    } catch {
+      setEditMsg("Network error duplicating track");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function deleteLayer(id: string) {
     if (id === "beat") return;
     if (!window.confirm("Remove this layer from the plan? The recorded take stays saved.")) return;
@@ -3416,6 +3478,15 @@ export function ProducerView({
                           padding: 0,
                         }}
                       />
+                      <button
+                        type="button"
+                        title="Duplicate track"
+                        disabled={savingId === tr.id}
+                        onClick={() => void duplicateLayer(tr.id)}
+                        style={miniChip(border, brass, false, text)}
+                      >
+                        ⧉
+                      </button>
                       <button
                         type="button"
                         title="Remove"

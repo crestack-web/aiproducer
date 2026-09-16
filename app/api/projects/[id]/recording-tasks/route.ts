@@ -80,6 +80,8 @@ const CreateTrackSchema = z.object({
   start_ms: z.number().min(0).default(0),
   end_ms: z.number().min(0).optional(),
   instruction: z.string().max(500).optional(),
+  /** Clone an existing task (+ take when present) */
+  duplicate_from: z.string().uuid().optional(),
 });
 
 /**
@@ -112,6 +114,100 @@ export async function POST(req: Request, ctx: Ctx) {
   const parsed = CreateTrackSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  if (parsed.data.duplicate_from) {
+    const { data: src, error: srcErr } = await supabase
+      .from("recording_tasks")
+      .select("*")
+      .eq("id", parsed.data.duplicate_from)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (srcErr || !src) {
+      return NextResponse.json({ error: "Source track not found" }, { status: 404 });
+    }
+
+    const srcMeta =
+      src.metadata && typeof src.metadata === "object" && !Array.isArray(src.metadata)
+        ? (src.metadata as Record<string, unknown>)
+        : {};
+
+    const dupTitle = `${(src.title as string) || (src.type as string) || "Track"} (copy)`;
+    const row: Record<string, unknown> = {
+      project_id: projectId,
+      type: src.type || "custom",
+      title: dupTitle,
+      instruction: src.instruction || "Duplicated track from Producer View.",
+      status: "pending",
+      required: false,
+      recommendation: "optional",
+      selected_in_plan: true,
+      active: false,
+      start_ms: src.start_ms ?? 0,
+      end_ms: src.end_ms ?? (src.start_ms ?? 0) + 8000,
+      priority: 0,
+      metadata: {
+        ...srcMeta,
+        duplicated_from: src.id,
+        duplicated_at: new Date().toISOString(),
+      },
+    };
+
+    let data: Record<string, unknown> | null = null;
+    let dbError: { message?: string } | null = null;
+    {
+      const res = await supabase.from("recording_tasks").insert(row).select("*").single();
+      data = res.data as Record<string, unknown> | null;
+      dbError = res.error;
+    }
+    if (dbError) {
+      const slim = {
+        project_id: projectId,
+        type: row.type,
+        title: dupTitle,
+        instruction: row.instruction,
+        status: "pending",
+        required: false,
+        start_ms: row.start_ms,
+        end_ms: row.end_ms,
+      };
+      const res2 = await supabase.from("recording_tasks").insert(slim).select("*").single();
+      data = res2.data as Record<string, unknown> | null;
+      dbError = res2.error;
+    }
+    if (dbError || !data) {
+      console.error("[duplicate-track]", dbError);
+      return NextResponse.json({ error: "Could not duplicate track" }, { status: 500 });
+    }
+
+    const newId = data.id as string;
+    const { data: recs } = await supabase
+      .from("recordings")
+      .select("*")
+      .eq("task_id", src.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const rec = recs?.[0] as Record<string, unknown> | undefined;
+    if (rec?.audio_path) {
+      const copy: Record<string, unknown> = {
+        task_id: newId,
+        project_id: projectId,
+        audio_path: rec.audio_path,
+        status: rec.status || "ready",
+      };
+      if (rec.duration_ms != null) copy.duration_ms = rec.duration_ms;
+      if (rec.content_type) copy.content_type = rec.content_type;
+      if (rec.metadata) copy.metadata = rec.metadata;
+      const { error: recErr } = await supabase.from("recordings").insert(copy);
+      if (!recErr) {
+        await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", newId);
+        data = { ...data, status: "completed" };
+      } else {
+        console.warn("[duplicate-track] recording copy failed", recErr.message);
+      }
+    }
+
+    return NextResponse.json({ task: data, duplicated: true }, { status: 201 });
   }
 
   const start = Math.round(parsed.data.start_ms);
