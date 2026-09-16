@@ -217,11 +217,9 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
       onClose={() => router.push(`/app/studio/${projectId}`)}
       onLayersChanged={() => void load({ soft: true })}
       onOpenTweak={() => void load({ soft: true })}
-      tweaksEnabled={hasMaster}
+      tweaksEnabled={Boolean(beatUrl) || layers.some((l) => Boolean(l.audioUrl))}
       tweaksGateMessage={
-        hasMaster
-          ? "Ask AP about the mix…"
-          : "Select a track with a take to tweak it — or Produce first for song-wide tweaks"
+        "Add a beat or record a take to start directing AP"
       }
     />
   );

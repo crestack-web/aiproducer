@@ -277,7 +277,7 @@ export function ProducerView({
   onClose,
   onOpenTweak,
   tweaksEnabled = false,
-  tweaksGateMessage = "Produce first to unlock song-wide tweaks",
+  tweaksGateMessage = "Add a beat or take to direct AP",
   onLayersChanged,
   tempoBpm = null,
   boothHref = null,
@@ -445,9 +445,11 @@ export function ProducerView({
         setEditMsg(
           typeof j.plain === "string"
             ? j.plain
-            : trackScope
-              ? "Updated this track"
-              : "Song tweak applied"
+            : typeof j.summary === "string"
+              ? j.summary
+              : trackScope
+                ? "Updated this track"
+                : "Song tweak applied"
         );
         onLayersChanged?.();
         onOpenTweak?.();

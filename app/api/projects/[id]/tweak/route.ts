@@ -4,6 +4,9 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isStoragePath, resolveAudioUrl, getStorageBucket } from "@/lib/storage";
 import { decodeWav } from "@/lib/audio/wav";
 import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
+import { placeOnTimeline } from "@/lib/ap-engine/ingestion/normalize";
+import { sumStereo } from "@/lib/ap-engine/mix/balance";
+import { applyGainStereo, peakOf } from "@/lib/ap-engine/dsp";
 import type { PcmStereo } from "@/lib/ap-engine/types";
 import { exportWav } from "@/lib/ap-engine/render/export-wav-mp3";
 import {
@@ -94,7 +97,7 @@ async function loadMasterBuffer(
     .from("audio_versions")
     .select("audio_path, kind, version")
     .eq("project_id", projectId)
-    .in("kind", ["master", "mix", "preview_mix"])
+    .in("kind", ["working_mix", "master", "mix", "preview_mix", "tweak"])
     .order("version", { ascending: false })
     .limit(5);
   for (const v of versions || []) {
@@ -179,6 +182,129 @@ async function loadMasterBuffer(
 
   return null;
 }
+
+
+/**
+ * Lightweight Console working mix — beat + placed selected takes only.
+ * Skips restoration, Producer Mind fullness, pitch/time, and mastering.
+ * Used so song-wide prompts work before a full Produce.
+ */
+async function buildWorkingMix(
+  service: ReturnType<typeof createServiceClient>,
+  projectId: string
+): Promise<{ buffer: Buffer; path: string; layerCount: number; log: string[] } | null> {
+  const log: string[] = [];
+  const { data: beat } = await service
+    .from("beats")
+    .select("audio_path, duration_ms")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!beat?.audio_path) {
+    log.push("working_mix: no beat");
+    return null;
+  }
+
+  async function loadPcm(path: string): Promise<PcmStereo | null> {
+    try {
+      const { data: blob, error } = await service.storage.from(getStorageBucket()).download(path);
+      if (error || !blob) return null;
+      const raw = Buffer.from(await blob.arrayBuffer());
+      const wav = (await convertBufferToWav(raw, path)).buffer;
+      const decoded = decodeWav(wav);
+      const ch = decoded.channels || 1;
+      const samples = decoded.samples;
+      const sr = decoded.sampleRate;
+      const frames = Math.floor(samples.length / Math.max(1, ch));
+      if (ch >= 2) {
+        const left = new Float32Array(frames);
+        const right = new Float32Array(frames);
+        for (let i = 0; i < frames; i++) {
+          left[i] = samples[i * ch] || 0;
+          right[i] = samples[i * ch + 1] || 0;
+        }
+        return { left, right, sampleRate: sr };
+      }
+      return { left: samples, right: new Float32Array(samples), sampleRate: sr };
+    } catch (e) {
+      log.push(`load fail ${path}: ${e instanceof Error ? e.message : "err"}`);
+      return null;
+    }
+  }
+
+  const beatPcm = await loadPcm(String(beat.audio_path));
+  if (!beatPcm) return null;
+  log.push("working_mix:beat");
+
+  const { data: tasks } = await service
+    .from("recording_tasks")
+    .select("id, type, start_ms, end_ms, status")
+    .eq("project_id", projectId);
+
+  let mix = {
+    left: new Float32Array(beatPcm.left),
+    right: new Float32Array(beatPcm.right),
+    sampleRate: beatPcm.sampleRate,
+  };
+  // slightly reduce beat under vocals
+  applyGainStereo(mix, 0.85);
+
+  let layerCount = 0;
+  for (const task of tasks || []) {
+    const st = String(task.status || "").toLowerCase();
+    if (st === "skipped" || st === "cancelled") continue;
+    const { data: recs } = await service
+      .from("recordings")
+      .select("audio_path, is_selected, take_number")
+      .eq("task_id", task.id)
+      .order("take_number", { ascending: false });
+    const rec =
+      (recs || []).find((r) => r.is_selected && r.audio_path) ||
+      (recs || []).find((r) => r.audio_path) ||
+      null;
+    if (!rec?.audio_path) continue;
+    const takePcm = await loadPcm(String(rec.audio_path));
+    if (!takePcm) continue;
+    const startMs = Number(task.start_ms) || 0;
+    const placed = placeOnTimeline(takePcm, mix, startMs);
+    mix = sumStereo(placed.vocal, mix);
+    layerCount += 1;
+    log.push(`working_mix:layer task=${task.id} type=${task.type || "?"} @${startMs}ms`);
+  }
+
+  if (layerCount === 0) {
+    log.push("working_mix: beat only (no takes yet)");
+  }
+
+  const peak = Math.max(peakOf(mix.left), peakOf(mix.right));
+  if (peak > 0.89) applyGainStereo(mix, 0.89 / peak);
+
+  const wavOut = exportWav(mix);
+  const outPath = `projects/${projectId}/masters/working-mix-${Date.now()}.wav`;
+  const { error: upErr } = await service.storage
+    .from(getStorageBucket())
+    .upload(outPath, wavOut, { contentType: "audio/wav", upsert: true });
+  if (upErr) {
+    log.push(`upload failed: ${upErr.message}`);
+    return null;
+  }
+
+  try {
+    await service.from("audio_versions").insert({
+      project_id: projectId,
+      kind: "working_mix",
+      audio_path: outPath,
+      version: Date.now() % 100000,
+      metadata: { source: "console_working_mix", layerCount, log: log.slice(0, 20) },
+    });
+  } catch {
+    /* schema may differ */
+  }
+
+  return { buffer: wavOut, path: outPath, layerCount, log };
+}
+
 
 export async function GET(
   _req: Request,
@@ -548,11 +674,25 @@ export async function POST(
     (meta.tweak_original_master_path as string) ||
     null;
   let masterLoad = await loadMasterBuffer(service, projectId);
+  let workingMixLog: string[] = [];
+  let usedWorkingMix = false;
   if (!masterLoad) {
-    return NextResponse.json(
-      { error: "No master audio found to tweak. Produce the song first." },
-      { status: 404 }
-    );
+    const built = await buildWorkingMix(service, projectId);
+    if (!built) {
+      return NextResponse.json(
+        {
+          error:
+            "Nothing on the timeline to mix yet — add a beat and at least one take, then try again.",
+        },
+        { status: 404 }
+      );
+    }
+    masterLoad = { buffer: built.buffer, path: built.path };
+    workingMixLog = built.log;
+    usedWorkingMix = true;
+    meta.tweak_latest_path = built.path;
+    // Working mix is the baseline for this prompt (not a full Produce master)
+    meta.tweak_original_master_path = built.path;
   }
 
   // On first tweak, remember original path
@@ -657,23 +797,26 @@ export async function POST(
     .maybeSingle();
   const nextVer = (lastVer?.version || 0) + 1;
 
+  const versionKind = usedWorkingMix ? "working_mix" : "master";
   await service.from("audio_versions").insert({
     project_id: projectId,
-    kind: "master",
+    kind: versionKind,
     version: nextVer,
     audio_path: outPath,
     metadata: {
-      source: "prompt_tweak",
+      source: usedWorkingMix ? "console_working_mix_tweak" : "prompt_tweak",
       tweak_version: history.currentVersion,
       summary: history.versions[history.currentVersion - 1]?.summary || "original",
+      working_mix_log: usedWorkingMix ? workingMixLog.slice(0, 24) : undefined,
     },
   });
 
   meta.tweak_history = history;
   meta.tweak_latest_path = outPath;
+  // Do not force project status to complete — full Produce remains a separate deliberate action
   await service
     .from("projects")
-    .update({ metadata: meta, status: "complete" })
+    .update({ metadata: meta })
     .eq("id", projectId);
 
   const masterUrl = await resolveAudioUrl(outPath, 3600);
@@ -686,13 +829,31 @@ export async function POST(
       "This one’s tracking well and looks clean for export — keep exploring if you want, or download when you’re ready.";
   }
 
+  const summaryText =
+    history.currentVersion > 0
+      ? history.versions[history.currentVersion - 1]?.summary
+      : "Reverted to original master";
+
+  const plainParts: string[] = [];
+  if (usedWorkingMix) {
+    plainParts.push(
+      `mind: built a working mix from the timeline (${workingMixLog.filter((l) => l.startsWith("working_mix:layer")).length} vocal layers + beat) — not a full Produce`
+    );
+  }
+  if (summaryText) plainParts.push(`mind: ${summaryText}`);
+  if (toolkitDecision?.plain_summary) plainParts.push(`restore: ${toolkitDecision.plain_summary}`);
+  if (toolkitDecision?.tool_calls?.length) {
+    plainParts.push(
+      `mind: tools → ${toolkitDecision.tool_calls.map((c) => `${c.tool}${c.target && c.target !== "song" ? `@${c.target}` : ""}`).join(", ")}`
+    );
+  }
+
   return NextResponse.json({
     ok: true,
+    scope: "song",
     interpret,
-    summary:
-      history.currentVersion > 0
-        ? history.versions[history.currentVersion - 1]?.summary
-        : "Reverted to original master",
+    summary: summaryText,
+    plain: plainParts.join(" · ") || summaryText,
     currentVersion: history.currentVersion,
     versions: history.versions.map((v) => ({
       version: v.version,
@@ -701,6 +862,8 @@ export async function POST(
       at: v.at,
     })),
     master_url: masterUrl,
+    working_mix: usedWorkingMix,
+    working_mix_log: usedWorkingMix ? workingMixLog.slice(0, 24) : undefined,
     safety: "True-peak held near -1 dBTP",
     commercial,
     doneSignal,
