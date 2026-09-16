@@ -23,6 +23,10 @@ export type SpaceQC = {
   reverbWet: number;
   delayWet: number;
   reverted: boolean;
+  /** AP SPACE character when performance-aware path ran */
+  character?: string;
+  confidence?: number;
+  notes?: string[];
 };
 
 /** Stronger room cleanup still under over-clean guard. */
