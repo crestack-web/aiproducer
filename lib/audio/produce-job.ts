@@ -4,7 +4,7 @@ import { RoExMixProvider } from "@/lib/providers/roex";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";
 import { resolveAudioUrl } from "@/lib/storage";
 import { getRoexEnv } from "@/lib/env";
-import { checkProjectProduceReady } from "@/lib/production/readiness";
+import { checkProjectProduceReady } from "@/lib/production/check-project-produce-ready";
 
 export type RecordingRow = { id: string; task_id: string; is_selected: boolean | null };
 export type TakeRow = {
