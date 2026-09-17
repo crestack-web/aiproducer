@@ -1,13 +1,11 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { useTheme } from "@/lib/theme";
-import { CoverArt } from "@/components/studio-player";
 
 const GENRES = [
   "R&B",
@@ -104,6 +102,9 @@ type Project = {
   genre: string | null;
   mood: string | null;
   updated_at: string;
+  has_beat?: boolean;
+  has_master?: boolean;
+  tempo?: number | null;
 };
 
 function statusLabel(s: string) {
@@ -147,6 +148,11 @@ function StudioPageInner() {
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [loadingPlayId, setLoadingPlayId] = useState<string | null>(null);
+  const [beatUrls, setBeatUrls] = useState<Record<string, string>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const tempoLabel = tempo < 90 ? "Slow" : tempo < 125 ? "Medium" : "Fast";
 
   useEffect(() => {
@@ -169,7 +175,7 @@ function StudioPageInner() {
       const res = await fetch("/api/projects");
       if (res.ok) {
         const json = await res.json();
-        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft"));
+        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft" && p.status !== "failed"));
       }
       setLoading(false);
     })();
@@ -436,7 +442,112 @@ function StudioPageInner() {
     router.replace("/");
   }
 
-  const inProgress = projects.filter((p) => p.status !== "complete" && p.status !== "failed");
+
+  const beats = projects.filter(
+    (p) => p.has_beat || ["beat_ready", "analyzing", "blueprint_ready", "recording", "generating_beat"].includes(p.status)
+  );
+
+  async function ensureBeatUrl(projectId: string): Promise<string | null> {
+    if (beatUrls[projectId]) return beatUrls[projectId];
+    const res = await fetch(`/api/projects/${projectId}/beat`);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const url = typeof j.audio_url === "string" ? j.audio_url : null;
+    if (url) setBeatUrls((prev) => ({ ...prev, [projectId]: url }));
+    return url;
+  }
+
+  async function togglePlayBeat(projectId: string) {
+    try {
+      if (playingId === projectId && audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+        setPlayingId(null);
+        return;
+      }
+      setLoadingPlayId(projectId);
+      const url = await ensureBeatUrl(projectId);
+      setLoadingPlayId(null);
+      if (!url) {
+        setError("Could not load this beat for playback.");
+        return;
+      }
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+        audioRef.current.preload = "auto";
+        audioRef.current.addEventListener("ended", () => setPlayingId(null));
+        audioRef.current.addEventListener("pause", () => {
+          if (audioRef.current && audioRef.current.paused) {
+            /* keep playingId if seeking */
+          }
+        });
+      }
+      const a = audioRef.current;
+      if (playingId && playingId !== projectId) {
+        a.pause();
+      }
+      if (a.src !== url) {
+        a.src = url;
+      }
+      await a.play();
+      setPlayingId(projectId);
+      setError(null);
+    } catch (e) {
+      setLoadingPlayId(null);
+      setPlayingId(null);
+      setError(e instanceof Error ? e.message : "Playback failed");
+    }
+  }
+
+  async function downloadBeat(projectId: string, title: string) {
+    try {
+      setLoadingPlayId(projectId);
+      const url = await ensureBeatUrl(projectId);
+      setLoadingPlayId(null);
+      if (!url) {
+        setError("Could not get download link for this beat.");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
+      a.target = "_blank";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      setLoadingPlayId(null);
+      setError(e instanceof Error ? e.message : "Download failed");
+    }
+  }
+
+  async function deleteBeatProject(projectId: string) {
+    if (!confirm("Delete this beat and its session? This cannot be undone.")) return;
+    setDeletingId(projectId);
+    try {
+      if (playingId === projectId && audioRef.current) {
+        audioRef.current.pause();
+        setPlayingId(null);
+      }
+      const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not delete");
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setBeatUrls((prev) => {
+        const next = { ...prev };
+        delete next[projectId];
+        return next;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+
 
   const chip = (on: boolean): CSSProperties => ({
     padding: "5px 10px",
@@ -844,43 +955,132 @@ function StudioPageInner() {
           </button>
         </div>
 
-        {!loading && inProgress.length > 0 && (
-          <div style={{ marginTop: 36 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: 1.2, textTransform: "uppercase", color: C.textFaint, marginBottom: 12 }}>
-              Continue a session
+        {!loading && beats.length > 0 && (
+          <div style={{ marginTop: 28, maxWidth: 560 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 650,
+                letterSpacing: 1.1,
+                textTransform: "uppercase",
+                color: C.textFaint,
+                marginBottom: 10,
+              }}
+            >
+              Your beats
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {inProgress.slice(0, 6).map((p) => {
+              {beats.slice(0, 20).map((p) => {
+                const isPlaying = playingId === p.id;
+                const busy = loadingPlayId === p.id || deletingId === p.id;
                 return (
                   <div
                     key={p.id}
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 12,
-                      padding: 12,
+                      gap: 10,
+                      padding: "10px 12px",
                       borderRadius: 14,
                       background: C.surface,
-                      border: `1px solid ${C.border}`,
+                      border: `1px solid ${isPlaying ? C.brassLine || C.brass : C.border}`,
                       color: C.text,
                     }}
                   >
-                    <CoverArt seed={p.id + (p.title || "")} size={48} />
+                    <button
+                      type="button"
+                      aria-label={isPlaying ? "Pause beat" : "Play beat"}
+                      disabled={busy}
+                      onClick={() => togglePlayBeat(p.id)}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 999,
+                        border: "none",
+                        flexShrink: 0,
+                        cursor: busy ? "wait" : "pointer",
+                        background: isPlaying
+                          ? `linear-gradient(180deg, #F0BC80, ${C.brass})`
+                          : C.bgDeep,
+                        color: isPlaying ? "#1A1208" : C.brass,
+                        display: "grid",
+                        placeItems: "center",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        fontFamily: "inherit",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      {loadingPlayId === p.id ? "…" : isPlaying ? "❚❚" : "▶"}
+                    </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
-                      <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13.5,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {p.title}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 2 }}>
                         {statusLabel(p.status)}
-                        {[p.genre, p.mood].filter(Boolean).length ? ` · ${[p.genre, p.mood].filter(Boolean).join(" · ")}` : ""}
+                        {[p.genre, p.mood].filter(Boolean).length
+                          ? ` · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`
+                          : ""}
+                        {isPlaying ? " · Playing" : ""}
                       </div>
                     </div>
-                    <Link href={`/app/studio/${p.id}`} style={{ color: C.brass, fontSize: 13, fontWeight: 600, textDecoration: "none" }}>Booth</Link>
-                    <Link href={`/app/console/${p.id}`} style={{ color: C.textMuted, fontSize: 12, fontWeight: 600, textDecoration: "none", marginLeft: 8 }}>Console</Link>
+                    <button
+                      type="button"
+                      title="Download beat"
+                      disabled={busy}
+                      onClick={() => downloadBeat(p.id, p.title)}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${C.border}`,
+                        background: "transparent",
+                        color: C.textMuted,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        cursor: busy ? "wait" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Download
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete beat"
+                      disabled={busy}
+                      onClick={() => deleteBeatProject(p.id)}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${C.border}`,
+                        background: "transparent",
+                        color: deletingId === p.id ? "#ff8a8a" : C.textFaint,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        cursor: busy ? "wait" : "pointer",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {deletingId === p.id ? "…" : "Delete"}
+                    </button>
                   </div>
                 );
               })}
             </div>
+            <p style={{ margin: "10px 0 0", fontSize: 11.5, color: C.textFaint, lineHeight: 1.4 }}>
+              Play stays on this page. Open a project from Library when you are ready to record or produce.
+            </p>
           </div>
         )}
+
       </div>
     </AppShell>
   );
