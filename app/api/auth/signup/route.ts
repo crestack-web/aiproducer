@@ -77,23 +77,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg || "Could not create account" }, { status: 502 });
     }
 
-    // Prefer signup confirmation link; fall back to magiclink
+    // Generate confirmation link — types require password for "signup", not for magiclink
     let actionLink: string | null = null;
-    for (const type of ["signup", "magiclink"] as const) {
-      const { data, error } = await service.auth.admin.generateLink({
-        type,
+
+    const signupLink = await service.auth.admin.generateLink({
+      type: "signup",
+      email,
+      password,
+      options: { redirectTo },
+    });
+    if (!signupLink.error) {
+      actionLink =
+        signupLink.data?.properties?.action_link ||
+        (signupLink.data as { action_link?: string } | undefined)?.action_link ||
+        null;
+    } else {
+      console.warn("[signup] generateLink signup", signupLink.error.message);
+      const magic = await service.auth.admin.generateLink({
+        type: "magiclink",
         email,
         options: { redirectTo },
       });
-      if (error) {
-        console.warn("[signup] generateLink", type, error.message);
-        continue;
+      if (!magic.error) {
+        actionLink =
+          magic.data?.properties?.action_link ||
+          (magic.data as { action_link?: string } | undefined)?.action_link ||
+          null;
+      } else {
+        console.warn("[signup] generateLink magiclink", magic.error.message);
       }
-      actionLink =
-        data?.properties?.action_link ||
-        (data as { action_link?: string } | undefined)?.action_link ||
-        null;
-      if (actionLink) break;
     }
 
     if (!actionLink) {
@@ -111,7 +123,7 @@ export async function POST(req: Request) {
     const confirmHtml = shellEmail(
       "Confirm your email",
       `<p style="margin:0 0 14px;">Welcome to ${STUDIO_NAME}. Tap the button to confirm your email and open the booth.</p>
-       <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Confirm email</a></p>
+       <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:700;">Confirm email</a></p>
        <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t sign up, ignore this email.</p>`
     );
 
@@ -133,7 +145,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Welcome is best-effort — confirmation is the critical path
     try {
       const welcome = welcomeEmailHtml({ appUrl: origin });
       await sendResendEmail({
