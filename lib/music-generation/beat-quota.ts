@@ -38,6 +38,7 @@ export function estimateBeatCostUsd(durationSec: number): number {
   return Math.round(sec * estimatedMusicCostUsdPerSec() * 10000) / 10000;
 }
 
+/** Monthly paid beat allowance in seconds (env-overridable). */
 function getPaidSecondsBudget(): number {
   // Prefer explicit seconds budget; fall back to count × free cap for backwards compat
   const sec = Number(process.env.BEAT_GEN_PAID_SECONDS_PER_MONTH || "");
