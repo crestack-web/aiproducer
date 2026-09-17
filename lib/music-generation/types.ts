@@ -46,6 +46,10 @@ export type MusicGenerationRequest = {
   instrumentalOnly?: boolean;
   energy?: string;
   structure?: string;
+  /** e.g. heavy bass, 808-driven, acoustic guitar-led */
+  instrumentation?: string;
+  /** Artist / track feel reference (style matching, not cloning) */
+  referenceStyle?: string;
   kind?: GenerationKind;
   referenceAudioUrl?: string;
   idempotencyKey?: string;
@@ -65,6 +69,8 @@ export type MusicGenerationPlan = {
   reason?: string;
   energy?: string;
   structure?: string;
+  instrumentation?: string;
+  referenceStyle?: string;
 };
 
 export type GeneratedMusicAsset = {
