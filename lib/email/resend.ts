@@ -58,7 +58,7 @@ export async function sendResendEmail(args: SendArgs): Promise<{ id?: string; er
   return { id: data.id };
 }
 
-function shell(title: string, bodyHtml: string): string {
+export function shellEmail(title: string, bodyHtml: string): string {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
@@ -87,7 +87,7 @@ function shell(title: string, bodyHtml: string): string {
 export function welcomeEmailHtml(opts: { name?: string; appUrl: string }): { subject: string; html: string; text: string } {
   const greet = opts.name ? `Hey ${opts.name}` : "Hey";
   const subject = `Welcome to ${STUDIO_NAME}`;
-  const html = shell(
+  const html = shellEmail(
     "Welcome to AP",
     `<p style="margin:0 0 14px;">${greet} — you’re in. Record with your real voice, follow a clear plan, and let AP mix and master a finished track.</p>
      <p style="margin:0 0 20px;"><a href="${opts.appUrl}/app" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Open studio</a></p>
@@ -99,7 +99,7 @@ export function welcomeEmailHtml(opts: { name?: string; appUrl: string }): { sub
 
 export function passwordResetEmailHtml(opts: { resetUrl: string }): { subject: string; html: string; text: string } {
   const subject = `Reset your ${STUDIO_NAME} password`;
-  const html = shell(
+  const html = shellEmail(
     "Reset your password",
     `<p style="margin:0 0 14px;">We received a request to reset your password. Use the button below — it expires soon.</p>
      <p style="margin:0 0 20px;"><a href="${opts.resetUrl}" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Choose new password</a></p>

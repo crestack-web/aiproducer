@@ -145,7 +145,23 @@ export default function AuthPage() {
           password,
         });
         if (err) {
-          setError(err.message);
+          const msg = err.message || "";
+          if (/invalid login credentials|invalid credentials/i.test(msg)) {
+            setError(
+              "Invalid email or password. If you just signed up, confirm your email first (check inbox/spam). You can also use Forgot password."
+            );
+          } else if (/email not confirmed/i.test(msg)) {
+            setError("Confirm your email before logging in. Check inbox/spam for the AP message.");
+            try {
+              await fetch("/api/auth/send-confirm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: email.trim() }),
+              });
+            } catch { /* ignore */ }
+          } else {
+            setError(msg);
+          }
           return;
         }
         router.replace(next);
@@ -159,26 +175,38 @@ export default function AuthPage() {
         password,
       });
       if (err) {
-        setError(err.message);
+        if (/already registered|already been registered|user already exists/i.test(err.message)) {
+          setError("That email already has an account. Log in, or use Forgot password if you need access.");
+          setMode("login");
+        } else {
+          setError(err.message);
+        }
         return;
       }
 
-      // Branded welcome via Resend (best-effort)
+      // Welcome + confirmation via Resend (best-effort)
       try {
         await fetch("/api/auth/send-welcome", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: email.trim() }),
         });
-      } catch {
-        /* non-blocking */
-      }
+      } catch { /* non-blocking */ }
+      try {
+        await fetch("/api/auth/send-confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim() }),
+        });
+      } catch { /* non-blocking */ }
 
       if (data.session) {
         router.replace(next);
         router.refresh();
       } else {
-        setInfo("Check your email to confirm your account, then log in.");
+        setInfo(
+          "Account created. Check your email (and spam) to confirm, then log in. If no email arrives, set RESEND_FROM_EMAIL to a verified domain in Resend."
+        );
         setMode("login");
       }
     } catch (err) {

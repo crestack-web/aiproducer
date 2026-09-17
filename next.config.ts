@@ -3,40 +3,35 @@ import type { NextConfig } from "next";
 const STUDIO_LOGO =
   "https://res.cloudinary.com/dzjoqbg2u/image/upload/v1786866729/Untitled_-_August_15_2026_at_17.55.54-2_ipkio0.png";
 
-const nextConfig: NextConfig = {
-  // Vercel Supabase integration often sets SUPABASE_URL / SUPABASE_ANON_KEY (server-only).
-  // Map them into NEXT_PUBLIC_* at build so the browser client can connect.
-  env: {
-    NEXT_PUBLIC_SUPABASE_URL:
-      process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY:
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.SUPABASE_PUBLISHABLE_KEY ||
-      "",
-  },
+/** Prefer non-empty values so we never bake "" into the client bundle. */
+function publicEnv() {
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ||
+    process.env.SUPABASE_URL?.trim() ||
+    "";
+  const anon =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
+    process.env.SUPABASE_ANON_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    process.env.SUPABASE_PUBLISHABLE_KEY?.trim() ||
+    "";
+  const out: Record<string, string> = {};
+  if (url) out.NEXT_PUBLIC_SUPABASE_URL = url;
+  if (anon) out.NEXT_PUBLIC_SUPABASE_ANON_KEY = anon;
+  return out;
+}
 
-  reactStrictMode: true,
-  // Keep ffmpeg-static out of webpack bundling; load via require at runtime
+const nextConfig: NextConfig = {
+  // Vercel Supabase integration often sets server-only SUPABASE_* vars.
+  // Map them into NEXT_PUBLIC_* at build so the browser can auth.
+  env: publicEnv(),
+  // Avoid bundling native/binary packages into the serverless trace incorrectly.
   serverExternalPackages: ["ffmpeg-static"],
-  // Ensure the native binary is copied into Vercel serverless function traces
-  outputFileTracingIncludes: {
-    "/api/**/*": [
-      "./node_modules/ffmpeg-static/**/*",
-    ],
-    "/*": [
-      "./node_modules/ffmpeg-static/**/*",
-    ],
-  },
-  images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "res.cloudinary.com",
-        pathname: "/**",
-      },
-    ],
+  // Ensure large audio uploads work on Node runtime
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "50mb",
+    },
   },
   async redirects() {
     return [
