@@ -18,4 +18,5 @@ export {
 } from "./beat-quota";
 export type { BeatQuotaSnapshot } from "./beat-quota";
 export { ReplicateMusicProvider } from "./replicate-provider";
+export { ElevenLabsMusicProvider, buildElevenLabsCompositionPlan } from "./elevenlabs-provider";
 export { MockMusicProvider } from "./mock-provider";
