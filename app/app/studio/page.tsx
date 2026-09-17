@@ -11,6 +11,15 @@ import { CoverArt } from "@/components/studio-player";
 
 const GENRES = ["R&B", "Afrobeats", "Hip-Hop", "Pop", "Amapiano", "Gospel", "Highlife"];
 const MOODS = ["Emotional", "Confident", "Dark", "Romantic", "Energetic", "Chill"];
+const ENERGIES = ["Intimate", "Laid-back", "Driving", "Explosive"];
+const INSTRUMENTATION = [
+  "808-driven",
+  "Heavy bass",
+  "Acoustic guitar-led",
+  "Keys / pad-led",
+  "Live drums",
+  "Sparse minimal",
+];
 type Project = {
   id: string;
   title: string;
@@ -51,6 +60,11 @@ function StudioPageInner() {
   const [mood, setMood] = useState("Emotional");
   const [prompt, setPrompt] = useState("");
   const [tempo, setTempo] = useState(104);
+  const [energy, setEnergy] = useState("Driving");
+  const [instrumentation, setInstrumentation] = useState("808-driven");
+  const [referenceStyle, setReferenceStyle] = useState("");
+  const [clarifyOpen, setClarifyOpen] = useState(false);
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -232,9 +246,26 @@ function StudioPageInner() {
   async function createAndGenerate() {
     setCreating(true);
     setError(null);
+    setLimitMessage(null);
     let projectId: string | null = null;
     try {
       if (beatMode === "upload" && !beatFile) throw new Error("Choose a beat file to upload");
+
+      // Vague prompt + AI mode → ask for specificity instead of wasting a credit
+      if (beatMode === "ai") {
+        const p = prompt.trim().toLowerCase();
+        const vague =
+          !p ||
+          p.length < 12 ||
+          /^(make|create|give|generate)\s+(me\s+)?(a\s+)?(beat|track|instrumental)/i.test(p);
+        if (vague && !clarifyOpen && !energy && !instrumentation) {
+          setClarifyOpen(true);
+          setCreating(false);
+          setError("Quick check — pick energy and instrumentation so AP can match what you hear.");
+          return;
+        }
+        setClarifyOpen(true); // show advanced controls if not already
+      }
 
       const createRes = await fetch("/api/projects", {
         method: "POST",
@@ -263,10 +294,26 @@ function StudioPageInner() {
         const beatRes = await fetch(`/api/projects/${project.id}/generate-beat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ genre, mood, tempo, prompt: prompt.trim() || undefined }),
+          body: JSON.stringify({
+            genre,
+            mood,
+            tempo,
+            prompt: prompt.trim() || undefined,
+            energy,
+            instrumentation,
+            referenceStyle: referenceStyle.trim() || undefined,
+          }),
         });
         if (!beatRes.ok) {
           const j = await beatRes.json().catch(() => ({}));
+          if (j.errorType === "LIMIT_EXCEEDED" || j.code === "BEAT_GEN_LIMIT") {
+            setLimitMessage(
+              typeof j.error === "string"
+                ? j.error
+                : "You've used your free beat generation. Subscribe or finish and download a song to unlock another."
+            );
+            throw new Error(typeof j.error === "string" ? j.error : "Beat generation limit reached");
+          }
           throw new Error(
             (typeof j.error === "string" && j.error) || "Beat generation failed (not upload)"
           );
@@ -384,6 +431,52 @@ function StudioPageInner() {
             <input type="range" min={60} max={160} value={tempo} onChange={(e) => setTempo(Number(e.target.value))} aria-label="Tempo" style={{ width: "100%" }} />
           </div>
 
+          {beatMode === "ai" && (
+            <>
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Energy</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {ENERGIES.map((e) => (
+                    <button key={e} type="button" style={chip(energy === e)} onClick={() => setEnergy(e)}>
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Instrumentation</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {INSTRUMENTATION.map((ins) => (
+                    <button key={ins} type="button" style={chip(instrumentation === ins)} onClick={() => setInstrumentation(ins)}>
+                      {ins}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
+                  Style reference <span style={{ fontWeight: 500, opacity: 0.7 }}>(optional)</span>
+                </div>
+                <input
+                  type="text"
+                  value={referenceStyle}
+                  onChange={(e) => setReferenceStyle(e.target.value)}
+                  placeholder="e.g. early Wizkid · Tems · 2016 Drake feel"
+                  style={{
+                    width: "100%",
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: C.bgDeep,
+                    color: C.text,
+                    padding: "12px 14px",
+                    fontSize: 14,
+                    fontFamily: "inherit",
+                  }}
+                />
+              </div>
+            </>
+          )}
+
           <div style={{ marginTop: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Beat source</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -426,6 +519,47 @@ function StudioPageInner() {
             </div>
           )}
 
+          {limitMessage && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: "14px 16px",
+                borderRadius: 14,
+                border: `1px solid ${C.brass || "#E7A961"}`,
+                background: "rgba(231,169,97,0.08)",
+                fontSize: 14,
+                lineHeight: 1.45,
+                color: C.text,
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Beat generation limit</div>
+              <div style={{ color: C.textMuted || C.text, marginBottom: 12 }}>{limitMessage}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => router.push("/app?tab=library")}
+                  style={{
+                    ...chip(false),
+                    borderColor: C.brass || "#E7A961",
+                    color: C.brass || "#E7A961",
+                    fontWeight: 700,
+                  }}
+                >
+                  Finish a song in Library
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push("/app?tab=profile")}
+                  style={{
+                    ...chip(true),
+                    fontWeight: 700,
+                  }}
+                >
+                  View plans
+                </button>
+              </div>
+            </div>
+          )}
           {error && (
             <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 13.5 }}>
               {error}
