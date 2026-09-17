@@ -354,96 +354,209 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <div style={eyebrow}>◆ HOME</div>
-            <h1 style={h1}>
-              {userName && userName !== "Artist" ? (
-                <>
-                  Welcome back,
-                  <br />
-                  <span style={{ fontStyle: "italic", fontWeight: 400 }}>{userName}</span>
-                </>
-              ) : (
-                <>Welcome back</>
-              )}
-            </h1>
-            <p style={sub}>
-              Start a session in Booth for guided recording, or open Console for the full timeline — same projects either way.
-            </p>
-
-            <div
+            {/* Studio floor hero — session energy, not SaaS dashboard */}
+            <section
+              className="dash-hero"
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 12,
-                marginTop: 28,
+                position: "relative",
+                overflow: "hidden",
+                borderRadius: 20,
+                border: `1px solid ${C.border}`,
+                background: `radial-gradient(ellipse 90% 80% at 12% 0%, ${C.brassSoft || "rgba(231,169,97,.14)"} 0%, transparent 55%), radial-gradient(ellipse 70% 60% at 100% 20%, rgba(123,235,212,.1) 0%, transparent 50%), ${C.surface}`,
+                padding: "28px 22px 24px",
+                marginBottom: 8,
               }}
             >
-              <button
-                type="button"
-                onClick={() => router.push("/app/studio")}
+              <div
+                aria-hidden
                 style={{
-                  ...primary,
+                  position: "absolute",
+                  right: 16,
+                  top: 18,
                   display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 6,
-                  padding: "18px 18px",
-                  textAlign: "left",
-                  minHeight: 108,
+                  alignItems: "flex-end",
+                  gap: 3,
+                  height: 44,
+                  opacity: 0.55,
+                  pointerEvents: "none",
                 }}
               >
-                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", opacity: 0.85 }}>BOOTH</span>
-                <span style={{ fontSize: 17, fontWeight: 700 }}>New session</span>
-                <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.8, lineHeight: 1.35 }}>
-                  Guided plan + record — easiest path for vocals
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push("/app/studio?mode=console")}
-                style={{
-                  ...secondary,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 6,
-                  padding: "18px 18px",
-                  textAlign: "left",
-                  minHeight: 108,
-                  borderColor: C.brassLine || C.border,
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: C.brass }}>CONSOLE</span>
-                <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>New in Console</span>
-                <span style={{ fontSize: 13, fontWeight: 500, color: C.textMuted, lineHeight: 1.35 }}>
-                  AI timeline — arrange, record, and direct the mix
-                </span>
-              </button>
-            </div>
+                {[10, 22, 14, 32, 18, 28, 12, 36, 16, 24, 11, 30, 15, 20].map((h, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      width: 3,
+                      height: h,
+                      borderRadius: 2,
+                      background:
+                        i % 3 === 0
+                          ? C.brass || "#E7A961"
+                          : i % 2 === 0
+                            ? "rgba(123,235,212,.75)"
+                            : C.textFaint || "rgba(255,255,255,.25)",
+                    }}
+                  />
+                ))}
+              </div>
 
-            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
-                onClick={() => {
-                  setTab("library");
-                  router.replace("/app?tab=library");
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.14em",
+                  color: C.brass,
+                  textTransform: "uppercase",
+                  marginBottom: 10,
                 }}
               >
-                Library
-              </button>
-              <button
-                type="button"
-                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
-                onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}
+                ◆ Live floor
+              </div>
+
+              <h1
+                style={{
+                  ...h1,
+                  margin: "0 0 10px",
+                  maxWidth: 520,
+                  fontSize: "clamp(1.65rem, 4.2vw, 2.15rem)",
+                  lineHeight: 1.15,
+                }}
               >
-                How it works
-              </button>
-            </div>
+                {userName && userName !== "Artist" ? (
+                  <>
+                    <span style={{ fontWeight: 500, color: C.textMuted, fontSize: "0.72em", display: "block", marginBottom: 6 }}>
+                      Hey {userName}
+                    </span>
+                    Ready when you are.
+                    <br />
+                    <em style={{ fontStyle: "italic", fontWeight: 400, color: C.text }}>Mic up. Drop a beat.</em>
+                  </>
+                ) : (
+                  <>
+                    Ready when you are.
+                    <br />
+                    <em style={{ fontStyle: "italic", fontWeight: 400 }}>Mic up. Drop a beat.</em>
+                  </>
+                )}
+              </h1>
+
+              <p
+                style={{
+                  ...sub,
+                  margin: "0 0 22px",
+                  maxWidth: 440,
+                  fontSize: 14.5,
+                  lineHeight: 1.5,
+                }}
+              >
+                This is your booth — not a project manager. Load a beat, follow the plan, stack vocals, and leave with a mix.
+              </p>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: 12,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => router.push("/app/studio")}
+                  style={{
+                    ...primary,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    padding: "16px 18px",
+                    textAlign: "left",
+                    minHeight: 100,
+                    borderRadius: 14,
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", opacity: 0.9 }}>
+                    ● RECORD
+                  </span>
+                  <span style={{ fontSize: 16, fontWeight: 700 }}>Open the booth</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, opacity: 0.85, lineHeight: 1.35 }}>
+                    Guided session — beat in, vocals on the grid
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push("/app/studio?mode=console")}
+                  style={{
+                    ...secondary,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    padding: "16px 18px",
+                    textAlign: "left",
+                    minHeight: 100,
+                    borderRadius: 14,
+                    borderColor: C.brassLine || C.border,
+                    background: "transparent",
+                  }}
+                >
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.brass }}>
+                    ▣ BOARD
+                  </span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Open console</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: C.textMuted, lineHeight: 1.35 }}>
+                    Timeline, layers, and mix direction
+                  </span>
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  marginTop: 16,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <button
+                  type="button"
+                  style={{
+                    ...secondary,
+                    padding: "8px 12px",
+                    fontSize: 12.5,
+                    borderRadius: 999,
+                    background: "transparent",
+                  }}
+                  onClick={() => {
+                    setTab("library");
+                    router.replace("/app?tab=library");
+                  }}
+                >
+                  Tape library
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...secondary,
+                    padding: "8px 12px",
+                    fontSize: 12.5,
+                    borderRadius: 999,
+                    background: "transparent",
+                  }}
+                  onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}
+                >
+                  How a session runs
+                </button>
+                {!loading && projects.length > 0 && (
+                  <span style={{ fontSize: 12, color: C.textFaint, marginLeft: 4 }}>
+                    {projects.length} on the desk
+                  </span>
+                )}
+              </div>
+            </section>
 
             <div
               style={{
-                marginTop: 40,
+                marginTop: 28,
                 fontSize: 12,
                 fontWeight: 600,
                 letterSpacing: 1.2,
@@ -451,8 +564,9 @@ function AppInner() {
                 textTransform: "uppercase",
               }}
             >
-              Recent projects
+              On the desk
             </div>
+
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
               {!loading && projects.length === 0 && (
