@@ -21,6 +21,7 @@ const BodySchema = z.object({
   instrumentation: z.string().max(120).optional(),
   referenceStyle: z.string().max(120).optional(),
   length_ms: z.number().int().min(3000).max(180000).optional(),
+  duration_sec: z.number().int().min(5).max(120).optional(),
   kind: z.enum(["preview", "full"]).optional(),
   idempotencyKey: z.string().max(200).optional(),
 });
@@ -43,12 +44,14 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const kind = parsed.data.kind || "preview";
-  const durationSec = parsed.data.length_ms
-    ? Math.round(parsed.data.length_ms / 1000)
-    : kind === "full"
-      ? 24
-      : 8;
+  const kind = parsed.data.kind || "full";
+  const durationSec = parsed.data.duration_sec
+    ? parsed.data.duration_sec
+    : parsed.data.length_ms
+      ? Math.round(parsed.data.length_ms / 1000)
+      : kind === "full"
+        ? Number(process.env.MUSIC_FULL_DURATION_SEC || 30)
+        : Number(process.env.MUSIC_PREVIEW_DURATION_SEC || 12);
 
   const service = createServiceClient();
 
