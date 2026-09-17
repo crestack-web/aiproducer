@@ -138,7 +138,7 @@ export function welcomeEmailHtml(opts: {
   name?: string;
   appUrl: string;
 }): { subject: string; html: string; text: string } {
-  const subject = `Welcome to APstudio`;
+  const subject = `Welcome to APstudio — you're part of the beginning`;
   const openUrl = `${opts.appUrl.replace(/\/$/, "")}/app`;
 
   const body = `
