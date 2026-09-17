@@ -54,7 +54,13 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
     started_at: job.started_at || new Date().toISOString(),
     attempts: (job.attempts || 0) + 1,
     provider: "ap-internal",
-    output_data: { ...out, mode: "ap", provider: "ap-internal" },
+    // Refresh claim lock so a long tick is not mistaken for a dead worker
+    output_data: {
+      ...out,
+      mode: "ap",
+      provider: "ap-internal",
+      tick_lock_at: new Date().toISOString(),
+    },
   });
   try {
     const result = await runInternalApProduceJob({

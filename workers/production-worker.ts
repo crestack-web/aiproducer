@@ -26,6 +26,9 @@ function log(event: string, extra?: Record<string, unknown>) {
 }
 
 async function processJob(jobId: string): Promise<void> {
+  // HEARTBEAT NOTE: lock is refreshed before each tick and at tick start (tickProduceJob).
+  // It is NOT updated mid-tick. STALE_MS (15m) must stay > WORKER_TICK_MS (default 4m).
+
   log("JOB_CLAIMED", { jobId });
   const supabase = createServiceClient();
   const maxRounds = 40;
