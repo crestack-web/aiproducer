@@ -20,8 +20,8 @@ const BodySchema = z.object({
   energy: z.string().max(40).optional(),
   instrumentation: z.string().max(120).optional(),
   referenceStyle: z.string().max(120).optional(),
-  length_ms: z.number().int().min(3000).max(180000).optional(),
-  duration_sec: z.number().int().min(5).max(120).optional(),
+  length_ms: z.number().int().min(3000).max(240000).optional(),
+  duration_sec: z.number().int().min(5).max(240).optional(),
   kind: z.enum(["preview", "full"]).optional(),
   idempotencyKey: z.string().max(200).optional(),
 });
