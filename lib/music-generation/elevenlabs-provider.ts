@@ -1,7 +1,7 @@
 /**
  * ElevenLabs Music API ("Eleven Music") — text-to-music with force_instrumental.
  * Docs: POST https://api.elevenlabs.io/v1/music
- * Duration: 3s–4min product max (API allows 5min). Returns audio bytes directly.
+ * Duration: 3s–5min. Returns audio bytes directly (not async poll).
  */
 import type { MusicGenerationProvider } from "./provider";
 import type {
@@ -12,26 +12,13 @@ import type {
 } from "./types";
 import { MusicGenerationError } from "./types";
 
-const BASE = (process.env.ELEVENLABS_API_BASE || "https://api.elevenlabs.io").replace(/\/$/, "");
-
-/** Max product beat length (4 minutes). */
-export const MAX_BEAT_DURATION_SEC = 240;
-
-function cleanKey(raw: string | undefined | null): string {
-  if (!raw) return "";
-  let k = String(raw).trim();
-  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
-    k = k.slice(1, -1).trim();
-  }
-  k = k.replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
-  return k;
-}
+const BASE = "https://api.elevenlabs.io";
 
 function apiKey(): string {
   const k =
-    cleanKey(process.env.ELEVENLABS_API_KEY) ||
-    cleanKey(process.env.ELEVEN_API_KEY) ||
-    cleanKey(process.env.XI_API_KEY);
+    process.env.ELEVENLABS_API_KEY?.trim() ||
+    process.env.ELEVEN_API_KEY?.trim() ||
+    process.env.XI_API_KEY?.trim();
   if (!k) {
     throw new MusicGenerationError("NOT_CONFIGURED", "ELEVENLABS_API_KEY is not configured", {
       provider: "elevenlabs",
@@ -42,37 +29,23 @@ function apiKey(): string {
 
 function modelId(): string {
   return (
-    cleanKey(process.env.ELEVENLABS_MUSIC_MODEL) ||
-    cleanKey(process.env.ELEVEN_MUSIC_MODEL) ||
+    process.env.ELEVENLABS_MUSIC_MODEL?.trim() ||
+    process.env.ELEVEN_MUSIC_MODEL?.trim() ||
     "music_v2"
   );
 }
 
 function outputFormat(): string {
-  return cleanKey(process.env.ELEVENLABS_MUSIC_OUTPUT_FORMAT) || "mp3_44100_128";
-}
-
-function authHeaders(): Record<string, string> {
-  const key = apiKey();
-  return {
-    "xi-api-key": key,
-    Authorization: `Bearer ${key}`,
-  };
+  // Stable MP3 that the rest of the pipeline already converts to WAV when needed
+  return process.env.ELEVENLABS_MUSIC_OUTPUT_FORMAT?.trim() || "mp3_44100_128";
 }
 
 function classifyHttpError(status: number, body: string): MusicGenerationError {
   const lower = body.toLowerCase();
-  if (status === 401) {
+  if (status === 401 || status === 403) {
     return new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      "ElevenLabs API key was rejected. Check ELEVENLABS_API_KEY on Vercel (no quotes, full key, redeploy after changing).",
-      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400) } }
-    );
-  }
-  if (status === 403) {
-    return new MusicGenerationError(
-      "AUTHENTICATION_ERROR",
-      "ElevenLabs Music API is not enabled for this key. Music requires a paid ElevenLabs plan with Music API access. Enable Music on elevenlabs.io then retry.",
+      "ElevenLabs authentication failed or Music API not enabled on this plan",
       { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400) } }
     );
   }
@@ -86,12 +59,12 @@ function classifyHttpError(status: number, body: string): MusicGenerationError {
   ) {
     return new MusicGenerationError(
       "BILLING_REQUIRED",
-      "ElevenLabs Music needs more credits or an upgraded plan on the ElevenLabs account.",
+      "ElevenLabs Music requires a paid ElevenLabs plan or more credits",
       { provider: "elevenlabs", retryable: false, details: { httpStatus: status } }
     );
   }
   if (status === 429 || lower.includes("rate limit") || lower.includes("too many")) {
-    return new MusicGenerationError("RATE_LIMITED", "ElevenLabs rate limit exceeded. Try again shortly.", {
+    return new MusicGenerationError("RATE_LIMITED", "ElevenLabs rate limit exceeded", {
       provider: "elevenlabs",
       retryable: true,
       details: { httpStatus: status },
@@ -125,9 +98,7 @@ async function readErrorBody(res: Response): Promise<string> {
       if (typeof j.detail === "string") return j.detail;
       if (Array.isArray(j.detail)) {
         return j.detail
-          .map((d) =>
-            typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)
-          )
+          .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
           .join("; ");
       }
       return text.slice(0, 500);
@@ -139,6 +110,10 @@ async function readErrorBody(res: Response): Promise<string> {
   }
 }
 
+/**
+ * Build section-aware composition plan chunks for music_v2 / music_v2_5.
+ * Keeps instrumental styles only (no lyrics).
+ */
 export function buildElevenLabsCompositionPlan(opts: {
   prompt: string;
   durationMs: number;
@@ -168,13 +143,14 @@ export function buildElevenLabsCompositionPlan(opts: {
   if (opts.bpm) styles.push(`${opts.bpm} bpm`);
   styles.push("instrumental", "no vocals", "no lyrics", "vocal-ready midrange");
 
-  const total = Math.max(6000, Math.min(240000, opts.durationMs));
+  const total = Math.max(6000, Math.min(300000, opts.durationMs));
+  // Simple AP-friendly structure: intro → verse space → chorus lift → outro
   const intro = Math.round(total * 0.12);
   const verse = Math.round(total * 0.32);
   const chorus = Math.round(total * 0.36);
   const outro = Math.max(3000, total - intro - verse - chorus);
-  const base = styles.slice(0, 8);
 
+  const base = styles.slice(0, 8);
   return {
     chunks: [
       {
@@ -214,17 +190,26 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
 
   maxDurationSec(kind: "preview" | "full"): number {
     if (kind === "preview") return Number(process.env.MUSIC_PREVIEW_DURATION_SEC || 12);
+    // Full beats for AP sessions — default 45s (API allows up to 300s)
     return Number(process.env.MUSIC_FULL_DURATION_SEC || 30);
   }
 
   async checkAvailability(): Promise<void> {
-    const res = await fetch(`${BASE}/v1/user`, { headers: { ...authHeaders() } });
+    // Lightweight probe — user endpoint; Music access is validated on first compose
+    const res = await fetch(`${BASE}/v1/user`, {
+      headers: { "xi-api-key": apiKey() },
+    });
     if (!res.ok) throw classifyHttpError(res.status, await readErrorBody(res));
   }
 
+  /**
+   * ElevenLabs Music is synchronous (audio body). We still implement submit/poll
+   * for interface compatibility by running generate in one shot when service calls generate().
+   */
   async submitPrediction(
     req: MusicGenerationRequest & { prompt: string }
   ): Promise<ProviderSubmitResult> {
+    // Service prefers generate() when present — this is a fallback path
     const result = await this.generate(req);
     return {
       providerPredictionId: result.providerPredictionId,
@@ -234,6 +219,7 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
   }
 
   async pollPrediction(providerPredictionId: string): Promise<ProviderPollResult> {
+    // Sync provider — nothing to poll
     return {
       status: "succeeded",
       outputUrl: null,
@@ -259,46 +245,72 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
     const maxSec = this.maxDurationSec(kind);
     const durationSec = Math.min(Math.max(req.durationSec ?? maxSec, 3), MAX_BEAT_DURATION_SEC);
     const musicLengthMs = Math.round(durationSec * 1000);
-    const model = modelId();
+    let model = modelId();
 
-    // Default: prompt + force_instrumental (most reliable). Composition plan is opt-in.
     const usePlan =
       (process.env.ELEVENLABS_MUSIC_USE_COMPOSITION_PLAN || "").trim() === "1" && model !== "music_v1";
 
-    const body: Record<string, unknown> = { model_id: model };
-
-    if (usePlan) {
-      body.composition_plan = buildElevenLabsCompositionPlan({
-        prompt: req.prompt,
-        durationMs: musicLengthMs,
-        genre: req.genre,
-        mood: req.mood,
-        energy: req.energy,
-        instrumentation: req.instrumentation,
-        bpm: req.bpm,
+    async function composeOnce(modelIdUsed: string): Promise<Response> {
+      const body: Record<string, unknown> = { model_id: modelIdUsed };
+      if (usePlan) {
+        body.composition_plan = buildElevenLabsCompositionPlan({
+          prompt: req.prompt,
+          durationMs: musicLengthMs,
+          genre: req.genre,
+          mood: req.mood,
+          energy: req.energy,
+          instrumentation: req.instrumentation,
+          bpm: req.bpm,
+        });
+      } else {
+        const prompt = /instrumental|no vocals|no lyrics/i.test(req.prompt)
+          ? req.prompt
+          : `${req.prompt}. Instrumental only. No vocals. No lyrics. No singing.`;
+        body.prompt = prompt.slice(0, 4100);
+        body.music_length_ms = musicLengthMs;
+        body.force_instrumental = true;
+      }
+      const url = `${BASE}/v1/music?output_format=${encodeURIComponent(outputFormat())}`;
+      return fetch(url, {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+          Accept: "audio/mpeg, application/json",
+        },
+        body: JSON.stringify(body),
       });
-    } else {
-      const prompt = /instrumental|no vocals|no lyrics/i.test(req.prompt)
-        ? req.prompt
-        : `${req.prompt}. Instrumental only. No vocals. No lyrics. No singing.`;
-      body.prompt = prompt.slice(0, 4100);
-      body.music_length_ms = musicLengthMs;
-      body.force_instrumental = true;
     }
 
-    const url = `${BASE}/v1/music?output_format=${encodeURIComponent(outputFormat())}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        ...authHeaders(),
-        "Content-Type": "application/json",
-        Accept: "audio/mpeg, application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    let res = await composeOnce(model);
+    // If newer model is denied, fall back to music_v1 once
+    if (!res.ok && (res.status === 401 || res.status === 403) && model !== "music_v1") {
+      const firstBody = await readErrorBody(res);
+      console.warn("[elevenlabs-music] model denied, retrying music_v1", res.status, firstBody.slice(0, 120));
+      model = "music_v1";
+      res = await composeOnce(model);
+    }
 
     if (!res.ok) {
-      throw classifyHttpError(res.status, await readErrorBody(res));
+      const errBody = await readErrorBody(res);
+      try {
+        const k = apiKey();
+        console.error(
+          "[elevenlabs-music]",
+          JSON.stringify({
+            status: res.status,
+            body: errBody.slice(0, 300),
+            keyLen: k.length,
+            keyLast4: k.slice(-4),
+            model,
+            music_length_ms: musicLengthMs,
+            usePlan,
+          })
+        );
+      } catch {
+        console.error("[elevenlabs-music]", res.status, errBody.slice(0, 200));
+      }
+      throw classifyHttpError(res.status, errBody);
     }
 
     const songId = res.headers.get("song-id") || res.headers.get("Song-Id") || `el-${Date.now()}`;
