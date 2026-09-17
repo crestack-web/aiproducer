@@ -7,6 +7,7 @@
 import { claimNextProduceJob, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
 import { tickProduceJob } from "../lib/audio/pipeline";
 import { createServiceClient } from "../lib/supabase/server";
+import { getSupabaseUrl, getSupabaseServiceRoleKey } from "../lib/supabase/env";
 
 const POLL_MS = Number(process.env.WORKER_POLL_MS || 2500);
 const TICK_MS = Number(process.env.WORKER_TICK_MS || 240_000);
@@ -81,16 +82,9 @@ async function loop() {
   log("WORKER_STARTED", { pollMs: POLL_MS, tickMs: TICK_MS });
 
   // Validate env early
-  const hasUrl =
-    Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) ||
-    Boolean(process.env.SUPABASE_URL?.trim());
-  const hasService =
-    Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) ||
-    Boolean(process.env.SUPABASE_SECRET_KEY?.trim());
-  if (!hasUrl || !hasService) {
+  if (!getSupabaseUrl() || !getSupabaseServiceRoleKey()) {
     log("WORKER_FATAL", {
-      error:
-        "Missing Supabase URL (NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL) or service key (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY)",
+      error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SECRET_KEY",
     });
     process.exit(1);
   }
