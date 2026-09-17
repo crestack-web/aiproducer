@@ -20,6 +20,10 @@ type TaskRow = {
   status?: string | null;
   start_ms?: number | null;
   end_ms?: number | null;
+  /** Canonical Producer View FX (column). Prefer over metadata.track_fx. */
+  track_fx?: Record<string, number> | null;
+  /** Canonical track chrome color (column). Prefer over metadata.track_color. */
+  track_color?: string | null;
   metadata?: {
     track_fx?: Record<string, number>;
     track_color?: string;
@@ -107,7 +111,19 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             const startMs = Number(tk.start_ms) || 0;
             const endMs = Number(tk.end_ms) || startMs + 8000;
             const meta = tk.metadata || {};
-            const tf = meta.track_fx;
+            // Prefer first-class columns; fall back to legacy metadata
+            const tfRaw =
+              tk.track_fx && typeof tk.track_fx === "object" && !Array.isArray(tk.track_fx)
+                ? tk.track_fx
+                : meta.track_fx && typeof meta.track_fx === "object"
+                  ? meta.track_fx
+                  : null;
+            const colorRaw =
+              typeof tk.track_color === "string" && tk.track_color
+                ? tk.track_color
+                : typeof meta.track_color === "string"
+                  ? meta.track_color
+                  : undefined;
             const sectionLabel =
               meta.section_label ||
               tk.song_sections?.label ||
@@ -121,18 +137,18 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               startMs,
               endMs,
               audioUrl: audioByTask.get(tk.id) || null,
-              color: typeof meta.track_color === "string" ? meta.track_color : undefined,
-              trackFx: tf
+              color: colorRaw,
+              trackFx: tfRaw
                 ? {
-                    gainDb: Number(tf.gainDb) || 0,
-                    eqLowDb: Number(tf.eqLowDb) || 0,
-                    eqMidDb: Number(tf.eqMidDb) || 0,
-                    eqHighDb: Number(tf.eqHighDb) || 0,
-                    compress: Number(tf.compress) || 0,
-                    reverb: Number(tf.reverb) || 0,
-                    delay: Number(tf.delay) || 0,
-                    saturation: Number(tf.saturation) || 0,
-                    pan: Number(tf.pan) || 0,
+                    gainDb: Number(tfRaw.gainDb) || 0,
+                    eqLowDb: Number(tfRaw.eqLowDb) || 0,
+                    eqMidDb: Number(tfRaw.eqMidDb) || 0,
+                    eqHighDb: Number(tfRaw.eqHighDb) || 0,
+                    compress: Number(tfRaw.compress) || 0,
+                    reverb: Number(tfRaw.reverb) || 0,
+                    delay: Number(tfRaw.delay) || 0,
+                    saturation: Number(tfRaw.saturation) || 0,
+                    pan: Number(tfRaw.pan) || 0,
                   }
                 : null,
             };

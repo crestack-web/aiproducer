@@ -15,6 +15,7 @@ const TrackFxSchema = z.object({
   reverb: z.number().min(0).max(1).optional(),
   delay: z.number().min(0).max(1).optional(),
   saturation: z.number().min(0).max(1).optional(),
+  pan: z.number().min(-1).max(1).optional(),
 });
 
 const PatchSchema = z.object({
@@ -25,9 +26,15 @@ const PatchSchema = z.object({
   track_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 });
 
+function asFxObject(v: unknown): Record<string, unknown> {
+  if (v && typeof v === "object" && !Array.isArray(v)) return { ...(v as Record<string, unknown>) };
+  return {};
+}
+
 /**
- * PATCH recording task timing / status / track_fx.
- * Console timeline edits — single source of truth on recording_tasks (shared with Booth).
+ * PATCH recording task timing / status / track_fx / track_color.
+ * Canonical FX + color live on recording_tasks.track_fx and track_color columns.
+ * metadata.* is dual-written for legacy readers only.
  */
 export async function PATCH(req: Request, ctx: Ctx) {
   const { user, error } = await requireUser();
@@ -50,13 +57,40 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   const service = createServiceClient();
-  const { data: task, error: loadErr } = await service
-    .from("recording_tasks")
-    .select("id, project_id, start_ms, end_ms, status, type, metadata")
-    .eq("id", id)
-    .maybeSingle();
+  let task: {
+    id: string;
+    project_id: string;
+    start_ms: number | null;
+    end_ms: number | null;
+    status: string | null;
+    type: string | null;
+    metadata: unknown;
+    track_fx?: unknown;
+    track_color?: string | null;
+  } | null = null;
 
-  if (loadErr || !task) {
+  {
+    const res = await service
+      .from("recording_tasks")
+      .select("id, project_id, start_ms, end_ms, status, type, metadata, track_fx, track_color")
+      .eq("id", id)
+      .maybeSingle();
+    if (!res.error && res.data) {
+      task = res.data as typeof task;
+    } else {
+      const fallback = await service
+        .from("recording_tasks")
+        .select("id, project_id, start_ms, end_ms, status, type, metadata")
+        .eq("id", id)
+        .maybeSingle();
+      if (fallback.error || !fallback.data) {
+        return NextResponse.json({ error: "Task not found" }, { status: 404 });
+      }
+      task = fallback.data as typeof task;
+    }
+  }
+
+  if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
@@ -65,7 +99,6 @@ export async function PATCH(req: Request, ctx: Ctx) {
     .select("id, user_id")
     .eq("id", task.project_id)
     .maybeSingle();
-
   if (!project || project.user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -75,25 +108,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (parsed.data.end_ms !== undefined) patch.end_ms = Math.round(parsed.data.end_ms);
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
 
-  if (parsed.data.track_fx || parsed.data.track_color) {
-    const prevMeta =
-      task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
-        ? (task.metadata as Record<string, unknown>)
-        : {};
-    const nextMeta: Record<string, unknown> = { ...prevMeta };
-    if (parsed.data.track_fx) {
-      const prevFx =
-        prevMeta.track_fx && typeof prevMeta.track_fx === "object"
-          ? (prevMeta.track_fx as Record<string, unknown>)
-          : {};
-      nextMeta.track_fx = { ...prevFx, ...parsed.data.track_fx };
-      nextMeta.track_fx_source = "producer_view";
-      nextMeta.track_fx_updated_at = new Date().toISOString();
-    }
-    if (parsed.data.track_color) {
-      nextMeta.track_color = parsed.data.track_color;
-    }
-    patch.metadata = nextMeta;
+  const prevMeta =
+    task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+      ? ({ ...(task.metadata as Record<string, unknown>) } as Record<string, unknown>)
+      : ({} as Record<string, unknown>);
+
+  if (parsed.data.track_fx) {
+    const base = asFxObject(task.track_fx != null ? task.track_fx : prevMeta.track_fx);
+    const merged = { ...base, ...parsed.data.track_fx };
+    patch.track_fx = merged;
+    prevMeta.track_fx = merged;
+    prevMeta.track_fx_source = "producer_view";
+    prevMeta.track_fx_updated_at = new Date().toISOString();
+    patch.metadata = prevMeta;
+  }
+
+  if (parsed.data.track_color) {
+    patch.track_color = parsed.data.track_color;
+    prevMeta.track_color = parsed.data.track_color;
+    patch.metadata = prevMeta;
   }
 
   if (patch.start_ms != null && patch.end_ms != null && (patch.end_ms as number) <= (patch.start_ms as number)) {
@@ -112,29 +145,30 @@ export async function PATCH(req: Request, ctx: Ctx) {
       .from("recording_tasks")
       .update(patch)
       .eq("id", id)
-      .select("id, start_ms, end_ms, status, type, title, metadata")
+      .select("id, start_ms, end_ms, status, type, title, metadata, track_fx, track_color")
       .single();
     updated = res.data as Record<string, unknown> | null;
     upErr = res.error;
   }
-  // If metadata column missing, retry without it
-  if (upErr && parsed.data.track_fx) {
-    const { track_fx: _tf, ...rest } = parsed.data;
-    const timingOnly: Record<string, unknown> = {};
-    if (rest.start_ms !== undefined) timingOnly.start_ms = Math.round(rest.start_ms);
-    if (rest.end_ms !== undefined) timingOnly.end_ms = Math.round(rest.end_ms);
-    if (rest.status !== undefined) timingOnly.status = rest.status;
-    if (Object.keys(timingOnly).length) {
+
+  if (upErr && (parsed.data.track_fx || parsed.data.track_color)) {
+    const metaOnly: Record<string, unknown> = {};
+    if (parsed.data.start_ms !== undefined) metaOnly.start_ms = Math.round(parsed.data.start_ms);
+    if (parsed.data.end_ms !== undefined) metaOnly.end_ms = Math.round(parsed.data.end_ms);
+    if (parsed.data.status !== undefined) metaOnly.status = parsed.data.status;
+    if (patch.metadata) metaOnly.metadata = patch.metadata;
+    if (Object.keys(metaOnly).length) {
       const res2 = await service
         .from("recording_tasks")
-        .update(timingOnly)
+        .update(metaOnly)
         .eq("id", id)
-        .select("id, start_ms, end_ms, status, type, title")
+        .select("id, start_ms, end_ms, status, type, title, metadata")
         .single();
       if (!res2.error) {
         return NextResponse.json({
           task: res2.data,
-          warning: "track_fx not persisted (metadata column unavailable)",
+          warning:
+            "track_fx/track_color columns unavailable — persisted on metadata only until migration is applied",
         });
       }
     }
