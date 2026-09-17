@@ -1,0 +1,162 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { createServiceClient } from "@/lib/supabase/server";
+import {
+  getAppOrigin,
+  sendResendEmail,
+  shellEmail,
+  welcomeEmailHtml,
+} from "@/lib/email/resend";
+import { STUDIO_NAME } from "@/lib/brand";
+
+const Body = z.object({
+  email: z.string().email().max(320),
+  password: z.string().min(8).max(128),
+});
+
+/**
+ * POST /api/auth/signup
+ * Creates the user with the service role (no Supabase Auth email)
+ * and sends confirmation + welcome via Resend only.
+ */
+export async function POST(req: Request) {
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = Body.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Valid email and password (8+ characters) required" },
+      { status: 400 }
+    );
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const password = parsed.data.password;
+  const origin = getAppOrigin(req);
+  const redirectTo = `${origin}/auth/callback?next=/app`;
+
+  const key = process.env.RESEND_API_KEY?.trim();
+  if (!key) {
+    return NextResponse.json(
+      {
+        error:
+          "Email is not configured (RESEND_API_KEY). Add it in Vercel env so AP can send mail.",
+      },
+      { status: 503 }
+    );
+  }
+
+  try {
+    const service = createServiceClient();
+
+    const { data: created, error: createErr } = await service.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: false,
+      user_metadata: { signup_source: "resend_confirm" },
+    });
+
+    if (createErr) {
+      const msg = createErr.message || "";
+      if (/already|registered|exists/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error:
+              "That email already has an account. Log in, or use Forgot password if you need access.",
+            code: "already_registered",
+          },
+          { status: 409 }
+        );
+      }
+      console.error("[signup] createUser", msg);
+      return NextResponse.json({ error: msg || "Could not create account" }, { status: 502 });
+    }
+
+    // Prefer signup confirmation link; fall back to magiclink
+    let actionLink: string | null = null;
+    for (const type of ["signup", "magiclink"] as const) {
+      const { data, error } = await service.auth.admin.generateLink({
+        type,
+        email,
+        options: { redirectTo },
+      });
+      if (error) {
+        console.warn("[signup] generateLink", type, error.message);
+        continue;
+      }
+      actionLink =
+        data?.properties?.action_link ||
+        (data as { action_link?: string } | undefined)?.action_link ||
+        null;
+      if (actionLink) break;
+    }
+
+    if (!actionLink) {
+      console.error("[signup] no action link after create");
+      return NextResponse.json(
+        {
+          error:
+            "Account was created but the confirmation link could not be generated. Contact support.",
+        },
+        { status: 502 }
+      );
+    }
+
+    const confirmSubject = `Confirm your ${STUDIO_NAME} account`;
+    const confirmHtml = shellEmail(
+      "Confirm your email",
+      `<p style="margin:0 0 14px;">Welcome to ${STUDIO_NAME}. Tap the button to confirm your email and open the booth.</p>
+       <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Confirm email</a></p>
+       <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t sign up, ignore this email.</p>`
+    );
+
+    const confirmSent = await sendResendEmail({
+      to: email,
+      subject: confirmSubject,
+      html: confirmHtml,
+      text: `Confirm your ${STUDIO_NAME} account: ${actionLink}`,
+    });
+
+    if (confirmSent.error) {
+      console.error("[signup] resend confirm", confirmSent.error);
+      return NextResponse.json(
+        {
+          error: `Account created, but confirmation email failed: ${confirmSent.error}`,
+          code: "email_failed",
+        },
+        { status: 502 }
+      );
+    }
+
+    // Welcome is best-effort — confirmation is the critical path
+    try {
+      const welcome = welcomeEmailHtml({ appUrl: origin });
+      await sendResendEmail({
+        to: email,
+        subject: welcome.subject,
+        html: welcome.html,
+        text: welcome.text,
+      });
+    } catch (e) {
+      console.warn("[signup] welcome skip", e);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      userId: created.user?.id ?? null,
+      message:
+        "Account created. Check your email (and spam) for the AP confirmation link, then log in.",
+    });
+  } catch (e) {
+    console.error("[signup]", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Signup failed" },
+      { status: 500 }
+    );
+  }
+}
