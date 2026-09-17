@@ -53,9 +53,9 @@ export function getMusicProvider(): MusicGenerationProvider {
 
 function limits() {
   return {
-    maxPerDay: Number(process.env.MAX_GENERATIONS_PER_USER_PER_DAY || 20),
-    maxPreview: Number(process.env.MAX_PREVIEW_GENERATIONS_PER_DAY || 15),
-    maxFull: Number(process.env.MAX_FULL_GENERATIONS_PER_DAY || 5),
+    maxPerDay: Number(process.env.MAX_GENERATIONS_PER_USER_PER_DAY || 30),
+    maxPreview: Number(process.env.MAX_PREVIEW_GENERATIONS_PER_DAY || 20),
+    maxFull: Number(process.env.MAX_FULL_GENERATIONS_PER_DAY || 15),
   };
 }
 
@@ -63,18 +63,24 @@ async function assertWithinDailyLimits(userId: string, kind: GenerationKind) {
   const supabase = createServiceClient();
   const since = new Date();
   since.setUTCHours(0, 0, 0, 0);
+  // Only successful gens count — failed attempts must not lock users out
   const { count, error } = await supabase
     .from("music_generation_jobs")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
-    .gte("created_at", since.toISOString())
-    .neq("status", "CANCELLED");
+    .eq("status", "COMPLETED")
+    .not("audio_path", "is", null)
+    .gte("created_at", since.toISOString());
   if (error) {
     console.warn("[music-gen] limit check skipped", error.message);
     return;
   }
   const lim = limits();
-  if ((count || 0) >= lim.maxPerDay) {
+  // Guard against misconfigured env (0) locking everyone out
+  const maxPerDay = Math.max(1, lim.maxPerDay || 20);
+  const maxPreview = Math.max(1, lim.maxPreview || 15);
+  const maxFull = Math.max(1, lim.maxFull || 10);
+  if ((count || 0) >= maxPerDay) {
     throw new MusicGenerationError("LIMIT_EXCEEDED", "Daily generation limit reached");
   }
   const { count: kCount } = await supabase
@@ -82,9 +88,10 @@ async function assertWithinDailyLimits(userId: string, kind: GenerationKind) {
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("kind", kind)
-    .gte("created_at", since.toISOString())
-    .neq("status", "CANCELLED");
-  const cap = kind === "preview" ? lim.maxPreview : lim.maxFull;
+    .eq("status", "COMPLETED")
+    .not("audio_path", "is", null)
+    .gte("created_at", since.toISOString());
+  const cap = kind === "preview" ? maxPreview : maxFull;
   if ((kCount || 0) >= cap) {
     throw new MusicGenerationError("LIMIT_EXCEEDED", `Daily ${kind} generation limit reached`);
   }
