@@ -2,6 +2,19 @@ import { STUDIO_LOGO_URL, STUDIO_NAME } from "@/lib/brand";
 
 const RESEND_API = "https://api.resend.com/emails";
 
+/** Brand tokens aligned with Console / app aesthetic */
+const BRAND = {
+  bg: "#0a0a0c",
+  card: "#121218",
+  border: "rgba(231,169,97,0.22)",
+  brass: "#E7A961",
+  brassSoft: "#F0BC80",
+  text: "#F5F0E8",
+  muted: "#A39E96",
+  faint: "#6F6A64",
+  white: "#FFFFFF",
+};
+
 export function getResendFrom(): string {
   return (
     process.env.RESEND_FROM_EMAIL?.trim() ||
@@ -58,25 +71,44 @@ export async function sendResendEmail(args: SendArgs): Promise<{ id?: string; er
   return { id: data.id };
 }
 
+/** Shared branded shell — dark studio floor + brass accents (matches app) */
 export function shellEmail(title: string, bodyHtml: string): string {
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:0;background:#0a0a0c;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0c;padding:32px 16px;">
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="dark"/>
+  <title>${title}</title>
+</head>
+<body style="margin:0;padding:0;background:${BRAND.bg};font-family:Georgia,'Times New Roman',serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.bg};padding:40px 16px;">
     <tr><td align="center">
-      <table width="100%" style="max-width:480px;background:#141418;border-radius:16px;border:1px solid #2a2a32;overflow:hidden;">
-        <tr><td style="padding:28px 28px 12px;text-align:center;">
-          <img src="${STUDIO_LOGO_URL}" alt="${STUDIO_NAME}" width="48" height="48" style="border-radius:12px;display:inline-block;"/>
-          <div style="margin-top:12px;font-size:18px;font-weight:700;color:#f5f5f7;">${STUDIO_NAME}</div>
-        </td></tr>
-        <tr><td style="padding:8px 28px 28px;color:#c8c8d0;font-size:15px;line-height:1.55;">
-          <div style="font-size:17px;font-weight:600;color:#fff;margin-bottom:12px;">${title}</div>
-          ${bodyHtml}
-        </td></tr>
-        <tr><td style="padding:16px 28px 24px;border-top:1px solid #2a2a32;font-size:12px;color:#6b6b76;text-align:center;">
-          You’re receiving this because you use ${STUDIO_NAME}.
-        </td></tr>
+      <table role="presentation" width="100%" style="max-width:560px;background:${BRAND.card};border-radius:20px;border:1px solid ${BRAND.border};overflow:hidden;">
+        <tr>
+          <td style="height:3px;background:linear-gradient(90deg,${BRAND.brass},transparent 70%);font-size:0;line-height:0;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td style="padding:32px 32px 8px;text-align:center;">
+            <img src="${STUDIO_LOGO_URL}" alt="${STUDIO_NAME}" width="56" height="56" style="border-radius:14px;display:inline-block;border:1px solid ${BRAND.border};"/>
+            <div style="margin-top:14px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND.brass};">${STUDIO_NAME}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 32px 8px;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:500;line-height:1.25;color:${BRAND.text};text-align:center;">${title}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 32px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.65;color:${BRAND.muted};">
+            ${bodyHtml}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:18px 32px 28px;border-top:1px solid rgba(255,255,255,0.06);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;line-height:1.5;color:${BRAND.faint};text-align:center;">
+            You’re receiving this because you joined ${STUDIO_NAME}.
+          </td>
+        </tr>
       </table>
     </td></tr>
   </table>
@@ -84,26 +116,124 @@ export function shellEmail(title: string, bodyHtml: string): string {
 </html>`;
 }
 
-export function welcomeEmailHtml(opts: { name?: string; appUrl: string }): { subject: string; html: string; text: string } {
-  const greet = opts.name ? `Hey ${opts.name}` : "Hey";
-  const subject = `Welcome to ${STUDIO_NAME}`;
-  const html = shellEmail(
-    "Welcome to AP",
-    `<p style="margin:0 0 14px;">${greet} — you’re in. Record with your real voice, follow a clear plan, and let AP mix and master a finished track.</p>
-     <p style="margin:0 0 20px;"><a href="${opts.appUrl}/app" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Open studio</a></p>
-     <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t create this account, you can ignore this email.</p>`
-  );
-  const text = `${greet} — welcome to ${STUDIO_NAME}. Open your studio: ${opts.appUrl}/app`;
+function p(text: string, extra = ""): string {
+  return `<p style="margin:0 0 16px;color:${BRAND.muted};${extra}">${text}</p>`;
+}
+
+function emphasis(text: string): string {
+  return `<p style="margin:0 0 16px;color:${BRAND.text};font-size:16px;line-height:1.6;">${text}</p>`;
+}
+
+function quote(text: string): string {
+  return `<p style="margin:20px 0;padding:16px 18px;border-left:3px solid ${BRAND.brass};background:rgba(231,169,97,0.08);border-radius:0 12px 12px 0;color:${BRAND.text};font-style:italic;font-size:15px;line-height:1.55;">${text}</p>`;
+}
+
+function cta(href: string, label: string): string {
+  return `<p style="margin:28px 0 8px;text-align:center;">
+    <a href="${href}" style="display:inline-block;background:linear-gradient(180deg,${BRAND.brassSoft},${BRAND.brass});color:#1A1208;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:800;font-size:14px;letter-spacing:0.02em;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">${label}</a>
+  </p>`;
+}
+
+export function welcomeEmailHtml(opts: {
+  name?: string;
+  appUrl: string;
+}): { subject: string; html: string; text: string } {
+  const subject = `Welcome to APstudio`;
+  const openUrl = `${opts.appUrl.replace(/\/$/, "")}/app`;
+
+  const body = `
+    ${p("You didn’t just sign up for another music tool.")}
+    ${emphasis("You joined at the beginning of something we believe can become much bigger than a tool.")}
+    ${p("APstudio was built around a simple idea:")}
+    ${quote("What if artists could bring the music in their heads — and the voices in their phones — into the world without needing a studio, a producer, or a complicated setup?")}
+    ${p("That idea is why we’re building APstudio.")}
+    ${p("But the bigger idea is the movement around it.")}
+    ${p("We want to create a new generation of artists who can experiment more, record more, finish more songs, and sound like themselves — wherever they are.")}
+    ${emphasis("Your voice matters here.")}
+    ${p("That’s why we wanted you to understand the idea behind APstudio before you start using it. We’re not trying to replace artists or turn music into a button.")}
+    ${emphasis("We’re building technology around the artist.")}
+    ${p("You bring the voice.<br/>You bring the emotion.<br/>You bring the idea.")}
+    ${p("<strong style=\"color:" + BRAND.text + "\">AP helps you turn it into a record.</strong>")}
+    ${p("And because you joined early, you’re not simply using something that is already finished.")}
+    ${emphasis("You’re part of the beginning.")}
+    ${p("We’ll be learning from what you create, what you love, what feels wrong, what you wish existed, and what you think music should become.")}
+    ${p("So record something.")}
+    ${p("Try something strange.")}
+    ${p("Make something beautiful.")}
+    ${p("Make something terrible.")}
+    ${p("Then make it again.")}
+    ${emphasis("This is APstudio.")}
+    ${emphasis("Let’s make something.")}
+    ${cta(openUrl, "Open APstudio")}
+    <p style="margin:24px 0 0;color:${BRAND.faint};font-size:13px;text-align:center;">— The APstudio Team</p>
+  `;
+
+  const html = shellEmail("Welcome to APstudio", body);
+
+  const text = `Welcome to APstudio.
+
+You didn’t just sign up for another music tool.
+
+You joined at the beginning of something we believe can become much bigger than a tool.
+
+APstudio was built around a simple idea:
+
+What if artists could bring the music in their heads — and the voices in their phones — into the world without needing a studio, a producer, or a complicated setup?
+
+That idea is why we’re building APstudio.
+
+But the bigger idea is the movement around it.
+
+We want to create a new generation of artists who can experiment more, record more, finish more songs, and sound like themselves — wherever they are.
+
+Your voice matters here.
+
+That’s why we wanted you to understand the idea behind APstudio before you start using it. We’re not trying to replace artists or turn music into a button.
+
+We’re building technology around the artist.
+
+You bring the voice.
+You bring the emotion.
+You bring the idea.
+
+AP helps you turn it into a record.
+
+And because you joined early, you’re not simply using something that is already finished.
+
+You’re part of the beginning.
+
+We’ll be learning from what you create, what you love, what feels wrong, what you wish existed, and what you think music should become.
+
+So record something.
+
+Try something strange.
+
+Make something beautiful.
+
+Make something terrible.
+
+Then make it again.
+
+This is APstudio.
+
+Let’s make something.
+
+Open APstudio: ${openUrl}
+
+— The APstudio Team`;
+
   return { subject, html, text };
 }
 
-export function passwordResetEmailHtml(opts: { resetUrl: string }): { subject: string; html: string; text: string } {
+export function passwordResetEmailHtml(opts: {
+  resetUrl: string;
+}): { subject: string; html: string; text: string } {
   const subject = `Reset your ${STUDIO_NAME} password`;
   const html = shellEmail(
     "Reset your password",
-    `<p style="margin:0 0 14px;">We received a request to reset your password. Use the button below — it expires soon.</p>
-     <p style="margin:0 0 20px;"><a href="${opts.resetUrl}" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Choose new password</a></p>
-     <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t ask for this, you can ignore this email. Your password won’t change.</p>`
+    `${p("We received a request to reset your password. Use the button below — it expires soon.")}
+     ${cta(opts.resetUrl, "Choose new password")}
+     <p style="margin:16px 0 0;font-size:13px;color:${BRAND.faint};">If you didn’t ask for this, you can ignore this email. Your password won’t change.</p>`
   );
   const text = `Reset your ${STUDIO_NAME} password: ${opts.resetUrl}`;
   return { subject, html, text };
