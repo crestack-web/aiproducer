@@ -1,6 +1,9 @@
 /**
- * Resolve Supabase env vars across legacy names and Vercel Supabase integration mappings.
- * Prefer JWT-style anon keys (eyJ...) for SSR when both anon + publishable exist.
+ * Resolve Supabase env across classic names and Vercel Supabase integration mappings.
+ *
+ * Integration often provides (server):
+ *   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SECRET_KEY
+ * next.config maps URL + anon into NEXT_PUBLIC_* at build for the browser.
  */
 
 function firstDefined(...vals: (string | undefined)[]): string | undefined {
@@ -18,7 +21,7 @@ export function getSupabaseUrl(): string | undefined {
   );
 }
 
-/** Browser / user-scoped key (anon or publishable). */
+/** Browser / user-scoped key (anon or publishable). Prefer JWT eyJ… when present. */
 export function getSupabaseAnonKey(): string | undefined {
   const candidates = [
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -29,14 +32,12 @@ export function getSupabaseAnonKey(): string | undefined {
     .map((v) => (typeof v === "string" ? v.trim() : ""))
     .filter(Boolean);
 
-  // Prefer legacy JWT anon key when present
   const jwt = candidates.find((k) => k.startsWith("eyJ"));
   if (jwt) return jwt;
-
   return candidates[0] || undefined;
 }
 
-/** Service role / secret — never expose to the browser. */
+/** Service role — never expose to the browser. */
 export function getSupabaseServiceRoleKey(): string | undefined {
   return firstDefined(
     process.env.SUPABASE_SERVICE_ROLE_KEY,

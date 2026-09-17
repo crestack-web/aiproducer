@@ -4,6 +4,19 @@ const STUDIO_LOGO =
   "https://res.cloudinary.com/dzjoqbg2u/image/upload/v1786866729/Untitled_-_August_15_2026_at_17.55.54-2_ipkio0.png";
 
 const nextConfig: NextConfig = {
+  // Vercel Supabase integration often sets SUPABASE_URL / SUPABASE_ANON_KEY (server-only).
+  // Map them into NEXT_PUBLIC_* at build so the browser client can connect.
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL:
+      process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY:
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      "",
+  },
+
   reactStrictMode: true,
   // Keep ffmpeg-static out of webpack bundling; load via require at runtime
   serverExternalPackages: ["ffmpeg-static"],
