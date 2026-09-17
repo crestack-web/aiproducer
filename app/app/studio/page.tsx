@@ -90,7 +90,7 @@ const STYLE_PRESETS = [
   "Amapiano night drive",
 ];
 /** Beat length presets (seconds). Free tier covers ≤30s. */
-const LENGTH_PRESETS = [15, 30, 45, 60] as const;
+const LENGTH_PRESETS = [15, 30, 60, 120, 180, 240] as const;
 /** Estimated USD/sec — override via env on server; client mirror for preview. */
 const COST_PER_SEC_USD = 0.00583;
 const FREE_MAX_SEC = 30;
@@ -829,7 +829,7 @@ function StudioPageInner() {
                     <input
                       type="range"
                       min={10}
-                      max={60}
+                      max={240}
                       step={5}
                       value={beatDurationSec}
                       onChange={(e) => setBeatDurationSec(Number(e.target.value))}
