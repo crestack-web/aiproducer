@@ -9,16 +9,87 @@ import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 
-const GENRES = ["R&B", "Afrobeats", "Hip-Hop", "Pop", "Amapiano", "Gospel", "Highlife"];
-const MOODS = ["Emotional", "Confident", "Dark", "Romantic", "Energetic", "Chill"];
-const ENERGIES = ["Intimate", "Laid-back", "Driving", "Explosive"];
+const GENRES = [
+  "R&B",
+  "Afrobeats",
+  "Amapiano",
+  "Hip-Hop",
+  "Trap",
+  "Drill",
+  "Pop",
+  "Gospel",
+  "Highlife",
+  "Afro-fusion",
+  "Dancehall",
+  "Reggaeton",
+  "Soul",
+  "Neo-soul",
+  "Lo-fi",
+  "House",
+  "EDM",
+  "Indie",
+  "Rock",
+  "Jazz",
+  "Country",
+  "Folk",
+  "Latin",
+  "Hyperpop",
+];
+const MOODS = [
+  "Emotional",
+  "Confident",
+  "Dark",
+  "Romantic",
+  "Energetic",
+  "Chill",
+  "Melancholic",
+  "Uplifting",
+  "Sensual",
+  "Aggressive",
+  "Hopeful",
+  "Nostalgic",
+  "Playful",
+  "Spiritual",
+  "Cinematic",
+  "Dreamy",
+];
+const ENERGIES = [
+  "Intimate",
+  "Laid-back",
+  "Driving",
+  "Explosive",
+  "Dreamy",
+  "Aggressive",
+  "Uplifting",
+  "Hypnotic",
+];
 const INSTRUMENTATION = [
   "808-driven",
   "Heavy bass",
+  "Log drum / Amapiano",
   "Acoustic guitar-led",
+  "Electric guitar",
   "Keys / pad-led",
+  "Piano-led",
   "Live drums",
+  "Percussion-forward",
+  "Synth-led",
+  "Orchestral / strings",
+  "Brass / horns",
   "Sparse minimal",
+  "Sample-chop vibe",
+];
+const STYLE_PRESETS = [
+  "Early Wizkid feel",
+  "Tems atmosphere",
+  "Burna groove",
+  "2016 Drake melodic",
+  "SZA late-night R&B",
+  "Asake street energy",
+  "Rema soft life",
+  "Travis 808 world",
+  "Gospel choir pocket",
+  "Amapiano night drive",
 ];
 /** Beat length presets (seconds). Free tier covers ≤30s. */
 const LENGTH_PRESETS = [15, 30, 45, 60] as const;
@@ -475,11 +546,23 @@ function StudioPageInner() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
                   Style reference <span style={{ fontWeight: 500, opacity: 0.7 }}>(optional)</span>
                 </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                  {STYLE_PRESETS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      style={chip(referenceStyle === s)}
+                      onClick={() => setReferenceStyle(referenceStyle === s ? "" : s)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
                 <input
                   type="text"
                   value={referenceStyle}
                   onChange={(e) => setReferenceStyle(e.target.value)}
-                  placeholder="e.g. early Wizkid · Tems · 2016 Drake feel"
+                  placeholder="Or type any feel — artist, era, or production vibe"
                   style={{
                     width: "100%",
                     borderRadius: 12,
