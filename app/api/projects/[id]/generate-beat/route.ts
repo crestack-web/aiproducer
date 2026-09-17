@@ -17,6 +17,9 @@ const BodySchema = z.object({
   mood: z.string().max(60).optional(),
   tempo: z.number().int().min(40).max(200).optional(),
   prompt: z.string().max(2000).optional(),
+  energy: z.string().max(40).optional(),
+  instrumentation: z.string().max(120).optional(),
+  referenceStyle: z.string().max(120).optional(),
   length_ms: z.number().int().min(3000).max(180000).optional(),
   kind: z.enum(["preview", "full"]).optional(),
   idempotencyKey: z.string().max(200).optional(),
@@ -64,6 +67,9 @@ export async function POST(req: Request, ctx: Ctx) {
       mood: parsed.data.mood,
       bpm: parsed.data.tempo,
       prompt: parsed.data.prompt,
+      energy: parsed.data.energy,
+      instrumentation: parsed.data.instrumentation,
+      referenceStyle: parsed.data.referenceStyle,
       durationSec,
       kind,
       instrumentalOnly: true,
@@ -137,7 +143,11 @@ export async function POST(req: Request, ctx: Ctx) {
 
     if (e instanceof MusicGenerationError) {
       return NextResponse.json(
-        { error: publicErrorMessage(e.errorType), errorType: e.errorType },
+        {
+          error: e.message || publicErrorMessage(e.errorType),
+          errorType: e.errorType,
+          code: e.errorType === "LIMIT_EXCEEDED" ? "BEAT_GEN_LIMIT" : undefined,
+        },
         {
           status:
             e.errorType === "BILLING_REQUIRED"
