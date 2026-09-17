@@ -562,9 +562,39 @@ export function ProducerView({
     }
   });
   const [titleDraft, setTitleDraft] = useState(projectTitle || "Session");
+  const [titleSaving, setTitleSaving] = useState(false);
+  const [titleSavedFlash, setTitleSavedFlash] = useState(false);
   useEffect(() => {
     setTitleDraft(projectTitle || "Session");
   }, [projectTitle]);
+
+  async function saveSongTitle() {
+    const next = titleDraft.trim().slice(0, 120) || "Untitled";
+    if (!projectId) {
+      setTitleDraft(next);
+      return;
+    }
+    if (next === (projectTitle || "Session").trim()) return;
+    setTitleSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not save title");
+      }
+      setTitleDraft(next);
+      setTitleSavedFlash(true);
+      window.setTimeout(() => setTitleSavedFlash(false), 1600);
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Could not save title");
+    } finally {
+      setTitleSaving(false);
+    }
+  }
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
@@ -2830,31 +2860,114 @@ export function ProducerView({
           flexShrink: 0,
           background: surface,
           minHeight: isNarrow ? 48 : 56,
-          flexWrap: isNarrow ? "wrap" : "nowrap",
-          rowGap: 6,
+          flexWrap: "nowrap",
+          overflow: "hidden",
         }}
       >
         <a
           href={libraryHref || "/app"}
-          style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", color: text, flexShrink: 0 }}
-          title="Library"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: isNarrow ? 0 : 8,
+            textDecoration: "none",
+            color: text,
+            flexShrink: 0,
+            maxWidth: isNarrow ? 36 : 120,
+            overflow: "hidden",
+          }}
+          title="Back to Library"
+          aria-label="Library"
         >
           <img
             src={STUDIO_LOGO_URL}
-            alt="Studio"
+            alt=""
             width={28}
             height={28}
-            style={{ borderRadius: 8, objectFit: "cover", display: "block" }}
+            style={{ borderRadius: 8, objectFit: "cover", display: "block", flexShrink: 0 }}
           />
-          <span style={{ fontWeight: 800, fontSize: 13, letterSpacing: "0.04em", color: brass }}>CONSOLE</span>
+          {!isNarrow && (
+            <span
+              style={{
+                fontWeight: 800,
+                fontSize: 12,
+                letterSpacing: "0.04em",
+                color: brass,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              CONSOLE
+            </span>
+          )}
         </a>
 
-        <input
-          value={titleDraft}
-          onChange={(e) => setTitleDraft(e.target.value)}
-          aria-label="Song title"
-          style={{ flex: 1, minWidth: 0, maxWidth: isNarrow ? 120 : 280, background: "rgba(255,255,255,0.06)", border: `1px solid ${border}`, borderRadius: 8, color: text, fontWeight: 600, fontSize: isNarrow ? 13 : 14, padding: "6px 10px", fontFamily: "inherit" }}
-        />
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            maxWidth: isNarrow ? 140 : 300,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <input
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void saveSongTitle()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            aria-label="Song title"
+            title={titleDraft}
+            placeholder="Song name"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              width: "100%",
+              background: "rgba(255,255,255,0.06)",
+              border: `1px solid ${titleSavedFlash ? brass : border}`,
+              borderRadius: 8,
+              color: text,
+              fontWeight: 600,
+              fontSize: isNarrow ? 12.5 : 14,
+              padding: isNarrow ? "5px 8px" : "6px 10px",
+              fontFamily: "inherit",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          />
+          {!isNarrow && (
+            <button
+              type="button"
+              onClick={() => void saveSongTitle()}
+              disabled={titleSaving}
+              title="Save song name"
+              style={{
+                flexShrink: 0,
+                height: 32,
+                padding: "0 10px",
+                borderRadius: 8,
+                border: `1px solid ${border}`,
+                background: surface,
+                color: titleSavedFlash ? brass : mutedText,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: titleSaving ? "wait" : "pointer",
+                fontFamily: "inherit",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {titleSaving ? "…" : titleSavedFlash ? "Saved" : "Save"}
+            </button>
+          )}
+        </div>
 
 
         {projectId ? (
@@ -3013,7 +3126,24 @@ export function ProducerView({
         </button>
 
         {!isNarrow && (
-          <a href={libraryHref || "/app"} style={{ ...iconBtn(border, surface, text), textDecoration: "none", fontSize: 12, fontWeight: 700, padding: "0 12px", width: "auto", color: text }}>
+          <a
+            href={libraryHref || "/app"}
+            style={{
+              ...iconBtn(border, surface, text),
+              textDecoration: "none",
+              fontSize: 12,
+              fontWeight: 700,
+              padding: "0 10px",
+              width: "auto",
+              maxWidth: 88,
+              color: text,
+              flexShrink: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title="Library"
+          >
             Library
           </a>
         )}
