@@ -57,7 +57,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   const service = createServiceClient();
-  let task: {
+  type TaskRow = {
     id: string;
     project_id: string;
     start_ms: number | null;
@@ -67,7 +67,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
     metadata: unknown;
     track_fx?: unknown;
     track_color?: string | null;
-  } | null = null;
+  };
+  let task: TaskRow | null = null;
 
   {
     const res = await service
@@ -76,7 +77,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       .eq("id", id)
       .maybeSingle();
     if (!res.error && res.data) {
-      task = res.data as typeof task;
+      task = res.data as TaskRow;
     } else {
       const fallback = await service
         .from("recording_tasks")
@@ -86,7 +87,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       if (fallback.error || !fallback.data) {
         return NextResponse.json({ error: "Task not found" }, { status: 404 });
       }
-      task = fallback.data as typeof task;
+      task = fallback.data as TaskRow;
     }
   }
 

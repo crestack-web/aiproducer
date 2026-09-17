@@ -172,10 +172,7 @@ export async function POST(req: Request, ctx: Ctx) {
       if ((!durationMs || !body.bpm) && path.toLowerCase().endsWith(".wav")) {
         try {
           const fileBuf = await downloadStorageObject(path);
-          const ab = fileBuf.buffer.slice(
-            fileBuf.byteOffset,
-            fileBuf.byteOffset + fileBuf.byteLength
-          );
+          const ab = Uint8Array.from(fileBuf).buffer as ArrayBuffer;
           const wav = analyzeWavArrayBuffer(ab);
           if (wav) {
             if (!durationMs) durationMs = wav.duration_ms;

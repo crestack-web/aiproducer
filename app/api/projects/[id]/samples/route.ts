@@ -193,6 +193,7 @@ export async function POST(req: Request, ctx: Ctx) {
         },
       };
 
+      const service = createServiceClient();
       // Prefer service insert after ownership check (avoids RLS edge cases)
       const { data: sample, error: insErr } = await service
         .from("samples")
@@ -357,6 +358,7 @@ export async function POST(req: Request, ctx: Ctx) {
   let sample: Record<string, unknown> | null = null;
   let insErr: { message?: string } | null = null;
 
+  const service = createServiceClient();
   {
     const r = await service
       .from("samples")
