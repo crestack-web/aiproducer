@@ -201,7 +201,6 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     const wav = encodeWavStereoFromMono(mono, v.pcm.sampleRate);
 
-    let uploaded: { path: string } | null = null;
     try {
       const storagePath = recordingPath(
         user.id,
@@ -211,7 +210,6 @@ export async function POST(req: Request, ctx: Ctx) {
         "wav"
       );
       await uploadBuffer(storagePath, wav, "audio/wav");
-      const uploaded = { path: storagePath };
     } catch (e) {
       console.error("[choir] upload", e);
       continue;
@@ -220,7 +218,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const { error: recErr } = await service.from("recordings").insert({
       task_id: newTask.id,
       project_id: task.project_id,
-      audio_path: uploaded.path,
+      audio_path: storagePath,
       status: "ready",
       content_type: "audio/wav",
       metadata: { generated_by: "ap_choir", choir_role: v.role },
