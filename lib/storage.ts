@@ -53,6 +53,12 @@ function getR2Client(): S3Client {
       secretAccessKey: requireEnv("R2_SECRET_ACCESS_KEY"),
     },
     forcePathStyle: false,
+    // Prevent AWS SDK v3 from signing flexible checksum headers that browsers
+    // do not send on presigned PUT (common cause of 403 on R2 uploads).
+    // @ts-expect-error AWS SDK v3 optional checksum config (supported at runtime)
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    // @ts-expect-error AWS SDK v3 optional checksum config (supported at runtime)
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return _client;
 }
@@ -148,16 +154,30 @@ export async function resolveAudioUrl(
 
 export async function createSignedUploadUrl(
   path: string,
-  opts?: { upsert?: boolean }
-): Promise<{ signedUrl: string; token: string | undefined; path: string }> {
-  void opts;
+  opts?: { upsert?: boolean; contentType?: string }
+): Promise<{ signedUrl: string; token: string | undefined; path: string; contentType?: string }> {
+  void opts?.upsert; // R2 PutObject is effectively upsert by key
+  const contentType = opts?.contentType?.trim() || undefined;
   const client = getR2Client();
   const cmd = new PutObjectCommand({
     Bucket: getStorageBucket(),
     Key: path,
+    // Must match the Content-Type header the browser sends on PUT
+    ...(contentType ? { ContentType: contentType } : {}),
   });
-  const signedUrl = await getSignedUrl(client, cmd, { expiresIn: 3600 });
-  return { signedUrl, token: undefined, path };
+  const signedUrl = await getSignedUrl(client, cmd, {
+    expiresIn: 3600,
+    // Do not force browser to send AWS SDK checksum headers
+    unhoistableHeaders: new Set([
+      "x-amz-checksum-crc32",
+      "x-amz-checksum-crc32c",
+      "x-amz-checksum-sha1",
+      "x-amz-checksum-sha256",
+      "x-amz-sdk-checksum-algorithm",
+      "x-amz-checksum-mode",
+    ]),
+  });
+  return { signedUrl, token: undefined, path, contentType };
 }
 
 export async function downloadStorageObject(path: string): Promise<Buffer> {

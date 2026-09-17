@@ -88,9 +88,10 @@ export function ProjectSamplesPanel({ projectId }: { projectId: string }) {
     const sign = await signRes.json().catch(() => ({}));
     if (!signRes.ok) throw new Error(sign.error || "Could not start signed upload");
 
+    const putCt = (sign.contentType as string) || file.type || "audio/wav";
     const put = await fetch(sign.signedUrl as string, {
       method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
+      headers: { "Content-Type": putCt },
       body: file,
     });
     if (!put.ok) {

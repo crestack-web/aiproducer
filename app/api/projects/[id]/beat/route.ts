@@ -105,7 +105,7 @@ export async function POST(req: Request, ctx: Ctx) {
       const ext = audioExt(fileType, filename);
       const path = customBeatPath(user.id, projectId, ext);
       try {
-        const signed = await createSignedUploadUrl(path);
+        const signed = await createSignedUploadUrl(path, { contentType: fileType });
         return NextResponse.json({
           path: signed.path,
           signedUrl: signed.signedUrl,

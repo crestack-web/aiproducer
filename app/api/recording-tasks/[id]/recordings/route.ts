@@ -503,7 +503,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
   let signed;
   try {
-    signed = await createSignedUploadUrl(path);
+    signed = await createSignedUploadUrl(path, { contentType: content_type });
   } catch (e) {
     console.error("signed upload", e);
     return NextResponse.json({ error: "Could not create upload URL" }, { status: 500 });

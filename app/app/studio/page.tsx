@@ -139,9 +139,10 @@ function StudioPageInner() {
       throw new Error(j.error || "Could not start beat upload");
     }
     const signed = await signRes.json();
+    const putCt = signed.contentType || file.type || "audio/wav";
     const put = await fetch(signed.signedUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type || "audio/wav" },
+      headers: { "Content-Type": putCt },
       body: file,
     });
     if (!put.ok) throw new Error(`Storage upload failed (${put.status})`);
