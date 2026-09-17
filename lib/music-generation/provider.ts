@@ -16,6 +16,21 @@ export interface MusicGenerationProvider {
   maxDurationSec(kind: "preview" | "full"): number;
 }
 
+/** True when the free-text prompt is too vague to generate without more controls. */
+export function isVagueBeatPrompt(prompt?: string | null): boolean {
+  const p = (prompt || "").trim().toLowerCase();
+  if (!p) return true;
+  if (p.length < 12) return true;
+  const vague = /^(make|create|give|generate|need|want)\s+(me\s+)?(a\s+)?(beat|track|instrumental|song)s?\.?$/i;
+  if (vague.test(p)) return true;
+  if (/^(beat|instrumental|music|track)$/i.test(p)) return true;
+  return false;
+}
+
+/**
+ * Build a specific instrumental prompt for the provider.
+ * Prefer explicit artist controls over generic defaults.
+ */
 export function buildInstrumentalPrompt(input: {
   prompt?: string;
   genre?: string;
@@ -24,32 +39,43 @@ export function buildInstrumentalPrompt(input: {
   key?: string;
   energy?: string;
   structure?: string;
+  instrumentation?: string;
+  referenceStyle?: string;
 }): string {
-  if (input.prompt?.trim()) {
-    const p = input.prompt.trim();
-    if (/instrumental|no vocals|no singing|no lyrics/i.test(p)) return p;
-    return `${p}. Instrumental only. No vocals. No lyrics. No spoken words. Leave space in the midrange for a lead vocal.`;
-  }
-  const genre = input.genre || "contemporary";
-  const mood = input.mood || "emotional";
-  const bpm = input.bpm || 95;
-  const energy = input.energy || "medium";
-  const key = input.key ? `in ${input.key}` : "";
+  const genre = (input.genre || "").trim();
+  const mood = (input.mood || "").trim();
+  const energy = (input.energy || "").trim();
+  const instrumentation = (input.instrumentation || "").trim();
+  const referenceStyle = (input.referenceStyle || "").trim();
+  const bpm = input.bpm && input.bpm > 0 ? input.bpm : undefined;
+  const key = (input.key || "").trim();
   const structure =
-    input.structure ||
+    (input.structure || "").trim() ||
     "short intro, verse with space for vocals, fuller chorus, brief bridge, outro";
-  return [
-    `Create an instrumental ${genre} production`,
-    `mood: ${mood}`,
-    `energy: ${energy}`,
-    `${bpm} BPM`,
-    key,
-    structure,
-    "drums, bass, harmony instruments, atmospheric textures",
-    "spacious midrange designed for a lead vocal to sit on top",
-    "professional contemporary arrangement",
-    "Instrumental only. No vocals. No lyrics. No spoken words.",
-  ]
-    .filter(Boolean)
-    .join(". ");
+
+  const parts: string[] = [];
+
+  if (input.prompt?.trim() && !isVagueBeatPrompt(input.prompt)) {
+    parts.push(input.prompt.trim());
+  }
+
+  if (genre) parts.push(`${genre} instrumental production`);
+  if (mood) parts.push(`mood: ${mood}`);
+  if (energy) parts.push(`energy: ${energy}`);
+  if (bpm) parts.push(`${bpm} BPM`);
+  if (key) parts.push(`key: ${key}`);
+  if (instrumentation) {
+    parts.push(`instrumentation emphasis: ${instrumentation}`);
+  } else {
+    parts.push("drums, bass, harmony instruments, atmospheric textures");
+  }
+  if (referenceStyle) {
+    parts.push(`in the style / feel of: ${referenceStyle} (inspired by, not a copy)`);
+  }
+  parts.push(structure);
+  parts.push("spacious midrange designed for a lead vocal to sit on top");
+  parts.push("professional contemporary arrangement");
+  parts.push("Instrumental only. No vocals. No lyrics. No spoken words.");
+
+  return parts.filter(Boolean).join(". ");
 }
