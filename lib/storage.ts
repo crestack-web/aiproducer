@@ -55,9 +55,7 @@ function getR2Client(): S3Client {
     forcePathStyle: false,
     // Prevent AWS SDK v3 from signing flexible checksum headers that browsers
     // do not send on presigned PUT (common cause of 403 on R2 uploads).
-    // @ts-expect-error AWS SDK v3 optional checksum config (supported at runtime)
     requestChecksumCalculation: "WHEN_REQUIRED",
-    // @ts-expect-error AWS SDK v3 optional checksum config (supported at runtime)
     responseChecksumValidation: "WHEN_REQUIRED",
   });
   return _client;
