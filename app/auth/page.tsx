@@ -249,46 +249,30 @@ export default function AuthPage() {
         return;
       }
 
-      // signup
-      const { data, error: err } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
+      // signup — server creates user + sends Resend only (no Supabase Auth email)
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
       });
-      if (err) {
-        if (/already registered|already been registered|user already exists/i.test(err.message)) {
-          setError("That email already has an account. Log in, or use Forgot password if you need access.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.code === "already_registered" || /already/i.test(String(data.error || ""))) {
+          setError(
+            "That email already has an account. Log in, or use Forgot password if you need access."
+          );
           setMode("login");
         } else {
-          setError(err.message);
+          setError(typeof data.error === "string" ? data.error : "Could not create account");
         }
         return;
       }
-
-      // Welcome + confirmation via Resend (best-effort)
-      try {
-        await fetch("/api/auth/send-welcome", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim() }),
-        });
-      } catch { /* non-blocking */ }
-      try {
-        await fetch("/api/auth/send-confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim() }),
-        });
-      } catch { /* non-blocking */ }
-
-      if (data.session) {
-        router.replace(next);
-        router.refresh();
-      } else {
-        setInfo(
-          "Account created. Check your email (and spam) to confirm, then log in. If no email arrives, set RESEND_FROM_EMAIL to a verified domain in Resend."
-        );
-        setMode("login");
-      }
+      setInfo(
+        typeof data.message === "string"
+          ? data.message
+          : "Account created. Check your email (and spam) for the AP confirmation link, then log in."
+      );
+      setMode("login");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
