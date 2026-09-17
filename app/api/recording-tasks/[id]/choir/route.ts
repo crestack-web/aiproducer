@@ -201,14 +201,14 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     const wav = encodeWavStereoFromMono(mono, v.pcm.sampleRate);
 
+    const storagePath = recordingPath(
+      user.id,
+      task.project_id as string,
+      String(newTask.id),
+      1,
+      "wav"
+    );
     try {
-      const storagePath = recordingPath(
-        user.id,
-        task.project_id as string,
-        String(newTask.id),
-        1,
-        "wav"
-      );
       await uploadBuffer(storagePath, wav, "audio/wav");
     } catch (e) {
       console.error("[choir] upload", e);
