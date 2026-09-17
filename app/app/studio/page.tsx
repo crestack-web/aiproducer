@@ -110,42 +110,89 @@ function StudioPageInner() {
       measured.bpm_confidence != null && measured.bpm_confidence >= 0.12
         ? Math.round(measured.bpm)
         : tempo;
+    const contentType = (file.type && file.type.trim()) || "audio/wav";
+    const MAX_DIRECT = 4 * 1024 * 1024;
 
+    async function uploadViaServerForm() {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("genre", genre);
+      form.append("mood", mood);
+      form.append("tempo", String(effectiveBpm));
+      form.append("bpm", String(effectiveBpm));
+      if (measured.duration_ms) form.append("duration_ms", String(measured.duration_ms));
+      if (measured.bpm_confidence != null) form.append("bpm_confidence", String(measured.bpm_confidence));
+      if (measured.analysis_source) form.append("analysis_source", measured.analysis_source);
+      form.append("measured_bpm", measured.bpm != null ? String(measured.bpm) : "");
+      const beatRes = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: form });
+      if (!beatRes.ok) {
+        const err = await beatRes.json().catch(() => ({}));
+        throw new Error(
+          (typeof err.error === "string" && err.error) ||
+            "Beat upload failed on server (multipart). Check R2 env on Vercel."
+        );
+      }
+    }
+
+    // Prefer browser → R2 presigned PUT; fall back to server multipart for smaller files.
     const signRes = await fetch(`/api/projects/${projectId}/beat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "sign", filename: file.name, contentType: file.type || "audio/wav" }),
+      body: JSON.stringify({ mode: "sign", filename: file.name, contentType }),
     });
+
     if (!signRes.ok) {
       const j = await signRes.json().catch(() => ({}));
-      if (file.size <= 4 * 1024 * 1024) {
-        const form = new FormData();
-        form.append("file", file);
-        form.append("genre", genre);
-        form.append("mood", mood);
-        form.append("tempo", String(effectiveBpm));
-        form.append("bpm", String(effectiveBpm));
-        if (measured.duration_ms) form.append("duration_ms", String(measured.duration_ms));
-        if (measured.bpm_confidence != null) form.append("bpm_confidence", String(measured.bpm_confidence));
-        if (measured.analysis_source) form.append("analysis_source", measured.analysis_source);
-        form.append("measured_bpm", measured.bpm != null ? String(measured.bpm) : "");
-        const beatRes = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: form });
-        if (!beatRes.ok) {
-          const err = await beatRes.json().catch(() => ({}));
-          throw new Error(err.error || j.error || "Beat upload failed");
-        }
+      if (file.size <= MAX_DIRECT) {
+        await uploadViaServerForm();
         return;
       }
-      throw new Error(j.error || "Could not start beat upload");
+      throw new Error(
+        (typeof j.error === "string" && j.error) ||
+          "Could not start beat upload (sign). Check R2_ACCOUNT_ID / R2_BUCKET_NAME / R2_ENDPOINT on Vercel."
+      );
     }
+
     const signed = await signRes.json();
-    const putCt = signed.contentType || file.type || "audio/wav";
-    const put = await fetch(signed.signedUrl, {
-      method: "PUT",
-      headers: { "Content-Type": putCt },
-      body: file,
-    });
-    if (!put.ok) throw new Error(`Storage upload failed (${put.status})`);
+    if (!signed?.signedUrl || !signed?.path) {
+      if (file.size <= MAX_DIRECT) {
+        await uploadViaServerForm();
+        return;
+      }
+      throw new Error("Beat upload sign returned no URL");
+    }
+
+    const putCt = (typeof signed.contentType === "string" && signed.contentType) || contentType;
+    let put: Response;
+    try {
+      put = await fetch(signed.signedUrl as string, {
+        method: "PUT",
+        headers: { "Content-Type": putCt },
+        body: file,
+      });
+    } catch (netErr) {
+      // Typical: CORS blocked or network to R2 failed
+      if (file.size <= MAX_DIRECT) {
+        await uploadViaServerForm();
+        return;
+      }
+      throw new Error(
+        `Beat storage PUT blocked (${netErr instanceof Error ? netErr.message : "network"}). ` +
+          "Add CORS on the R2 bucket for https://apstudio.site (PUT, Content-Type)."
+      );
+    }
+
+    if (!put.ok) {
+      if (file.size <= MAX_DIRECT) {
+        await uploadViaServerForm();
+        return;
+      }
+      throw new Error(
+        `Beat storage PUT failed (${put.status}). ` +
+          "For 403: R2 CORS must allow origin https://apstudio.site and header Content-Type."
+      );
+    }
+
     const completeRes = await fetch(`/api/projects/${projectId}/beat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -153,7 +200,7 @@ function StudioPageInner() {
         mode: "complete",
         path: signed.path,
         filename: file.name,
-        contentType: file.type || "audio/wav",
+        contentType: putCt,
         size: file.size,
         genre,
         mood,
@@ -167,7 +214,10 @@ function StudioPageInner() {
     });
     if (!completeRes.ok) {
       const j = await completeRes.json().catch(() => ({}));
-      throw new Error(j.error || "Could not save uploaded beat");
+      throw new Error(
+        (typeof j.error === "string" && j.error) ||
+          "Beat file reached storage but could not be registered (complete step)."
+      );
     }
   }
 
@@ -217,16 +267,18 @@ function StudioPageInner() {
         });
         if (!beatRes.ok) {
           const j = await beatRes.json().catch(() => ({}));
-          throw new Error(j.error || "Beat generation failed");
+          throw new Error(
+            (typeof j.error === "string" && j.error) || "Beat generation failed (not upload)"
+          );
         }
       }
 
-      // Same analyze/planProduction pipeline as Booth
+      // Plan build (separate from beat upload). Failure does not roll back the beat.
       const analyzeRes = await fetch(`/api/projects/${project.id}/analyze`, { method: "POST" });
       if (!analyzeRes.ok) {
         const j = await analyzeRes.json().catch(() => ({}));
-        // Still open session — plan can be retried
-        console.warn("analyze", j);
+        console.warn("analyze/plan", j);
+        // Still open session — plan can be retried in Booth; do not treat as upload failure
       }
 
       if (startInConsole) {
