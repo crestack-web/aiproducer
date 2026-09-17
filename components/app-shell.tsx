@@ -10,7 +10,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -132,6 +139,26 @@ export function AppShell({
   }, [tour.start]);
   const search = typeof window !== "undefined" ? window.location.search : "";
   const current = resolveActive(pathname, search, active);
+  const [pendingNav, setPendingNav] = useState<AppNavKey | "booth" | "console" | null>(null);
+  const visual = pendingNav || current;
+
+  // Clear optimistic highlight when the URL catches up
+  useEffect(() => {
+    setPendingNav(null);
+  }, [pathname, active, search]);
+
+  // Warm the common destinations so mobile taps feel instant
+  useEffect(() => {
+    try {
+      router.prefetch("/app");
+      router.prefetch("/app/studio");
+      router.prefetch("/app?tab=library");
+      router.prefetch("/app?tab=profile");
+    } catch {
+      /* ignore */
+    }
+  }, [router]);
+
   const projectPathMatch = pathname.match(/\/app\/(studio|console)\/([^/]+)/);
   const projectIdFromPath = projectPathMatch?.[2] || null;
   const onBoothPage = projectPathMatch?.[1] === "studio";
@@ -143,13 +170,59 @@ export function AppShell({
     .slice(0, 2)
     .toUpperCase();
 
-  function go(key: AppNavKey, href: string) {
-    if (key === "home") router.push("/app");
-    else if (key === "studio") router.push("/app/studio");
-    else if (key === "library") router.push("/app?tab=library");
-    else if (key === "profile") router.push("/app?tab=profile");
-    else router.push(href);
-  }
+  const go = useCallback(
+    (key: AppNavKey, href: string) => {
+      // Already on target — no-op (avoids full remount churn)
+      if (
+        (key === "home" && current === "home" && pathname === "/app") ||
+        (key === "library" && current === "library") ||
+        (key === "profile" && current === "profile") ||
+        (key === "studio" && current === "studio" && pathname === "/app/studio")
+      ) {
+        return;
+      }
+
+      setPendingNav(key);
+      const dest =
+        key === "home"
+          ? "/app"
+          : key === "studio"
+            ? "/app/studio"
+            : key === "library"
+              ? "/app?tab=library"
+              : key === "profile"
+                ? "/app?tab=profile"
+                : href;
+
+      // Same /app shell: replace is cheaper than push for tab switches
+      const sameShell =
+        pathname === "/app" && (key === "home" || key === "library" || key === "profile");
+
+      startTransition(() => {
+        if (sameShell) router.replace(dest);
+        else router.push(dest);
+      });
+    },
+    [current, pathname, router]
+  );
+
+  const goProject = useCallback(
+    (kind: "booth" | "console", id: string) => {
+      const dest = kind === "booth" ? `/app/studio/${id}` : `/app/console/${id}`;
+      if (kind === "booth" && onBoothPage) return;
+      if (kind === "console" && onStudioPage) return;
+      setPendingNav(kind);
+      try {
+        router.prefetch(dest);
+      } catch {
+        /* ignore */
+      }
+      startTransition(() => {
+        router.push(dest);
+      });
+    },
+    [onBoothPage, onStudioPage, router]
+  );
 
   const shell: CSSProperties = {
     display: "flex",
@@ -300,6 +373,8 @@ export function AppShell({
   };
 
   const bottomItem: CSSProperties = {
+    WebkitTapHighlightColor: "transparent",
+    touchAction: "manipulation",
     flex: 1,
     display: "flex",
     flexDirection: "column",
@@ -490,7 +565,7 @@ export function AppShell({
             <button
               type="button"
               title="Booth — record vocals"
-              onClick={() => router.push(`/app/studio/${projectIdFromPath}`)}
+              onClick={() => projectIdFromPath && goProject("booth", projectIdFromPath)}
               style={{
                 ...navItem,
                 ...(onBoothPage ? navActive : {}),
@@ -505,7 +580,7 @@ export function AppShell({
             <button
               type="button"
               title="Console — AI timeline / mix"
-              onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
+              onClick={() => projectIdFromPath && goProject("console", projectIdFromPath)}
               style={{
                 ...navItem,
                 ...(onStudioPage ? navActive : {}),
@@ -677,40 +752,40 @@ export function AppShell({
               onClick={() => go("home", "/app")}
               style={{
                 ...bottomItem,
-                color: current === "home" ? C.brass : C.textFaint,
-                fontWeight: current === "home" ? 600 : 500,
+                color: visual === "home" ? C.brass : C.textFaint,
+                fontWeight: visual === "home" ? 600 : 500,
               }}
-              aria-current={current === "home" ? "page" : undefined}
+              aria-current={visual === "home" ? "page" : undefined}
             >
-              <IconHome size={22} color={current === "home" ? C.brass : C.textFaint} />
+              <IconHome size={22} color={visual === "home" ? C.brass : C.textFaint} />
               Home
             </button>
             <button
               type="button"
               title="Booth — guided recording"
-              onClick={() => router.push(`/app/studio/${projectIdFromPath}`)}
+              onClick={() => projectIdFromPath && goProject("booth", projectIdFromPath)}
               style={{
                 ...bottomItem,
-                color: onBoothPage ? C.brass : C.textFaint,
-                fontWeight: onBoothPage ? 600 : 500,
+                color: onBoothPage || pendingNav === "booth" ? C.brass : C.textFaint,
+                fontWeight: onBoothPage || pendingNav === "booth" ? 600 : 500,
               }}
               aria-current={onBoothPage ? "page" : undefined}
             >
-              <IconBooth size={22} color={onBoothPage ? C.brass : C.textFaint} />
+              <IconBooth size={22} color={onBoothPage || pendingNav === "booth" ? C.brass : C.textFaint} />
               Booth
             </button>
             <button
               type="button"
               title="Console — AI timeline"
-              onClick={() => router.push(`/app/console/${projectIdFromPath}`)}
+              onClick={() => projectIdFromPath && goProject("console", projectIdFromPath)}
               style={{
                 ...bottomItem,
-                color: onStudioPage ? C.brass : C.textFaint,
-                fontWeight: onStudioPage ? 600 : 500,
+                color: onStudioPage || pendingNav === "console" ? C.brass : C.textFaint,
+                fontWeight: onStudioPage || pendingNav === "console" ? 600 : 500,
               }}
               aria-current={onStudioPage ? "page" : undefined}
             >
-              <IconStudio size={22} color={onStudioPage ? C.brass : C.textFaint} />
+              <IconStudio size={22} color={onStudioPage || pendingNav === "console" ? C.brass : C.textFaint} />
               Console
             </button>
             <button
@@ -719,18 +794,18 @@ export function AppShell({
               onClick={() => go("library", "/app?tab=library")}
               style={{
                 ...bottomItem,
-                color: current === "library" ? C.brass : C.textFaint,
-                fontWeight: current === "library" ? 600 : 500,
+                color: visual === "library" ? C.brass : C.textFaint,
+                fontWeight: visual === "library" ? 600 : 500,
               }}
-              aria-current={current === "library" ? "page" : undefined}
+              aria-current={visual === "library" ? "page" : undefined}
             >
-              <IconLibrary size={22} color={current === "library" ? C.brass : C.textFaint} />
+              <IconLibrary size={22} color={visual === "library" ? C.brass : C.textFaint} />
               Library
             </button>
           </>
         ) : (
           NAV.map(({ key, label, href, Icon }) => {
-            const isActive = current === key;
+            const isActive = visual === key;
             return (
               <button
                 key={key}
@@ -741,6 +816,7 @@ export function AppShell({
                   ...bottomItem,
                   color: isActive ? C.brass : C.textFaint,
                   fontWeight: isActive ? 600 : 500,
+                  opacity: pendingNav && pendingNav !== key ? 0.7 : 1,
                 }}
                 aria-current={isActive ? "page" : undefined}
               >
