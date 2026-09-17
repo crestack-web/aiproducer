@@ -141,7 +141,7 @@ export function publicErrorMessage(errorType: MusicErrorType): string {
     case "BILLING_REQUIRED":
       return "Music generation is temporarily unavailable because the configured AI music provider has no available generation credit.";
     case "AUTHENTICATION_ERROR":
-      return "Music generation provider authentication failed. Please contact support.";
+      return "Music generation could not authenticate with ElevenLabs. Check ELEVENLABS_API_KEY and that Music API is enabled on your ElevenLabs plan.";
     case "RATE_LIMITED":
       return "Music generation is busy right now. Please try again in a moment.";
     case "MODEL_UNAVAILABLE":
