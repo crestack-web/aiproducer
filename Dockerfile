@@ -1,9 +1,11 @@
 # AP — Next.js web + shared image for production worker
 FROM node:20-bookworm-slim AS base
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -1
 WORKDIR /app
 
 FROM base AS deps
@@ -19,8 +21,11 @@ RUN npm run build
 FROM base AS runner
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 WORKDIR /app
-RUN groupadd --system --gid 1001 nodejs && useradd --system --uid 1001 nextjs
+
+RUN groupadd --system --gid 1001 nodejs \
+  && useradd --system --uid 1001 --gid nodejs nextjs
 
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
@@ -32,9 +37,6 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/workers ./workers
 COPY --from=builder /app/app ./app
-
-# System ffmpeg available as /usr/bin/ffmpeg; optional override via FFMPEG_PATH
-ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 USER nextjs
 EXPOSE 3000

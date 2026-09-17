@@ -1,0 +1,8 @@
+# AP staging reverse proxy (Caddy)
+# Replace staging.example.com with your real staging hostname.
+# Route only to the web container — never expose the worker.
+
+staging.example.com {
+	encode gzip
+	reverse_proxy web:3000
+}
