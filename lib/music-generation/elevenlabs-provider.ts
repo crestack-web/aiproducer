@@ -135,9 +135,13 @@ export function buildElevenLabsCompositionPlan(opts: {
   if (opts.genre) styles.push(opts.genre.toLowerCase());
   if (opts.mood) styles.push(opts.mood.toLowerCase());
   if (opts.energy) styles.push(opts.energy.toLowerCase());
-  if (opts.instrumentation) styles.push(opts.instrumentation.toLowerCase());
+  if (opts.instrumentation) {
+    for (const bit of opts.instrumentation.split(/[\/,]/).map((s) => s.trim()).filter(Boolean)) {
+      styles.push(bit.toLowerCase());
+    }
+  }
   if (opts.bpm) styles.push(`${opts.bpm} bpm`);
-  styles.push("instrumental", "no vocals", "no lyrics");
+  styles.push("instrumental", "no vocals", "no lyrics", "vocal-ready midrange");
 
   const total = Math.max(6000, Math.min(300000, opts.durationMs));
   // Simple AP-friendly structure: intro → verse space → chorus lift → outro
