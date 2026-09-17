@@ -81,9 +81,16 @@ async function loop() {
   log("WORKER_STARTED", { pollMs: POLL_MS, tickMs: TICK_MS });
 
   // Validate env early
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const hasUrl =
+    Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) ||
+    Boolean(process.env.SUPABASE_URL?.trim());
+  const hasService =
+    Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) ||
+    Boolean(process.env.SUPABASE_SECRET_KEY?.trim());
+  if (!hasUrl || !hasService) {
     log("WORKER_FATAL", {
-      error: "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY",
+      error:
+        "Missing Supabase URL (NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL) or service key (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY)",
     });
     process.exit(1);
   }
