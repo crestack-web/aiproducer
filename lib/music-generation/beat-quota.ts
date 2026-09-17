@@ -266,7 +266,7 @@ export async function assertBeatGenAllowed(
   durationSec?: number
 ): Promise<BeatQuotaSnapshot> {
   const snap = await getBeatGenQuota(userId);
-  const want = Math.max(5, Math.min(120, Math.round(durationSec || DEFAULT_FULL_BEAT_SEC)));
+  const want = Math.max(5, Math.min(240, Math.round(durationSec || DEFAULT_FULL_BEAT_SEC)));
 
   console.info(
     "[beat-quota] check",
