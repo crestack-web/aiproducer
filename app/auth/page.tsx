@@ -261,14 +261,8 @@ export default function AuthPage() {
                       <div className="auth-pw-wrap">
                         <input
                           type={showPw ? "text" : "password"}
-                          autoComplete={
-                            mode === "login"
-                              ? "current-password"
-                              : mode === "update-password"
-                                ? "new-password"
-                                : "new-password"
-                          }
-                          required={mode !== "forgot"}
+                          autoComplete={mode === "login" ? "current-password" : "new-password"}
+                          required
                           minLength={mode === "signup" || mode === "update-password" ? 8 : undefined}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
