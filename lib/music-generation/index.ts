@@ -15,6 +15,11 @@ export {
   assertBeatGenAllowed,
   recordSongDownloadForBeatUnlock,
   isPaidBeatSubscriber,
+  estimateBeatCostUsd,
+  estimatedMusicCostUsdPerSec,
+  FREE_BEAT_GEN_COUNT,
+  FREE_MAX_DURATION_SEC,
+  DEFAULT_FULL_BEAT_SEC,
 } from "./beat-quota";
 export type { BeatQuotaSnapshot } from "./beat-quota";
 export { ReplicateMusicProvider } from "./replicate-provider";
