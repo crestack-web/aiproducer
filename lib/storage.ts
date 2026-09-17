@@ -17,6 +17,8 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   HeadObjectCommand,
+  PutBucketCorsCommand,
+  GetBucketCorsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -250,4 +252,70 @@ export async function persistRemoteAudioToStorage(
   const contentType = res.headers.get("content-type") || "audio/wav";
   await uploadBuffer(storagePath, buffer, contentType);
   return { path: storagePath, bytes: buffer.length, contentType };
+}
+
+
+/** Origins allowed to PUT/GET audio against the private R2 bucket from the browser. */
+export function r2BrowserCorsOrigins(): string[] {
+  const fromEnv = (process.env.R2_CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const defaults = [
+    "https://apstudio.site",
+    "https://www.apstudio.site",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ];
+  const app =
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/$/, "");
+  if (app && app.startsWith("http")) defaults.unshift(app);
+  return Array.from(new Set([...defaults, ...fromEnv]));
+}
+
+/**
+ * Apply browser CORS on the R2 bucket so presigned PUT (beat/vocal upload) works.
+ * Requires R2 credentials. Safe to call repeatedly (replaces CORS rules).
+ */
+export async function applyR2BrowserCors(): Promise<{
+  origins: string[];
+  methods: string[];
+}> {
+  const client = getR2Client();
+  const origins = r2BrowserCorsOrigins();
+  const methods = ["GET", "PUT", "HEAD", "POST"];
+  await client.send(
+    new PutBucketCorsCommand({
+      Bucket: getStorageBucket(),
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: origins,
+            AllowedMethods: methods,
+            /** Browsers send Content-Type + optional x-amz-* on presigned PUT */
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag", "Content-Length", "Content-Type", "x-amz-request-id"],
+            MaxAgeSeconds: 86400,
+          },
+        ],
+      },
+    })
+  );
+  return { origins, methods };
+}
+
+/** Read current CORS rules (for diagnostics). */
+export async function getR2BrowserCors(): Promise<unknown> {
+  const client = getR2Client();
+  try {
+    const res = await client.send(
+      new GetBucketCorsCommand({ Bucket: getStorageBucket() })
+    );
+    return res.CORSRules ?? [];
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
