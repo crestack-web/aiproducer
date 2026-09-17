@@ -14,7 +14,7 @@ import type {
   MusicProviderName,
 } from "./types";
 import { MusicGenerationError, publicErrorMessage } from "./types";
-import { assertBeatGenAllowed } from "./beat-quota";
+import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC } from "./beat-quota";
 
 export function getMusicGenerationMode(): "mock" | "provider" {
   const m = (process.env.MUSIC_GENERATION_MODE || "").toLowerCase();
@@ -161,7 +161,8 @@ export async function enqueueMusicGeneration(
   if (existing) return { jobId: existing.id, status: existing.status as MusicJobStatus, deduped: true };
 
   // New generation only — successful COMPLETED jobs consume quota; failures do not
-  await assertBeatGenAllowed(req.userId);
+  const requestedSec = Math.round(req.durationSec || DEFAULT_FULL_BEAT_SEC);
+  await assertBeatGenAllowed(req.userId, requestedSec);
   await assertWithinDailyLimits(req.userId, kind);
 
   const { data: project } = await supabase
@@ -182,7 +183,7 @@ export async function enqueueMusicGeneration(
     instrumentation: req.instrumentation,
     referenceStyle: req.referenceStyle,
     kind,
-    durationSec: req.durationSec,
+    durationSec: req.durationSec ?? requestedSec,
   });
 
   const provider = getMusicProvider();
@@ -204,7 +205,12 @@ export async function enqueueMusicGeneration(
       duration_sec: plan.durationSec,
       idempotency_key: idem,
       progress: 0,
-      input_data: { plan },
+      input_data: {
+        plan,
+        duration_sec: plan.durationSec ?? requestedSec,
+        estimated_cost_usd: estimateBeatCostUsd(plan.durationSec ?? requestedSec),
+        cost_rate_usd_per_sec: Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || 0.00583),
+      },
     })
     .select("id, status")
     .single();
