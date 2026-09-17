@@ -10,14 +10,25 @@ type CookieToSet = {
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
-  const url =
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ||
-    process.env.SUPABASE_URL?.trim();
+  const url = (
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL ||
+    process.env.SUPABASE_PROJECT_URL ||
+    ""
+  ).trim();
+  const keyCandidates = [
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    process.env.SUPABASE_ANON_KEY,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    process.env.SUPABASE_PUBLISHABLE_KEY,
+    process.env.NEXT_PUBLIC_SUPABASE_KEY,
+    process.env.SUPABASE_KEY,
+  ]
+    .map((v) => (v || "").trim())
+    .filter(Boolean);
   const key =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
-    process.env.SUPABASE_ANON_KEY?.trim() ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ||
-    process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    keyCandidates.find((k) => k.startsWith("eyJ")) || keyCandidates[0] || "";
   if (!url || !key) return supabaseResponse;
 
   const supabase = createServerClient(url, key, {
