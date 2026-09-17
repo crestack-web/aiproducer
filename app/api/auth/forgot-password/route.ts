@@ -33,6 +33,14 @@ export async function POST(req: Request) {
   const origin = getAppOrigin(req);
   const redirectTo = `${origin}/auth?mode=update-password`;
 
+  if (!process.env.RESEND_API_KEY?.trim()) {
+    console.error("[forgot-password] RESEND_API_KEY missing");
+    return NextResponse.json({
+      ok: true,
+      message: "If that email is registered, you’ll get a reset link shortly.",
+    });
+  }
+
   try {
     const service = createServiceClient();
     const { data, error } = await service.auth.admin.generateLink({
@@ -65,8 +73,9 @@ export async function POST(req: Request) {
       });
       if (sent.error) {
         console.error("[forgot-password] resend", sent.error);
-        // Fallback: ask Supabase to send its own email if Resend fails
-        await service.auth.resetPasswordForEmail(email, { redirectTo }).catch(() => null);
+        // Do not fall back to Supabase Auth email — Resend is the only mail path
+      } else if (!actionLink) {
+        console.error("[forgot-password] missing action link");
       }
     }
 
