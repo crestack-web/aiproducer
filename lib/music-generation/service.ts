@@ -4,6 +4,7 @@ import { buildInstrumentalPrompt } from "./provider";
 import type { MusicGenerationProvider } from "./provider";
 import { MockMusicProvider } from "./mock-provider";
 import { ReplicateMusicProvider } from "./replicate-provider";
+import { ElevenLabsMusicProvider } from "./elevenlabs-provider";
 import type {
   GeneratedMusicAsset,
   GenerationKind,
@@ -19,15 +20,35 @@ export function getMusicGenerationMode(): "mock" | "provider" {
   const m = (process.env.MUSIC_GENERATION_MODE || "").toLowerCase();
   if (m === "mock") return "mock";
   if (m === "provider") return "provider";
-  if (!process.env.REPLICATE_API_TOKEN) return "mock";
-  return "provider";
+  // Prefer real providers when keys exist
+  if (
+    process.env.ELEVENLABS_API_KEY?.trim() ||
+    process.env.ELEVEN_API_KEY?.trim() ||
+    process.env.REPLICATE_API_TOKEN?.trim()
+  ) {
+    return "provider";
+  }
+  return "mock";
 }
 
 export function getMusicProvider(): MusicGenerationProvider {
   if (getMusicGenerationMode() === "mock") return new MockMusicProvider();
-  const name = (process.env.MUSIC_GENERATION_PROVIDER || "replicate").toLowerCase();
+  const name = (process.env.MUSIC_GENERATION_PROVIDER || "").toLowerCase().trim();
+  // Explicit choice
   if (name === "replicate") return new ReplicateMusicProvider();
-  return new ReplicateMusicProvider();
+  if (name === "elevenlabs" || name === "eleven") return new ElevenLabsMusicProvider();
+  // Auto: ElevenLabs first when key present, else Replicate, else ElevenLabs (will throw NOT_CONFIGURED)
+  if (
+    process.env.ELEVENLABS_API_KEY?.trim() ||
+    process.env.ELEVEN_API_KEY?.trim() ||
+    process.env.XI_API_KEY?.trim()
+  ) {
+    return new ElevenLabsMusicProvider();
+  }
+  if (process.env.REPLICATE_API_TOKEN?.trim()) {
+    return new ReplicateMusicProvider();
+  }
+  return new ElevenLabsMusicProvider();
 }
 
 function limits() {
