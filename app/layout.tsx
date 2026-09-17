@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
+import { getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase/env";
 import { ThemeProvider } from "@/lib/theme";
 import { PwaRegister } from "@/components/pwa-install";
 
@@ -25,6 +26,11 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const supabasePublic = {
+    url: getSupabaseUrl() || "",
+    anonKey: getSupabaseAnonKey() || "",
+  };
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -48,6 +54,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body style={{ margin: 0, minHeight: "100vh" }}>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__AP_SUPABASE__=${JSON.stringify(supabasePublic)};`,
+          }}
+        />
+
         <ThemeProvider>
           <PwaRegister />
           {children}
