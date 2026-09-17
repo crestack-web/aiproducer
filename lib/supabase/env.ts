@@ -40,7 +40,7 @@ export function getSupabaseUrl(): string | undefined {
 
 /**
  * Anon / publishable key for browser + user-scoped server clients.
- * Order: explicit NEXT_PUBLIC anon → integration anon → publishable variants.
+ * Private integration names first (SUPABASE_ANON_KEY, …), then NEXT_PUBLIC_* fallbacks.
  */
 export function getSupabaseAnonKey(): string | undefined {
   return preferJwt([
