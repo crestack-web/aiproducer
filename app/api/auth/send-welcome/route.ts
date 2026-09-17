@@ -12,9 +12,13 @@ const Body = z.object({
   name: z.string().max(120).optional(),
 });
 
+/** Bump when welcome copy/design changes — returned in API so we can verify deploys */
+const WELCOME_TEMPLATE_VERSION = "mission-v2-brass";
+
 /**
  * POST /api/auth/send-welcome
- * Branded welcome via Resend. Uses session email when present; otherwise body.email.
+ * Branded welcome via Resend.
+ * Explicit body.email always wins (admin/test sends); otherwise session email.
  */
 export async function POST(req: Request) {
   let json: unknown = {};
@@ -26,14 +30,17 @@ export async function POST(req: Request) {
 
   const parsed = Body.safeParse(json ?? {});
   const name = parsed.success ? parsed.data.name : undefined;
-  let email = parsed.success ? parsed.data.email?.trim().toLowerCase() : undefined;
+  const bodyEmail = parsed.success ? parsed.data.email?.trim().toLowerCase() : undefined;
 
-  try {
-    const supabase = await createClient();
-    const { data } = await supabase.auth.getUser();
-    if (data.user?.email) email = data.user.email;
-  } catch {
-    /* continue with body email */
+  let email = bodyEmail;
+  if (!email) {
+    try {
+      const supabase = await createClient();
+      const { data } = await supabase.auth.getUser();
+      if (data.user?.email) email = data.user.email.trim().toLowerCase();
+    } catch {
+      /* */
+    }
   }
 
   if (!email) {
@@ -54,5 +61,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: sent.error }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true, id: sent.id });
+  return NextResponse.json({
+    ok: true,
+    id: sent.id,
+    template: WELCOME_TEMPLATE_VERSION,
+    to: email,
+  });
 }
