@@ -276,7 +276,30 @@ export async function tickMusicGenerationJob(jobId: string) {
 
     let result;
     if (provider.generate) {
-      result = await provider.generate(genReq);
+      try {
+        result = await provider.generate(genReq);
+      } catch (genErr) {
+        const isAuth =
+          genErr instanceof MusicGenerationError &&
+          (genErr.errorType === "AUTHENTICATION_ERROR" || genErr.errorType === "NOT_CONFIGURED");
+        if (
+          isAuth &&
+          provider.name === "elevenlabs" &&
+          process.env.REPLICATE_API_TOKEN?.trim() &&
+          process.env.MUSIC_GENERATION_FALLBACK_REPLICATE !== "0"
+        ) {
+          console.warn("[music-gen] ElevenLabs auth failed; falling back to Replicate");
+          const fallback = new ReplicateMusicProvider();
+          await supabase
+            .from("music_generation_jobs")
+            .update({ provider: fallback.name, stage: "generate_fallback" })
+            .eq("id", jobId);
+          if (!fallback.generate) throw genErr;
+          result = await fallback.generate(genReq);
+        } else {
+          throw genErr;
+        }
+      }
     } else {
       const submitted = await provider.submitPrediction(genReq);
       await supabase.from("music_generation_jobs").update({ provider_prediction_id: submitted.providerPredictionId }).eq("id", jobId);
