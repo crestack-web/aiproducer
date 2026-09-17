@@ -25,55 +25,43 @@ export async function POST(req: Request) {
 
   try {
     const service = createServiceClient();
-    // Prefer signup confirmation; then magiclink; then invite — always delivered via Resend
-    const { data, error } = await service.auth.admin.generateLink({
-      type: "signup",
+
+    // magiclink + invite do not require password (signup type does)
+    const first = await service.auth.admin.generateLink({
+      type: "magiclink",
       email,
       options: { redirectTo },
     });
-    if (error) {
-      const second = await service.auth.admin.generateLink({
-        type: "magiclink",
-        email,
-        options: { redirectTo },
-      });
-      if (second.error) {
-        const third = await service.auth.admin.generateLink({
-          type: "invite",
-          email,
-          options: { redirectTo },
-        });
-        if (third.error) {
-          console.error("[send-confirm]", error.message, second.error.message, third.error.message);
-          return NextResponse.json(
-            { error: "Could not create confirmation link. Check SUPABASE_SERVICE_ROLE_KEY." },
-            { status: 502 }
-          );
-        }
-        const link =
-          third.data?.properties?.action_link ||
-          (third.data as { action_link?: string } | undefined)?.action_link;
-        if (!link) {
-          return NextResponse.json({ error: "No link returned" }, { status: 502 });
-        }
-        return await sendConfirm(email, link);
-      }
-      const link =
-        second.data?.properties?.action_link ||
-        (second.data as { action_link?: string } | undefined)?.action_link;
-      if (!link) {
-        return NextResponse.json({ error: "No link returned" }, { status: 502 });
-      }
-      return await sendConfirm(email, link);
+    if (!first.error) {
+      const actionLink =
+        first.data?.properties?.action_link ||
+        (first.data as { action_link?: string } | undefined)?.action_link;
+      if (actionLink) return await sendConfirm(email, actionLink);
     }
 
-    const actionLink =
-      data?.properties?.action_link ||
-      (data as { action_link?: string } | undefined)?.action_link;
-    if (!actionLink) {
-      return NextResponse.json({ error: "No confirmation link returned" }, { status: 502 });
+    const second = await service.auth.admin.generateLink({
+      type: "invite",
+      email,
+      options: { redirectTo },
+    });
+    if (second.error) {
+      console.error(
+        "[send-confirm]",
+        first.error?.message,
+        second.error.message
+      );
+      return NextResponse.json(
+        { error: "Could not create confirmation link. Check SUPABASE_SERVICE_ROLE_KEY." },
+        { status: 502 }
+      );
     }
-    return await sendConfirm(email, actionLink);
+    const link =
+      second.data?.properties?.action_link ||
+      (second.data as { action_link?: string } | undefined)?.action_link;
+    if (!link) {
+      return NextResponse.json({ error: "No link returned" }, { status: 502 });
+    }
+    return await sendConfirm(email, link);
   } catch (e) {
     console.error("[send-confirm]", e);
     return NextResponse.json(
@@ -88,7 +76,7 @@ async function sendConfirm(email: string, actionLink: string) {
   const html = shellEmail(
     "Confirm your email",
     `<p style="margin:0 0 14px;">Tap the button to confirm your email and open AP Studio.</p>
-     <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:#7c5cff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Confirm email</a></p>
+     <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:700;">Confirm email</a></p>
      <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t sign up, ignore this email.</p>`
   );
   const sent = await sendResendEmail({
