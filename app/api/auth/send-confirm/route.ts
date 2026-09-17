@@ -25,24 +25,38 @@ export async function POST(req: Request) {
 
   try {
     const service = createServiceClient();
+    // Prefer signup confirmation; then magiclink; then invite — always delivered via Resend
     const { data, error } = await service.auth.admin.generateLink({
-      type: "magiclink",
+      type: "signup",
       email,
       options: { redirectTo },
     });
     if (error) {
-      // Try signup type for brand-new unconfirmed users
       const second = await service.auth.admin.generateLink({
-        type: "invite",
+        type: "magiclink",
         email,
         options: { redirectTo },
       });
       if (second.error) {
-        console.error("[send-confirm]", error.message, second.error.message);
-        return NextResponse.json(
-          { error: "Could not create confirmation link. Check SUPABASE_SERVICE_ROLE_KEY." },
-          { status: 502 }
-        );
+        const third = await service.auth.admin.generateLink({
+          type: "invite",
+          email,
+          options: { redirectTo },
+        });
+        if (third.error) {
+          console.error("[send-confirm]", error.message, second.error.message, third.error.message);
+          return NextResponse.json(
+            { error: "Could not create confirmation link. Check SUPABASE_SERVICE_ROLE_KEY." },
+            { status: 502 }
+          );
+        }
+        const link =
+          third.data?.properties?.action_link ||
+          (third.data as { action_link?: string } | undefined)?.action_link;
+        if (!link) {
+          return NextResponse.json({ error: "No link returned" }, { status: 502 });
+        }
+        return await sendConfirm(email, link);
       }
       const link =
         second.data?.properties?.action_link ||
