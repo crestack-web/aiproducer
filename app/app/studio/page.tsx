@@ -20,6 +20,12 @@ const INSTRUMENTATION = [
   "Live drums",
   "Sparse minimal",
 ];
+/** Beat length presets (seconds). Free tier covers ≤30s. */
+const LENGTH_PRESETS = [15, 30, 45, 60] as const;
+/** Estimated USD/sec — override via env on server; client mirror for preview. */
+const COST_PER_SEC_USD = 0.00583;
+const FREE_MAX_SEC = 30;
+const FREE_GEN_COUNT = 3;
 type Project = {
   id: string;
   title: string;
@@ -60,6 +66,7 @@ function StudioPageInner() {
   const [mood, setMood] = useState("Emotional");
   const [prompt, setPrompt] = useState("");
   const [tempo, setTempo] = useState(104);
+  const [beatDurationSec, setBeatDurationSec] = useState(30);
   const [energy, setEnergy] = useState("Driving");
   const [instrumentation, setInstrumentation] = useState("808-driven");
   const [referenceStyle, setReferenceStyle] = useState("");
@@ -252,6 +259,15 @@ function StudioPageInner() {
       if (beatMode === "upload" && !beatFile) throw new Error("Choose a beat file to upload");
 
       // Vague prompt + AI mode → ask for specificity instead of wasting a credit
+      if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC) {
+        // Soft client gate — server remains authoritative for free users
+        setError(
+          `Free beats are limited to ${FREE_MAX_SEC}s. Choose ${FREE_MAX_SEC}s or shorter, or upgrade for longer beats.`
+        );
+        setCreating(false);
+        return;
+      }
+
       if (beatMode === "ai") {
         const p = prompt.trim().toLowerCase();
         const vague =
@@ -302,6 +318,8 @@ function StudioPageInner() {
             energy,
             instrumentation,
             referenceStyle: referenceStyle.trim() || undefined,
+            duration_sec: beatDurationSec,
+            kind: "full",
           }),
         });
         if (!beatRes.ok) {
@@ -475,6 +493,47 @@ function StudioPageInner() {
                 />
               </div>
             </>
+          )}
+
+
+          {beatMode === "ai" && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
+                Beat length · {beatDurationSec}s
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                {LENGTH_PRESETS.map((s) => (
+                  <button key={s} type="button" style={chip(beatDurationSec === s)} onClick={() => setBeatDurationSec(s)}>
+                    {s}s
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={60}
+                step={5}
+                value={beatDurationSec}
+                onChange={(e) => setBeatDurationSec(Number(e.target.value))}
+                aria-label="Beat length seconds"
+                style={{ width: "100%" }}
+              />
+              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.45, color: C.textMuted || C.textFaint }}>
+                {beatDurationSec <= FREE_MAX_SEC ? (
+                  <>
+                    <span style={{ color: C.brass || "#E7A961", fontWeight: 600 }}>Covered on free tier</span>
+                    {" · "}up to {FREE_GEN_COUNT} gens ≤{FREE_MAX_SEC}s · est. ~$
+                    {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)} if billed
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 600 }}>Above free length ({FREE_MAX_SEC}s)</span>
+                    {" · "}shorten to generate free, or upgrade · est. ~$
+                    {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                  </>
+                )}
+              </div>
+            </div>
           )}
 
           <div style={{ marginTop: 20 }}>
