@@ -13,6 +13,7 @@ import type {
   MusicProviderName,
 } from "./types";
 import { MusicGenerationError, publicErrorMessage } from "./types";
+import { assertBeatGenAllowed } from "./beat-quota";
 
 export function getMusicGenerationMode(): "mock" | "provider" {
   const m = (process.env.MUSIC_GENERATION_MODE || "").toLowerCase();
@@ -76,22 +77,32 @@ export function createMusicGenerationPlan(input: {
   genre?: string | null;
   mood?: string | null;
   tempo?: number | null;
+  bpm?: number | null;
   key?: string | null;
   prompt?: string | null;
   energy?: string | null;
+  structure?: string | null;
+  instrumentation?: string | null;
+  referenceStyle?: string | null;
   kind?: GenerationKind;
+  durationSec?: number;
 }): MusicGenerationPlan {
   const genre = input.genre || "R&B";
   const mood = input.mood || "Emotional";
-  const bpm = input.tempo || 95;
-  const kind = input.kind || "preview";
+  const bpm = input.bpm ?? input.tempo ?? 95;
+  const energy = input.energy || undefined;
+  const instrumentation = input.instrumentation || undefined;
+  const referenceStyle = input.referenceStyle || undefined;
   const prompt = buildInstrumentalPrompt({
     prompt: input.prompt || undefined,
     genre,
     mood,
     bpm,
     key: input.key || undefined,
-    energy: input.energy || undefined,
+    energy,
+    structure: input.structure || undefined,
+    instrumentation,
+    referenceStyle,
   });
   return {
     shouldGenerate: true,
@@ -100,11 +111,14 @@ export function createMusicGenerationPlan(input: {
     mood,
     bpm,
     key: input.key || undefined,
-    durationSec: kind === "full" ? 24 : 8,
-    kind,
+    durationSec: input.durationSec,
+    kind: input.kind || "preview",
     prompt,
-    reason: "The user needs an instrumental foundation before recording vocals.",
-    energy: input.energy || undefined,
+    reason: "instrumental foundation before recording vocals.",
+    energy,
+    structure: input.structure || undefined,
+    instrumentation,
+    referenceStyle,
   };
 }
 
@@ -125,6 +139,8 @@ export async function enqueueMusicGeneration(
     .maybeSingle();
   if (existing) return { jobId: existing.id, status: existing.status as MusicJobStatus, deduped: true };
 
+  // New generation only — successful COMPLETED jobs consume quota; failures do not
+  await assertBeatGenAllowed(req.userId);
   await assertWithinDailyLimits(req.userId, kind);
 
   const { data: project } = await supabase
@@ -138,11 +154,14 @@ export async function enqueueMusicGeneration(
   const plan = createMusicGenerationPlan({
     genre: req.genre ?? project.genre,
     mood: req.mood ?? project.mood,
-    tempo: req.bpm ?? project.tempo,
-    key: req.key,
-    prompt: req.prompt ?? project.prompt,
+    tempo: req.bpm ?? (project as { tempo?: number }).tempo,
+    bpm: req.bpm ?? (project as { tempo?: number }).tempo,
+    prompt: req.prompt ?? (project as { prompt?: string }).prompt,
     energy: req.energy,
+    instrumentation: req.instrumentation,
+    referenceStyle: req.referenceStyle,
     kind,
+    durationSec: req.durationSec,
   });
 
   const provider = getMusicProvider();
