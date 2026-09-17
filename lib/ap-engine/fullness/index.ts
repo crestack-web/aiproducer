@@ -7,4 +7,6 @@ export {
   generateAdlibEcho,
   generateFromDecision,
   generateChoir,
+  generateStack,
 } from "./generate";
+export type { StackMode, ChoirVoice } from "./generate";

@@ -5,12 +5,15 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { createSignedDownloadUrl, uploadProjectAudio } from "@/lib/storage";
 import { encodeWavStereoFromMono } from "@/lib/audio/wav";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
-import { generateChoir } from "@/lib/ap-engine/fullness";
+import { generateStack, type StackMode } from "@/lib/ap-engine/fullness";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 const BodySchema = z.object({
-  intensity: z.enum(["light", "full"]).optional().default("full"),
+  /** Preferred: double | choir_light | choir_full | chorus_lift */
+  mode: z.enum(["double", "choir_light", "choir_full", "chorus_lift"]).optional(),
+  /** @deprecated — maps to choir_light / choir_full */
+  intensity: z.enum(["light", "full"]).optional(),
 });
 
 /**
@@ -25,24 +28,54 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const { id: taskId } = await ctx.params;
-  let intensity: "light" | "full" = "full";
+  let mode: StackMode = "choir_full";
   try {
     const body = await req.json().catch(() => ({}));
     const parsed = BodySchema.safeParse(body || {});
-    if (parsed.success) intensity = parsed.data.intensity;
+    if (parsed.success) {
+      if (parsed.data.mode) mode = parsed.data.mode;
+      else if (parsed.data.intensity === "light") mode = "choir_light";
+      else if (parsed.data.intensity === "full") mode = "choir_full";
+    }
   } catch {
-    /* default full */
+    /* default choir_full */
   }
 
   const service = createServiceClient();
   const { data: task, error: taskErr } = await service
     .from("recording_tasks")
-    .select("id, project_id, type, title, start_ms, end_ms, status")
+    .select("id, project_id, type, title, start_ms, end_ms, status, metadata, section_type, section_label")
     .eq("id", taskId)
     .maybeSingle();
 
   if (taskErr || !task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (mode === "chorus_lift") {
+    const meta =
+      task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
+        ? (task.metadata as Record<string, unknown>)
+        : {};
+    const sectionBlob = [
+      task.section_type,
+      task.section_label,
+      meta.section_type,
+      meta.section_label,
+      meta.section,
+      task.title,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const looksChorus =
+      /chorus|hook|drop|refrain/.test(sectionBlob) ||
+      String(task.type || "").toLowerCase() === "lead";
+    // Soft gate: still allow on lead even if label missing; warn via message
+    if (!looksChorus && !/chorus|hook/.test(sectionBlob)) {
+      // Prefer not blocking artists — apply light stack and tag
+      mode = "choir_light";
+    }
   }
 
   const { data: project } = await service
@@ -92,9 +125,9 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const leadPcm = lead.pcm;
 
-  const voices = generateChoir({
+  const voices = generateStack({
     lead: leadPcm,
-    intensity,
+    mode,
     startMs: Number(task.start_ms) || 0,
   });
 
@@ -126,7 +159,7 @@ export async function POST(req: Request, ctx: Ctx) {
       metadata: {
         choir_source_task_id: taskId,
         choir_role: v.role,
-        choir_intensity: intensity,
+        stack_mode: mode,
         generated_by: "ap_choir",
       },
     };
@@ -214,8 +247,13 @@ export async function POST(req: Request, ctx: Ctx) {
   return NextResponse.json({
     ok: true,
     source_task_id: taskId,
-    intensity,
+    mode,
     layers: created,
-    message: `AP built a ${created.length}-voice choir from your take.`,
+    message:
+      mode === "double"
+        ? `AP added ${created.length} double layers from your take.`
+        : mode === "chorus_lift"
+          ? `AP lifted this section with ${created.length} stack layers.`
+          : `AP built a ${created.length}-voice choir (${mode}) from your take.`,
   });
 }

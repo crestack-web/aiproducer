@@ -38,22 +38,78 @@ function delayPcm(pcm: PcmStereo, delaySamples: number): PcmStereo {
  * Simple resampling pitch shift (formant not perfect — keep intervals small).
  * ratio > 1 = higher pitch.
  */
+/**
+ * Formant-safer pitch shift: grain OLA + post EQ so intervals stay more "human"
+ * than raw resample (which chipmunks upward shifts).
+ */
 function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
   if (Math.abs(ratio - 1) < 0.001) return cloneStereo(pcm);
+  // Cap extreme shifts — choir uses modest intervals only
+  const r = Math.max(0.75, Math.min(1.35, ratio));
+  const sr = pcm.sampleRate;
   const n = pcm.left.length;
-  const outLen = n;
-  const left = new Float32Array(outLen);
-  const right = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const src = i / ratio;
-    const i0 = Math.floor(src);
-    const i1 = Math.min(n - 1, i0 + 1);
-    const f = src - i0;
-    if (i0 < 0 || i0 >= n) continue;
-    left[i] = (pcm.left[i0] || 0) * (1 - f) + (pcm.left[i1] || 0) * f;
-    right[i] = (pcm.right[i0] || 0) * (1 - f) + (pcm.right[i1] || 0) * f;
+  const grainMs = 32;
+  const grain = Math.max(64, Math.floor((sr * grainMs) / 1000));
+  const hop = Math.max(16, Math.floor(grain / 4));
+  const left = new Float32Array(n);
+  const right = new Float32Array(n);
+  const win = new Float32Array(grain);
+  for (let i = 0; i < grain; i++) {
+    win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / Math.max(1, grain - 1));
   }
-  return { left, right, sampleRate: pcm.sampleRate };
+  const norm = new Float32Array(n);
+
+  for (let outPos = 0; outPos < n; outPos += hop) {
+    const srcCenter = outPos / r;
+    const srcStart = Math.floor(srcCenter - grain / 2);
+    for (let i = 0; i < grain; i++) {
+      const oi = outPos - Math.floor(grain / 2) + i;
+      if (oi < 0 || oi >= n) continue;
+      const si = srcStart + i;
+      let sL = 0;
+      let sR = 0;
+      if (si >= 0 && si < n - 1) {
+        const i0 = Math.floor(si);
+        const f = si - i0;
+        sL = pcm.left[i0] * (1 - f) + pcm.left[Math.min(n - 1, i0 + 1)] * f;
+        sR = pcm.right[i0] * (1 - f) + pcm.right[Math.min(n - 1, i0 + 1)] * f;
+      } else if (si >= 0 && si < n) {
+        sL = pcm.left[si];
+        sR = pcm.right[si];
+      }
+      const w = win[i];
+      left[oi] += sL * w;
+      right[oi] += sR * w;
+      norm[oi] += w;
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const g = norm[i] > 1e-6 ? 1 / norm[i] : 0;
+    left[i] *= g;
+    right[i] *= g;
+  }
+  // Formant hint: upward shift → tame highs; downward → slight presence
+  const out: PcmStereo = { left, right, sampleRate: sr };
+  if (r > 1.02) {
+    softenHarmonic(out);
+    // extra gentle lowpass-ish: one-pole on both channels
+    let lpL = 0;
+    let lpR = 0;
+    const a = r > 1.15 ? 0.18 : 0.12;
+    for (let i = 0; i < n; i++) {
+      lpL = lpL + a * (left[i] - lpL);
+      lpR = lpR + a * (right[i] - lpR);
+      left[i] = left[i] * 0.35 + lpL * 0.65;
+      right[i] = right[i] * 0.35 + lpR * 0.65;
+    }
+  } else if (r < 0.98) {
+    // keep air on downward intervals
+    for (let i = 0; i < n; i++) {
+      left[i] *= 1.02;
+      right[i] *= 1.02;
+    }
+  }
+  return out;
 }
 
 function intervalRatio(interval: HarmonyInterval, minorPrefer: boolean): number {
@@ -177,59 +233,49 @@ export function generateAdlibEcho(opts: {
 
 
 
+
+export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
+
 export type ChoirVoice = {
   role: "double" | "harmony_high" | "harmony_mid" | "harmony_low" | "background";
   label: string;
   gainDb: number;
   pan: number;
   pcm: PcmStereo;
+  mode: StackMode;
 };
 
 /**
- * Turn a single lead vocal into a small choir — artist's voice only
- * (pitch-shifted / delayed layers from the real take).
+ * Stack modes from a single real vocal:
+ * - double: tight L/R doubles only
+ * - choir_light: doubles + one high 3rd
+ * - choir_full: doubles + high/mid/low
+ * - chorus_lift: same as light but intended for chorus sections (UI/API gates)
  */
-export function generateChoir(opts: {
+export function generateStack(opts: {
   lead: PcmStereo;
-  intensity?: "light" | "full";
+  mode?: StackMode;
   startMs?: number;
 }): ChoirVoice[] {
-  const intensity = opts.intensity || "full";
+  const mode: StackMode = opts.mode || "choir_full";
   const lead = opts.lead;
   const startMs = opts.startMs ?? 0;
   const section = "chorus" as SongSectionKind;
   const voices: ChoirVoice[] = [];
 
-  const dbl = generateDouble({
-    pcm: lead,
-    startMs,
-    section,
-    side: "left",
-  });
-  applyGainStereo(dbl.pcm, dbToGain(intensity === "full" ? -5 : -7));
-  voices.push({
-    role: "double",
-    label: "Choir double",
-    gainDb: intensity === "full" ? -5 : -7,
-    pan: -0.2,
-    pcm: dbl.pcm,
-  });
+  const pushDouble = (side: "left" | "right", label: string, gainDb: number, pan: number) => {
+    const dbl = generateDouble({ pcm: lead, startMs, section, side });
+    applyGainStereo(dbl.pcm, dbToGain(gainDb));
+    voices.push({ role: "double", label, gainDb, pan, pcm: dbl.pcm, mode });
+  };
 
-  const dblR = generateDouble({
-    pcm: lead,
-    startMs,
-    section,
-    side: "right",
-  });
-  applyGainStereo(dblR.pcm, dbToGain(intensity === "full" ? -6 : -8));
-  voices.push({
-    role: "double",
-    label: "Choir double R",
-    gainDb: intensity === "full" ? -6 : -8,
-    pan: 0.25,
-    pcm: dblR.pcm,
-  });
+  // Always start with stereo doubles for any stack mode
+  pushDouble("left", mode === "double" ? "Double L" : "Choir double", mode === "double" ? -4 : -5.5, -0.22);
+  pushDouble("right", mode === "double" ? "Double R" : "Choir double R", mode === "double" ? -4.5 : -6, 0.28);
 
+  if (mode === "double") return voices;
+
+  // Light + chorus_lift + full: high third
   const hi = generateHarmony({
     pcm: lead,
     startMs,
@@ -238,16 +284,21 @@ export function generateChoir(opts: {
     minorMode: false,
   });
   if (hi) {
-    applyGainStereo(hi.pcm, dbToGain(intensity === "full" ? -7 : -9));
+    const g = mode === "choir_full" ? -7 : -8.5;
+    applyGainStereo(hi.pcm, dbToGain(g));
     voices.push({
       role: "harmony_high",
-      label: "Choir high",
-      gainDb: intensity === "full" ? -7 : -9,
-      pan: 0.5,
+      label: mode === "chorus_lift" ? "Chorus high" : "Choir high",
+      gainDb: g,
+      pan: 0.48,
       pcm: hi.pcm,
+      mode,
     });
   }
 
+  if (mode === "choir_light" || mode === "chorus_lift") return voices;
+
+  // Full only: fifth + low third
   const mid = generateHarmony({
     pcm: lead,
     startMs,
@@ -256,37 +307,50 @@ export function generateChoir(opts: {
     minorMode: false,
   });
   if (mid) {
-    applyGainStereo(mid.pcm, dbToGain(intensity === "full" ? -9 : -11));
+    applyGainStereo(mid.pcm, dbToGain(-9));
     voices.push({
       role: "harmony_mid",
       label: "Choir mid",
-      gainDb: intensity === "full" ? -9 : -11,
-      pan: -0.4,
+      gainDb: -9,
+      pan: -0.42,
       pcm: mid.pcm,
+      mode,
     });
   }
 
-  if (intensity === "full") {
-    const low = generateHarmony({
-      pcm: lead,
-      startMs,
-      section,
-      interval: "minor3rd",
-      minorMode: true,
+  const low = generateHarmony({
+    pcm: lead,
+    startMs,
+    section,
+    interval: "minor3rd",
+    minorMode: true,
+  });
+  if (low) {
+    applyGainStereo(low.pcm, dbToGain(-10.5));
+    voices.push({
+      role: "harmony_low",
+      label: "Choir low",
+      gainDb: -10.5,
+      pan: 0.12,
+      pcm: low.pcm,
+      mode,
     });
-    if (low) {
-      applyGainStereo(low.pcm, dbToGain(-10));
-      voices.push({
-        role: "harmony_low",
-        label: "Choir low",
-        gainDb: -10,
-        pan: 0.15,
-        pcm: low.pcm,
-      });
-    }
   }
 
   return voices;
+}
+
+/** @deprecated use generateStack — kept for callers */
+export function generateChoir(opts: {
+  lead: PcmStereo;
+  intensity?: "light" | "full";
+  startMs?: number;
+}): ChoirVoice[] {
+  return generateStack({
+    lead: opts.lead,
+    startMs: opts.startMs,
+    mode: opts.intensity === "light" ? "choir_light" : "choir_full",
+  });
 }
 
 export function generateFromDecision(opts: {

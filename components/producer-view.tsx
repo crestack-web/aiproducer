@@ -651,6 +651,7 @@ export function ProducerView({
   const addFileRef = useRef<HTMLInputElement | null>(null);
 
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [stackMenuId, setStackMenuId] = useState<string | null>(null);
   const dragRef = useRef<{
     id: string;
     mode: "move" | "trim-start" | "trim-end";
@@ -1114,16 +1115,25 @@ export function ProducerView({
     void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
   }
 
-  async function makeChoir(id: string, intensity: "light" | "full" = "full") {
+  async function makeChoir(
+    id: string,
+    mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full"
+  ) {
     if (!projectId || id === "beat") return;
-    if (!window.confirm("Turn this vocal into a choir? AP will add harmony layers from your real take.")) return;
+    const labels: Record<string, string> = {
+      double: "Add tight doubles from this vocal?",
+      choir_light: "Add a light choir (doubles + high harmony)?",
+      choir_full: "Turn this vocal into a full choir stack?",
+      chorus_lift: "Lift this section (chorus-style doubles + high)?",
+    };
+    if (!window.confirm(labels[mode] || labels.choir_full)) return;
     setSavingId(id);
     setEditMsg(null);
     try {
       const res = await fetch(`/api/recording-tasks/${id}/choir`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intensity }),
+        body: JSON.stringify({ mode }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -3525,18 +3535,20 @@ export function ProducerView({
                       </button>
                       <button
                         type="button"
-                        title="Make choir from this vocal"
+                        title="Stack / choir from this vocal"
                         disabled={savingId === tr.id}
-                        onClick={() => void makeChoir(tr.id, "full")}
+                        onClick={() =>
+                          setStackMenuId(stackMenuId === tr.id ? null : tr.id)
+                        }
                         style={{
-                          ...miniChip(border, brass, false, text),
+                          ...miniChip(border, brass, stackMenuId === tr.id, text),
                           fontSize: 9,
                           width: "auto",
                           padding: "0 6px",
                           minWidth: 28,
                         }}
                       >
-                        Choir
+                        Stack
                       </button>
                       <button
                         type="button"
@@ -3592,6 +3604,55 @@ export function ProducerView({
                     ))}
                   </div>
                 )}
+
+                {stackMenuId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      padding: 6,
+                      borderRadius: 8,
+                      background: "rgba(0,0,0,0.35)",
+                      border: `1px solid ${border}`,
+                    }}
+                  >
+                    {(
+                      [
+                        ["double", "Double"],
+                        ["chorus_lift", "Chorus lift"],
+                        ["choir_light", "Choir light"],
+                        ["choir_full", "Choir full"],
+                      ] as const
+                    ).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={savingId === tr.id}
+                        onClick={() => {
+                          setStackMenuId(null);
+                          void makeChoir(tr.id, mode);
+                        }}
+                        style={{
+                          textAlign: "left",
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          border: "none",
+                          background: "transparent",
+                          color: text,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
               </div>
             );
           })}
