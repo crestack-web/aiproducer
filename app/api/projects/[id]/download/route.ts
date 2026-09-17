@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isStoragePath, resolveAudioUrl } from "@/lib/storage";
+import { recordSongDownloadForBeatUnlock } from "@/lib/music-generation/beat-quota";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -172,6 +173,13 @@ export async function GET(req: Request, ctx: Ctx) {
       },
       { status: 404 }
     );
+  }
+
+  // Successful path to a real master/mix — grant free-tier beat unlock once per project
+  try {
+    await recordSongDownloadForBeatUnlock(user.id, projectId);
+  } catch (e) {
+    console.warn("[download] beat unlock record failed", e);
   }
 
   const downloadUrl = await resolveAudioUrl(audioPath, 3600);
