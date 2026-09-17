@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 
 const PHRASES = [
-  "Records from real takes",
-  "Booth-ready sessions",
-  "Your voice on the master",
-  "Beat in · song out",
-  "Mix and master in one produce",
+  "Radio-ready songs",
+  "Commercial-ready songs",
+  "Show-ready songs",
+  "Chart-ready songs",
 ];
 
 const INTERVAL_MS = 2800;
