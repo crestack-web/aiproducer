@@ -38,7 +38,7 @@ export function estimateBeatCostUsd(durationSec: number): number {
   return Math.round(sec * estimatedMusicCostUsdPerSec() * 10000) / 10000;
 }
 
-function paidSecondsBudget(): number {
+function getPaidSecondsBudget(): number {
   // Prefer explicit seconds budget; fall back to count × free cap for backwards compat
   const sec = Number(process.env.BEAT_GEN_PAID_SECONDS_PER_MONTH || "");
   if (Number.isFinite(sec) && sec > 0) return Math.floor(sec);
@@ -162,7 +162,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
   const downloadUnlocks = await countDownloadUnlocks(userId);
   const freeBaseAllowance = FREE_BEAT_GEN_COUNT;
   const freeLimit = freeBaseAllowance + downloadUnlocks;
-  const paidSecondsBudget = paidSecondsBudget();
+  const paidSecondsBudget = getPaidSecondsBudget();
   const usedSecondsThisMonth = await sumCompletedSecondsThisMonth(userId);
   const costPerSecUsd = estimatedMusicCostUsdPerSec();
 
