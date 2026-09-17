@@ -9,8 +9,7 @@
  * use the returned readable_url (clean host/path, no query tokens).
  */
 
-import { createServiceClient } from "@/lib/supabase/server";
-import { getStorageBucket, isStoragePath } from "@/lib/storage";
+import { downloadStorageObject, isStoragePath } from "@/lib/storage";
 import { ensureStereoWavForRoex, isWavBuffer } from "@/lib/audio/wav";
 import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";
@@ -104,14 +103,14 @@ export async function downloadStorageOrUrl(pathOrUrl: string): Promise<Buffer> {
   if (!isStoragePath(pathOrUrl)) {
     throw new Error(`Invalid storage path for provider asset: ${pathOrUrl.slice(0, 80)}`);
   }
-  const supabase = createServiceClient();
-  const { data, error } = await supabase.storage.from(getStorageBucket()).download(pathOrUrl);
-  if (error || !data) {
-    throw new Error(`Could not download from storage: ${error?.message || pathOrUrl}`);
+  try {
+    const buf = await downloadStorageObject(pathOrUrl);
+    if (buf.length < 100) throw new Error(`Storage audio too small (${buf.length} bytes)`);
+    return buf;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Could not download from storage: ${msg}`);
   }
-  const buf = Buffer.from(await data.arrayBuffer());
-  if (buf.length < 100) throw new Error(`Storage audio too small (${buf.length} bytes)`);
-  return buf;
 }
 
 export type PreparedTrack = {

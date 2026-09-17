@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { getStorageBucket } from "@/lib/storage";
+import { deleteStorageObject } from "@/lib/storage";
 
 type Ctx = { params: Promise<{ id: string; sampleId: string }> };
 
@@ -28,7 +28,11 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 
   const service = createServiceClient();
   if (sample.audio_path) {
-    await service.storage.from(getStorageBucket()).remove([sample.audio_path]);
+    try {
+      await deleteStorageObject(sample.audio_path);
+    } catch (e) {
+      console.warn("sample delete storage", e);
+    }
   }
   await supabase.from("samples").delete().eq("id", sampleId);
   return NextResponse.json({ ok: true });

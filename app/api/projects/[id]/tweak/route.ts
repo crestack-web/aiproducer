@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { isStoragePath, resolveAudioUrl, getStorageBucket } from "@/lib/storage";
+import { isStoragePath, resolveAudioUrl, downloadStorageObject, uploadBuffer } from "@/lib/storage";
 import { decodeWav } from "@/lib/audio/wav";
 import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
 import { placeOnTimeline } from "@/lib/ap-engine/ingestion/normalize";
@@ -208,9 +208,12 @@ async function buildWorkingMix(
 
   async function loadPcm(path: string): Promise<PcmStereo | null> {
     try {
-      const { data: blob, error } = await service.storage.from(getStorageBucket()).download(path);
-      if (error || !blob) return null;
-      const raw = Buffer.from(await blob.arrayBuffer());
+      let raw: Buffer;
+      try {
+        raw = await downloadStorageObject(path);
+      } catch {
+        return null;
+      }
       const wav = (await convertBufferToWav(raw, path)).buffer;
       const decoded = decodeWav(wav);
       const ch = decoded.channels || 1;
@@ -282,11 +285,10 @@ async function buildWorkingMix(
 
   const wavOut = exportWav(mix);
   const outPath = `projects/${projectId}/masters/working-mix-${Date.now()}.wav`;
-  const { error: upErr } = await service.storage
-    .from(getStorageBucket())
-    .upload(outPath, wavOut, { contentType: "audio/wav", upsert: true });
-  if (upErr) {
-    log.push(`upload failed: ${upErr.message}`);
+  try {
+    await uploadBuffer(outPath, wavOut, "audio/wav");
+  } catch (upErr) {
+    log.push(`upload failed: ${upErr instanceof Error ? upErr.message : "storage error"}`);
     return null;
   }
 
@@ -430,13 +432,13 @@ export async function POST(
       let usedPath: string | null = null;
       for (const p of pathCandidates) {
         try {
-          const { data: blob, error: dlErr } = await service.storage
-            .from(getStorageBucket())
-            .download(p);
-          if (dlErr || !blob) continue;
-          fileBuf = Buffer.from(await blob.arrayBuffer());
-          usedPath = p;
-          break;
+          try {
+            fileBuf = await downloadStorageObject(p);
+            usedPath = p;
+            break;
+          } catch {
+            continue;
+          }
         } catch {
           continue;
         }
@@ -519,11 +521,13 @@ export async function POST(
       const wavOut = exportWav(rendered);
       const outPath = `projects/${projectId}/takes/${taskId}/tweak-${Date.now()}.wav`;
 
-      const { error: upErr } = await service.storage
-        .from(getStorageBucket())
-        .upload(outPath, wavOut, { contentType: "audio/wav", upsert: true });
-      if (upErr) {
-        return NextResponse.json({ error: upErr.message || "Upload failed" }, { status: 500 });
+      try {
+        await uploadBuffer(outPath, wavOut, "audio/wav");
+      } catch (upErr) {
+        return NextResponse.json(
+          { error: upErr instanceof Error ? upErr.message : "Upload failed" },
+          { status: 500 }
+        );
       }
 
       // New selected take for this task only — other tracks untouched
@@ -777,13 +781,13 @@ export async function POST(
   const wavOut = exportWav(rendered);
   const outPath = `projects/${projectId}/masters/tweak-v${history.currentVersion}-${Date.now()}.wav`;
 
-  const { error: upErr } = await service.storage
-    .from(getStorageBucket())
-    .upload(outPath, wavOut, { contentType: "audio/wav", upsert: true });
-
-  if (upErr) {
-    // try without bucket prefix issues
-    return NextResponse.json({ error: upErr.message || "Upload failed" }, { status: 500 });
+  try {
+    await uploadBuffer(outPath, wavOut, "audio/wav");
+  } catch (upErr) {
+    return NextResponse.json(
+      { error: upErr instanceof Error ? upErr.message : "Upload failed" },
+      { status: 500 }
+    );
   }
 
   // Bump audio_versions

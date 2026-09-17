@@ -4,7 +4,8 @@ import {
   createSignedDownloadUrl,
   createSignedUploadUrl,
   customBeatPath,
-  getStorageBucket,
+  downloadStorageObject,
+  uploadBuffer,
 } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
 import { analyzeWavArrayBuffer } from "@/lib/audio/beat-detect";
@@ -118,7 +119,7 @@ export async function POST(req: Request, ctx: Ctx) {
             error:
               e instanceof Error
                 ? e.message
-                : "Could not create upload URL. Check STORAGE_BUCKET / studio storage bucket (case-sensitive).",
+                : "Could not create upload URL. Check R2 storage configuration.",
           },
           { status: 500 }
         );
@@ -135,12 +136,10 @@ export async function POST(req: Request, ctx: Ctx) {
       let registeredContentType = String(body.contentType || "audio/wav");
       if (!path.toLowerCase().endsWith(".wav")) {
         try {
-          const service = createServiceClient();
-          const { data: fileData } = await service.storage.from(getStorageBucket()).download(path);
-          if (fileData) {
+          try {
             const { convertBufferToWav } = await import("@/lib/audio/convert-to-wav");
             const { ensureStereoWavForRoex, isWavBuffer } = await import("@/lib/audio/wav");
-            let buf = Buffer.from(await fileData.arrayBuffer());
+            let buf = await downloadStorageObject(path);
             if (!isWavBuffer(buf)) {
               const conv = await convertBufferToWav(buf, path);
               buf = Buffer.from(ensureStereoWavForRoex(Buffer.from(conv.buffer)));
@@ -148,14 +147,11 @@ export async function POST(req: Request, ctx: Ctx) {
               buf = Buffer.from(ensureStereoWavForRoex(buf));
             }
             const wavPath = path.replace(/\.[^./]+$/, "") + ".wav";
-            const { error: upErr } = await service.storage.from(getStorageBucket()).upload(wavPath, buf, {
-              contentType: "audio/wav",
-              upsert: true,
-            });
-            if (!upErr) {
-              path = wavPath;
-              registeredContentType = "audio/wav";
-            }
+            await uploadBuffer(wavPath, buf, "audio/wav");
+            path = wavPath;
+            registeredContentType = "audio/wav";
+          } catch (convStorageErr) {
+            console.warn("[beat] convert-to-wav skipped", convStorageErr);
           }
         } catch (convErr) {
           console.warn("[beat-complete] WAV convert skipped", convErr);
@@ -175,19 +171,19 @@ export async function POST(req: Request, ctx: Ctx) {
 
       if ((!durationMs || !body.bpm) && path.toLowerCase().endsWith(".wav")) {
         try {
-          const service = createServiceClient();
-          const { data: fileData } = await service.storage.from(getStorageBucket()).download(path);
-          if (fileData) {
-            const ab = await fileData.arrayBuffer();
-            const wav = analyzeWavArrayBuffer(ab);
-            if (wav) {
-              if (!durationMs) durationMs = wav.duration_ms;
-              if (!body.bpm) {
-                bpm = wav.bpm;
-                confidence = wav.confidence;
-                beatTimes = wav.beat_times_ms;
-                analysisSource = "server_wav";
-              }
+          const fileBuf = await downloadStorageObject(path);
+          const ab = fileBuf.buffer.slice(
+            fileBuf.byteOffset,
+            fileBuf.byteOffset + fileBuf.byteLength
+          );
+          const wav = analyzeWavArrayBuffer(ab);
+          if (wav) {
+            if (!durationMs) durationMs = wav.duration_ms;
+            if (!body.bpm) {
+              bpm = wav.bpm;
+              confidence = wav.confidence;
+              beatTimes = wav.beat_times_ms;
+              analysisSource = "server_wav";
             }
           }
         } catch (e) {
@@ -275,15 +271,13 @@ export async function POST(req: Request, ctx: Ctx) {
     console.warn("[beat-upload] WAV convert skipped", convErr);
   }
   const path = customBeatPath(user.id, projectId, ext);
-  const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-    contentType: uploadContentType,
-    upsert: true,
-  });
-  if (upErr) {
+  try {
+    await uploadBuffer(path, buf, uploadContentType);
+  } catch (upErr) {
     console.error("custom beat upload", upErr);
     return NextResponse.json(
       {
-        error: `Upload failed: ${upErr.message || "storage error"}. Ensure the storage bucket exists (default name: studio). Set STORAGE_BUCKET if your bucket name differs (names are case-sensitive).`,
+        error: `Upload failed: ${upErr instanceof Error ? upErr.message : "storage error"}. Check R2 storage configuration.`,
       },
       { status: 500 }
     );

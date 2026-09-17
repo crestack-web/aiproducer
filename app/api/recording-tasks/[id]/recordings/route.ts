@@ -8,7 +8,7 @@ import {
   createSignedDownloadUrl,
   createSignedUploadUrl,
   recordingPath,
-  getStorageBucket,
+  uploadBuffer,
 } from "@/lib/storage";
 import { assessDurationAlignment } from "@/lib/audio/timing";
 import { analyzeMetadataOnly } from "@/lib/audio/analysis";
@@ -345,13 +345,14 @@ export async function POST(req: Request, ctx: Ctx) {
 
     const path = recordingPath(user.id, task.project_id, taskId, takeNumber, uploadExt);
 
-    const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, uploadBuf, {
-      contentType: uploadContentType,
-      upsert: true,
-    });
-    if (upErr) {
+    try {
+      await uploadBuffer(path, uploadBuf, uploadContentType);
+    } catch (upErr) {
       console.error("upload", upErr);
-      return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
+      return NextResponse.json(
+        { error: `Upload failed: ${upErr instanceof Error ? upErr.message : "storage error"}` },
+        { status: 500 }
+      );
     }
 
     const durationMs = Number(form.get("duration_ms") || 0) || null;

@@ -2,8 +2,7 @@
  * Download recording from storage → timeline-align → upload full-song stem.
  */
 
-import { createServiceClient } from "@/lib/supabase/server";
-import { getStorageBucket, uploadBuffer } from "@/lib/storage";
+import { downloadStorageObject, uploadBuffer } from "@/lib/storage";
 import { renderTimelineAlignedStem, type AlignmentStatus } from "@/lib/audio/timeline-stem";
 import { isWavBuffer } from "@/lib/audio/wav";
 import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
@@ -18,11 +17,12 @@ export function alignedStemPath(
 }
 
 export async function downloadStorageBytes(path: string): Promise<Buffer> {
-  const supabase = createServiceClient();
-  const { data, error } = await supabase.storage.from(getStorageBucket()).download(path);
-  if (error || !data) throw new Error(`Could not download stem source: ${error?.message || path}`);
-  const ab = await data.arrayBuffer();
-  return Buffer.from(ab);
+  try {
+    return await downloadStorageObject(path);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Could not download stem source: ${msg}`);
+  }
 }
 
 export type AlignedStemResult = {

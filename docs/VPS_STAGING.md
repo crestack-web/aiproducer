@@ -39,7 +39,7 @@ cp .env.example .env
 **Server secrets**
 
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `STORAGE_BUCKET` (optional)
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_ENDPOINT` (required for web + worker; private R2 bucket)
 - `MISTRAL_API_KEY`, `MISTRAL_MODEL`, `MISTRAL_TRANSCRIBE_MODEL`
 - `REPLICATE_API_TOKEN` / related Replicate vars
 - `ELEVENLABS_*`, `OPENAI_API_KEY` (if used)

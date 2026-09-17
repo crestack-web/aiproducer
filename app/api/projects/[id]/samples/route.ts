@@ -4,7 +4,9 @@ import {
   createSignedDownloadUrl,
   createSignedUploadUrl,
   samplePath,
-  getStorageBucket,
+  uploadBuffer,
+  deleteStorageObject,
+  storageObjectExists,
 } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
 import { randomUUID } from "crypto";
@@ -125,10 +127,7 @@ export async function POST(req: Request, ctx: Ctx) {
         return NextResponse.json(
           {
             error:
-              msg.includes("Bucket") || msg.includes("bucket") || msg.includes("not found")
-                ? `Storage bucket error: ${msg}. Check STORAGE_BUCKET (default "Studio", case-sensitive) and bucket policies for signed uploads.`
-                : msg ||
-                  "Could not create upload URL. Check STORAGE_BUCKET (case-sensitive) and that the samples path is allowed.",
+              msg || "Could not create upload URL. Check R2 storage configuration.",
           },
           { status: 500 }
         );
@@ -158,44 +157,18 @@ export async function POST(req: Request, ctx: Ctx) {
           : null;
       const includeInProduce = body.include_in_produce !== false;
 
-      const service = createServiceClient();
-      const bucket = getStorageBucket();
-
-      // Verify object actually landed in storage (catches policy / CORS / failed PUT)
+      // Verify object actually landed in R2
       try {
-        const folder = path.split("/").slice(0, -1).join("/");
-        const name = path.split("/").pop() || "";
-        const { data: listed, error: listErr } = await service.storage
-          .from(bucket)
-          .list(folder, { search: name, limit: 5 });
-        if (listErr) {
-          console.error("sample complete list", listErr);
-        }
-        const found = (listed || []).some((f) => f.name === name);
+        const found = await storageObjectExists(path);
         if (!found) {
-          // One more try: download head via createSignedUrl + HEAD
-          try {
-            const probe = await service.storage.from(bucket).createSignedUrl(path, 60);
-            if (probe.error || !probe.data?.signedUrl) {
-              return NextResponse.json(
-                {
-                  error:
-                    "File did not arrive in storage after upload. Check bucket policies (allow signed uploads + upsert) for path users/*/projects/*/samples/*.",
-                  code: "STORAGE_OBJECT_MISSING",
-                },
-                { status: 400 }
-              );
-            }
-          } catch {
-            return NextResponse.json(
-              {
-                error:
-                  "File did not arrive in storage after upload. Check bucket policies (allow signed uploads + upsert) for path users/*/projects/*/samples/*.",
-                code: "STORAGE_OBJECT_MISSING",
-              },
-              { status: 400 }
-            );
-          }
+          return NextResponse.json(
+            {
+              error:
+                "File did not arrive in storage after upload. Retry the upload or check R2 configuration.",
+              code: "STORAGE_OBJECT_MISSING",
+            },
+            { status: 400 }
+          );
         }
       } catch (verifyErr) {
         console.warn("sample complete verify", verifyErr);
@@ -346,17 +319,18 @@ export async function POST(req: Request, ctx: Ctx) {
   const ext = audioExt(file.type || "", filename);
   const path = samplePath(user.id, projectId, sampleId, ext);
 
-  const service = createServiceClient();
   const buf = Buffer.from(await file.arrayBuffer());
-  const { error: upErr } = await service.storage.from(getStorageBucket()).upload(path, buf, {
-    contentType: file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`,
-    upsert: true,
-  });
-  if (upErr) {
+  try {
+    await uploadBuffer(
+      path,
+      buf,
+      file.type || `audio/${ext === "mp3" ? "mpeg" : ext}`
+    );
+  } catch (upErr) {
     console.error("sample storage upload", upErr);
     return NextResponse.json(
       {
-        error: `Upload failed: ${upErr.message || "storage error"}. Check STORAGE_BUCKET (default Studio, case-sensitive) and that the service role can write to samples/.`,
+        error: `Upload failed: ${upErr instanceof Error ? upErr.message : "storage error"}. Check R2 storage configuration.`,
       },
       { status: 500 }
     );
@@ -535,9 +509,12 @@ export async function DELETE(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Sample not found" }, { status: 404 });
   }
 
-  const service = createServiceClient();
   if (existing.audio_path) {
-    await service.storage.from(getStorageBucket()).remove([existing.audio_path]);
+    try {
+      await deleteStorageObject(existing.audio_path);
+    } catch (e) {
+      console.warn("sample storage delete", e);
+    }
   }
 
   const { error: dErr } = await supabase
