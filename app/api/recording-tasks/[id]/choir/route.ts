@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import { createSignedDownloadUrl, uploadProjectAudio } from "@/lib/storage";
+import { createSignedDownloadUrl, uploadBuffer, recordingPath } from "@/lib/storage";
 import { encodeWavStereoFromMono } from "@/lib/audio/wav";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import { generateStack, type StackMode } from "@/lib/ap-engine/fullness";
@@ -203,13 +203,15 @@ export async function POST(req: Request, ctx: Ctx) {
 
     let uploaded: { path: string } | null = null;
     try {
-      uploaded = await uploadProjectAudio(
+      const storagePath = recordingPath(
         user.id,
         task.project_id as string,
-        `choir-${newTask.id}.wav`,
-        wav,
-        "audio/wav"
+        String(newTask.id),
+        1,
+        "wav"
       );
+      await uploadBuffer(storagePath, wav, "audio/wav");
+      const uploaded = { path: storagePath };
     } catch (e) {
       console.error("[choir] upload", e);
       continue;
