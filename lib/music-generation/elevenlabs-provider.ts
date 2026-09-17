@@ -187,7 +187,7 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
   maxDurationSec(kind: "preview" | "full"): number {
     if (kind === "preview") return Number(process.env.MUSIC_PREVIEW_DURATION_SEC || 12);
     // Full beats for AP sessions — default 45s (API allows up to 300s)
-    return Number(process.env.MUSIC_FULL_DURATION_SEC || 45);
+    return Number(process.env.MUSIC_FULL_DURATION_SEC || 30);
   }
 
   async checkAvailability(): Promise<void> {
