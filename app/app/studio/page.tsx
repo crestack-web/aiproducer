@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -138,6 +138,7 @@ function StudioPageInner() {
   const [prompt, setPrompt] = useState("");
   const [tempo, setTempo] = useState(104);
   const [beatDurationSec, setBeatDurationSec] = useState(30);
+  const [createPanel, setCreatePanel] = useState<"sound" | "vibe" | "style" | "length">("sound");
   const [energy, setEnergy] = useState("Driving");
   const [instrumentation, setInstrumentation] = useState("808-driven");
   const [referenceStyle, setReferenceStyle] = useState("");
@@ -437,14 +438,43 @@ function StudioPageInner() {
 
   const inProgress = projects.filter((p) => p.status !== "complete" && p.status !== "failed");
 
-  const chip = (on: boolean): React.CSSProperties => ({
-    padding: "8px 14px",
+  const chip = (on: boolean): CSSProperties => ({
+    padding: "5px 10px",
     borderRadius: 999,
     border: on ? `1px solid ${C.brassLine}` : `1px solid ${C.border}`,
     background: on ? C.brassSoft : "transparent",
     color: on ? C.brass : C.textMuted,
-    fontSize: 13,
-    fontWeight: on ? 600 : 400,
+    fontSize: 11.5,
+    fontWeight: on ? 600 : 450,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    lineHeight: 1.2,
+    whiteSpace: "nowrap" as const,
+  });
+
+  const panelTab = (on: boolean): CSSProperties => ({
+    flex: 1,
+    padding: "8px 6px",
+    border: "none",
+    borderBottom: on ? `2px solid ${C.brass}` : `2px solid transparent`,
+    background: "transparent",
+    color: on ? C.text : C.textFaint,
+    fontSize: 12,
+    fontWeight: on ? 650 : 500,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    letterSpacing: 0.2,
+  });
+
+  const modeTab = (on: boolean): CSSProperties => ({
+    flex: 1,
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "none",
+    background: on ? (C.brassSoft || "rgba(231,169,97,0.14)") : "transparent",
+    color: on ? C.brass : C.textMuted,
+    fontSize: 12.5,
+    fontWeight: on ? 650 : 500,
     cursor: "pointer",
     fontFamily: "inherit",
   });
@@ -463,247 +493,318 @@ function StudioPageInner() {
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 10 }}>
           ◆ STUDIO
         </div>
-        <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.75rem, 3.2vw, 2.35rem)", fontWeight: 500, margin: "0 0 8px", color: C.text }}>
+        <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.5rem, 2.8vw, 2rem)", fontWeight: 500, margin: "0 0 6px", color: C.text }}>
           Create your beat
         </h1>
-        <p style={{ color: C.textMuted, fontSize: 14.5, lineHeight: 1.5, margin: "0 0 24px", maxWidth: 520 }}>
-          Describe the sound, pick genre and mood, set tempo — then open Booth (guided) or Console (AI timeline). Same plan either way.
+        <p style={{ color: C.textMuted, fontSize: 13.5, lineHeight: 1.45, margin: "0 0 18px", maxWidth: 480 }}>
+          Prompt + a few controls — AP builds the instrumental.
         </p>
 
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "24px 22px 22px" }}>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={4}
-            placeholder="Emotional Afrobeats song about falling in love at night, warm guitars, deep bass…"
+        <div
+          style={{
+            background: C.surface,
+            border: `1px solid ${C.border}`,
+            borderRadius: 16,
+            padding: "14px 14px 16px",
+            maxWidth: 560,
+          }}
+        >
+          {/* AI / Upload mode */}
+          <div
             style={{
-              width: "100%",
-              boxSizing: "border-box",
-              minHeight: 110,
-              borderRadius: 14,
-              border: `1px solid ${C.border}`,
+              display: "flex",
+              gap: 4,
+              padding: 3,
+              borderRadius: 12,
               background: C.bgDeep,
-              color: C.text,
-              padding: 14,
-              fontSize: 14.5,
-              fontFamily: "inherit",
-              resize: "vertical",
+              marginBottom: 12,
             }}
-          />
-
-          <div style={{ marginTop: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Genre</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {GENRES.map((g) => (
-                <button key={g} type="button" style={chip(genre === g)} onClick={() => setGenre(g)}>
-                  {g}
-                </button>
-              ))}
-            </div>
+          >
+            <button type="button" style={modeTab(beatMode === "ai")} onClick={() => setBeatMode("ai")}>
+              AI beat
+            </button>
+            <button type="button" style={modeTab(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
+              Upload
+            </button>
           </div>
 
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Mood</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {MOODS.map((m) => (
-                <button key={m} type="button" style={chip(mood === m)} onClick={() => setMood(m)}>
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
-              Tempo · {tempo} BPM · {tempoLabel}
-            </div>
-            <input type="range" min={60} max={160} value={tempo} onChange={(e) => setTempo(Number(e.target.value))} aria-label="Tempo" style={{ width: "100%" }} />
-          </div>
-
-          {beatMode === "ai" && (
+          {beatMode === "ai" ? (
             <>
-              <div style={{ marginTop: 18 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Energy</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {ENERGIES.map((e) => (
-                    <button key={e} type="button" style={chip(energy === e)} onClick={() => setEnergy(e)}>
-                      {e}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ marginTop: 18 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Instrumentation</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {INSTRUMENTATION.map((ins) => (
-                    <button key={ins} type="button" style={chip(instrumentation === ins)} onClick={() => setInstrumentation(ins)}>
-                      {ins}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ marginTop: 18 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
-                  Style reference <span style={{ fontWeight: 500, opacity: 0.7 }}>(optional)</span>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                  {STYLE_PRESETS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      style={chip(referenceStyle === s)}
-                      onClick={() => setReferenceStyle(referenceStyle === s ? "" : s)}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="text"
-                  value={referenceStyle}
-                  onChange={(e) => setReferenceStyle(e.target.value)}
-                  placeholder="Or type any feel — artist, era, or production vibe"
-                  style={{
-                    width: "100%",
-                    borderRadius: 12,
-                    border: `1px solid ${C.border}`,
-                    background: C.bgDeep,
-                    color: C.text,
-                    padding: "12px 14px",
-                    fontSize: 14,
-                    fontFamily: "inherit",
-                  }}
-                />
-              </div>
-            </>
-          )}
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={2}
+                placeholder="Describe the beat — mood, story, texture…"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  minHeight: 64,
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: C.bgDeep,
+                  color: C.text,
+                  padding: "10px 12px",
+                  fontSize: 13.5,
+                  fontFamily: "inherit",
+                  resize: "none",
+                  lineHeight: 1.4,
+                }}
+              />
 
-
-          {beatMode === "ai" && (
-            <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>
-                Beat length · {beatDurationSec}s
+              {/* Selection summary */}
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 11.5,
+                  color: C.textFaint,
+                  lineHeight: 1.35,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: "4px 8px",
+                }}
+              >
+                <span style={{ color: C.textMuted }}>{genre}</span>
+                <span>·</span>
+                <span style={{ color: C.textMuted }}>{mood}</span>
+                <span>·</span>
+                <span style={{ color: C.textMuted }}>{energy}</span>
+                <span>·</span>
+                <span style={{ color: C.textMuted }}>{tempo} BPM</span>
+                <span>·</span>
+                <span style={{ color: C.brass || "#E7A961" }}>{beatDurationSec}s</span>
+                {referenceStyle ? (
+                  <>
+                    <span>·</span>
+                    <span style={{ color: C.textMuted }}>{referenceStyle}</span>
+                  </>
+                ) : null}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                {LENGTH_PRESETS.map((s) => (
-                  <button key={s} type="button" style={chip(beatDurationSec === s)} onClick={() => setBeatDurationSec(s)}>
-                    {s}s
+
+              {/* Compact tabs */}
+              <div
+                style={{
+                  display: "flex",
+                  marginTop: 12,
+                  borderBottom: `1px solid ${C.border}`,
+                }}
+              >
+                {(
+                  [
+                    ["sound", "Sound"],
+                    ["vibe", "Vibe"],
+                    ["style", "Style"],
+                    ["length", "Length"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button key={id} type="button" style={panelTab(createPanel === id)} onClick={() => setCreatePanel(id)}>
+                    {label}
                   </button>
                 ))}
               </div>
-              <input
-                type="range"
-                min={10}
-                max={60}
-                step={5}
-                value={beatDurationSec}
-                onChange={(e) => setBeatDurationSec(Number(e.target.value))}
-                aria-label="Beat length seconds"
-                style={{ width: "100%" }}
-              />
-              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.45, color: C.textMuted || C.textFaint }}>
-                {beatDurationSec <= FREE_MAX_SEC ? (
+
+              <div style={{ marginTop: 12, minHeight: 120 }}>
+                {createPanel === "sound" && (
                   <>
-                    <span style={{ color: C.brass || "#E7A961", fontWeight: 600 }}>Covered on free tier</span>
-                    {" · "}up to {FREE_GEN_COUNT} gens ≤{FREE_MAX_SEC}s · est. ~$
-                    {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)} if billed
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, marginBottom: 6, textTransform: "uppercase" }}>
+                      Genre
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 88, overflowY: "auto" }}>
+                      {GENRES.map((g) => (
+                        <button key={g} type="button" style={chip(genre === g)} onClick={() => setGenre(g)}>
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, margin: "12px 0 6px", textTransform: "uppercase" }}>
+                      Instrumentation
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 72, overflowY: "auto" }}>
+                      {INSTRUMENTATION.map((ins) => (
+                        <button key={ins} type="button" style={chip(instrumentation === ins)} onClick={() => setInstrumentation(ins)}>
+                          {ins}
+                        </button>
+                      ))}
+                    </div>
                   </>
-                ) : (
+                )}
+
+                {createPanel === "vibe" && (
                   <>
-                    <span style={{ fontWeight: 600 }}>Above free length ({FREE_MAX_SEC}s)</span>
-                    {" · "}shorten to generate free, or upgrade · est. ~$
-                    {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, marginBottom: 6, textTransform: "uppercase" }}>
+                      Mood
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 72, overflowY: "auto" }}>
+                      {MOODS.map((m) => (
+                        <button key={m} type="button" style={chip(mood === m)} onClick={() => setMood(m)}>
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, margin: "12px 0 6px", textTransform: "uppercase" }}>
+                      Energy
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                      {ENERGIES.map((e) => (
+                        <button key={e} type="button" style={chip(energy === e)} onClick={() => setEnergy(e)}>
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, margin: "12px 0 6px", textTransform: "uppercase" }}>
+                      Tempo · {tempo} BPM
+                    </div>
+                    <input
+                      type="range"
+                      min={60}
+                      max={160}
+                      value={tempo}
+                      onChange={(e) => setTempo(Number(e.target.value))}
+                      aria-label="Tempo"
+                      style={{ width: "100%", accentColor: C.brass }}
+                    />
+                  </>
+                )}
+
+                {createPanel === "style" && (
+                  <>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, marginBottom: 6, textTransform: "uppercase" }}>
+                      Reference feel
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, maxHeight: 88, overflowY: "auto" }}>
+                      {STYLE_PRESETS.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          style={chip(referenceStyle === s)}
+                          onClick={() => setReferenceStyle(referenceStyle === s ? "" : s)}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      value={referenceStyle}
+                      onChange={(e) => setReferenceStyle(e.target.value)}
+                      placeholder="Or type any artist / era / vibe"
+                      style={{
+                        width: "100%",
+                        marginTop: 10,
+                        boxSizing: "border-box",
+                        borderRadius: 10,
+                        border: `1px solid ${C.border}`,
+                        background: C.bgDeep,
+                        color: C.text,
+                        padding: "8px 10px",
+                        fontSize: 12.5,
+                        fontFamily: "inherit",
+                      }}
+                    />
+                  </>
+                )}
+
+                {createPanel === "length" && (
+                  <>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: C.textFaint, letterSpacing: 0.5, marginBottom: 8, textTransform: "uppercase" }}>
+                      Duration · {beatDurationSec}s
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+                      {LENGTH_PRESETS.map((s) => (
+                        <button key={s} type="button" style={chip(beatDurationSec === s)} onClick={() => setBeatDurationSec(s)}>
+                          {s}s
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={60}
+                      step={5}
+                      value={beatDurationSec}
+                      onChange={(e) => setBeatDurationSec(Number(e.target.value))}
+                      aria-label="Beat length"
+                      style={{ width: "100%", accentColor: C.brass }}
+                    />
+                    <div style={{ marginTop: 8, fontSize: 11.5, color: C.textFaint, lineHeight: 1.4 }}>
+                      {beatDurationSec <= FREE_MAX_SEC ? (
+                        <>
+                          <span style={{ color: C.brass }}>Free tier</span>
+                          {" · "}≤{FREE_MAX_SEC}s · {FREE_GEN_COUNT} gens · ~$
+                          {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)} if billed
+                        </>
+                      ) : (
+                        <>
+                          Above free length — shorten to {FREE_MAX_SEC}s or upgrade · ~$
+                          {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
-            </div>
-          )}
-
-          <div style={{ marginTop: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.textFaint, letterSpacing: 0.4, marginBottom: 8, textTransform: "uppercase" }}>Beat source</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <button type="button" style={chip(beatMode === "ai")} onClick={() => setBeatMode("ai")}>
-                AI beat
-              </button>
-              <button type="button" style={chip(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
-                Upload my beat
-              </button>
-            </div>
-          </div>
-
-          {beatMode === "upload" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
+            </>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0" }}>
               <input
                 ref={fileRef}
                 type="file"
-                accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm"
+                accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
                 style={{ display: "none" }}
-                onChange={(e) => setBeatFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setBeatFile(f);
+                }}
               />
               <button
                 type="button"
                 style={{
-                  padding: "10px 16px",
-                  borderRadius: 12,
+                  padding: "8px 14px",
+                  borderRadius: 10,
                   border: `1px solid ${C.border}`,
-                  background: C.surface,
+                  background: C.bgDeep,
                   color: C.text,
-                  fontWeight: 500,
-                  fontSize: 13.5,
+                  fontWeight: 550,
+                  fontSize: 12.5,
                   cursor: "pointer",
                   fontFamily: "inherit",
                 }}
                 onClick={() => fileRef.current?.click()}
               >
-                {beatFile ? "Change file" : "Choose beat file"}
+                {beatFile ? "Change file" : "Choose file"}
               </button>
-              <span style={{ fontSize: 13, color: C.textMuted }}>{beatFile ? beatFile.name : "WAV, MP3, M4A…"}</span>
+              <span style={{ fontSize: 12.5, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {beatFile ? beatFile.name : "WAV, MP3, M4A…"}
+              </span>
             </div>
           )}
 
           {limitMessage && (
             <div
               style={{
-                marginTop: 16,
-                padding: "14px 16px",
-                borderRadius: 14,
+                marginTop: 12,
+                padding: "10px 12px",
+                borderRadius: 12,
                 border: `1px solid ${C.brass || "#E7A961"}`,
                 background: "rgba(231,169,97,0.08)",
-                fontSize: 14,
-                lineHeight: 1.45,
+                fontSize: 12.5,
+                lineHeight: 1.4,
                 color: C.text,
               }}
             >
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>Beat generation limit</div>
-              <div style={{ color: C.textMuted || C.text, marginBottom: 12 }}>{limitMessage}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => router.push("/app?tab=library")}
-                  style={{
-                    ...chip(false),
-                    borderColor: C.brass || "#E7A961",
-                    color: C.brass || "#E7A961",
-                    fontWeight: 700,
-                  }}
-                >
-                  Finish a song in Library
+              <div style={{ fontWeight: 650, marginBottom: 4 }}>Beat limit</div>
+              <div style={{ color: C.textMuted || C.text, marginBottom: 8 }}>{limitMessage}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <button type="button" onClick={() => router.push("/app?tab=library")} style={{ ...chip(false), borderColor: C.brass, color: C.brass, fontWeight: 650 }}>
+                  Finish a song
                 </button>
-                <button
-                  type="button"
-                  onClick={() => router.push("/app?tab=profile")}
-                  style={{
-                    ...chip(true),
-                    fontWeight: 700,
-                  }}
-                >
-                  View plans
+                <button type="button" onClick={() => router.push("/app?tab=profile")} style={{ ...chip(true), fontWeight: 650 }}>
+                  Plans
                 </button>
               </div>
             </div>
           )}
           {error && (
-            <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 13.5 }}>
+            <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 12.5 }}>
               {error}
             </div>
           )}
@@ -712,14 +813,14 @@ function StudioPageInner() {
             type="button"
             style={{
               width: "100%",
-              marginTop: 22,
-              padding: "14px 20px",
-              borderRadius: 14,
+              marginTop: 14,
+              padding: "11px 16px",
+              borderRadius: 12,
               border: "none",
               background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
               color: "#1A1208",
-              fontWeight: 600,
-              fontSize: 15,
+              fontWeight: 650,
+              fontSize: 14,
               cursor: "pointer",
               fontFamily: "inherit",
               opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1,
@@ -736,7 +837,7 @@ function StudioPageInner() {
               : startInConsole
                 ? beatMode === "upload"
                   ? "Start in Console"
-                  : "Create beat & open Console"
+                  : "Create & open Console"
                 : beatMode === "upload"
                   ? "Start with my beat"
                   : "Create beat"}
