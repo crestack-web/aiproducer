@@ -10,5 +10,12 @@ export {
   publicErrorMessage,
   MusicGenerationError,
 } from "./service";
+export {
+  getBeatGenQuota,
+  assertBeatGenAllowed,
+  recordSongDownloadForBeatUnlock,
+  isPaidBeatSubscriber,
+} from "./beat-quota";
+export type { BeatQuotaSnapshot } from "./beat-quota";
 export { ReplicateMusicProvider } from "./replicate-provider";
 export { MockMusicProvider } from "./mock-provider";
