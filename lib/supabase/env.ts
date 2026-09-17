@@ -29,12 +29,12 @@ function preferJwt(candidates: string[]): string | undefined {
 
 /** Project URL */
 export function getSupabaseUrl(): string | undefined {
+  // Private server names first (Vercel: no NEXT_PUBLIC_ prefix → no "public" warning)
   return first(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.SUPABASE_URL,
-    // Occasional integration aliases
-    process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL,
-    process.env.SUPABASE_PROJECT_URL
+    process.env.SUPABASE_PROJECT_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_PROJECT_URL
   );
 }
 
@@ -44,13 +44,12 @@ export function getSupabaseUrl(): string | undefined {
  */
 export function getSupabaseAnonKey(): string | undefined {
   return preferJwt([
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
     process.env.SUPABASE_ANON_KEY || "",
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "",
     process.env.SUPABASE_PUBLISHABLE_KEY || "",
-    // Some integrations only set non-prefixed publishable
-    process.env.NEXT_PUBLIC_SUPABASE_KEY || "",
     process.env.SUPABASE_KEY || "",
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "",
+    process.env.NEXT_PUBLIC_SUPABASE_KEY || "",
   ]);
 }
 
