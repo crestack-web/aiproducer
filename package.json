@@ -14,7 +14,9 @@
     "test:pitch": "node scripts/test-pitch-polish.mjs",
     "test:performance": "node scripts/test-performance-polish.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run test:performance && npm run build"
+    "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run test:performance && npm run build",
+    "worker": "tsx --tsconfig tsconfig.json workers/production-worker.ts",
+    "worker:prod": "tsx workers/production-worker.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -23,7 +25,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.24.1",
-    "ffmpeg-static": "^5.2.0"
+    "ffmpeg-static": "^5.2.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

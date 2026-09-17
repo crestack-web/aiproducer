@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { tickProduceJob, getPipelineMode } from "@/lib/audio/pipeline";
+import { getPipelineMode } from "@/lib/audio/pipeline";
 import { createServiceClient } from "@/lib/supabase/server";
 import { createSignedDownloadUrl, isStoragePath } from "@/lib/storage";
 import { getRoexEnv } from "@/lib/env";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 /** GET /api/projects/:id/status — project + latest job; advances produce jobs while polling. */
 export async function GET(_req: Request, ctx: Ctx) {
@@ -29,68 +29,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   const service = createServiceClient();
-
-  const { data: produceJob } = await service
-    .from("jobs")
-    .select("id, status, stage, type, started_at, created_at, output_data, error")
-    .eq("project_id", id)
-    .eq("type", "PRODUCE_SONG")
-    .in("status", ["queued", "processing"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (produceJob?.id) {
-    const out = (produceJob.output_data || {}) as Record<string, unknown>;
-    const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
-    const lockFresh = Boolean(lockAt && Date.now() - lockAt < 280_000);
-    const started = produceJob.started_at
-      ? Date.parse(String(produceJob.started_at))
-      : Date.parse(String(produceJob.created_at || "")) || Date.now();
-    const ageMs = Date.now() - started;
-
-    if (ageMs > 25 * 60_000) {
-      await service
-        .from("jobs")
-        .update({
-          status: "failed",
-          stage: "failed",
-          progress: 100,
-          error: "Production took too long on the server. Tap Produce again to retry with the full engine.",
-          completed_at: new Date().toISOString(),
-          output_data: { ...out, error: "timeout_25m" },
-        })
-        .eq("id", produceJob.id);
-    } else if (!lockFresh) {
-      try {
-        await service
-          .from("jobs")
-          .update({
-            status: "processing",
-            started_at: produceJob.started_at || new Date().toISOString(),
-            output_data: { ...out, tick_lock_at: new Date().toISOString() },
-          })
-          .eq("id", produceJob.id);
-        await tickProduceJob(produceJob.id, { maxWorkMs: 240_000 });
-      } catch (e) {
-        console.error("status poll tick", e);
-        const msg = e instanceof Error ? e.message : String(e);
-        // Keep job processing so the next poll can resume from checkpoint
-        await service
-          .from("jobs")
-          .update({
-            status: "processing",
-            output_data: {
-              ...out,
-              last_tick_error: msg.slice(0, 400),
-              tick_lock_at: null,
-            },
-          })
-          .eq("id", produceJob.id)
-          .in("status", ["queued", "processing"]);
-      }
-    }
-  }
+// Status is read-only. Worker owns tickProduceJob (Phase 2).
 
   const { data: jobs } = await service
     .from("jobs")
