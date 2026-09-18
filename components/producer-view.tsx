@@ -275,20 +275,43 @@ const bufferCache = new Map<string, AudioBuffer>();
 
 async function fetchDecode(
   ctx: AudioContext,
-  url: string
+  url: string,
+  /** Same-origin fallback when signed R2/S3 URLs block CORS (AI beats). */
+  sameOriginFallback?: string | null
 ): Promise<AudioBuffer | null> {
   if (bufferCache.has(url)) return bufferCache.get(url)!;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const arr = await res.arrayBuffer();
-    const buf = await ctx.decodeAudioData(arr.slice(0));
-    bufferCache.set(url, buf);
-    return buf;
-  } catch (e) {
-    console.warn("[producer-view] decode failed", url, e);
-    return null;
+  // Prefer caching under the primary url key even if we load via proxy
+  const candidates: string[] = [url];
+  if (sameOriginFallback && sameOriginFallback !== url) {
+    candidates.push(sameOriginFallback);
   }
+  let lastErr: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      const res = await fetch(candidate, {
+        credentials: candidate.startsWith("/") ? "same-origin" : "omit",
+        mode: candidate.startsWith("/") ? "same-origin" : "cors",
+      });
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      const arr = await res.arrayBuffer();
+      if (!arr.byteLength) {
+        lastErr = new Error("empty body");
+        continue;
+      }
+      const buf = await ctx.decodeAudioData(arr.slice(0));
+      bufferCache.set(url, buf);
+      if (candidate !== url) bufferCache.set(candidate, buf);
+      return buf;
+    } catch (e) {
+      lastErr = e;
+      // try next candidate (typically same-origin beat proxy)
+    }
+  }
+  console.warn("[producer-view] decode failed", url, lastErr);
+  return null;
 }
 
 /** Downsample channel peaks into `buckets` max-abs values. */
@@ -2085,7 +2108,11 @@ export function ProducerView({
           next[tr.id] = null;
           continue;
         }
-        const buf = await fetchDecode(ctx, tr.url);
+        const buf = await fetchDecode(
+          ctx,
+          tr.url,
+          tr.kind === "beat" && projectId ? `/api/projects/${projectId}/beat/download` : null
+        );
         if (cancelled) return;
         if (buf) {
           if (tr.id === "beat") {
@@ -2167,6 +2194,15 @@ export function ProducerView({
     gainsRef.current.clear();
     panNodesRef.current.clear();
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    // Stop HTMLAudio beat fallback (used when WebAudio decode fails)
+    try {
+      if (monitorAudioRef.current && !isConsoleRecording) {
+        monitorAudioRef.current.pause();
+        monitorAudioRef.current = null;
+      }
+    } catch {
+      /* */
+    }
   }
 
   useEffect(() => {
@@ -2200,11 +2236,24 @@ export function ProducerView({
     startedAtRef.current = ctx.currentTime;
     const startSec = fromMs / 1000;
 
+    const beatProxy =
+      projectId && beatUrl ? `/api/projects/${projectId}/beat/download` : null;
+    let beatStartedInGraph = false;
+
     for (const tr of tracks) {
       if (!tr.url) continue;
-      let buf = bufferCache.get(tr.url) || null;
-      if (!buf) buf = await fetchDecode(ctx, tr.url);
-      if (!buf) continue;
+      let buf = bufferCache.get(tr.url) || bufferCache.get(beatProxy || "") || null;
+      if (!buf) {
+        const fallback =
+          tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null;
+        buf = await fetchDecode(ctx, tr.url, fallback);
+      }
+      if (!buf) {
+        if (tr.kind === "beat") {
+          console.warn("[producer-view] beat buffer missing — will try HTMLAudio fallback");
+        }
+        continue;
+      }
 
       const gain = ctx.createGain();
       const on = isAudible(tr.id, tr.kind);
@@ -2307,8 +2356,30 @@ export function ProducerView({
       } else {
         if (startSec >= buf.duration) continue;
         src.start(0, startSec);
+        if (tr.kind === "beat") beatStartedInGraph = true;
       }
       sourcesRef.current.push(src);
+      if (tr.kind === "beat") beatStartedInGraph = true;
+    }
+
+    // Fallback: if beat URL exists but WebAudio decode failed (CORS), use HTMLAudioElement
+    // (same path that already works during Console recording monitor).
+    const beatTrack = tracks.find((t) => t.kind === "beat" && t.url);
+    if (beatTrack?.url && !beatStartedInGraph && isAudible("beat", "beat")) {
+      try {
+        try {
+          monitorAudioRef.current?.pause();
+        } catch {
+          /* */
+        }
+        const a = new Audio(beatTrack.url);
+        a.currentTime = Math.max(0, startSec);
+        a.volume = 1;
+        monitorAudioRef.current = a;
+        void a.play().catch((e) => console.warn("[producer-view] beat HTMLAudio play", e));
+      } catch (e) {
+        console.warn("[producer-view] beat HTMLAudio fallback", e);
+      }
     }
 
     setPlaying(true);
