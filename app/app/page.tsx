@@ -1,6 +1,13 @@
 "use client";
 
 import React, { useEffect, useState, Suspense } from "react";
+import {
+  useBeatAudio,
+  BeatPreviewTransport,
+  BeatPlayButton,
+  BeatMoreButton,
+  BeatActionsSheet,
+} from "@/components/beat-preview-player";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -34,6 +41,23 @@ function AppInner() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [downloadModal, setDownloadModal] = useState<{ id: string; title: string } | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
+  const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
+  const beatAudio = useBeatAudio({
+    onError: (message) => setBeatPlayError(message),
+  });
+  const {
+    playingId,
+    loadingId: loadingPlayId,
+    currentTime,
+    duration,
+    toggle: togglePlayBeat,
+    seek,
+    skip,
+    stop,
+    stopIfPlaying,
+    ensureUrl: ensureBeatUrl,
+  } = beatAudio;
 
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -44,6 +68,13 @@ function AppInner() {
       router.replace(t ? `/app?tab=${t}` : "/app");
     }
   }, [searchParams, router]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (tab !== "library" || libraryTab !== "beats") {
+      stop();
+      setBeatMenu(null);
+    }
+  }, [tab, libraryTab, stop]);
 
   useEffect(() => {
     (async () => {
@@ -92,11 +123,32 @@ function AppInner() {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || "Could not delete");
       }
+      stopIfPlaying(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function downloadBeatFile(projectId: string, title: string) {
+    try {
+      const url = await ensureBeatUrl(projectId);
+      if (!url) {
+        setBeatPlayError("Could not get download link for this beat.");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
+      a.target = "_blank";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (e) {
+      setBeatPlayError(e instanceof Error ? e.message : "Download failed");
     }
   }
 
@@ -552,7 +604,7 @@ function AppInner() {
               </div>
             )}
             {libraryTab === "beats" && (
-              <div className="dash-project-grid" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading && projects.filter((p) => p.has_beat && !isFinishedSong(p)).length === 0 && (
                   <EmptyState
@@ -566,15 +618,112 @@ function AppInner() {
                     }
                   />
                 )}
+                {beatPlayError && (
+                  <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
+                )}
                 {projects
                   .filter((p) => p.has_beat && !isFinishedSong(p))
-                  .map((p) => (
-                    <ProjectRow
-                      key={p.id}
-                      p={p}
-                      meta={`Beat · ${[p.genre, p.mood].filter(Boolean).join(" · ") || p.status}`}
-                    />
-                  ))}
+                  .map((p) => {
+                    const isPlaying = playingId === p.id;
+                    const busy = loadingPlayId === p.id || deletingId === p.id;
+                    const meta = [p.genre, p.mood].filter(Boolean).join(" · ") || p.status;
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 0,
+                          padding: "12px 14px",
+                          borderRadius: 16,
+                          background: C.surface,
+                          border: `1px solid ${isPlaying ? C.brassLine || C.brass : C.border}`,
+                          color: C.text,
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <BeatPlayButton
+                            isPlaying={isPlaying}
+                            loading={loadingPlayId === p.id}
+                            disabled={busy && loadingPlayId !== p.id}
+                            onClick={() => {
+                              setBeatPlayError(null);
+                              void togglePlayBeat(p.id);
+                            }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontWeight: 650,
+                                fontSize: 14,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {p.title}
+                            </div>
+                            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                              {meta}
+                              {isPlaying ? " · Playing" : ""}
+                            </div>
+                          </div>
+                          <BeatMoreButton
+                            active={beatMenu?.id === p.id}
+                            onClick={() =>
+                              setBeatMenu({
+                                id: p.id,
+                                title: p.title,
+                                meta: `Beat · ${meta}`,
+                              })
+                            }
+                          />
+                        </div>
+                        <BeatPreviewTransport
+                          active={isPlaying}
+                          currentTime={currentTime}
+                          duration={duration}
+                          onSeek={seek}
+                          onSkip={skip}
+                          disabled={busy}
+                        />
+                      </div>
+                    );
+                  })}
+                <BeatActionsSheet
+                  open={Boolean(beatMenu)}
+                  title={beatMenu?.title || "Beat"}
+                  subtitle={beatMenu?.meta}
+                  onClose={() => setBeatMenu(null)}
+                  items={
+                    beatMenu
+                      ? [
+                          {
+                            key: "booth",
+                            label: "Open Booth",
+                            onClick: () => router.push(`/app/studio/${beatMenu.id}`),
+                          },
+                          {
+                            key: "console",
+                            label: "Open Console",
+                            onClick: () => router.push(`/app/console/${beatMenu.id}`),
+                          },
+                          {
+                            key: "download",
+                            label: "Download beat",
+                            onClick: () => void downloadBeatFile(beatMenu.id, beatMenu.title),
+                          },
+                          {
+                            key: "delete",
+                            label: deletingId === beatMenu.id ? "Deleting…" : "Delete",
+                            danger: true,
+                            disabled: deletingId === beatMenu.id,
+                            onClick: () => void deleteProject(beatMenu.id, beatMenu.title),
+                          },
+                        ]
+                      : []
+                  }
+                />
               </div>
             )}
             {libraryTab === "recordings" && (

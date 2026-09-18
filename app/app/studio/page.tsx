@@ -4,6 +4,13 @@ import { Suspense, useEffect, useRef, useState, type CSSProperties } from "react
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
+import {
+  useBeatAudio,
+  BeatPreviewTransport,
+  BeatPlayButton,
+  BeatMoreButton,
+  BeatActionsSheet,
+} from "@/components/beat-preview-player";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { useTheme } from "@/lib/theme";
 
@@ -148,11 +155,20 @@ function StudioPageInner() {
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [loadingPlayId, setLoadingPlayId] = useState<string | null>(null);
-  const [beatUrls, setBeatUrls] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [beatMenuId, setBeatMenuId] = useState<string | null>(null);
+  const beatAudio = useBeatAudio({ onError: (message) => setError(message) });
+  const {
+    playingId,
+    loadingId: loadingPlayId,
+    currentTime,
+    duration,
+    toggle: togglePlayBeat,
+    seek,
+    skip,
+    stopIfPlaying,
+    ensureUrl: ensureBeatUrl,
+  } = beatAudio;
   const tempoLabel = tempo < 90 ? "Slow" : tempo < 125 ? "Medium" : "Fast";
 
   useEffect(() => {
@@ -447,62 +463,11 @@ function StudioPageInner() {
     (p) => p.has_beat || ["beat_ready", "analyzing", "blueprint_ready", "recording", "generating_beat"].includes(p.status)
   );
 
-  async function ensureBeatUrl(projectId: string): Promise<string | null> {
-    if (beatUrls[projectId]) return beatUrls[projectId];
-    const res = await fetch(`/api/projects/${projectId}/beat`);
-    if (!res.ok) return null;
-    const j = await res.json();
-    const url = typeof j.audio_url === "string" ? j.audio_url : null;
-    if (url) setBeatUrls((prev) => ({ ...prev, [projectId]: url }));
-    return url;
-  }
-
-  async function togglePlayBeat(projectId: string) {
-    try {
-      if (playingId === projectId && audioRef.current && !audioRef.current.paused) {
-        audioRef.current.pause();
-        setPlayingId(null);
-        return;
-      }
-      setLoadingPlayId(projectId);
-      const url = await ensureBeatUrl(projectId);
-      setLoadingPlayId(null);
-      if (!url) {
-        setError("Could not load this beat for playback.");
-        return;
-      }
-      if (!audioRef.current) {
-        audioRef.current = new Audio();
-        audioRef.current.preload = "auto";
-        audioRef.current.addEventListener("ended", () => setPlayingId(null));
-        audioRef.current.addEventListener("pause", () => {
-          if (audioRef.current && audioRef.current.paused) {
-            /* keep playingId if seeking */
-          }
-        });
-      }
-      const a = audioRef.current;
-      if (playingId && playingId !== projectId) {
-        a.pause();
-      }
-      if (a.src !== url) {
-        a.src = url;
-      }
-      await a.play();
-      setPlayingId(projectId);
-      setError(null);
-    } catch (e) {
-      setLoadingPlayId(null);
-      setPlayingId(null);
-      setError(e instanceof Error ? e.message : "Playback failed");
-    }
-  }
-
   async function downloadBeat(projectId: string, title: string) {
     try {
-      setLoadingPlayId(projectId);
+      // loading via player
       const url = await ensureBeatUrl(projectId);
-      setLoadingPlayId(null);
+      
       if (!url) {
         setError("Could not get download link for this beat.");
         return;
@@ -516,7 +481,7 @@ function StudioPageInner() {
       a.click();
       a.remove();
     } catch (e) {
-      setLoadingPlayId(null);
+      
       setError(e instanceof Error ? e.message : "Download failed");
     }
   }
@@ -525,21 +490,13 @@ function StudioPageInner() {
     if (!confirm("Delete this beat and its session? This cannot be undone.")) return;
     setDeletingId(projectId);
     try {
-      if (playingId === projectId && audioRef.current) {
-        audioRef.current.pause();
-        setPlayingId(null);
-      }
+      stopIfPlaying(projectId);
       const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(typeof j.error === "string" ? j.error : "Could not delete");
       }
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
-      setBeatUrls((prev) => {
-        const next = { ...prev };
-        delete next[projectId];
-        return next;
-      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -983,8 +940,8 @@ function StudioPageInner() {
                     key={p.id}
                     style={{
                       display: "flex",
-                      alignItems: "center",
-                      gap: 10,
+                      flexDirection: "column",
+                      gap: 0,
                       padding: "10px 12px",
                       borderRadius: 14,
                       background: C.surface,
@@ -992,94 +949,88 @@ function StudioPageInner() {
                       color: C.text,
                     }}
                   >
-                    <button
-                      type="button"
-                      aria-label={isPlaying ? "Pause beat" : "Play beat"}
-                      disabled={busy}
-                      onClick={() => togglePlayBeat(p.id)}
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 999,
-                        border: "none",
-                        flexShrink: 0,
-                        cursor: busy ? "wait" : "pointer",
-                        background: isPlaying
-                          ? `linear-gradient(180deg, #F0BC80, ${C.brass})`
-                          : C.bgDeep,
-                        color: isPlaying ? "#1A1208" : C.brass,
-                        display: "grid",
-                        placeItems: "center",
-                        fontSize: 14,
-                        fontWeight: 700,
-                        fontFamily: "inherit",
-                        opacity: busy ? 0.6 : 1,
-                      }}
-                    >
-                      {loadingPlayId === p.id ? "…" : isPlaying ? "❚❚" : "▶"}
-                    </button>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 13.5,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {p.title}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <BeatPlayButton
+                        isPlaying={isPlaying}
+                        loading={loadingPlayId === p.id}
+                        disabled={busy && loadingPlayId !== p.id}
+                        onClick={() => void togglePlayBeat(p.id)}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 13.5,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {p.title}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 2 }}>
+                          {statusLabel(p.status)}
+                          {[p.genre, p.mood].filter(Boolean).length
+                            ? ` · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`
+                            : ""}
+                          {isPlaying ? " · Playing" : ""}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 2 }}>
-                        {statusLabel(p.status)}
-                        {[p.genre, p.mood].filter(Boolean).length
-                          ? ` · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`
-                          : ""}
-                        {isPlaying ? " · Playing" : ""}
-                      </div>
+                      <BeatMoreButton
+                        active={beatMenuId === p.id}
+                        onClick={() => setBeatMenuId(p.id)}
+                      />
                     </div>
-                    <button
-                      type="button"
-                      title="Download beat"
+                    <BeatPreviewTransport
+                      active={isPlaying}
+                      currentTime={currentTime}
+                      duration={duration}
+                      onSeek={seek}
+                      onSkip={skip}
                       disabled={busy}
-                      onClick={() => downloadBeat(p.id, p.title)}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        border: `1px solid ${C.border}`,
-                        background: "transparent",
-                        color: C.textMuted,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        cursor: busy ? "wait" : "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      Download
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete beat"
-                      disabled={busy}
-                      onClick={() => deleteBeatProject(p.id)}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        border: `1px solid ${C.border}`,
-                        background: "transparent",
-                        color: deletingId === p.id ? "#ff8a8a" : C.textFaint,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        cursor: busy ? "wait" : "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      {deletingId === p.id ? "…" : "Delete"}
-                    </button>
+                    />
                   </div>
                 );
               })}
             </div>
+            <BeatActionsSheet
+              open={Boolean(beatMenuId)}
+              title={beats.find((b) => b.id === beatMenuId)?.title || "Beat"}
+              subtitle={(() => {
+                const b = beats.find((x) => x.id === beatMenuId);
+                if (!b) return undefined;
+                return [statusLabel(b.status), b.genre, b.mood].filter(Boolean).join(" · ");
+              })()}
+              onClose={() => setBeatMenuId(null)}
+              items={
+                beatMenuId
+                  ? [
+                      {
+                        key: "booth",
+                        label: "Open Booth",
+                        onClick: () => router.push(`/app/studio/${beatMenuId}`),
+                      },
+                      {
+                        key: "console",
+                        label: "Open Console",
+                        onClick: () => router.push(`/app/console/${beatMenuId}`),
+                      },
+                      {
+                        key: "download",
+                        label: "Download beat",
+                        onClick: () => void downloadBeat(beatMenuId, beats.find((b) => b.id === beatMenuId)?.title || "beat"),
+                      },
+                      {
+                        key: "delete",
+                        label: deletingId === beatMenuId ? "Deleting…" : "Delete",
+                        danger: true,
+                        disabled: deletingId === beatMenuId,
+                        onClick: () => void deleteBeatProject(beatMenuId),
+                      },
+                    ]
+                  : []
+              }
+            />
             <p style={{ margin: "10px 0 0", fontSize: 11.5, color: C.textFaint, lineHeight: 1.4 }}>
               Play stays on this page. Open a project from Library when you are ready to record or produce.
             </p>
