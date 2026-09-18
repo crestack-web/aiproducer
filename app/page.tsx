@@ -1098,7 +1098,21 @@ html[data-theme="light"] .chip{
     line-height:1.55;
     color:var(--muted);
   }
-  .product-demo-frame{
+  
+  .product-demo-frame-wrap{position:relative}
+  .product-demo-nav{
+    position:absolute;top:50%;transform:translateY(-50%);
+    z-index:2;width:36px;height:36px;border-radius:999px;
+    border:1px solid var(--border);
+    background:rgba(12,10,16,.85);
+    color:var(--text);font-size:22px;line-height:1;
+    cursor:pointer;display:grid;place-items:center;
+    backdrop-filter:blur(8px);
+  }
+  .product-demo-nav-prev{left:8px}
+  .product-demo-nav-next{right:8px}
+  html[data-theme="light"] .product-demo-nav{background:rgba(255,255,255,.92)}
+.product-demo-frame{
     border-radius:16px;
     overflow:hidden;
     border:1px solid var(--border);
