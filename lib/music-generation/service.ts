@@ -14,7 +14,7 @@ import type {
   MusicProviderName,
 } from "./types";
 import { MusicGenerationError, publicErrorMessage } from "./types";
-import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC } from "./beat-quota";
+import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC, isPaidBeatSubscriber } from "./beat-quota";
 
 export function getMusicGenerationMode(): "mock" | "provider" {
   const m = (process.env.MUSIC_GENERATION_MODE || "").toLowerCase();
@@ -172,6 +172,22 @@ export async function enqueueMusicGeneration(
   const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec, {
     forceBillable: Boolean(req.forceBillable),
   });
+  // Section / AI beat edits: Creator & Pro only
+  if (req.editSection && String(req.editSection).trim()) {
+    const paid = await isPaidBeatSubscriber(req.userId);
+    if (!paid) {
+      throw new MusicGenerationError(
+        "LIMIT_EXCEEDED",
+        "AI beat editing is included on Creator and Pro. Keep the beat you generated, or subscribe to rework sections.",
+        {
+          details: {
+            code: "BEAT_EDIT_PAID_ONLY",
+            canSubscribe: true,
+          },
+        }
+      );
+    }
+  }
   await assertWithinDailyLimits(req.userId, kind);
 
   const { data: project } = await supabase

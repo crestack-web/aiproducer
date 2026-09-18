@@ -181,6 +181,9 @@ function StudioPageInner() {
   >([]);
   const [versionsProjectId, setVersionsProjectId] = useState<string | null>(null);
   const [selectingBeatId, setSelectingBeatId] = useState<string | null>(null);
+  const [editGateModal, setEditGateModal] = useState(false);
+  const [isPaidPlan, setIsPaidPlan] = useState(false);
+
 
 
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
@@ -201,6 +204,40 @@ function StudioPageInner() {
     ensureUrl: ensureBeatUrl,
   } = beatAudio;
   const tempoLabel = tempo < 90 ? "Slow" : tempo < 125 ? "Medium" : "Fast";
+
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || cancelled) return;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("subscription_plan, plan, metadata")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (cancelled || !profile) return;
+        const plan = String(
+          (profile as { subscription_plan?: string }).subscription_plan ||
+            (profile as { plan?: string }).plan ||
+            ""
+        ).toLowerCase();
+        const meta = (profile as { metadata?: Record<string, unknown> }).metadata;
+        const mp =
+          meta && typeof meta === "object"
+            ? String(meta.plan || meta.subscription_plan || "").toLowerCase()
+            : "";
+        setIsPaidPlan(plan === "creator" || plan === "pro" || mp === "creator" || mp === "pro");
+      } catch {
+        /* stay free */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -413,8 +450,11 @@ function StudioPageInner() {
   }
 
   async function tweakReadyBeat() {
-
     if (!readyBeat?.projectId || !tweakPrompt.trim()) return;
+    if (!isPaidPlan) {
+      setEditGateModal(true);
+      return;
+    }
     setTweaking(true);
     setError(null);
     try {
@@ -437,6 +477,11 @@ function StudioPageInner() {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const code = (j.details as { code?: string } | undefined)?.code;
+        if (code === "BEAT_EDIT_PAID_ONLY") {
+          setEditGateModal(true);
+          return;
+        }
         throw new Error(typeof j.error === "string" ? j.error : "Could not rework section");
       }
       await loadBeatVersions(readyBeat.projectId);
@@ -1204,8 +1249,13 @@ function StudioPageInner() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 8 }}>
-                AI EDIT SECTION
+                AI EDIT SECTION{isPaidPlan ? "" : " · Creator / Pro"}
               </div>
+              {!isPaidPlan && (
+                <p style={{ margin: "0 0 8px", fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>
+                  Section reworks are on paid plans. Keep this beat, or subscribe to edit intro / verse / chorus.
+                </p>
+              )}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                 {(["intro", "verse", "chorus", "bridge", "outro"] as const).map((s) => (
                   <button
@@ -1242,7 +1292,13 @@ function StudioPageInner() {
               <button
                 type="button"
                 disabled={tweaking || !tweakPrompt.trim()}
-                onClick={() => void tweakReadyBeat()}
+                onClick={() => {
+                  if (!isPaidPlan) {
+                    setEditGateModal(true);
+                    return;
+                  }
+                  void tweakReadyBeat();
+                }}
                 style={{
                   width: "100%",
                   padding: "10px 12px",
@@ -1254,10 +1310,14 @@ function StudioPageInner() {
                   fontSize: 13,
                   cursor: tweaking ? "wait" : "pointer",
                   fontFamily: "inherit",
-                  opacity: tweaking || !tweakPrompt.trim() ? 0.55 : 1,
+                  opacity: tweaking || (!tweakPrompt.trim() && isPaidPlan) ? 0.55 : 1,
                 }}
               >
-                {tweaking ? "Reworking section…" : `Rework ${tweakSection} with AI`}
+                {tweaking
+                  ? "Reworking section…"
+                  : isPaidPlan
+                    ? `Rework ${tweakSection} with AI`
+                    : "Unlock section editing"}
               </button>
             </div>
 
@@ -1562,6 +1622,106 @@ function StudioPageInner() {
                 ))}
               </div>
             )}
+
+
+      {editGateModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 92,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => setEditGateModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: "18px 18px 0 0",
+              background: C.surface || "#16140f",
+              border: `1px solid ${C.border}`,
+              padding: "18px 16px 28px",
+              color: C.text,
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>AI beat editing</div>
+            <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
+              Reworking intro, verse, chorus, and other sections is included on{" "}
+              <strong style={{ color: C.text }}>Creator</strong> and{" "}
+              <strong style={{ color: C.text }}>Pro</strong>. You can keep the single unedited beat you already generated and continue to record.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setEditGateModal(false);
+                router.push("/app?tab=profile");
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "none",
+                background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                color: "#1A1208",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+              }}
+            >
+              Subscribe to monthly plans
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditGateModal(false);
+                setTweakPrompt("");
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.brass}`,
+                background: "transparent",
+                color: C.brass,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+              }}
+            >
+              Keep this beat unedited
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditGateModal(false)}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "transparent",
+                color: C.textMuted,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
 {upgradeModal && (
         <div
