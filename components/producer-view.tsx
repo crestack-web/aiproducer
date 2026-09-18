@@ -546,6 +546,11 @@ export function ProducerView({
   const startedAtRef = useRef(0);
   const offsetRef = useRef(0);
   const rafRef = useRef(0);
+  /** Authoritative transport — avoids stale RAF closures keeping time running after pause */
+  const playingRef = useRef(false);
+  /** Bumped on every stop/pause so in-flight startPlayback cannot restart audio */
+  const playbackGenRef = useRef(0);
+  const pxPerSecRef = useRef(56);
 
   const [layers, setLayers] = useState(layersProp);
   const [durationMs, setDurationMs] = useState(durationProp || 0);
@@ -553,6 +558,7 @@ export function ProducerView({
   const [playing, setPlaying] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
   const [pxPerSec, setPxPerSec] = useState(56);
+  pxPerSecRef.current = pxPerSec;
   const [loopOn, setLoopOn] = useState(false);
   const loopOnRef = useRef(false);
 
@@ -2209,6 +2215,11 @@ export function ProducerView({
   }, [muted, soloId, tracks, fxById]);
 
   function stopSources() {
+    playingRef.current = false;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    }
     for (const s of sourcesRef.current) {
       try {
         s.stop();
@@ -2219,11 +2230,11 @@ export function ProducerView({
     sourcesRef.current = [];
     gainsRef.current.clear();
     panNodesRef.current.clear();
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     // Stop HTMLAudio beat fallback (used when WebAudio decode fails)
     try {
       if (monitorAudioRef.current && !isConsoleRecording) {
         monitorAudioRef.current.pause();
+        // Keep element for resume position only if we need it — null so clock cannot advance
         monitorAudioRef.current = null;
       }
     } catch {
@@ -2236,8 +2247,16 @@ export function ProducerView({
   }, [loopOn]);
 
   function tickPlayhead() {
+    // Must use ref — React state in this closure stays true after pause
+    if (!playingRef.current) {
+      rafRef.current = 0;
+      return;
+    }
     const ctx = audioCtxRef.current;
-    if (!ctx || !playing) return;
+    if (!ctx) {
+      rafRef.current = 0;
+      return;
+    }
     // Prefer AudioContext clock (Web Audio graph). If only HTMLAudio beat fallback
     // is running, derive timeline from that element so the playhead matches audio.
     let elapsed: number;
@@ -2247,13 +2266,32 @@ export function ProducerView({
     } else {
       elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
     }
-    setPlayheadMs(Math.min(totalMs, Math.max(0, elapsed)));
-    if (elapsed >= totalMs) {
+    elapsed = Math.min(totalMs, Math.max(0, elapsed));
+    setPlayheadMs(elapsed);
+
+    // DAW-style follow: keep playhead in view while playing (critical on mobile)
+    try {
+      const el = timelineScrollRef.current;
+      if (el && el.clientWidth > 0) {
+        const x = (elapsed / 1000) * pxPerSecRef.current;
+        const margin = Math.min(96, Math.max(48, el.clientWidth * 0.22));
+        const viewL = el.scrollLeft;
+        const viewR = viewL + el.clientWidth;
+        if (x > viewR - margin || x < viewL + 24) {
+          const target = Math.max(0, x - el.clientWidth * 0.28);
+          el.scrollLeft = target;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (elapsed >= totalMs - 1) {
       if (loopOnRef.current && totalMs > 0) {
-        // Restart from start without dropping loop state
         void startPlayback(0);
         return;
       }
+      playingRef.current = false;
       setPlaying(false);
       stopSources();
       return;
@@ -2264,8 +2302,13 @@ export function ProducerView({
   async function startPlayback(fromMs: number) {
     const ctx = getCtx();
     if (!ctx) return;
+    // Invalidate any previous in-flight start; only this generation may finish
+    const gen = ++playbackGenRef.current;
     if (ctx.state === "suspended") await ctx.resume();
+    if (gen !== playbackGenRef.current) return;
     stopSources();
+    // stopSources clears playingRef — re-arm for this session
+    playingRef.current = true;
     offsetRef.current = fromMs;
     startedAtRef.current = ctx.currentTime;
     const startSec = fromMs / 1000;
@@ -2419,6 +2462,12 @@ export function ProducerView({
       }
     }
 
+    // User may have paused while buffers were decoding
+    if (gen !== playbackGenRef.current || !playingRef.current) {
+      stopSources();
+      return;
+    }
+    playingRef.current = true;
     setPlaying(true);
     setPlayheadMs(fromMs);
     rafRef.current = requestAnimationFrame(tickPlayhead);
@@ -2437,12 +2486,17 @@ export function ProducerView({
   }
 
   function togglePlay() {
-    if (playing) {
+    if (playingRef.current || playing) {
       const ctx = audioCtxRef.current;
-      if (ctx) {
-        offsetRef.current =
+      if (ctx && playingRef.current) {
+        // Freeze displayed time at the true audio position
+        const frozen =
           (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+        offsetRef.current = Math.min(totalMs, Math.max(0, frozen));
+        setPlayheadMs(offsetRef.current);
       }
+      playbackGenRef.current += 1; // cancel in-flight startPlayback
+      playingRef.current = false;
       stopSources();
       setPlaying(false);
     } else {
@@ -2818,7 +2872,8 @@ export function ProducerView({
   function seekTo(ms: number) {
     const clamped = Math.max(0, Math.min(totalMs, ms));
     setPlayheadMs(clamped);
-    if (playing) {
+    offsetRef.current = clamped;
+    if (playingRef.current || playing) {
       void startPlayback(clamped);
     }
   }
@@ -4167,19 +4222,6 @@ export function ProducerView({
                   {s.label}
                 </div>
               ))}
-              <div
-                style={{
-                  position: "absolute",
-                  left: msToX(playheadMs),
-                  top: 0,
-                  bottom: 0,
-                  width: 2,
-                  background: "#F07167",
-                  pointerEvents: "none",
-                  zIndex: 4,
-                  boxShadow: "0 0 8px rgba(240,113,103,0.6)",
-                }}
-              />
             </div>
 
             {tracks.map((tr) => {
@@ -4480,21 +4522,52 @@ export function ProducerView({
                       </button>
                     </div>
                   ) : null}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: msToX(playheadMs),
-                      top: 0,
-                      bottom: 0,
-                      width: 2,
-                      background: "#F07167",
-                      pointerEvents: "none",
-                      zIndex: 4,
-                    }}
-                  />
                 </div>
               );
             })}
+            {/* Single full-height playhead — one line through ruler + every track */}
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: 0,
+                width: 0,
+                zIndex: 25,
+                pointerEvents: "none",
+                transform: `translate3d(${msToX(playheadMs)}px, 0, 0)`,
+                willChange: playing ? "transform" : "auto",
+              }}
+            >
+              {/* Triangle head on the ruler */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: -6,
+                  width: 0,
+                  height: 0,
+                  borderLeft: "6px solid transparent",
+                  borderRight: "6px solid transparent",
+                  borderTop: "9px solid #F07167",
+                  filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.35))",
+                }}
+              />
+              {/* Crisp 2px line */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  bottom: 0,
+                  left: -1,
+                  width: 2,
+                  background: "linear-gradient(180deg, #F07167 0%, #E85A52 100%)",
+                  boxShadow: "0 0 0 1px rgba(240,113,103,0.25), 0 0 10px rgba(240,113,103,0.45)",
+                  borderRadius: 1,
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>
