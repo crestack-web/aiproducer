@@ -163,6 +163,14 @@ function StudioPageInner() {
   const [referenceStyle, setReferenceStyle] = useState("");
   const [clarifyOpen, setClarifyOpen] = useState(false);
   const [limitMessage, setLimitMessage] = useState<string | null>(null);
+  const [upgradeModal, setUpgradeModal] = useState<{
+    message: string;
+    estimatedCostUsd?: number;
+  } | null>(null);
+  const [tweakSection, setTweakSection] = useState("chorus");
+  const [tweakPrompt, setTweakPrompt] = useState("");
+  const [tweaking, setTweaking] = useState(false);
+
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -355,7 +363,43 @@ function StudioPageInner() {
     }
   }
 
-  async function createAndGenerate() {
+  async function tweakReadyBeat() {
+    if (!readyBeat?.projectId || !tweakPrompt.trim()) return;
+    setTweaking(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${readyBeat.projectId}/generate-beat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          genre,
+          mood,
+          tempo,
+          prompt: tweakPrompt.trim(),
+          energy,
+          instrumentation,
+          duration_sec: beatDurationSec,
+          kind: "full",
+          editSection: tweakSection,
+          billable: true,
+          forceBillable: true,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not rework section");
+      }
+      void togglePlayBeat(readyBeat.projectId);
+      setTweakPrompt("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Section edit failed");
+    } finally {
+      setTweaking(false);
+    }
+  }
+
+  async function createAndGenerate(opts?: { billable?: boolean }) {
+
     setCreating(true);
     setError(null);
     setLimitMessage(null);
@@ -425,17 +469,37 @@ function StudioPageInner() {
             referenceStyle: referenceStyle.trim() || undefined,
             duration_sec: beatDurationSec,
             kind: "full",
+            billable: Boolean(opts?.billable),
+            forceBillable: Boolean(opts?.billable),
           }),
         });
         if (!beatRes.ok) {
           const j = await beatRes.json().catch(() => ({}));
           if (j.errorType === "LIMIT_EXCEEDED" || j.code === "BEAT_GEN_LIMIT") {
-            setLimitMessage(
+            const details = (j.details || {}) as {
+              code?: string;
+              estimatedCostUsd?: number;
+              canBillable?: boolean;
+            };
+            const msg =
               typeof j.error === "string"
                 ? j.error
-                : "You've used your free beat generation. Subscribe or finish and download a song to unlock another."
-            );
-            throw new Error(typeof j.error === "string" ? j.error : "Beat generation limit reached");
+                : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
+            setLimitMessage(msg);
+            if (
+              details.code === "SEQUENTIAL_FREE_BLOCKED" ||
+              details.code === "FREE_COUNT_EXCEEDED" ||
+              details.canBillable
+            ) {
+              setUpgradeModal({
+                message: msg,
+                estimatedCostUsd:
+                  typeof details.estimatedCostUsd === "number"
+                    ? details.estimatedCostUsd
+                    : Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+              });
+            }
+            throw new Error(msg);
           }
           throw new Error(
             (typeof j.error === "string" && j.error) || "Beat generation failed (not upload)"
@@ -912,8 +976,20 @@ function StudioPageInner() {
               <div style={{ fontWeight: 650, marginBottom: 4 }}>Beat limit</div>
               <div style={{ color: C.textMuted || C.text, marginBottom: 8 }}>{limitMessage}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                <button type="button" onClick={() => router.push("/app?tab=library")} style={{ ...chip(false), borderColor: C.brass, color: C.brass, fontWeight: 650 }}>
-                  Finish a song
+                <button
+                  type="button"
+                  onClick={() =>
+                    setUpgradeModal({
+                      message: limitMessage,
+                      estimatedCostUsd: Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+                    })
+                  }
+                  style={{ ...chip(false), borderColor: C.brass, color: C.brass, fontWeight: 650 }}
+                >
+                  Options
+                </button>
+                <button type="button" onClick={() => router.push("/app?tab=library")} style={{ ...chip(false), fontWeight: 650 }}>
+                  Finish current song
                 </button>
                 <button type="button" onClick={() => router.push("/app?tab=profile")} style={{ ...chip(true), fontWeight: 650 }}>
                   Plans
@@ -975,7 +1051,7 @@ function StudioPageInner() {
               opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1,
             }}
             disabled={creating || (beatMode === "upload" && !beatFile)}
-            onClick={createAndGenerate}
+            onClick={() => void createAndGenerate()}
           >
             {creating
               ? beatMode === "upload"
@@ -1066,6 +1142,73 @@ function StudioPageInner() {
               onSeek={seek}
               onSkip={skip}
             />
+            <div
+              style={{
+                marginTop: 14,
+                padding: 12,
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "rgba(0,0,0,0.2)",
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 8 }}>
+                AI EDIT SECTION
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                {(["intro", "verse", "chorus", "bridge", "outro"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setTweakSection(s)}
+                    style={{
+                      ...chip(tweakSection === s),
+                      textTransform: "capitalize",
+                      fontSize: 11,
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={tweakPrompt}
+                onChange={(e) => setTweakPrompt(e.target.value)}
+                placeholder="e.g. bigger drums, softer keys, more space for vocals"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: `1px solid ${C.border}`,
+                  background: C.bgDeep || "transparent",
+                  color: C.text,
+                  fontSize: 13,
+                  fontFamily: "inherit",
+                  marginBottom: 8,
+                }}
+              />
+              <button
+                type="button"
+                disabled={tweaking || !tweakPrompt.trim()}
+                onClick={() => void tweakReadyBeat()}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "none",
+                  background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                  color: "#1A1208",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: tweaking ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                  opacity: tweaking || !tweakPrompt.trim() ? 0.55 : 1,
+                }}
+              >
+                {tweaking ? "Reworking section…" : `Rework ${tweakSection} with AI`}
+              </button>
+            </div>
+
             <div
               style={{
                 display: "flex",
@@ -1267,7 +1410,112 @@ function StudioPageInner() {
                 );
               })}
             </div>
-            <BeatActionsSheet
+            
+      {upgradeModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 90,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => setUpgradeModal(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: "18px 18px 0 0",
+              background: C.surface || "#16140f",
+              border: `1px solid ${C.border}`,
+              padding: "18px 16px 28px",
+              color: C.text,
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Generate another beat?</div>
+            <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
+              {upgradeModal.message}
+            </p>
+            <p style={{ margin: "0 0 14px", fontSize: 12.5, color: C.textMuted }}>
+              Continue with a paid beat (~$
+              {(upgradeModal.estimatedCostUsd ?? beatDurationSec * COST_PER_SEC_USD).toFixed(2)}) —
+              you can record and Produce now; download unlocks after payment for{" "}
+              <strong style={{ color: C.text }}>session + beat</strong>.
+            </p>
+            <button
+              type="button"
+              disabled={creating}
+              onClick={() => {
+                setUpgradeModal(null);
+                setLimitMessage(null);
+                void createAndGenerate({ billable: true });
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "none",
+                background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                color: "#1A1208",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+              }}
+            >
+              Generate paid beat
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setUpgradeModal(null);
+                router.push("/app?tab=profile");
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.brass}`,
+                background: "transparent",
+                color: C.brass,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+              }}
+            >
+              Subscribe to monthly plans
+            </button>
+            <button
+              type="button"
+              onClick={() => setUpgradeModal(null)}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "transparent",
+                color: C.textMuted,
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+<BeatActionsSheet
               open={Boolean(beatMenuId)}
               title={beats.find((b) => b.id === beatMenuId)?.title || "Beat"}
               subtitle={(() => {

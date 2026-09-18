@@ -374,10 +374,12 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
 
 export async function assertBeatGenAllowed(
   userId: string,
-  durationSec?: number
+  durationSec?: number,
+  opts?: { forceBillable?: boolean }
 ): Promise<BeatQuotaSnapshot> {
   const snap = await getBeatGenQuota(userId);
   const want = Math.max(5, Math.min(240, Math.round(durationSec || DEFAULT_FULL_BEAT_SEC)));
+  const forceBillable = Boolean(opts?.forceBillable);
 
   console.info(
     "[beat-quota] check",
@@ -394,8 +396,8 @@ export async function assertBeatGenAllowed(
   );
 
   if (!snap.isPaid) {
-    // Free + billable-after-free share the same max length for free accounts unless paid
-    if (want > snap.freeMaxDurationSec && !snap.billableGeneration) {
+    // Free length cap always applies unless user explicitly accepts a billable longer beat
+    if (want > snap.freeMaxDurationSec && !forceBillable && !snap.billableGeneration) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
         `Free beats are limited to ${snap.freeMaxDurationSec}s (${Math.round(snap.freeMaxDurationSec / 60)} min). Shorten the length or upgrade for longer beats.`,
@@ -410,10 +412,15 @@ export async function assertBeatGenAllowed(
         }
       );
     }
-    if (snap.sequentialBlocked || (!snap.allowed && !snap.billableGeneration)) {
+    // Sequential free gate — unless user accepts billable generation (cost on song download)
+    if (
+      !forceBillable &&
+      (snap.sequentialBlocked || (!snap.allowed && !snap.billableGeneration))
+    ) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
-        snap.message || "Finish recording and Produce your current free beat first.",
+        snap.message ||
+          "Record and Produce your current free beat before generating the next free one — or continue with a paid beat (cost added at download).",
         {
           details: {
             code: snap.sequentialBlocked ? "SEQUENTIAL_FREE_BLOCKED" : "FREE_COUNT_EXCEEDED",
@@ -421,9 +428,22 @@ export async function assertBeatGenAllowed(
             usedSuccessful: snap.usedSuccessful,
             freeLimit: snap.freeLimit,
             finishedFreeProjects: snap.finishedFreeProjects,
+            estimatedCostUsd: estimateBeatCostUsd(want),
+            canBillable: true,
+            canSubscribe: true,
           },
         }
       );
+    }
+    if (forceBillable) {
+      return {
+        ...snap,
+        allowed: true,
+        billableGeneration: true,
+        sequentialBlocked: false,
+        message:
+          "This beat is billable — cost is added to your song download after you Produce.",
+      };
     }
     return snap;
   }

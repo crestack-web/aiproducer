@@ -341,6 +341,9 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
           body.prompt = prompt.slice(0, 4100);
           body.music_length_ms = musicLengthMs;
           body.force_instrumental = true;
+          if ((process.env.ELEVENLABS_STORE_FOR_INPAINTING || "1").trim() !== "0") {
+            body.store_for_inpainting = true;
+          }
         }
 
         const url = `${base}/v1/music?output_format=${encodeURIComponent(outputFormat())}`;

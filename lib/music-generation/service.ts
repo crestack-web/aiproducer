@@ -169,7 +169,9 @@ export async function enqueueMusicGeneration(
 
   // New generation only — successful COMPLETED jobs consume quota; failures do not
   const requestedSec = Math.round(req.durationSec || DEFAULT_FULL_BEAT_SEC);
-  const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec);
+  const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec, {
+    forceBillable: Boolean(req.forceBillable),
+  });
   await assertWithinDailyLimits(req.userId, kind);
 
   const { data: project } = await supabase
@@ -205,7 +207,9 @@ export async function enqueueMusicGeneration(
       kind,
       provider: provider.name,
       mode,
-      prompt: plan.prompt,
+      prompt: req.editSection
+        ? `${plan.prompt}\n\nSection edit focus: regenerate the ${req.editSection} region. ${req.prompt || ""}. Instrumental only. Keep continuity with surrounding sections.`
+        : plan.prompt,
       genre: plan.genre,
       mood: plan.mood,
       bpm: plan.bpm,

@@ -43,6 +43,10 @@ export type MusicGenerationRequest = {
   bpm?: number;
   key?: string;
   durationSec?: number;
+  /** User accepted paid beat (cost on song download) */
+  forceBillable?: boolean;
+  /** Section label for AI tweak of existing beat */
+  editSection?: string;
   instrumentalOnly?: boolean;
   energy?: string;
   structure?: string;

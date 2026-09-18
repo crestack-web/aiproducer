@@ -20,6 +20,11 @@ const BodySchema = z.object({
   energy: z.string().max(40).optional(),
   instrumentation: z.string().max(120).optional(),
   referenceStyle: z.string().max(120).optional(),
+  /** Accept billable generation when free sequential slot is locked */
+  billable: z.boolean().optional(),
+  forceBillable: z.boolean().optional(),
+  /** AI section tweak: intro | verse | chorus | bridge | outro | full */
+  editSection: z.string().max(40).optional(),
   length_ms: z.number().int().min(3000).max(240000).optional(),
   duration_sec: z.number().int().min(5).max(240).optional(),
   kind: z.enum(["preview", "full"]).optional(),
@@ -76,8 +81,13 @@ export async function POST(req: Request, ctx: Ctx) {
       durationSec,
       kind,
       instrumentalOnly: true,
+      forceBillable: Boolean(parsed.data.billable || parsed.data.forceBillable),
+      editSection: parsed.data.editSection,
       idempotencyKey:
-        parsed.data.idempotencyKey || `beat:${user.id}:${projectId}:${kind}`,
+        parsed.data.idempotencyKey ||
+        (parsed.data.editSection
+          ? `beat-edit:${user.id}:${projectId}:${parsed.data.editSection}:${Date.now()}`
+          : `beat:${user.id}:${projectId}:${kind}`),
     });
 
     // Drive the job to completion (or failure) within this request.
