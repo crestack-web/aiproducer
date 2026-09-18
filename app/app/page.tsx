@@ -44,6 +44,12 @@ function AppInner() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{
+    id: string;
+    title: string;
+    meta: string;
+    isReady: boolean;
+  } | null>(null);
   const beatAudio = useBeatAudio({
     onError: (message) => setBeatPlayError(message),
   });
@@ -335,64 +341,17 @@ function AppInner() {
             <div style={rowMeta}>{meta}</div>
           </div>
         </Link>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={() => router.push(`/app/studio/${p.id}`)}
-            style={{
-              border: `1px solid ${C.border}`,
-              background: C.surface,
-              color: C.brass,
-              fontSize: 11,
-              fontWeight: 700,
-              padding: "6px 8px",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Booth
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push(`/app/console/${p.id}`)}
-            style={{
-              border: `1px solid ${C.border}`,
-              background: C.surface,
-              color: C.textMuted,
-              fontSize: 11,
-              fontWeight: 700,
-              padding: "6px 8px",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Console
-          </button>
-          <IconBtn label="Open Booth" onClick={() => router.push(`/app/studio/${p.id}`)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M8 5.5v13l11-6.5L8 5.5Z" />
-            </svg>
-          </IconBtn>
-          {isReady && (
-            <IconBtn label="Download" onClick={() => setDownloadModal({ id: p.id, title: p.title })}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                <path d="M12 3v12" strokeLinecap="round" />
-                <path d="M7 11l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M5 21h14" strokeLinecap="round" />
-              </svg>
-            </IconBtn>
-          )}
-          <IconBtn label="Delete" danger onClick={() => void deleteProject(p.id, p.title)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path d="M4 7h16" strokeLinecap="round" />
-              <path d="M10 11v6M14 11v6" strokeLinecap="round" />
-              <path d="M6 7l1 14h10l1-14" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M9 7V4h6v3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </IconBtn>
-        </div>
+        <BeatMoreButton
+          active={projectMenu?.id === p.id}
+          onClick={() =>
+            setProjectMenu({
+              id: p.id,
+              title: p.title,
+              meta,
+              isReady,
+            })
+          }
+        />
       </div>
     );
   }
@@ -832,7 +791,48 @@ function AppInner() {
         )}
       </div>
 
-        {downloadModal && (
+        
+        <BeatActionsSheet
+          open={Boolean(projectMenu)}
+          title={projectMenu?.title || "Project"}
+          subtitle={projectMenu?.meta}
+          onClose={() => setProjectMenu(null)}
+          items={
+            projectMenu
+              ? [
+                  {
+                    key: "booth",
+                    label: "Open Booth",
+                    onClick: () => router.push(`/app/studio/${projectMenu.id}`),
+                  },
+                  {
+                    key: "console",
+                    label: "Open Console",
+                    onClick: () => router.push(`/app/console/${projectMenu.id}`),
+                  },
+                  ...(projectMenu.isReady
+                    ? [
+                        {
+                          key: "download",
+                          label: "Download song",
+                          onClick: () =>
+                            setDownloadModal({ id: projectMenu.id, title: projectMenu.title }),
+                        },
+                      ]
+                    : []),
+                  {
+                    key: "delete",
+                    label: deletingId === projectMenu.id ? "Deleting…" : "Delete",
+                    danger: true,
+                    disabled: deletingId === projectMenu.id,
+                    onClick: () => void deleteProject(projectMenu.id, projectMenu.title),
+                  },
+                ]
+              : []
+          }
+        />
+
+{downloadModal && (
           <div
             role="dialog"
             aria-modal="true"
