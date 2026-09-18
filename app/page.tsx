@@ -3,6 +3,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { RotatingHeadline } from "@/components/rotating-headline";
 import { WelcomeCreateHook } from "@/components/welcome-create-hook";
 import { WelcomeMusicRail } from "@/components/welcome-music-rail";
+import { WelcomeProductDemo } from "@/components/welcome-product-demo";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -24,6 +25,7 @@ export default function WelcomePage() {
             Studio
           </Link>
           <nav className="nav desktop-nav">
+            <a href="#workspace">Workspace</a>
             <a href="#listen">Listen</a>
             <a href="#how">How it works</a>
             <a href="#value">Why Studio</a>
@@ -50,7 +52,7 @@ export default function WelcomePage() {
           <WelcomeCreateHook />
         </section>
 
-        {/* Product demo / dashboard mockup slot — add when ready */}
+        <WelcomeProductDemo />
 
         <WelcomeMusicRail />
 
@@ -1065,5 +1067,80 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .listen-play{
     background:rgba(255,255,255,.85);
     color:#1A1208;
+  }
+
+  /* —— Product demo (Suno-style workspace card) —— */
+  .product-demo{
+    margin:40px auto 8px;
+    max-width:560px;
+    padding:0 4px;
+  }
+  .product-demo-card{
+    border-radius:24px;
+    border:1px solid var(--border);
+    background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+    box-shadow:0 32px 64px -40px rgba(0,0,0,.75);
+    padding:28px 22px 24px;
+    text-align:left;
+  }
+  .product-demo-title{
+    margin:0 0 12px;
+    font-family:var(--serif,Georgia,serif);
+    font-size:clamp(1.45rem,3.5vw,1.85rem);
+    font-weight:500;
+    letter-spacing:-0.02em;
+    line-height:1.2;
+    color:var(--text);
+  }
+  .product-demo-body{
+    margin:0 0 20px;
+    font-size:15px;
+    line-height:1.55;
+    color:var(--muted);
+  }
+  .product-demo-frame{
+    border-radius:16px;
+    overflow:hidden;
+    border:1px solid var(--border);
+    background:#0a0a0c;
+    aspect-ratio:9/16;
+    max-height:min(520px,70vh);
+    margin:0 auto;
+  }
+  .product-demo-img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    object-position:top center;
+    display:block;
+  }
+  .product-demo-dots{
+    display:flex;
+    justify-content:center;
+    gap:8px;
+    margin:16px 0 4px;
+  }
+  .product-demo-dot{
+    width:7px;height:7px;border-radius:999px;
+    border:none;padding:0;
+    background:rgba(255,255,255,.22);
+    cursor:pointer;
+  }
+  .product-demo-dot.on{background:var(--brass,#e7a961);width:18px}
+  .product-demo-cta{margin-top:16px;text-align:center}
+  .product-demo-cta .primary{
+    display:inline-flex;justify-content:center;
+    padding:12px 28px;border-radius:999px;
+    font-size:14.5px;font-weight:650;
+  }
+  html[data-theme="light"] .product-demo-card{
+    background:linear-gradient(180deg,#fff,rgba(255,255,255,.92));
+    box-shadow:0 24px 48px -28px rgba(0,0,0,.18);
+  }
+  html[data-theme="light"] .product-demo-dot{background:rgba(0,0,0,.18)}
+  @media (min-width:720px){
+    .product-demo{max-width:640px;margin-top:48px}
+    .product-demo-card{padding:32px 28px 28px}
+    .product-demo-frame{aspect-ratio:10/16;max-height:560px}
   }
 `;
