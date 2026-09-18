@@ -156,7 +156,7 @@ function StudioPageInner() {
   const [mood, setMood] = useState("Emotional");
   const [prompt, setPrompt] = useState("");
   const [tempo, setTempo] = useState(104);
-  const [beatDurationSec, setBeatDurationSec] = useState(30);
+  const [beatDurationSec, setBeatDurationSec] = useState(60);
   const [createPanel, setCreatePanel] = useState<"sound" | "vibe" | "style" | "length">("sound");
   const [energy, setEnergy] = useState("Driving");
   const [instrumentation, setInstrumentation] = useState("808-driven");
@@ -845,13 +845,14 @@ function StudioPageInner() {
                     <div style={{ marginTop: 8, fontSize: 11.5, color: C.textFaint, lineHeight: 1.4 }}>
                       {beatDurationSec <= FREE_MAX_SEC ? (
                         <>
-                          <span style={{ color: C.brass }}>Free tier</span>
-                          {" · "}≤{FREE_MAX_SEC}s · {FREE_GEN_COUNT} gens · ~$
-                          {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)} if billed
+                          <span style={{ color: C.brass }}>Free · up to {Math.floor(FREE_MAX_SEC / 60)} min</span>
+                          {" · "}
+                          Est. cost ~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                          {" · "}AP covers {FREE_GEN_COUNT} gens
                         </>
                       ) : (
                         <>
-                          Above free length — shorten to {FREE_MAX_SEC}s or upgrade · ~$
+                          Above free {Math.floor(FREE_MAX_SEC / 60)} min — shorten or upgrade · Est. ~$
                           {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
                         </>
                       )}
@@ -925,6 +926,33 @@ function StudioPageInner() {
               {error}
             </div>
           )}
+
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: `1px solid ${C.brassLine || C.brass}`,
+              background: "rgba(231,169,97,0.08)",
+              fontSize: 12,
+              lineHeight: 1.45,
+              color: C.textMuted,
+            }}
+          >
+            <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
+              Free AP beats
+            </div>
+            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} beat generations</strong> (up to{" "}
+            <strong style={{ color: C.text }}>{Math.floor(FREE_MAX_SEC / 60)} minutes</strong> each).
+            After you use them, unlock another by finishing a song — <strong style={{ color: C.text }}>Produce</strong>, then{" "}
+            <strong style={{ color: C.text }}>pay to download</strong>. Creator &amp; Pro plans include monthly beat time
+            (Creator ~10 × 3 min, Pro ~30 × 3 min).
+            <div style={{ marginTop: 6, color: C.text }}>
+              This length (~{beatDurationSec}s) estimates{" "}
+              <strong>~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}</strong> at provider rates
+              {beatDurationSec <= FREE_MAX_SEC ? " — covered on free when allowance remains" : ""}.
+            </div>
+          </div>
 
           <button
             type="button"

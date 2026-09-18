@@ -1,7 +1,7 @@
 /**
  * Beat generation usage gating (duration-aware).
  *
- * Free: 3 successful COMPLETED generations with real audio, each ≤ FREE_MAX_DURATION_SEC (default 30).
+ * Free: 3 successful COMPLETED generations with real audio, each ≤ FREE_MAX_DURATION_SEC (default 180 = 3 min).
  * Longer selections are blocked for free users (no pay-per-overage).
  * After free quota, unlock via Creator/Pro OR finish+download (beat_unlock_granted).
  *
@@ -28,10 +28,10 @@ function envInt(name: string, fallback: number, min?: number): number {
 export const FREE_BEAT_GEN_COUNT = envInt("BEAT_GEN_FREE_COUNT", 3, 1);
 
 /** Max seconds covered per free generation. */
-export const FREE_MAX_DURATION_SEC = envInt("BEAT_GEN_FREE_MAX_SEC", 30, 5);
+export const FREE_MAX_DURATION_SEC = envInt("BEAT_GEN_FREE_MAX_SEC", 180, 5);
 
 /** Default full beat length when user does not pick (seconds). */
-export const DEFAULT_FULL_BEAT_SEC = envInt("MUSIC_FULL_DURATION_SEC", 30, 5);
+export const DEFAULT_FULL_BEAT_SEC = envInt("MUSIC_FULL_DURATION_SEC", 60, 5);
 
 export function estimatedMusicCostUsdPerSec(): number {
   const n = Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || 0.00583);
@@ -43,9 +43,21 @@ export function estimateBeatCostUsd(durationSec: number): number {
   return Math.round(sec * estimatedMusicCostUsdPerSec() * 10000) / 10000;
 }
 
-function getPaidSecondsBudget(): number {
-  const sec = envInt("BEAT_GEN_PAID_SECONDS_PER_MONTH", 0, 0);
-  if (sec > 0) return sec;
+/**
+ * Monthly beat-generation seconds by subscription plan.
+ * Override with BEAT_GEN_CREATOR_SECONDS / BEAT_GEN_PRO_SECONDS / BEAT_GEN_PAID_SECONDS_PER_MONTH.
+ */
+function getPaidSecondsBudgetForPlan(plan: string): number {
+  const global = envInt("BEAT_GEN_PAID_SECONDS_PER_MONTH", 0, 0);
+  if (global > 0) return global;
+  const p = plan.toLowerCase();
+  if (p === "pro") {
+    return envInt("BEAT_GEN_PRO_SECONDS", 30 * 180, 60); // ~30 × 3 min
+  }
+  if (p === "creator") {
+    return envInt("BEAT_GEN_CREATOR_SECONDS", 10 * 180, 60); // ~10 × 3 min
+  }
+  // Unknown paid plan — modest default
   const count = envInt("BEAT_GEN_PAID_PER_MONTH", 15, 1);
   return Math.max(60, count * FREE_MAX_DURATION_SEC);
 }
@@ -67,37 +79,39 @@ export type BeatQuotaSnapshot = {
   costPerSecUsd: number;
 };
 
-export async function isPaidBeatSubscriber(userId: string): Promise<boolean> {
-  if (!userId) return false;
+export async function getSubscriberPlanName(userId: string): Promise<string> {
+  if (!userId) return "";
   const supabase = createServiceClient();
   try {
     const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
     const p = profile as Record<string, unknown> | null;
-    if (p) {
-      const plan = String(p.subscription_plan || p.plan || "").toLowerCase();
-      if (plan === "creator" || plan === "pro") return true;
-      const meta = p.metadata;
-      if (meta && typeof meta === "object") {
-        const mp = String((meta as Record<string, unknown>).subscription_plan || "").toLowerCase();
-        if (mp === "creator" || mp === "pro") return true;
-      }
+    if (!p) return "";
+    const plan = String(p.subscription_plan || p.plan || "").toLowerCase();
+    if (plan === "creator" || plan === "pro") return plan;
+    const meta = p.metadata;
+    if (meta && typeof meta === "object") {
+      const mp = String(
+        (meta as Record<string, unknown>).plan ||
+          (meta as Record<string, unknown>).subscription_plan ||
+          ""
+      ).toLowerCase();
+      if (mp === "creator" || mp === "pro") return mp;
     }
-  } catch {
-    /* profiles shape varies */
-  }
-
-  try {
-    const { data } = await supabase.from("projects").select("metadata").eq("user_id", userId).limit(50);
-    for (const row of data || []) {
-      const m = (row as { metadata?: Record<string, unknown> }).metadata || {};
-      const plan = String(m.subscription_plan || "").toLowerCase();
-      if (plan === "creator" || plan === "pro") return true;
+    const status = String(p.subscription_status || "").toLowerCase();
+    if ((status === "active" || status === "trialing") && plan && plan !== "free" && plan !== "session") {
+      return plan;
     }
   } catch {
     /* ignore */
   }
-  return false;
+  return "";
 }
+
+export async function isPaidBeatSubscriber(userId: string): Promise<boolean> {
+  const plan = await getSubscriberPlanName(userId);
+  return plan === "creator" || plan === "pro";
+}
+
 
 /**
  * Count only true successes: COMPLETED + has audio (beat was actually produced).
@@ -192,7 +206,8 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
   const freeBaseAllowance = FREE_BEAT_GEN_COUNT;
   const freeMaxDurationSec = FREE_MAX_DURATION_SEC;
   const costPerSecUsd = estimatedMusicCostUsdPerSec();
-  const paidSecondsBudget = getPaidSecondsBudget();
+  // paid budget resolved after we know plan (see below)
+  let paidSecondsBudget = 0;
 
   // Fail-open defaults if userId missing
   if (!userId) {
@@ -211,7 +226,9 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     };
   }
 
-  const isPaid = await isPaidBeatSubscriber(userId);
+  const planName = await getSubscriberPlanName(userId);
+  const isPaid = planName === "creator" || planName === "pro";
+  paidSecondsBudget = isPaid ? getPaidSecondsBudgetForPlan(planName) : 0;
   const usedSuccessful = await countSuccessfulGens(userId);
   const downloadUnlocks = await countDownloadUnlocks(userId);
   const freeLimit = freeBaseAllowance + downloadUnlocks;
@@ -219,6 +236,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
 
   if (isPaid) {
     const remainingSeconds = Math.max(0, paidSecondsBudget - usedSecondsThisMonth);
+    const planLabel = planName === "pro" ? "Pro" : "Creator";
     return {
       allowed: remainingSeconds >= 5,
       isPaid: true,
@@ -234,7 +252,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
       message:
         remainingSeconds >= 5
           ? undefined
-          : `You've used your ${paidSecondsBudget}s of beat generation this month. Limits reset next month.`,
+          : `You've used your ${planLabel} beat budget (${paidSecondsBudget}s/month). Limits reset next month.`,
       upgradePath: remainingSeconds >= 5 ? undefined : "plan",
       costPerSecUsd,
     };
@@ -255,7 +273,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     message:
       remaining > 0
         ? undefined
-        : "You've used your free beat generations. Subscribe to a monthly plan for more, or finish and download a song to unlock another.",
+        : "You've used your 3 free AP beats. Finish a song, Produce, and unlock download to get another — or subscribe for monthly beat time.",
     upgradePath: remaining > 0 ? undefined : "finish_download",
     costPerSecUsd,
   };

@@ -2354,6 +2354,34 @@ export function ProducerView({
   const pollProduceOnce = useCallback(async (): Promise<"complete" | "failed" | "pending" | "error"> => {
     if (!projectId) return "error";
     try {
+      // Advance the job on the server (status route is read-only; worker may be offline).
+      // GET /api/jobs/:id runs tickProduceJob for queued/processing PRODUCE_SONG.
+      if (produceJobId) {
+        try {
+          const jr = await fetch(`/api/jobs/${produceJobId}`);
+          const jj = await jr.json().catch(() => ({}));
+          if (jr.ok) {
+            if (jj.stage) setProduceStage(String(jj.stage));
+            if (jj.status === "failed" || jj.status === "FAILED") {
+              const raw = jj.error || "AP couldn’t finish producing this version.";
+              setProduceError(
+                String(raw).replace(/\bRoEx\b/gi, "AP").replace(/\bmixer\b/gi, "production").slice(0, 180)
+              );
+              setProduceUi("failed");
+              return "failed";
+            }
+            if (
+              (jj.status === "complete" || jj.status === "completed") &&
+              (jj.output_data?.master_url || jj.output_data?.master_path)
+            ) {
+              // Fall through to status for signed master URL
+            }
+          }
+        } catch {
+          /* still poll status */
+        }
+      }
+
       const sr = await fetch(`/api/projects/${projectId}/status`);
       const st = await sr.json().catch(() => ({}));
       if (!sr.ok) return "error";
@@ -2438,7 +2466,7 @@ export function ProducerView({
   const scheduleProducePoll = useCallback(() => {
     clearProducePoll();
     produceActiveRef.current = true;
-    const PRODUCE_POLL_MS = 3500;
+    const PRODUCE_POLL_MS = 4000;
     const PRODUCE_MAX_MS = 10 * 60 * 1000;
     const tick = async () => {
       if (!produceActiveRef.current) return;
@@ -2597,7 +2625,11 @@ export function ProducerView({
         throw new Error(String(msg).replace(/\bRoEx\b/gi, "AP"));
       }
       const jid = j.jobId || j.job_id;
-      if (jid) setProduceJobId(String(jid));
+      if (jid) {
+        setProduceJobId(String(jid));
+        // Kick first tick immediately so production doesn't sit idle without a worker
+        void fetch(`/api/jobs/${jid}`).catch(() => undefined);
+      }
 
       if (j.deduped && (j.status === "queued" || j.status === "processing")) {
         setProduceStage(j.stage || "queued");

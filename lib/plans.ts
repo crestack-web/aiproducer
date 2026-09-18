@@ -47,6 +47,7 @@ export const PLANS: PlanDef[] = [
     features: [
       "10 finished songs / month",
       "About $1.90 per song (vs $2.99 one-time)",
+      "~30 min AP beat generation / month (10 × 3 min)",
       "WAV + MP3 export",
       "Professional mix & master",
       "Unlimited takes per song",
@@ -65,6 +66,7 @@ export const PLANS: PlanDef[] = [
     features: [
       "30 finished songs / month",
       "About $1.63 per song (vs $2.99 one-time)",
+      "~90 min AP beat generation / month (30 × 3 min)",
       "Everything in Creator",
       "Priority mastering queue",
       "Stem export when available",
