@@ -223,6 +223,7 @@ export async function enqueueMusicGeneration(
         cost_rate_usd_per_sec: Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || 0.00583),
         free_beat_generation: !quotaSnap.billableGeneration && !quotaSnap.isPaid,
         billable_generation: Boolean(quotaSnap.billableGeneration),
+        edit_section: req.editSection || null,
       },
     })
     .select("id, status")
@@ -384,6 +385,18 @@ export async function tickMusicGenerationJob(jobId: string) {
         kind: job.kind,
         music_generation_job_id: jobId,
         provider_prediction_id: result.providerPredictionId,
+        ...(() => {
+          const input =
+            job.input_data && typeof job.input_data === "object"
+              ? (job.input_data as Record<string, unknown>)
+              : {};
+          const plan = input.plan && typeof input.plan === "object" ? (input.plan as Record<string, unknown>) : {};
+          const es =
+            (typeof input.edit_section === "string" && input.edit_section) ||
+            (typeof plan.editSection === "string" && plan.editSection) ||
+            null;
+          return es ? { edit_section: es, section_edit: true } : {};
+        })(),
       },
     };
 

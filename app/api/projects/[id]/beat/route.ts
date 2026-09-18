@@ -43,13 +43,41 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: beat, error: bErr } = await supabase
-    .from("beats")
-    .select("*")
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: false })
-    .limit(1)
+  const { data: projMeta } = await supabase
+    .from("projects")
+    .select("metadata")
+    .eq("id", projectId)
     .maybeSingle();
+  const activeBeatId =
+    projMeta?.metadata &&
+    typeof projMeta.metadata === "object" &&
+    typeof (projMeta.metadata as Record<string, unknown>).active_beat_id === "string"
+      ? String((projMeta.metadata as Record<string, unknown>).active_beat_id)
+      : null;
+
+  let beat: Record<string, unknown> | null = null;
+  let bErr: { message?: string } | null = null;
+  if (activeBeatId) {
+    const res = await supabase
+      .from("beats")
+      .select("*")
+      .eq("id", activeBeatId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    beat = res.data as Record<string, unknown> | null;
+    bErr = res.error;
+  }
+  if (!beat) {
+    const res = await supabase
+      .from("beats")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    beat = res.data as Record<string, unknown> | null;
+    bErr = res.error;
+  }
 
   if (bErr) {
     console.error("get beat", bErr);
@@ -60,9 +88,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   let audio_url: string | null = null;
-  if (beat.audio_path) {
+  const path = typeof beat.audio_path === "string" ? beat.audio_path : null;
+  if (path) {
     try {
-      audio_url = await createSignedDownloadUrl(beat.audio_path, 3600);
+      audio_url = await createSignedDownloadUrl(path, 3600);
     } catch (e) {
       console.error("signed url", e);
     }

@@ -8,6 +8,9 @@ import {
 } from "@/lib/welcome-showcase-tracks";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
+/** Marketing previews only — full tracks stay in the app after signup. */
+const PREVIEW_MAX_SEC = 30;
+
 
 /**
  * Suno-style horizontal listening rail for the welcome page.
@@ -53,6 +56,13 @@ export function WelcomeMusicRail() {
         setPlayingId(null);
         setLoadingId(null);
       });
+      a.addEventListener("timeupdate", () => {
+        if (a.currentTime >= PREVIEW_MAX_SEC) {
+          a.pause();
+          a.currentTime = 0;
+          setPlayingId(null);
+        }
+      });
       audioRef.current = a;
     }
     return audioRef.current;
@@ -95,7 +105,7 @@ export function WelcomeMusicRail() {
       <div className="listen-head">
         <h2 className="listen-title">Mind-blowing session quality</h2>
         <p className="listen-sub">
-          Hear AP-generated beats and finished songs — your voice stays the lead when you produce.
+          30-second previews of AP beats and produced songs — sign up to use the full track.
         </p>
       </div>
 

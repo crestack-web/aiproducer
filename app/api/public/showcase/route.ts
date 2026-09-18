@@ -74,6 +74,8 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
   const service = createServiceClient();
   const tracks: ShowcaseTrack[] = [];
   const seenPaths = new Set<string>();
+  const seenProjectSong = new Set<string>();
+  const seenProjectBeat = new Set<string>();
 
   let masterQ = service
     .from("audio_versions")
@@ -133,11 +135,14 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
 
   for (const m of masters || []) {
     if (tracks.filter((t) => t.kind === "song").length >= MAX_SONGS) break;
+    const pid = String(m.project_id || "");
+    if (pid && seenProjectSong.has(pid)) continue;
     const path = m.audio_path as string;
     if (!path || !isStoragePath(path) || seenPaths.has(path)) continue;
     const audioUrl = await safeSign(path);
     if (!audioUrl) continue;
     seenPaths.add(path);
+    if (pid) seenProjectSong.add(pid);
     const proj = projectMap.get(m.project_id as string);
     const title = proj?.title || "Produced song";
     tracks.push({
@@ -155,13 +160,25 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
   for (const b of beats || []) {
     if (tracks.filter((t) => t.kind === "beat").length >= MAX_BEATS) break;
     if (tracks.length >= MAX_TOTAL) break;
+    const pid = String(b.project_id || "");
+    // One showcase card per project — section edits / reworks stay in-app on the Beats tab
+    if (pid && seenProjectBeat.has(pid)) continue;
     const path = b.audio_path as string;
     if (!path || !isStoragePath(path) || seenPaths.has(path)) continue;
+    const metaSkip = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
+      section_edit?: boolean;
+      edit_section?: string;
+    };
+    // Prefer primary generation over section-edit variants when ordering is mixed
+    if (metaSkip.section_edit || metaSkip.edit_section) {
+      // still allow if this is the only beat for project — we already skip duplicates by project
+    }
     const st = String(b.status || "").toLowerCase();
     if (st === "failed" || st === "error") continue;
     const audioUrl = await safeSign(path);
     if (!audioUrl) continue;
     seenPaths.add(path);
+    if (pid) seenProjectBeat.add(pid);
     const proj = projectMap.get(b.project_id as string);
     const meta = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
       provider?: string;

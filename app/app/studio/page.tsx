@@ -170,6 +170,18 @@ function StudioPageInner() {
   const [tweakSection, setTweakSection] = useState("chorus");
   const [tweakPrompt, setTweakPrompt] = useState("");
   const [tweaking, setTweaking] = useState(false);
+  const [beatVersions, setBeatVersions] = useState<
+    {
+      id: string;
+      audio_url: string | null;
+      label: string;
+      is_active?: boolean;
+      edit_section?: string | null;
+    }[]
+  >([]);
+  const [versionsProjectId, setVersionsProjectId] = useState<string | null>(null);
+  const [selectingBeatId, setSelectingBeatId] = useState<string | null>(null);
+
 
   const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
@@ -363,7 +375,45 @@ function StudioPageInner() {
     }
   }
 
+  async function loadBeatVersions(projectId: string) {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/beats`);
+      if (!res.ok) return;
+      const j = await res.json();
+      if (Array.isArray(j.beats)) {
+        setBeatVersions(j.beats);
+        setVersionsProjectId(projectId);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function selectBeatVersion(projectId: string, beatId: string) {
+    setSelectingBeatId(beatId);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/beats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ select_beat_id: beatId }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not select version");
+      }
+      await loadBeatVersions(projectId);
+      // refresh signed URL for player
+      void togglePlayBeat(projectId);
+      stopIfPlaying(projectId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Select failed");
+    } finally {
+      setSelectingBeatId(null);
+    }
+  }
+
   async function tweakReadyBeat() {
+
     if (!readyBeat?.projectId || !tweakPrompt.trim()) return;
     setTweaking(true);
     setError(null);
@@ -389,7 +439,8 @@ function StudioPageInner() {
       if (!res.ok) {
         throw new Error(typeof j.error === "string" ? j.error : "Could not rework section");
       }
-      void togglePlayBeat(readyBeat.projectId);
+      await loadBeatVersions(readyBeat.projectId);
+      stopIfPlaying(readyBeat.projectId);
       setTweakPrompt("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Section edit failed");
@@ -522,7 +573,8 @@ function StudioPageInner() {
       const source: "ai" | "upload" = beatMode === "upload" ? "upload" : "ai";
 
       // Stay on Studio — show player + CTAs (do not auto-jump to plan/booth)
-      setReadyBeat({
+      void loadBeatVersions(project.id);
+        setReadyBeat({
         projectId: project.id,
         title,
         source,
@@ -1209,6 +1261,57 @@ function StudioPageInner() {
               </button>
             </div>
 
+
+            {beatVersions.length > 1 && versionsProjectId === readyBeat.projectId && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 8 }}>
+                  BEAT VERSIONS — pick the one you want
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {beatVersions.map((v) => (
+                    <div
+                      key={v.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: `1px solid ${v.is_active ? C.brass : C.border}`,
+                        background: v.is_active ? "rgba(231,169,97,0.1)" : "transparent",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 650, color: C.text }}>{v.label}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted }}>
+                          {v.is_active ? "Active for Booth / Console" : "Tap Use to make active"}
+                        </div>
+                      </div>
+                      {!v.is_active && (
+                        <button
+                          type="button"
+                          disabled={selectingBeatId === v.id}
+                          onClick={() => void selectBeatVersion(readyBeat.projectId, v.id)}
+                          style={{
+                            ...chip(false),
+                            borderColor: C.brass,
+                            color: C.brass,
+                            fontWeight: 700,
+                            fontSize: 11,
+                          }}
+                        >
+                          {selectingBeatId === v.id ? "…" : "Use"}
+                        </button>
+                      )}
+                      {v.is_active && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: C.brass }}>Active</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div
               style={{
                 display: "flex",
@@ -1395,7 +1498,7 @@ function StudioPageInner() {
                       </div>
                       <BeatMoreButton
                         active={beatMenuId === p.id}
-                        onClick={() => setBeatMenuId(p.id)}
+                        onClick={() => { setBeatMenuId(p.id); void loadBeatVersions(p.id); }}
                       />
                     </div>
                     <BeatPreviewTransport
@@ -1411,7 +1514,56 @@ function StudioPageInner() {
               })}
             </div>
             
-      {upgradeModal && (
+      
+            {versionsProjectId && beatVersions.length > 1 && beats.some((b) => b.id === versionsProjectId) && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: "rgba(0,0,0,0.15)",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+                  Versions for this beat — choose one
+                </div>
+                {beatVersions.map((v) => (
+                  <div
+                    key={v.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "8px 0",
+                      borderBottom: `1px solid ${C.border}`,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{v.label}</div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>
+                        {v.is_active ? "Currently active" : "Alternate take"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={v.is_active || selectingBeatId === v.id}
+                      onClick={() => void selectBeatVersion(versionsProjectId, v.id)}
+                      style={{
+                        ...chip(Boolean(v.is_active)),
+                        fontSize: 11,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {v.is_active ? "Active" : selectingBeatId === v.id ? "…" : "Use this"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+{upgradeModal && (
         <div
           role="dialog"
           aria-modal="true"
