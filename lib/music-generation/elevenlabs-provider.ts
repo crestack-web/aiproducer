@@ -21,12 +21,24 @@ const DEFAULT_BASES = [
 function cleanKey(raw: string | undefined | null): string {
   if (!raw) return "";
   let k = String(raw).trim();
-  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
-    k = k.slice(1, -1).trim();
+  k = k.replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
+  for (let i = 0; i < 3; i++) {
+    if (k.length < 2) break;
+    const a = k[0];
+    const b = k[k.length - 1];
+    if (
+      (a === '"' && b === '"') ||
+      (a === "'" && b === "'") ||
+      (a === "\u201c" && b === "\u201d") ||
+      (a === "\u2018" && b === "\u2019")
+    ) {
+      k = k.slice(1, -1).trim();
+      continue;
+    }
+    break;
   }
-  // Remove accidental "Bearer " prefix if pasted into env
-  if (/^bearer\s+/i.test(k)) k = k.replace(/^bearer\s+/i, "").trim();
-  k = k.replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+  k = k.replace(/^Bearer\s+/i, "").replace(/^xi-api-key\s*:\s*/i, "").trim();
+  k = k.replace(/\s+/g, "");
   return k;
 }
 
@@ -59,10 +71,27 @@ function outputFormat(): string {
 function classifyHttpError(status: number, body: string, base: string): MusicGenerationError {
   const lower = body.toLowerCase();
   if (status === 401) {
+    let elMsg = "";
+    try {
+      const j = JSON.parse(body) as { detail?: { message?: string; code?: string } | string };
+      if (typeof j.detail === "string") elMsg = j.detail;
+      else if (j.detail && typeof j.detail === "object") elMsg = j.detail.message || j.detail.code || "";
+    } catch {
+      /* ignore */
+    }
+    const key =
+      cleanKey(process.env.ELEVENLABS_API_KEY) ||
+      cleanKey(process.env.ELEVEN_API_KEY) ||
+      cleanKey(process.env.XI_API_KEY);
+    const fingerprint = key ? `len=${key.length} suffix=…${key.slice(-4)}` : "empty";
     return new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      `ElevenLabs rejected the API key (HTTP 401 via ${base}). Confirm ELEVENLABS_API_KEY is the full key from elevenlabs.io → Profile → API keys, set for Production on Vercel, and redeployed.`,
-      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 500), base } }
+      `ElevenLabs rejected the API key (HTTP 401 via ${base})${elMsg ? `: ${elMsg}` : ""}. Env key ${fingerprint}. Fix: set Production ELEVENLABS_API_KEY to the full sk_ key with NO quotes around it, then Redeploy.`,
+      {
+        provider: "elevenlabs",
+        retryable: false,
+        details: { httpStatus: status, body: body.slice(0, 300), base, keyFingerprint: fingerprint },
+      }
     );
   }
   if (status === 403) {
