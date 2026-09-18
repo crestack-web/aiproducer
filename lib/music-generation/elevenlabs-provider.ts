@@ -52,6 +52,14 @@ function apiKey(): string {
       provider: "elevenlabs",
     });
   }
+  if (!k.startsWith("sk_")) {
+    const fingerprint = `len=${k.length} prefix=${JSON.stringify(k.slice(0, 6))} suffix=…${k.slice(-4)}`;
+    throw new MusicGenerationError(
+      "AUTHENTICATION_ERROR",
+      `ELEVENLABS_API_KEY must start with "sk_" (${fingerprint}). Set the full key from elevenlabs.io on Vercel Production with no quotes, then Redeploy.`,
+      { provider: "elevenlabs", retryable: false, details: { code: "invalid_api_key_prefix", keyFingerprint: fingerprint } }
+    );
+  }
   return k;
 }
 
@@ -72,10 +80,16 @@ function classifyHttpError(status: number, body: string, base: string): MusicGen
   const lower = body.toLowerCase();
   if (status === 401) {
     let elMsg = "";
+    let elCode = "";
     try {
-      const j = JSON.parse(body) as { detail?: { message?: string; code?: string } | string };
+      const j = JSON.parse(body) as {
+        detail?: { message?: string; code?: string; status?: string } | string;
+      };
       if (typeof j.detail === "string") elMsg = j.detail;
-      else if (j.detail && typeof j.detail === "object") elMsg = j.detail.message || j.detail.code || "";
+      else if (j.detail && typeof j.detail === "object") {
+        elMsg = j.detail.message || j.detail.code || "";
+        elCode = j.detail.code || j.detail.status || "";
+      }
     } catch {
       /* ignore */
     }
@@ -84,9 +98,27 @@ function classifyHttpError(status: number, body: string, base: string): MusicGen
       cleanKey(process.env.ELEVEN_API_KEY) ||
       cleanKey(process.env.XI_API_KEY);
     const fingerprint = key ? `len=${key.length} suffix=…${key.slice(-4)}` : "empty";
+    // Restricted keys often lack user_read — that is NOT an invalid key.
+    if (/missing_permissions|user_read/i.test(body) || /missing_permissions/i.test(elCode)) {
+      return new MusicGenerationError(
+        "PROVIDER_ERROR",
+        `ElevenLabs key is valid but missing permission for this endpoint (${elMsg || "missing_permissions"}). Music may still work with a scoped key.`,
+        {
+          provider: "elevenlabs",
+          retryable: false,
+          details: {
+            httpStatus: status,
+            body: body.slice(0, 300),
+            base,
+            keyFingerprint: fingerprint,
+            code: "missing_permissions",
+          },
+        }
+      );
+    }
     return new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      `ElevenLabs rejected the API key (HTTP 401 via ${base})${elMsg ? `: ${elMsg}` : ""}. Env key ${fingerprint}. Fix: set Production ELEVENLABS_API_KEY to the full sk_ key with NO quotes around it, then Redeploy.`,
+      `ElevenLabs rejected the API key (HTTP 401 via ${base})${elMsg ? `: ${elMsg}` : ""}. Env key ${fingerprint}. Fix: set Production ELEVENLABS_API_KEY to the full sk_ key with NO quotes, then Redeploy.`,
       {
         provider: "elevenlabs",
         retryable: false,
@@ -239,16 +271,10 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
   }
 
   async checkAvailability(): Promise<void> {
-    const key = apiKey();
-    let lastErr: MusicGenerationError | null = null;
-    for (const base of DEFAULT_BASES) {
-      const res = await fetch(`${base}/v1/user`, { headers: { "xi-api-key": key } });
-      if (res.ok) return;
-      lastErr = classifyHttpError(res.status, await readErrorBody(res), base);
-    }
-    throw lastErr || new MusicGenerationError("AUTHENTICATION_ERROR", "ElevenLabs user check failed", {
-      provider: "elevenlabs",
-    });
+    // Validate key present + sk_ shape only.
+    // Do NOT require GET /v1/user — restricted API keys often lack user_read but still
+    // succeed on POST /v1/music (confirmed against production scoped keys).
+    apiKey();
   }
 
   async submitPrediction(
