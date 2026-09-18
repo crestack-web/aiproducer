@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { RotatingHeadline } from "@/components/rotating-headline";
 import { WelcomeCreateHook } from "@/components/welcome-create-hook";
+import { WelcomeMusicRail } from "@/components/welcome-music-rail";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -23,6 +24,7 @@ export default function WelcomePage() {
             Studio
           </Link>
           <nav className="nav desktop-nav">
+            <a href="#listen">Listen</a>
             <a href="#how">How it works</a>
             <a href="#value">Why Studio</a>
             <a href="#faq">FAQ</a>
@@ -89,6 +91,8 @@ export default function WelcomePage() {
             </div>
           </div>
         </div>
+
+        <WelcomeMusicRail />
 
         <section className="section" id="how">
           <div className="section-head">
@@ -952,5 +956,154 @@ html[data-theme="light"] .chip{
     .wrap{max-width:1320px}
     .header-inner{max-width:1320px}
     .nav-inner{max-width:1320px}
+  }
+
+  /* —— Listen rail (Suno-style) —— */
+  .listen-section{
+    margin:56px auto 8px;
+    max-width:100%;
+    padding:8px 0 12px;
+  }
+  .listen-head{text-align:center;max-width:640px;margin:0 auto 28px;padding:0 8px}
+  .listen-title{
+    font-family:var(--serif,Georgia,serif);
+    font-size:clamp(1.75rem,4vw,2.4rem);
+    font-weight:500;
+    letter-spacing:-0.02em;
+    line-height:1.15;
+    color:var(--text);
+    margin:0 0 12px;
+  }
+  .listen-sub{
+    margin:0;
+    font-size:15px;
+    line-height:1.55;
+    color:var(--muted);
+  }
+  .listen-rail-wrap{position:relative;margin:0 -8px}
+  .listen-rail{
+    display:flex;
+    gap:16px;
+    overflow-x:auto;
+    scroll-snap-type:x mandatory;
+    padding:8px 40px 20px;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .listen-rail::-webkit-scrollbar{display:none}
+  .listen-arrow{
+    position:absolute;
+    top:42%;
+    transform:translateY(-50%);
+    z-index:2;
+    width:36px;height:36px;
+    border-radius:999px;
+    border:1px solid var(--border);
+    background:rgba(12,10,16,.85);
+    color:var(--text);
+    font-size:22px;
+    line-height:1;
+    cursor:pointer;
+    display:grid;place-items:center;
+    backdrop-filter:blur(8px);
+  }
+  .listen-arrow-left{left:4px}
+  .listen-arrow-right{right:4px}
+  @media (max-width:640px){
+    .listen-arrow{display:none}
+    .listen-rail{padding-left:16px;padding-right:16px}
+  }
+  .listen-card{
+    flex:0 0 220px;
+    scroll-snap-align:start;
+    max-width:240px;
+  }
+  .listen-cover{
+    position:relative;
+    width:100%;
+    aspect-ratio:1;
+    border-radius:14px;
+    border:none;
+    padding:0;
+    cursor:pointer;
+    overflow:hidden;
+    display:block;
+    box-shadow:0 16px 40px -20px rgba(0,0,0,.7);
+  }
+  .listen-card.is-playing .listen-cover{
+    box-shadow:0 0 0 2px var(--brass),0 16px 40px -16px rgba(231,169,97,.45);
+  }
+  .listen-cover-img{
+    width:100%;height:100%;object-fit:cover;display:block;
+  }
+  .listen-cover-glyph{
+    position:absolute;inset:0;
+    display:grid;place-items:center;
+    font-size:48px;
+    opacity:.35;
+    color:#fff;
+    pointer-events:none;
+  }
+  .listen-play{
+    position:absolute;
+    top:12px;left:12px;
+    width:40px;height:40px;
+    border-radius:999px;
+    background:rgba(0,0,0,.55);
+    color:#fff;
+    display:grid;place-items:center;
+    font-size:14px;
+    font-weight:700;
+    backdrop-filter:blur(6px);
+    border:1px solid rgba(255,255,255,.15);
+  }
+  .listen-play.on{
+    background:linear-gradient(180deg,#F0BC80,var(--brass,#e7a961));
+    color:#1A1208;
+    border-color:transparent;
+  }
+  .listen-badge{
+    position:absolute;
+    bottom:10px;left:10px;
+    padding:4px 10px;
+    border-radius:999px;
+    background:rgba(0,0,0,.55);
+    color:#fff;
+    font-size:11px;
+    font-weight:650;
+    backdrop-filter:blur(6px);
+  }
+  .listen-meta{margin-top:10px;padding:0 2px}
+  .listen-track-title{
+    font-size:14px;font-weight:650;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .listen-track-artist{
+    margin-top:4px;
+    font-size:12.5px;color:var(--muted);
+    display:flex;align-items:center;gap:6px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .listen-avatar{
+    flex-shrink:0;
+    width:18px;height:18px;border-radius:999px;
+    background:rgba(231,169,97,.2);
+    color:var(--brass);
+    font-size:9px;font-weight:800;
+    display:grid;place-items:center;
+  }
+  .listen-cta-row{text-align:center;margin-top:8px}
+  .listen-cta{
+    display:inline-flex;justify-content:center;
+    padding:12px 28px;border-radius:999px;
+    font-size:14.5px;font-weight:650;
+  }
+  .listen-footnote{margin:10px 0 0;font-size:12.5px;color:var(--faint)}
+  html[data-theme="light"] .listen-arrow{
+    background:rgba(255,255,255,.92);
+  }
+  html[data-theme="light"] .listen-play{
+    background:rgba(255,255,255,.85);
+    color:#1A1208;
   }
 `;
