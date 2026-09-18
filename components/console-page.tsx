@@ -56,15 +56,30 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         fetch(`/api/projects/${projectId}/session-preview`),
       ]);
       const audioByTask = new Map<string, string>();
+      /** Canonical timeline placement from session-preview (includes recordingOffset). */
+      const placementByTask = new Map<
+        string,
+        { startMs: number; endMs: number | null; durationMs: number | null }
+      >();
       if (prev.ok) {
         try {
           const pj = await prev.json();
           const layersIn = (pj.layers || pj.recordings || []) as {
             task_id?: string;
             audio_url?: string;
+            start_ms?: number;
+            end_ms?: number | null;
+            duration_ms?: number | null;
           }[];
           for (const row of layersIn) {
             if (row.task_id && row.audio_url) audioByTask.set(row.task_id, row.audio_url);
+            if (row.task_id && typeof row.start_ms === "number") {
+              placementByTask.set(row.task_id, {
+                startMs: row.start_ms,
+                endMs: typeof row.end_ms === "number" ? row.end_ms : null,
+                durationMs: typeof row.duration_ms === "number" ? row.duration_ms : null,
+              });
+            }
           }
           // beat may already be set from /beat; only fill gaps
           if (pj.beat_url || pj.beatUrl) {
@@ -129,13 +144,20 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               tk.song_sections?.label ||
               tk.title ||
               undefined;
+            const place = placementByTask.get(tk.id);
+            // Prefer session-preview placement (placementStartMs) over bare plan section times
+            const resolvedStart = place?.startMs ?? startMs;
+            let resolvedEnd = endMs;
+            if (place?.endMs != null) resolvedEnd = place.endMs;
+            else if (place?.durationMs != null)
+              resolvedEnd = resolvedStart + place.durationMs;
             return {
               id: tk.id,
               label: (tk.type || "lead").replace(/_/g, " "),
               role: tk.type || "lead",
               sectionLabel,
-              startMs,
-              endMs,
+              startMs: resolvedStart,
+              endMs: resolvedEnd,
               audioUrl: audioByTask.get(tk.id) || null,
               color: colorRaw,
               trackFx: tfRaw

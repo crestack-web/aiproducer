@@ -445,12 +445,13 @@ function WaveformCanvas({
       ctx.setLineDash([]);
       return;
     }
-    // Peak-normalize so quiet takes still read clearly (errors / dropouts stand out)
+    // Soft normalize: boost quiet takes without turning true silence into solid bars.
+    // Floor at 0.12 so relative dynamics / gaps remain visible.
     let peakMax = 0;
     for (let i = 0; i < peaks.length; i++) {
       if (peaks[i] > peakMax) peakMax = peaks[i];
     }
-    const norm = peakMax > 1e-4 ? 1 / peakMax : 1;
+    const norm = peakMax > 1e-4 ? 1 / Math.max(peakMax, 0.12) : 1;
     const mid = height / 2;
     // Bold solid clip body (same language as beat)
     ctx.fillStyle = dimmed ? color + "55" : color + "DD";
@@ -621,6 +622,8 @@ export function ProducerView({
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
+  /** Decoded audio duration (ms) — source of truth for clip length on timeline */
+  const [durationById, setDurationById] = useState<Record<string, number>>({});
 
   const [decodeStatus, setDecodeStatus] = useState<string>("");
   const [editMsg, setEditMsg] = useState<string | null>(null);
@@ -2044,12 +2047,16 @@ export function ProducerView({
     }
     for (const l of layers) {
       const start = Number(l.startMs) || 0;
-      const end = Number(l.endMs) || 0;
+      const decoded = durationById[l.id];
+      const end =
+        typeof decoded === "number" && decoded > 0
+          ? start + decoded
+          : Number(l.endMs) || 0;
       max = Math.max(max, end, start + 500);
     }
     // Prefer real beat length when known; never cap the scroll region to the first section only
     return Math.max(max, 60_000);
-  }, [durationMs, sections, layers]);
+  }, [durationMs, sections, layers, durationById]);
 
   // Explicit pixel width so iOS doesn't collapse absolute-positioned clip rows to viewport-only scroll
   const timelineW = Math.max(480, Math.ceil((totalMs / 1000) * pxPerSec) + 80);
@@ -2082,13 +2089,20 @@ export function ProducerView({
         kind: "vocal",
         color: colorById[l.id] || l.color || roleColor(l.role),
         startMs: l.startMs,
-        endMs: Math.max(l.endMs, l.startMs + 500),
+        // Clip length must match decoded audio, not plan section length alone.
+        endMs: (() => {
+          const decoded = durationById[l.id];
+          if (typeof decoded === "number" && decoded > 0) {
+            return l.startMs + decoded;
+          }
+          return Math.max(l.endMs, l.startMs + 500);
+        })(),
         sub: l.sectionLabel,
         url: l.audioUrl,
       });
     }
     return list;
-  }, [layers, totalMs, beatUrl, colorById]);
+  }, [layers, totalMs, beatUrl, colorById, durationById]);
 
   const getCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -2111,6 +2125,7 @@ export function ProducerView({
     (async () => {
       setDecodeStatus("Loading waveforms…");
       const next: Record<string, Float32Array | null> = {};
+      const durs: Record<string, number> = {};
       for (const tr of tracks) {
         if (!tr.url) {
           next[tr.id] = null;
@@ -2123,9 +2138,11 @@ export function ProducerView({
         );
         if (cancelled) return;
         if (buf) {
+          const durMs = Math.round(buf.duration * 1000);
           if (tr.id === "beat") {
-            setDurationMs((d) => Math.max(d, Math.round(buf.duration * 1000)));
+            setDurationMs((d) => Math.max(d, durMs));
           }
+          durs[tr.id] = durMs;
           // store high-res peaks once
           peaksForUrl(tr.url, buf, 2048);
           next[tr.id] = peaksForUrl(tr.url, buf, peakBuckets);
@@ -2135,6 +2152,7 @@ export function ProducerView({
       }
       if (!cancelled) {
         setPeaksById(next);
+        setDurationById((prev) => ({ ...prev, ...durs }));
         setDecodeStatus("");
       }
     })();
@@ -2220,7 +2238,15 @@ export function ProducerView({
   function tickPlayhead() {
     const ctx = audioCtxRef.current;
     if (!ctx || !playing) return;
-    const elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+    // Prefer AudioContext clock (Web Audio graph). If only HTMLAudio beat fallback
+    // is running, derive timeline from that element so the playhead matches audio.
+    let elapsed: number;
+    const htmlBeat = monitorAudioRef.current;
+    if (htmlBeat && sourcesRef.current.length === 0 && !htmlBeat.paused) {
+      elapsed = (htmlBeat.currentTime || 0) * 1000;
+    } else {
+      elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+    }
     setPlayheadMs(Math.min(totalMs, Math.max(0, elapsed)));
     if (elapsed >= totalMs) {
       if (loopOnRef.current && totalMs > 0) {
@@ -2350,20 +2376,23 @@ export function ProducerView({
       // Vocals: offset by section start on the timeline
       if (tr.kind === "vocal") {
         const layerStart = tr.startMs / 1000;
+        // Buffer sample 0 maps to layerStart on the project timeline
         const localOffset = startSec - layerStart;
         if (localOffset >= buf.duration) {
-          // past this clip
+          // playhead is past this clip's audio
           continue;
         }
         if (localOffset >= 0) {
-          src.start(0, localOffset);
+          // Start now, offset into the take
+          src.start(ctx.currentTime, localOffset);
         } else {
-          // playhead before clip — schedule start later
-          src.start(ctx.currentTime + -localOffset, 0);
+          // Playhead before clip — schedule buffer start at the right context time
+          src.start(ctx.currentTime - localOffset, 0);
         }
       } else {
+        // Beat (and other full-timeline assets): buffer time == project timeline
         if (startSec >= buf.duration) continue;
-        src.start(0, startSec);
+        src.start(ctx.currentTime, startSec);
         if (tr.kind === "beat") beatStartedInGraph = true;
       }
       sourcesRef.current.push(src);
