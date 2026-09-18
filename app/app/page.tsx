@@ -26,6 +26,7 @@ type Project = {
   updated_at: string;
   has_master?: boolean;
   has_beat?: boolean;
+  beat_source?: string | null;
 };
 type Tab = "home" | "library" | "profile";
 
@@ -134,19 +135,30 @@ function AppInner() {
 
   async function downloadBeatFile(projectId: string, title: string) {
     try {
-      const url = await ensureBeatUrl(projectId);
-      if (!url) {
-        setBeatPlayError("Could not get download link for this beat.");
-        return;
+      const res = await fetch(`/api/projects/${projectId}/beat/download`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not download beat");
       }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const match = /filename="([^"]+)"/i.exec(cd);
+      const filename =
+        match?.[1] ||
+        `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
-      a.target = "_blank";
+      a.href = objectUrl;
+      a.download = filename;
       a.rel = "noopener";
+      a.style.display = "none";
       document.body.appendChild(a);
       a.click();
       a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+      setBeatPlayError(null);
     } catch (e) {
       setBeatPlayError(e instanceof Error ? e.message : "Download failed");
     }
@@ -659,9 +671,45 @@ function AppInner() {
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
                               }}
                             >
-                              {p.title}
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {p.title}
+                              </span>
+                              {p.beat_source === "ai" && (
+                                <span
+                                  style={{
+                                    flexShrink: 0,
+                                    fontSize: 9,
+                                    fontWeight: 800,
+                                    padding: "2px 6px",
+                                    borderRadius: 999,
+                                    background: "rgba(231,169,97,0.16)",
+                                    color: C.brass,
+                                    border: `1px solid ${C.brassLine || C.brass}`,
+                                  }}
+                                >
+                                  AP
+                                </span>
+                              )}
+                              {p.beat_source === "upload" && (
+                                <span
+                                  style={{
+                                    flexShrink: 0,
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    padding: "2px 6px",
+                                    borderRadius: 999,
+                                    color: C.textMuted,
+                                    border: `1px solid ${C.border}`,
+                                  }}
+                                >
+                                  Upload
+                                </span>
+                              )}
                             </div>
                             <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
                               {meta}

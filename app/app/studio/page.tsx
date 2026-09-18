@@ -112,6 +112,15 @@ type Project = {
   has_beat?: boolean;
   has_master?: boolean;
   tempo?: number | null;
+  beat_source?: string | null;
+};
+
+type ReadyBeat = {
+  projectId: string;
+  title: string;
+  source: "ai" | "upload";
+  genre?: string;
+  mood?: string;
 };
 
 function statusLabel(s: string) {
@@ -140,6 +149,8 @@ function StudioPageInner() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [readyBeat, setReadyBeat] = useState<ReadyBeat | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [genre, setGenre] = useState("R&B");
   const [mood, setMood] = useState("Emotional");
@@ -432,19 +443,43 @@ function StudioPageInner() {
         }
       }
 
-      // Plan build (separate from beat upload). Failure does not roll back the beat.
-      const analyzeRes = await fetch(`/api/projects/${project.id}/analyze`, { method: "POST" });
-      if (!analyzeRes.ok) {
-        const j = await analyzeRes.json().catch(() => ({}));
-        console.warn("analyze/plan", j);
-        // Still open session — plan can be retried in Booth; do not treat as upload failure
+      // Plan build in background — do not block preview. Failure does not roll back the beat.
+      void fetch(`/api/projects/${project.id}/analyze`, { method: "POST" }).then(async (analyzeRes) => {
+        if (!analyzeRes.ok) {
+          const j = await analyzeRes.json().catch(() => ({}));
+          console.warn("analyze/plan", j);
+        }
+      });
+
+      const title =
+        beatMode === "upload" && beatFile
+          ? beatFile.name.replace(/\.[^.]+$/, "")
+          : `${mood} ${genre}`;
+      const source: "ai" | "upload" = beatMode === "upload" ? "upload" : "ai";
+
+      // Stay on Studio — show player + CTAs (do not auto-jump to plan/booth)
+      setReadyBeat({
+        projectId: project.id,
+        title,
+        source,
+        genre,
+        mood,
+      });
+      projectId = null; // prevent discard on success path
+
+      // Refresh list so Your beats updates
+      try {
+        const res = await fetch("/api/projects");
+        if (res.ok) {
+          const json = await res.json();
+          setProjects((json.projects || []).filter((x: Project) => x.status !== "draft"));
+        }
+      } catch {
+        /* ignore */
       }
 
-      if (startInConsole) {
-        router.push(`/app/console/${project.id}`);
-      } else {
-        router.push(`/app/studio/${project.id}`);
-      }
+      // Auto-load preview in player
+      void togglePlayBeat(project.id);
     } catch (e) {
       if (projectId) await discardFailedProject(projectId);
       setError(e instanceof Error ? e.message : "Something went wrong");
@@ -465,23 +500,32 @@ function StudioPageInner() {
 
   async function downloadBeat(projectId: string, title: string) {
     try {
-      // loading via player
-      const url = await ensureBeatUrl(projectId);
-      
-      if (!url) {
-        setError("Could not get download link for this beat.");
-        return;
+      // Same-origin attachment stream — avoids signed URL opening in-browser player
+      const res = await fetch(`/api/projects/${projectId}/beat/download`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not download beat");
       }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const match = /filename="([^"]+)"/i.exec(cd);
+      const filename =
+        match?.[1] ||
+        `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(title || "beat").replace(/[^\w\-]+/g, "-").slice(0, 48)}.mp3`;
-      a.target = "_blank";
+      a.href = objectUrl;
+      a.download = filename;
       a.rel = "noopener";
+      a.style.display = "none";
       document.body.appendChild(a);
       a.click();
       a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+      setError(null);
     } catch (e) {
-      
       setError(e instanceof Error ? e.message : "Download failed");
     }
   }
@@ -902,20 +946,180 @@ function StudioPageInner() {
             onClick={createAndGenerate}
           >
             {creating
-              ? startInConsole
-                ? "Building plan…"
-                : beatMode === "upload"
-                  ? "Analyzing beat…"
-                  : "Creating beat…"
-              : startInConsole
-                ? beatMode === "upload"
-                  ? "Start in Console"
-                  : "Create & open Console"
-                : beatMode === "upload"
-                  ? "Start with my beat"
-                  : "Create beat"}
+              ? beatMode === "upload"
+                ? "Uploading & analyzing…"
+                : "Generating your beat…"
+              : beatMode === "upload"
+                ? "Upload & preview beat"
+                : "Create beat"}
           </button>
         </div>
+
+        {readyBeat && (
+          <div
+            style={{
+              marginTop: 20,
+              width: "100%",
+              padding: 16,
+              borderRadius: 16,
+              border: `1px solid ${C.brassLine || C.brass}`,
+              background: C.surface,
+              boxSizing: "border-box",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, color: C.brass, textTransform: "uppercase" }}>
+                Your beat is ready
+              </div>
+              {readyBeat.source === "ai" ? (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: 0.06,
+                    padding: "3px 8px",
+                    borderRadius: 999,
+                    background: "rgba(231,169,97,0.18)",
+                    color: C.brass,
+                    border: `1px solid ${C.brassLine || C.brass}`,
+                  }}
+                  title="Generated by AP"
+                >
+                  AP
+                </span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "3px 8px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.06)",
+                    color: C.textMuted,
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  Uploaded
+                </span>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <BeatPlayButton
+                isPlaying={playingId === readyBeat.projectId}
+                loading={loadingPlayId === readyBeat.projectId}
+                onClick={() => void togglePlayBeat(readyBeat.projectId)}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: 15,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {readyBeat.title}
+                </div>
+                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                  {[readyBeat.genre, readyBeat.mood].filter(Boolean).join(" · ") || "Instrumental"}
+                  {playingId === readyBeat.projectId ? " · Playing" : " · Tap play to listen"}
+                </div>
+              </div>
+            </div>
+            <BeatPreviewTransport
+              active={playingId === readyBeat.projectId}
+              currentTime={currentTime}
+              duration={duration}
+              onSeek={seek}
+              onSkip={skip}
+            />
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                marginTop: 14,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => router.push(`/app/studio/${readyBeat.projectId}`)}
+                style={{
+                  flex: "1 1 120px",
+                  padding: "11px 14px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                  color: "#1A1208",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Open Booth
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push(`/app/console/${readyBeat.projectId}`)}
+                style={{
+                  flex: "1 1 120px",
+                  padding: "11px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: "transparent",
+                  color: C.text,
+                  fontWeight: 650,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Open Console
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadBeat(readyBeat.projectId, readyBeat.title)}
+                style={{
+                  flex: "1 1 100px",
+                  padding: "11px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: "transparent",
+                  color: C.brass,
+                  fontWeight: 650,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Download
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setReadyBeat(null);
+                  stopIfPlaying(readyBeat.projectId);
+                }}
+                style={{
+                  flex: "1 1 100px",
+                  padding: "11px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${C.border}`,
+                  background: "transparent",
+                  color: C.textMuted,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Create another
+              </button>
+            </div>
+          </div>
+        )}
 
         {!loading && beats.length > 0 && (
           <div style={{ marginTop: 28, width: "100%" }}>
@@ -964,9 +1168,47 @@ function StudioPageInner() {
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
                           }}
                         >
-                          {p.title}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {p.title}
+                          </span>
+                          {p.beat_source === "ai" && (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 9,
+                                fontWeight: 800,
+                                letterSpacing: 0.04,
+                                padding: "2px 6px",
+                                borderRadius: 999,
+                                background: "rgba(231,169,97,0.16)",
+                                color: C.brass,
+                                border: `1px solid ${C.brassLine || C.brass}`,
+                              }}
+                            >
+                              AP
+                            </span>
+                          )}
+                          {p.beat_source === "upload" && (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                padding: "2px 6px",
+                                borderRadius: 999,
+                                background: "rgba(255,255,255,0.06)",
+                                color: C.textMuted,
+                                border: `1px solid ${C.border}`,
+                              }}
+                            >
+                              Upload
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: 11.5, color: C.textMuted, marginTop: 2 }}>
                           {statusLabel(p.status)}

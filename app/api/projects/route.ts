@@ -73,6 +73,7 @@ export async function GET() {
   const ids = projects.map((p: { id: string }) => p.id);
   const mastered = new Set<string>();
   const withBeat = new Set<string>();
+  const beatSourceByProject = new Map<string, string>();
   if (ids.length) {
     const { data: songs } = await supabase
       .from("songs")
@@ -91,10 +92,34 @@ export async function GET() {
     }
     const { data: beats } = await supabase
       .from("beats")
-      .select("project_id")
-      .in("project_id", ids);
+      .select("project_id, source, metadata, created_at")
+      .in("project_id", ids)
+      .order("created_at", { ascending: false });
     for (const b of beats || []) {
-      if (b.project_id) withBeat.add(b.project_id as string);
+      const pid = b.project_id as string | null;
+      if (!pid) continue;
+      withBeat.add(pid);
+      if (beatSourceByProject.has(pid)) continue;
+      const meta = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
+        source?: string;
+        provider?: string;
+      };
+      const raw =
+        (typeof b.source === "string" && b.source) ||
+        (typeof meta.source === "string" && meta.source) ||
+        (meta.provider ? "ai" : "") ||
+        "";
+      const normalized =
+        raw === "upload" || raw === "custom"
+          ? "upload"
+          : raw === "ai" ||
+              raw === "elevenlabs" ||
+              raw === "replicate" ||
+              raw === "mock" ||
+              Boolean(meta.provider)
+            ? "ai"
+            : raw || "unknown";
+      beatSourceByProject.set(pid, normalized);
     }
   }
 
@@ -105,7 +130,8 @@ export async function GET() {
       hasMaster && p.status !== "complete" && p.status !== "completed"
         ? "complete"
         : p.status;
-    return { ...p, status, has_master: hasMaster, has_beat: hasBeat };
+    const beat_source = beatSourceByProject.get(p.id) || (hasBeat ? "unknown" : null);
+    return { ...p, status, has_master: hasMaster, has_beat: hasBeat, beat_source };
   });
 
   return NextResponse.json({ projects: enriched });
