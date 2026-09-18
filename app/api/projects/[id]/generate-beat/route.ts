@@ -103,8 +103,16 @@ export async function POST(req: Request, ctx: Ctx) {
           errorType: job.errorType,
           job_id: job.jobId,
           status: job.status,
+          provider: job.provider,
         },
-        { status: job.errorType === "BILLING_REQUIRED" ? 503 : 500 }
+        {
+          status:
+            job.errorType === "BILLING_REQUIRED"
+              ? 503
+              : job.errorType === "AUTHENTICATION_ERROR"
+                ? 502
+                : 500,
+        }
       );
     }
 
@@ -150,6 +158,7 @@ export async function POST(req: Request, ctx: Ctx) {
           error: e.message || publicErrorMessage(e.errorType),
           errorType: e.errorType,
           code: e.errorType === "LIMIT_EXCEEDED" ? "BEAT_GEN_LIMIT" : undefined,
+          details: e.details || undefined,
         },
         {
           status:
@@ -159,7 +168,9 @@ export async function POST(req: Request, ctx: Ctx) {
                 ? 429
                 : e.errorType === "UNAUTHORIZED"
                   ? 403
-                  : 500,
+                  : e.errorType === "AUTHENTICATION_ERROR"
+                    ? 502
+                    : 500,
         }
       );
     }
