@@ -581,6 +581,26 @@ export function ProducerView({
   } | null>(null);
   const takeWorkingRef = useRef<AudioBuffer | null>(null);
   const takeUndoStackRef = useRef<AudioBuffer[]>([]);
+  const takeRedoStackRef = useRef<AudioBuffer[]>([]);
+  /** Console-wide undo/redo (clip geometry + track FX). Take-edit uses take stacks when active. */
+  type ConsoleHistoryEntry =
+    | {
+        kind: "layer-geo";
+        label: string;
+        id: string;
+        before: { startMs: number; endMs: number };
+        after: { startMs: number; endMs: number };
+      }
+    | {
+        kind: "fx";
+        label: string;
+        id: string;
+        before: TrackFx;
+        after: TrackFx;
+      };
+  const consoleUndoRef = useRef<ConsoleHistoryEntry[]>([]);
+  const consoleRedoRef = useRef<ConsoleHistoryEntry[]>([]);
+  const [historyTick, setHistoryTick] = useState(0);
   const takeSelDragRef = useRef<{
     mode: "create" | "start" | "end";
     originX: number;
@@ -1177,8 +1197,17 @@ export function ProducerView({
       dragRef.current = null;
       return;
     }
-    const { id, lastStart, lastEnd } = d;
+    const { id, lastStart, lastEnd, originStart, originEnd } = d;
     dragRef.current = null;
+    if (lastStart !== originStart || lastEnd !== originEnd) {
+      pushConsoleHistory({
+        kind: "layer-geo",
+        label: d.mode === "move" ? "Move clip" : "Trim clip",
+        id,
+        before: { startMs: originStart, endMs: originEnd },
+        after: { startMs: lastStart, endMs: lastEnd },
+      });
+    }
     void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
   }
 
@@ -1538,7 +1567,81 @@ export function ProducerView({
 
   function pushTakeUndo(buf: AudioBuffer) {
     takeUndoStackRef.current = [...takeUndoStackRef.current.slice(-11), buf];
+    takeRedoStackRef.current = [];
     setTakeUndoDepth(takeUndoStackRef.current.length);
+  }
+
+  function bumpHistory() {
+    setHistoryTick((n) => n + 1);
+  }
+
+  function pushConsoleHistory(entry: ConsoleHistoryEntry) {
+    consoleUndoRef.current = [...consoleUndoRef.current.slice(-39), entry];
+    consoleRedoRef.current = [];
+    bumpHistory();
+  }
+
+  function applyLayerGeo(id: string, startMs: number, endMs: number, persist: boolean) {
+    updateLocalLayer(id, startMs, endMs);
+    if (persist) void persistLayer(id, { start_ms: startMs, end_ms: endMs });
+  }
+
+  function applyFxSnapshot(id: string, fx: TrackFx, persist: boolean) {
+    setFxById((prev) => ({ ...prev, [id]: { ...fx } }));
+    if (persist) void persistFx(id, fx);
+  }
+
+  function consoleUndo() {
+    // Prefer take-edit stack while a take is open
+    if (takeEditId && takeUndoStackRef.current.length) {
+      undoTakeEdit();
+      return;
+    }
+    const entry = consoleUndoRef.current.pop();
+    if (!entry) return;
+    consoleRedoRef.current.push(entry);
+    if (entry.kind === "layer-geo") {
+      applyLayerGeo(entry.id, entry.before.startMs, entry.before.endMs, true);
+    } else if (entry.kind === "fx") {
+      applyFxSnapshot(entry.id, entry.before, true);
+    }
+    bumpHistory();
+  }
+
+  function consoleRedo() {
+    if (takeEditId && takeRedoStackRef.current.length) {
+      redoTakeEdit();
+      return;
+    }
+    const entry = consoleRedoRef.current.pop();
+    if (!entry) return;
+    consoleUndoRef.current.push(entry);
+    if (entry.kind === "layer-geo") {
+      applyLayerGeo(entry.id, entry.after.startMs, entry.after.endMs, true);
+    } else if (entry.kind === "fx") {
+      applyFxSnapshot(entry.id, entry.after, true);
+    }
+    bumpHistory();
+  }
+
+  function redoTakeEdit() {
+    const next = takeRedoStackRef.current.pop();
+    if (!next || !takeEditId) return;
+    const cur = takeWorkingRef.current;
+    if (cur) {
+      takeUndoStackRef.current = [...takeUndoStackRef.current.slice(-11), cur];
+      setTakeUndoDepth(takeUndoStackRef.current.length);
+    }
+    takeWorkingRef.current = next;
+    refreshTakePeaks(next);
+    setTakeSel(null);
+    const dur = bufferDurationMs(next);
+    setLayers((prevL) =>
+      prevL.map((l) =>
+        l.id === takeEditId ? { ...l, endMs: l.startMs + Math.max(400, dur) } : l
+      )
+    );
+    bumpHistory();
   }
 
   function refreshTakePeaks(buf: AudioBuffer) {
@@ -1567,7 +1670,8 @@ export function ProducerView({
       const buf = await decodeAudioUrl(ctx, audioUrl);
       takeWorkingRef.current = buf;
       takeUndoStackRef.current = [];
-    setTakeUndoDepth(0);
+    takeRedoStackRef.current = [];
+       setTakeUndoDepth(0);
       setTakeSel(null);
       setRetakeTarget(null);
       refreshTakePeaks(buf);
@@ -1584,7 +1688,8 @@ export function ProducerView({
   function cancelTakeEdit() {
     takeWorkingRef.current = null;
     takeUndoStackRef.current = [];
-    setTakeUndoDepth(0);
+    takeRedoStackRef.current = [];
+       setTakeUndoDepth(0);
     setTakeEditId(null);
     setTakeSel(null);
     setTakePeaks([]);
@@ -1637,6 +1742,10 @@ export function ProducerView({
   function undoTakeEdit() {
     const prev = takeUndoStackRef.current.pop();
     if (!prev) return;
+    const cur = takeWorkingRef.current;
+    if (cur) {
+      takeRedoStackRef.current = [...takeRedoStackRef.current.slice(-11), cur];
+    }
     takeWorkingRef.current = prev;
     setTakeUndoDepth(takeUndoStackRef.current.length);
     refreshTakePeaks(prev);
@@ -1649,6 +1758,7 @@ export function ProducerView({
         )
       );
     }
+    bumpHistory();
   }
 
   function playTakeSelection() {
@@ -2889,6 +2999,15 @@ export function ProducerView({
       const cur = prev[trackId] || { ...DEFAULT_TRACK_FX };
       const nextPan = Math.max(-1, Math.min(1, (Number(cur.pan) || 0) + delta));
       const next = { ...cur, pan: Math.round(nextPan * 20) / 20 };
+      if (next.pan !== cur.pan) {
+        pushConsoleHistory({
+          kind: "fx",
+          label: "Pan",
+          id: trackId,
+          before: { ...cur },
+          after: { ...next },
+        });
+      }
       void persistFx(trackId, next);
       return { ...prev, [trackId]: next };
     });
@@ -2900,7 +3019,16 @@ export function ProducerView({
     setFxById((prev) => {
       const cur = prev[trackId] || { ...DEFAULT_TRACK_FX };
       const next = { ...cur, pan };
-      if (commit) void persistFx(trackId, next);
+      if (commit && next.pan !== cur.pan) {
+        pushConsoleHistory({
+          kind: "fx",
+          label: "Pan",
+          id: trackId,
+          before: { ...cur },
+          after: { ...next },
+        });
+        void persistFx(trackId, next);
+      }
       return { ...prev, [trackId]: next };
     });
   }
@@ -2916,6 +3044,20 @@ export function ProducerView({
     }
     function onKeyDown(e: KeyboardEvent) {
       if (isTypingTarget(e.target)) return;
+      // Undo / Redo (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y)
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "z" && !e.shiftKey) {
+          e.preventDefault();
+          consoleUndo();
+          return;
+        }
+        if ((k === "z" && e.shiftKey) || k === "y") {
+          e.preventDefault();
+          consoleRedo();
+          return;
+        }
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const key = e.key;
       const sel = selectedTrackId;
@@ -3008,6 +3150,15 @@ export function ProducerView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // historyTick forces button enabled state to update when stacks change (refs alone don't)
+  void historyTick;
+  const undoEnabled = takeEditId
+    ? takeUndoStackRef.current.length > 0
+    : consoleUndoRef.current.length > 0;
+  const redoEnabled = takeEditId
+    ? takeRedoStackRef.current.length > 0
+    : consoleRedoRef.current.length > 0;
 
   const msToX = (ms: number) => (ms / 1000) * pxPerSec;
 
@@ -3190,6 +3341,45 @@ export function ProducerView({
 
         {/* Mobile: spacer so Produce sits toward the right */}
         {isNarrow && <div style={{ flex: 1, minWidth: 4 }} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          <button
+            type="button"
+            title="Undo (Ctrl/Cmd+Z)"
+            disabled={!undoEnabled}
+            onClick={() => consoleUndo()}
+            style={{
+              ...iconBtn(border, surface, text),
+              width: isNarrow ? 34 : 36,
+              height: isNarrow ? 34 : 36,
+              opacity: undoEnabled ? 1 : 0.35,
+              cursor: undoEnabled ? "pointer" : "default",
+              fontSize: 14,
+              fontWeight: 700,
+            }}
+            aria-label="Undo"
+          >
+            ↺
+          </button>
+          <button
+            type="button"
+            title="Redo (Ctrl/Cmd+Shift+Z)"
+            disabled={!redoEnabled}
+            onClick={() => consoleRedo()}
+            style={{
+              ...iconBtn(border, surface, text),
+              width: isNarrow ? 34 : 36,
+              height: isNarrow ? 34 : 36,
+              opacity: redoEnabled ? 1 : 0.35,
+              cursor: redoEnabled ? "pointer" : "default",
+              fontSize: 14,
+              fontWeight: 700,
+            }}
+            aria-label="Redo"
+          >
+            ↻
+          </button>
+        </div>
 
         {projectId ? (
           <button
@@ -4538,6 +4728,11 @@ export function ProducerView({
                         onClick={undoTakeEdit}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
                         Undo
+                      </button>
+                      <button type="button" disabled={takeRedoStackRef.current.length === 0 || takeEditBusy}
+                        onClick={redoTakeEdit}
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: takeRedoStackRef.current.length ? "pointer" : "default", fontFamily: "inherit", opacity: takeRedoStackRef.current.length ? 1 : 0.4 }}>
+                        Redo
                       </button>
                       <button type="button" onClick={cancelTakeEdit} disabled={takeEditBusy}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "transparent", color: mutedText, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
