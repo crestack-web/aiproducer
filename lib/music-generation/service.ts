@@ -442,7 +442,7 @@ export async function tickMusicGenerationJob(jobId: string) {
       .update({
         status: "FAILED",
         error_type: err.errorType,
-        error_message: publicErrorMessage(err.errorType),
+        error_message: err.message || publicErrorMessage(err.errorType),
         progress: 100,
         completed_at: new Date().toISOString(),
       })
