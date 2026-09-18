@@ -2963,30 +2963,39 @@ export function ProducerView({
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: isNarrow ? 6 : 10,
-          padding: isNarrow ? "8px 10px 10px" : "8px 12px",
-          paddingTop: "max(8px, env(safe-area-inset-top))",
-          borderBottom: `1px solid ${border}`,
+          flexDirection: "column",
           flexShrink: 0,
           background: surface,
-          minHeight: isNarrow ? 72 : 56,
-          flexWrap: isNarrow ? "wrap" : "nowrap",
-          overflow: "visible",
-          rowGap: isNarrow ? 8 : 6,
+          borderBottom: `1px solid ${border}`,
+          paddingTop: "max(8px, env(safe-area-inset-top))",
+        }}
+      >
+      {/* Row 1 — tools */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: isNarrow ? 6 : 10,
+          padding: isNarrow ? "6px 10px 6px" : "8px 12px",
+          minHeight: isNarrow ? 48 : 56,
+          flexWrap: "nowrap",
+          overflowX: isNarrow ? "auto" : "visible",
+          WebkitOverflowScrolling: "touch",
         }}
       >
         <a
           href={libraryHref || "/app"}
           style={{
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
+            justifyContent: "center",
             gap: isNarrow ? 0 : 8,
             textDecoration: "none",
             color: text,
             flexShrink: 0,
             maxWidth: isNarrow ? 36 : 120,
             overflow: "hidden",
+            lineHeight: 1,
           }}
           title="Back to Library"
           aria-label="Library"
@@ -3008,6 +3017,7 @@ export function ProducerView({
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
+                lineHeight: 1,
               }}
             >
               CONSOLE
@@ -3015,47 +3025,51 @@ export function ProducerView({
           )}
         </a>
 
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            maxWidth: isNarrow ? "min(48vw, 168px)" : 300,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <input
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={() => void saveSongTitle()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
-            aria-label="Song title"
-            title={titleDraft}
-            placeholder="Song name"
+        {/* Desktop: title inline */}
+        {!isNarrow && (
+          <div
             style={{
               flex: 1,
               minWidth: 0,
-              width: "100%",
-              background: "rgba(255,255,255,0.06)",
-              border: `1px solid ${titleSavedFlash ? brass : border}`,
-              borderRadius: 8,
-              color: text,
-              fontWeight: 600,
-              fontSize: isNarrow ? 12.5 : 14,
-              padding: isNarrow ? "5px 8px" : "6px 10px",
-              fontFamily: "inherit",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              maxWidth: 300,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}
-          />
-          {!isNarrow && (
+          >
+            <input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => void saveSongTitle()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              aria-label="Song title"
+              title={titleDraft}
+              placeholder="Song name"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                width: "100%",
+                height: 36,
+                background: "rgba(255,255,255,0.06)",
+                border: `1px solid ${titleSavedFlash ? brass : border}`,
+                borderRadius: 8,
+                color: text,
+                fontWeight: 600,
+                fontSize: 14,
+                padding: "0 10px",
+                fontFamily: "inherit",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                lineHeight: 1,
+                boxSizing: "border-box",
+              }}
+            />
             <button
               type="button"
               onClick={() => void saveSongTitle()}
@@ -3074,13 +3088,19 @@ export function ProducerView({
                 cursor: titleSaving ? "wait" : "pointer",
                 fontFamily: "inherit",
                 whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
               }}
             >
               {titleSaving ? "…" : titleSavedFlash ? "Saved" : "Save"}
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
+        {/* Mobile: spacer so Produce sits toward the right */}
+        {isNarrow && <div style={{ flex: 1, minWidth: 4 }} />}
 
         {projectId ? (
           <button
@@ -3247,14 +3267,20 @@ export function ProducerView({
               textDecoration: "none",
               fontSize: 12,
               fontWeight: 700,
-              padding: "0 10px",
+              padding: "0 12px",
               width: "auto",
-              maxWidth: 88,
+              minWidth: 72,
+              height: 40,
+              maxWidth: 100,
               color: text,
               flexShrink: 0,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
             }}
             title="Library"
           >
@@ -3268,11 +3294,90 @@ export function ProducerView({
               if (boothHref) window.location.href = boothHref;
               else onClose?.();
             }}
-            style={{ ...iconBtn(border, surface, text), width: "auto", padding: "0 12px", fontSize: 12, fontWeight: 700 }}
+            style={{
+              ...iconBtn(border, surface, text),
+              width: "auto",
+              minWidth: 64,
+              height: 40,
+              padding: "0 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
+            }}
           >
             Booth
           </button>
         )}
+      </div>
+
+      {/* Row 2 (mobile) — song name + edit dot */}
+      {isNarrow && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "4px 12px 10px",
+            minHeight: 36,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              background: titleSavedFlash ? brass : mutedText,
+              flexShrink: 0,
+              opacity: titleSavedFlash ? 1 : 0.55,
+            }}
+            title="Edit song name"
+          />
+          <input
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void saveSongTitle()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            aria-label="Song title"
+            title="Tap to edit song name"
+            placeholder="Song name"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 32,
+              background: "transparent",
+              border: "none",
+              borderBottom: `1px solid ${titleSavedFlash ? brass : "transparent"}`,
+              borderRadius: 0,
+              color: text,
+              fontWeight: 650,
+              fontSize: 15,
+              padding: "0 2px",
+              fontFamily: "inherit",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              lineHeight: 1.2,
+              outline: "none",
+            }}
+          />
+          {titleSaving ? (
+            <span style={{ fontSize: 11, color: mutedText, flexShrink: 0 }}>…</span>
+          ) : titleSavedFlash ? (
+            <span style={{ fontSize: 11, color: brass, fontWeight: 700, flexShrink: 0 }}>Saved</span>
+          ) : (
+            <span style={{ fontSize: 11, color: faint, flexShrink: 0 }}>edit</span>
+          )}
+        </div>
+      )}
       </div>
       {editMsg && (
         <div
@@ -5736,6 +5841,11 @@ function iconBtn(border: string, surface: string, text: string): React.CSSProper
     cursor: "pointer",
     fontFamily: "inherit",
     fontSize: 16,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1,
+    boxSizing: "border-box",
   };
 }
 
