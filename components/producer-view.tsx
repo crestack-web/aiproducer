@@ -2820,7 +2820,7 @@ export function ProducerView({
   const brass = C.brass || "#E7A961";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
-  const sidebarW = sidebarCollapsed ? (isNarrow ? 56 : 64) : isNarrow ? 180 : 280;
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 52 : 64) : isNarrow ? 212 : 280;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -2853,15 +2853,16 @@ export function ProducerView({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
-          padding: "8px 12px",
+          gap: isNarrow ? 6 : 10,
+          padding: isNarrow ? "8px 10px 10px" : "8px 12px",
           paddingTop: "max(8px, env(safe-area-inset-top))",
           borderBottom: `1px solid ${border}`,
           flexShrink: 0,
           background: surface,
-          minHeight: isNarrow ? 48 : 56,
-          flexWrap: "nowrap",
-          overflow: "hidden",
+          minHeight: isNarrow ? 72 : 56,
+          flexWrap: isNarrow ? "wrap" : "nowrap",
+          overflow: "visible",
+          rowGap: isNarrow ? 8 : 6,
         }}
       >
         <a
@@ -2907,7 +2908,7 @@ export function ProducerView({
           style={{
             flex: 1,
             minWidth: 0,
-            maxWidth: isNarrow ? 140 : 300,
+            maxWidth: isNarrow ? "min(48vw, 168px)" : 300,
             display: "flex",
             alignItems: "center",
             gap: 6,
@@ -3020,8 +3021,8 @@ export function ProducerView({
           onClick={() => void toggleConsoleRecord()}
           style={{
             ...iconBtn(border, surface, text),
-            width: 40,
-            height: 40,
+            width: isNarrow ? 36 : 40,
+            height: isNarrow ? 36 : 40,
             borderRadius: 999,
             color: "#F07167",
             boxShadow: isConsoleRecording ? "0 0 0 3px rgba(240,113,103,0.35)" : undefined,
@@ -3087,12 +3088,14 @@ export function ProducerView({
           {formatPlayhead(playheadMs)}
         </div>
 
+        {!isNarrow && (
         <div
-          style={{ fontSize: 12, color: tempoBpm != null ? text : faint, fontWeight: 600, minWidth: 64, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "rgba(255,255,255,0.04)" }}
+          style={{ fontSize: 12, color: tempoBpm != null ? text : faint, fontWeight: 600, minWidth: 64, padding: "4px 8px", borderRadius: 6, border: `1px solid ${border}`, background: "rgba(255,255,255,0.04)", flexShrink: 0 }}
           title={tempoBpm != null ? "Project tempo" : "BPM not detected for this project yet"}
         >
           {tempoBpm != null && Number.isFinite(tempoBpm) ? `${Math.round(tempoBpm)} BPM` : "— BPM"}
         </div>
+        )}
 
         <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)} aria-label="Zoom out" title="Zoom out">
           <ZoomIcon zoomIn={false} />
@@ -3323,44 +3326,60 @@ export function ProducerView({
               boxSizing: "border-box",
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              padding: "0 8px",
+              gap: 4,
+              padding: isNarrow ? "0 4px 0 6px" : "0 8px",
               background: bg,
               borderBottom: `1px solid ${border}`,
-              overflow: "hidden",
+              overflow: "visible",
+              flexShrink: 0,
             }}
           >
+            {/* Collapse always first + flexShrink 0 so it never clips behind badges */}
             <button
               type="button"
               onClick={toggleSidebar}
               style={{
-                background: "none",
-                border: "none",
-                color: faint,
+                background: sidebarCollapsed ? "rgba(255,255,255,0.06)" : "rgba(231,169,97,0.12)",
+                border: `1px solid ${sidebarCollapsed ? border : brass + "66"}`,
+                borderRadius: 8,
+                color: sidebarCollapsed ? mutedText : brass,
                 cursor: "pointer",
-                padding: 0,
+                padding: isNarrow ? "4px 8px" : "4px 10px",
                 fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "0.06em",
+                fontWeight: 800,
+                letterSpacing: "0.04em",
                 fontFamily: "inherit",
                 flexShrink: 0,
+                lineHeight: 1,
+                minWidth: 36,
               }}
               title={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
+              aria-label={sidebarCollapsed ? "Expand tracks" : "Collapse tracks"}
             >
-              {sidebarCollapsed ? "»" : "TRACKS"}
+              {sidebarCollapsed ? "»" : "«"}
             </button>
             {!sidebarCollapsed && (
-              <div style={{ display: "flex", gap: 4, marginLeft: "auto", minWidth: 0 }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  marginLeft: "auto",
+                  flexShrink: 0,
+                  alignItems: "center",
+                }}
+              >
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: 800,
                     color: brass,
                     border: `1px solid ${brass}88`,
                     borderRadius: 6,
-                    padding: "2px 6px",
+                    padding: "3px 6px",
                     whiteSpace: "nowrap",
+                    flexShrink: 0,
                   }}
+                  title="Console"
                 >
                   CONSOLE
                 </span>
@@ -3372,17 +3391,19 @@ export function ProducerView({
                       else onClose?.();
                     }}
                     style={{
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: 700,
                       color: mutedText,
                       border: `1px solid ${border}`,
                       borderRadius: 6,
-                      padding: "2px 6px",
+                      padding: "3px 6px",
                       background: "transparent",
                       cursor: "pointer",
                       fontFamily: "inherit",
                       whiteSpace: "nowrap",
+                      flexShrink: 0,
                     }}
+                    title="Open Booth"
                   >
                     BOOTH
                   </button>
@@ -4215,7 +4236,7 @@ export function ProducerView({
             position: "absolute",
             left: 12,
             right: 12,
-            top: isNarrow ? 58 : 64,
+            top: isNarrow ? 88 : 64,
             zIndex: 35,
             display: "flex",
             justifyContent: "center",
