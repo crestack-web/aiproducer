@@ -50,47 +50,7 @@ export default function WelcomePage() {
           <WelcomeCreateHook />
         </section>
 
-        <div className="showcase" aria-label="Product preview">
-          <div className="showcase-bar">
-            <span className="dot" /><span className="dot" /><span className="dot" />
-            <span className="showcase-title">Producer Session · Late Night · R&B</span>
-          </div>
-          <div className="showcase-body">
-            <div className="panel">
-              <div className="panel-label">◆ Your beat</div>
-              <h3>Warm keys. Deep bass.</h3>
-              <p>AI builds the instrumental. You focus on performance.</p>
-              <div className="wave" aria-hidden>
-                <i style={{ height: "28%" }} /> <i style={{ height: "42%" }} /> <i style={{ height: "55%" }} /> <i style={{ height: "70%" }} /> <i style={{ height: "48%" }} /> <i style={{ height: "88%" }} /> <i style={{ height: "62%" }} /> <i style={{ height: "40%" }} /> <i style={{ height: "78%" }} /> <i style={{ height: "95%" }} /> <i style={{ height: "58%" }} /> <i style={{ height: "35%" }} /> <i style={{ height: "72%" }} /> <i style={{ height: "90%" }} /> <i style={{ height: "52%" }} /> <i style={{ height: "68%" }} /> <i style={{ height: "44%" }} /> <i style={{ height: "82%" }} /> <i style={{ height: "60%" }} /> <i style={{ height: "38%" }} /> <i style={{ height: "75%" }} /> <i style={{ height: "92%" }} /> <i style={{ height: "50%" }} /> <i style={{ height: "66%" }} /> <i style={{ height: "34%" }} /> <i style={{ height: "80%" }} /> <i style={{ height: "56%" }} /> <i style={{ height: "45%" }} /> <i style={{ height: "85%" }} /> <i style={{ height: "70%" }} />
-              </div>
-              <div>
-                <span className="chip">94 BPM</span>
-                <span className="chip">A minor</span>
-                <span className="chip">Emotional</span>
-              </div>
-            </div>
-            <div className="panel panel-producer">
-              <div className="panel-label">◆ AI Producer</div>
-              <h3>What to record next</h3>
-              <p>Plain-language cues. One section at a time.</p>
-              <div className="task">
-                <div className="task-num">01</div>
-                <div>
-                  <strong>Chorus · Lead</strong>
-                  <span>Give me your strongest melody here. Keep it open and confident.</span>
-                </div>
-              </div>
-              <div className="task">
-                <div className="task-num">02</div>
-                <div>
-                  <strong>Chorus · Harmony</strong>
-                  <span>Sing softly underneath your main vocal.</span>
-                </div>
-              </div>
-              <Link href={START_HREF} className="primary showcase-cta">Start this session</Link>
-            </div>
-          </div>
-        </div>
+        {/* Product demo / dashboard mockup slot — add when ready */}
 
         <WelcomeMusicRail />
 
