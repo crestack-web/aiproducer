@@ -3416,8 +3416,14 @@ export function ProducerView({
             const isSolo = soloId === tr.id;
             const isExpanded = expandedId === tr.id;
             const isTakeEditingSide = takeEditId === tr.id;
+            const stackOpen = stackMenuId === tr.id;
+            const colorOpen = colorPickerId === tr.id;
             const rowH = isTakeEditingSide
               ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+              : stackOpen
+                ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
+              : colorOpen && isExpanded
+                ? Math.max(TRACK_ROW_H_EXPANDED + 36, 160)
               : isExpanded
                 ? TRACK_ROW_H_EXPANDED
                 : TRACK_ROW_H;
@@ -3431,14 +3437,16 @@ export function ProducerView({
                   boxSizing: "border-box",
                   borderBottom: `1px solid rgba(255,255,255,0.06)`,
                   borderLeft: `3px solid ${tr.color}`,
-                  padding: sidebarCollapsed ? "6px 4px" : isExpanded ? "8px 10px" : "6px 8px",
+                  padding: sidebarCollapsed ? "6px 4px" : isExpanded || stackOpen ? "8px 10px" : "6px 8px",
                   background:
                     selectedTrackId === tr.id || armedTrackId === tr.id
                       ? "rgba(255,255,255,0.06)"
-                      : isExpanded
+                      : isExpanded || stackOpen
                         ? "rgba(255,255,255,0.03)"
                         : "transparent",
-                  overflow: "hidden",
+                  overflow: stackOpen || colorOpen ? "visible" : "hidden",
+                  zIndex: stackOpen || colorOpen ? 8 : 1,
+                  position: "relative",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: isExpanded ? "flex-start" : "center",
@@ -3580,6 +3588,31 @@ export function ProducerView({
                       Edit
                     </button>
                   ) : null}
+                  {!isExpanded && tr.kind === "vocal" && (
+                    <button
+                      type="button"
+                      title="Stack / choir from this vocal"
+                      disabled={savingId === tr.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setExpandedId(tr.id);
+                        setSelectedTrackId(tr.id);
+                        setColorPickerId(null);
+                        setFxOpenId(null);
+                        setStackMenuId(tr.id);
+                      }}
+                      style={{
+                        ...miniChip(border, brass, stackMenuId === tr.id, text),
+                        fontSize: 9,
+                        width: "auto",
+                        padding: "0 6px",
+                        minWidth: 28,
+                      }}
+                    >
+                      Stack
+                    </button>
+                  )}
                   {isExpanded ? (
                     <>
                   <div
@@ -3688,9 +3721,16 @@ export function ProducerView({
                         type="button"
                         title="Stack / choir from this vocal"
                         disabled={savingId === tr.id}
-                        onClick={() =>
-                          setStackMenuId(stackMenuId === tr.id ? null : tr.id)
-                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          // Expand so controls + menu are visible (menu was clipped at 128px before)
+                          setExpandedId(tr.id);
+                          setSelectedTrackId(tr.id);
+                          setColorPickerId(null);
+                          setFxOpenId(null);
+                          setStackMenuId(stackMenuId === tr.id ? null : tr.id);
+                        }}
                         style={{
                           ...miniChip(border, brass, stackMenuId === tr.id, text),
                           fontSize: 9,
@@ -3758,17 +3798,24 @@ export function ProducerView({
 
                 {stackMenuId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
                   <div
+                    role="menu"
+                    aria-label="Stack and choir options"
                     style={{
                       marginTop: 6,
                       display: "flex",
                       flexDirection: "column",
                       gap: 4,
-                      padding: 6,
+                      padding: 8,
                       borderRadius: 8,
-                      background: "rgba(0,0,0,0.35)",
-                      border: `1px solid ${border}`,
+                      background: "rgba(12,10,8,0.95)",
+                      border: `1px solid ${brass}`,
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+                      flexShrink: 0,
                     }}
                   >
+                    <div style={{ fontSize: 10, fontWeight: 700, color: brass, letterSpacing: 0.04, marginBottom: 2 }}>
+                      STACK / CHOIR
+                    </div>
                     {(
                       [
                         ["double", "Double"],
@@ -3905,9 +3952,15 @@ export function ProducerView({
                 : tr.endMs;
               const displayEndMs = isLiveRec ? Math.max(tr.endMs, liveEndMs) : tr.endMs;
               const isTakeEditing = takeEditId === tr.id;
+              const stackOpen = stackMenuId === tr.id;
+              const colorOpen = colorPickerId === tr.id;
               const clipW = Math.max(10, msToX(displayEndMs) - msToX(tr.startMs));
               const rowH = isTakeEditing
                 ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+                : stackOpen
+                  ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
+                : colorOpen && expanded
+                  ? Math.max(TRACK_ROW_H_EXPANDED + 36, 160)
                 : expanded
                   ? TRACK_ROW_H_EXPANDED
                   : TRACK_ROW_H;
