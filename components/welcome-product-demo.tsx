@@ -34,7 +34,8 @@ const SLIDES: Slide[] = [
 ];
 
 /**
- * Suno-style product demo — auto-rotating slides, no manual controls.
+ * Suno-style product demo — auto-rotating slides.
+ * Dots are indicators only (not clickable controls).
  */
 export function WelcomeProductDemo() {
   const [index, setIndex] = useState(0);
@@ -63,6 +64,20 @@ export function WelcomeProductDemo() {
             loading="eager"
           />
         </div>
+        {SLIDES.length > 1 && (
+          <div
+            className="product-demo-dots"
+            aria-hidden="true"
+            title={`Slide ${index + 1} of ${SLIDES.length}`}
+          >
+            {SLIDES.map((s, i) => (
+              <span
+                key={s.id}
+                className={`product-demo-dot${i === index ? " on" : ""}`}
+              />
+            ))}
+          </div>
+        )}
         <div className="product-demo-cta">
           <Link href={START_HREF} className="primary">
             Open Studio

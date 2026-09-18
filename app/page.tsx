@@ -1134,6 +1134,7 @@ html[data-theme="light"] .chip{
     gap:8px;
     margin:16px 0 4px;
   }
+  .product-demo-dots{pointer-events:none}
   .product-demo-dot{
     width:7px;height:7px;border-radius:999px;
     border:none;padding:0;
@@ -1151,7 +1152,8 @@ html[data-theme="light"] .chip{
     background:linear-gradient(180deg,#fff,rgba(255,255,255,.92));
     box-shadow:0 24px 48px -28px rgba(0,0,0,.18);
   }
-  html[data-theme="light"] .product-demo-dot{background:rgba(0,0,0,.18)}
+  html[data-theme="light"] .product-demo-dots{pointer-events:none}
+  .product-demo-dot{background:rgba(0,0,0,.18)}
   @media (min-width:720px){
     .product-demo{max-width:640px;margin-top:48px}
     .product-demo-card{padding:32px 28px 28px}
