@@ -316,18 +316,23 @@ async function fetchDecode(
 
 /** Downsample channel peaks into `buckets` max-abs values. */
 function computePeaks(buf: AudioBuffer, buckets: number): Float32Array {
-  const cacheKey = `${buf.length}:${buf.sampleRate}:${buckets}`;
-  // Prefer URL-level cache set by caller; this is compute-only
-  const ch = buf.getChannelData(0);
+  // Max-abs across channels so stereo takes are not under-read from ch0 only.
+  // Visualization only — does not alter playback audio.
   const peaks = new Float32Array(buckets);
-  const block = Math.max(1, Math.floor(ch.length / buckets));
+  const n = buf.length;
+  if (!n || buckets < 1) return peaks;
+  const block = Math.max(1, Math.floor(n / buckets));
+  const nCh = buf.numberOfChannels;
   for (let i = 0; i < buckets; i++) {
     let max = 0;
     const start = i * block;
-    const end = Math.min(ch.length, start + block);
-    for (let j = start; j < end; j++) {
-      const v = Math.abs(ch[j]);
-      if (v > max) max = v;
+    const end = Math.min(n, start + block);
+    for (let c = 0; c < nCh; c++) {
+      const ch = buf.getChannelData(c);
+      for (let j = start; j < end; j++) {
+        const v = Math.abs(ch[j]);
+        if (v > max) max = v;
+      }
     }
     peaks[i] = max;
   }
@@ -1659,9 +1664,9 @@ export function ProducerView({
       const r = normalizeRegion(takeSel, bufferDurationMs(buf));
       const start = r.startMs / 1000;
       const dur = (r.endMs - r.startMs) / 1000;
-      src.start(0, start, dur);
+      src.start(ctx.currentTime, start, dur);
     } else {
-      src.start(0);
+      src.start(ctx.currentTime);
     }
   }
 
@@ -3301,6 +3306,28 @@ export function ProducerView({
 
         <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: mutedText, minWidth: 88, fontWeight: 600 }}>
           {formatPlayhead(playheadMs)}
+          {typeof window !== "undefined" &&
+          (() => {
+            try {
+              return window.localStorage?.getItem("studio_console_debug") === "1";
+            } catch {
+              return false;
+            }
+          })() ? (
+            <span
+              style={{
+                display: "block",
+                fontSize: 10,
+                fontFamily: "ui-monospace, monospace",
+                color: "#E8A87C",
+                marginTop: 2,
+                lineHeight: 1.35,
+              }}
+              title="Dev only: localStorage.studio_console_debug=1"
+            >
+              {`PH ${Math.round(playheadMs)}ms${playing ? " ▶" : " ⏸"}`}
+            </span>
+          ) : null}
         </div>
 
         {!isNarrow && (
