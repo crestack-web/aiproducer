@@ -7,13 +7,20 @@ import {
 } from "@/lib/welcome-showcase-tracks";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const MAX_BEATS = 10;
+const MAX_SONGS = 8;
+const MAX_TOTAL = 16;
 
 /**
  * GET /api/public/showcase
- * Public listening rail for the welcome page.
+ * Pulls real beats + produced masters from R2 via DB audio_path → signed URL.
  *
- * Optional env SHOWCASE_PROJECT_IDS=uuid1,uuid2 — loads real beat/master audio.
- * Optional SHOWCASE_TRACKS_JSON — full JSON array of ShowcaseTrack.
+ * Optional:
+ *   SHOWCASE_TRACKS_JSON — full track array
+ *   SHOWCASE_PROJECT_IDS — limit to specific project UUIDs
+ *   SHOWCASE_USE_FALLBACK=0 — empty list if bucket has nothing
  */
 export async function GET() {
   try {
@@ -33,94 +40,171 @@ export async function GET() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
-      .slice(0, 12);
+      .slice(0, 24);
 
-    if (ids.length) {
-      const tracks = await loadFromProjects(ids);
-      if (tracks.length) {
-        return NextResponse.json({ tracks, source: "projects" });
-      }
+    const fromBucket = await loadFromBucketCatalog(ids.length ? ids : null);
+    if (fromBucket.length) {
+      return NextResponse.json({
+        tracks: fromBucket,
+        source: "bucket",
+        count: fromBucket.length,
+      });
+    }
+
+    if ((process.env.SHOWCASE_USE_FALLBACK || "1").trim() === "0") {
+      return NextResponse.json({ tracks: [], source: "empty", count: 0 });
     }
 
     return NextResponse.json({
       tracks: FALLBACK_SHOWCASE_TRACKS,
       source: "fallback",
+      count: FALLBACK_SHOWCASE_TRACKS.length,
     });
   } catch (e) {
     console.error("[showcase]", e);
     return NextResponse.json({
       tracks: FALLBACK_SHOWCASE_TRACKS,
-      source: "fallback",
+      source: "fallback_error",
+      count: FALLBACK_SHOWCASE_TRACKS.length,
     });
   }
 }
 
-async function loadFromProjects(ids: string[]): Promise<ShowcaseTrack[]> {
+async function loadFromBucketCatalog(projectIds: string[] | null): Promise<ShowcaseTrack[]> {
   const service = createServiceClient();
-  const out: ShowcaseTrack[] = [];
+  const tracks: ShowcaseTrack[] = [];
+  const seenPaths = new Set<string>();
 
-  for (const projectId of ids) {
-    try {
-      const { data: project } = await service
-        .from("projects")
-        .select("id, title, genre, mood, status")
-        .eq("id", projectId)
-        .maybeSingle();
-      if (!project) continue;
+  let masterQ = service
+    .from("audio_versions")
+    .select("id, project_id, audio_path, kind, created_at, metadata")
+    .eq("kind", "master")
+    .not("audio_path", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(MAX_SONGS * 2);
 
-      // Prefer finished master
-      const { data: master } = await service
-        .from("audio_versions")
-        .select("audio_path, kind")
-        .eq("project_id", projectId)
-        .eq("kind", "master")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+  if (projectIds?.length) {
+    masterQ = masterQ.in("project_id", projectIds);
+  }
 
-      let path = master?.audio_path as string | undefined;
-      let kind: "beat" | "song" = "song";
+  const { data: masters, error: mErr } = await masterQ;
+  if (mErr) console.warn("[showcase] masters", mErr.message);
 
-      if (!path || !isStoragePath(path)) {
-        const { data: beat } = await service
-          .from("beats")
-          .select("audio_path")
-          .eq("project_id", projectId)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        path = beat?.audio_path as string | undefined;
-        kind = "beat";
-      }
+  let beatQ = service
+    .from("beats")
+    .select("id, project_id, audio_path, duration_ms, source, metadata, created_at, status")
+    .not("audio_path", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(MAX_BEATS * 2);
 
-      if (!path || !isStoragePath(path)) continue;
+  if (projectIds?.length) {
+    beatQ = beatQ.in("project_id", projectIds);
+  }
 
-      let audioUrl: string;
-      try {
-        audioUrl = await createSignedDownloadUrl(path, 3600 * 6);
-      } catch {
-        continue;
-      }
+  const { data: beats, error: bErr } = await beatQ;
+  if (bErr) console.warn("[showcase] beats", bErr.message);
 
-      const genre = (project.genre as string) || "Studio";
-      const mood = (project.mood as string) || "";
-      const cover = coverForSeed(String(project.title || projectId));
+  const masterProjectIds = [
+    ...new Set((masters || []).map((m) => m.project_id as string).filter(Boolean)),
+  ];
+  const beatProjectIds = [
+    ...new Set((beats || []).map((b) => b.project_id as string).filter(Boolean)),
+  ];
+  const allProjectIds = [...new Set([...masterProjectIds, ...beatProjectIds])];
 
-      out.push({
-        id: projectId,
-        title: String(project.title || "Untitled"),
-        artist: mood ? `AP · ${genre} · ${mood}` : `AP · ${genre}`,
-        kind,
-        cover,
-        audioUrl,
-        playsLabel: kind === "song" ? "Produced" : "AP beat",
+  const projectMap = new Map<
+    string,
+    { title: string; genre: string | null; mood: string | null }
+  >();
+
+  if (allProjectIds.length) {
+    const { data: projects } = await service
+      .from("projects")
+      .select("id, title, genre, mood")
+      .in("id", allProjectIds);
+    for (const p of projects || []) {
+      projectMap.set(p.id as string, {
+        title: String(p.title || "Untitled"),
+        genre: (p.genre as string) || null,
+        mood: (p.mood as string) || null,
       });
-    } catch (e) {
-      console.warn("[showcase] project", projectId, e);
     }
   }
 
-  return out;
+  for (const m of masters || []) {
+    if (tracks.filter((t) => t.kind === "song").length >= MAX_SONGS) break;
+    const path = m.audio_path as string;
+    if (!path || !isStoragePath(path) || seenPaths.has(path)) continue;
+    const audioUrl = await safeSign(path);
+    if (!audioUrl) continue;
+    seenPaths.add(path);
+    const proj = projectMap.get(m.project_id as string);
+    const title = proj?.title || "Produced song";
+    tracks.push({
+      id: `song-${m.id}`,
+      title,
+      artist: artistLine(proj, "song"),
+      kind: "song",
+      cover: coverForSeed(title),
+      audioUrl,
+      playsLabel: "Produced",
+    });
+    if (tracks.length >= MAX_TOTAL) break;
+  }
+
+  for (const b of beats || []) {
+    if (tracks.filter((t) => t.kind === "beat").length >= MAX_BEATS) break;
+    if (tracks.length >= MAX_TOTAL) break;
+    const path = b.audio_path as string;
+    if (!path || !isStoragePath(path) || seenPaths.has(path)) continue;
+    const st = String(b.status || "").toLowerCase();
+    if (st === "failed" || st === "error") continue;
+    const audioUrl = await safeSign(path);
+    if (!audioUrl) continue;
+    seenPaths.add(path);
+    const proj = projectMap.get(b.project_id as string);
+    const meta = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
+      provider?: string;
+    };
+    const source = String(b.source || meta.provider || "").toLowerCase();
+    const isAi =
+      source === "ai" ||
+      source === "elevenlabs" ||
+      source === "replicate" ||
+      Boolean(meta.provider);
+    const title = proj?.title || "AP beat";
+    tracks.push({
+      id: `beat-${b.id}`,
+      title,
+      artist: artistLine(proj, "beat"),
+      kind: "beat",
+      cover: coverForSeed(title + String(b.id)),
+      audioUrl,
+      playsLabel: isAi ? "AP beat" : "Upload",
+    });
+  }
+
+  return tracks;
+}
+
+async function safeSign(path: string): Promise<string | null> {
+  try {
+    return await createSignedDownloadUrl(path, 3600 * 4);
+  } catch (e) {
+    console.warn("[showcase] sign failed", path, e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+function artistLine(
+  proj: { title: string; genre: string | null; mood: string | null } | undefined,
+  kind: "beat" | "song"
+): string {
+  const bits = ["AP"];
+  if (kind === "song") bits.push("Produced");
+  if (proj?.genre) bits.push(proj.genre);
+  if (proj?.mood) bits.push(proj.mood);
+  return bits.join(" · ");
 }
 
 function coverForSeed(seed: string): [string, string] {
@@ -131,6 +215,8 @@ function coverForSeed(seed: string): [string, string] {
     ["#0f1f1a", "#c4a574"],
     ["#1a1208", "#e7a961"],
     ["#0a1628", "#5b8def"],
+    ["#201018", "#d4a0ff"],
+    ["#0c1a14", "#6ee7b7"],
   ];
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;

@@ -24,7 +24,7 @@ export function WelcomeMusicRail() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/public/showcase");
+        const res = await fetch("/api/public/showcase", { cache: "no-store" });
         if (!res.ok) return;
         const j = await res.json();
         if (!cancelled && Array.isArray(j.tracks) && j.tracks.length) {
