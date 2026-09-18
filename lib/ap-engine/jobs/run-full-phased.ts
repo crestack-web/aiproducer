@@ -75,37 +75,77 @@ export async function runFullProduceWithCheckpoints(opts: {
   if (cp.phase === "restoring") {
     await report("restoring");
     const tRestore = Date.now();
+    const restoreFails: string[] = Array.isArray((cp as { restoreFails?: string[] }).restoreFails)
+      ? [...((cp as { restoreFails?: string[] }).restoreFails || [])]
+      : [];
     while (cp.restoreIndex < vocals.length && budgetOk()) {
       const v = vocals[cp.restoreIndex];
       const idx = cp.restoreIndex;
       try {
-        const val = validateAudioBuffer(v.buffer, v.pathHint);
-        if (!val.ok) {
+        if (!v?.buffer || !Buffer.isBuffer(v.buffer) || v.buffer.length < 64) {
+          restoreFails.push(`layer_${idx}: missing_or_tiny_buffer`);
+          console.warn("[ap-tick] restore skip missing buffer", idx);
           cp.restoreIndex++;
           continue;
         }
-        const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
-        const restored = runRestorationFrontEnd(norm.pcm);
-        const wav = encodeStereoWav(restored.pcm);
-        const storagePath = restoredLayerPath(userId, projectId, jobId, idx);
-        await uploadBuffer(storagePath, wav, "audio/wav");
-        cp.layers.push({
-          index: idx,
-          storagePath,
-          role: String(v.taskType || v.sectionLabel || "lead"),
-          sectionLabel: v.sectionLabel,
-          taskType: v.taskType,
-          startMs: Math.max(0, Number(v.startMs) || 0),
-          pathHint: v.pathHint,
-          noiseFloorBeforeDb: restored.report.noiseFloorBeforeDb,
-          noiseFloorAfterDb: restored.report.noiseFloorAfterDb,
-          restoreConfidence: restored.report.confidence,
-        });
+        const val = validateAudioBuffer(v.buffer, v.pathHint);
+        if (!val.ok) {
+          restoreFails.push(`layer_${idx}: validate_fail ${val.errors?.join(",") || "invalid"}`);
+          console.warn("[ap-tick] restore validate fail", idx, val.errors);
+          // Fall through: still try normalize for arrangement (full path, skip heavy restore)
+        }
+        let uploaded = false;
+        try {
+          const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
+          let pcm = norm.pcm;
+          let noiseFloorBeforeDb: number | undefined;
+          let noiseFloorAfterDb: number | undefined;
+          let restoreConfidence: string | undefined;
+          try {
+            const restored = runRestorationFrontEnd(norm.pcm);
+            pcm = restored.pcm;
+            noiseFloorBeforeDb = restored.report.noiseFloorBeforeDb;
+            noiseFloorAfterDb = restored.report.noiseFloorAfterDb;
+            restoreConfidence = restored.report.confidence;
+          } catch (re) {
+            // Keep normalized PCM — arrangement must not die solely on restore DSP
+            restoreFails.push(
+              `layer_${idx}: restore_dsp ${re instanceof Error ? re.message : String(re)}`
+            );
+            console.warn("[ap-tick] restore DSP failed, using normalized PCM", idx, re);
+          }
+          const wav = encodeStereoWav(pcm);
+          const storagePath = restoredLayerPath(userId, projectId, jobId, idx);
+          await uploadBuffer(storagePath, wav, "audio/wav");
+          cp.layers.push({
+            index: idx,
+            storagePath,
+            role: String(v.taskType || v.sectionLabel || "lead"),
+            sectionLabel: v.sectionLabel,
+            taskType: v.taskType,
+            startMs: Math.max(0, Number(v.startMs) || 0),
+            pathHint: v.pathHint,
+            noiseFloorBeforeDb,
+            noiseFloorAfterDb,
+            restoreConfidence,
+          });
+          uploaded = true;
+        } catch (e) {
+          restoreFails.push(
+            `layer_${idx}: ${e instanceof Error ? e.message : String(e)}`
+          );
+          console.warn("[ap-tick] restore layer failed", idx, e);
+        }
+        if (!uploaded) {
+          /* layer skipped */
+        }
       } catch (e) {
-        console.warn("[ap-tick] restore layer failed", idx, e);
+        restoreFails.push(`layer_${idx}: outer ${e instanceof Error ? e.message : String(e)}`);
+        console.warn("[ap-tick] restore outer failed", idx, e);
       }
       cp.restoreIndex++;
     }
+    (cp as { restoreFails?: string[] }).restoreFails = restoreFails.slice(-40);
     cp.stageTimingsMs.restore_tick =
       (cp.stageTimingsMs.restore_tick || 0) + (Date.now() - tRestore);
 
@@ -127,6 +167,18 @@ export async function runFullProduceWithCheckpoints(opts: {
         }
       );
       return { complete: false };
+    }
+    if (cp.layers.length === 0) {
+      const fails = (cp as { restoreFails?: string[] }).restoreFails || [];
+      const msg =
+        "Produce could not prepare any vocal layers. " +
+        (fails[0] || "Check that takes uploaded and are valid audio.");
+      await patch("failed", 100, {
+        error: msg.slice(0, 400),
+        ap_checkpoint: cp,
+        restoreFails: fails,
+      });
+      return { complete: false, error: msg };
     }
     cp.phase = "arranging";
     cp.lastCheckpointAt = new Date().toISOString();
@@ -161,11 +213,18 @@ export async function runFullProduceWithCheckpoints(opts: {
       }
     }
     if (!arrangedVocals.length) {
+      const fails = (cp as { restoreFails?: string[] }).restoreFails || [];
+      const detail =
+        fails.length > 0
+          ? fails.slice(0, 6).join("; ")
+          : "all layers failed validate/download/upload during restore";
+      const msg = `No vocal layers ready for arrangement (${detail})`;
       await patch("failed", 100, {
-        error: "No restored vocal layers available for arrangement",
+        error: msg,
         ap_checkpoint: cp,
+        restoreFails: fails,
       });
-      return { complete: false, error: "No restored layers" };
+      return { complete: false, error: msg };
     }
 
     const beatBuffer = await downloadStorageOrUrl(beatPath);

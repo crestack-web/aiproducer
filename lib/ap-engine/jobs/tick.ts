@@ -110,6 +110,7 @@ export async function runInternalApProduceJob(opts: {
     if (!vocals.length) {
       await patch("failed", 100, {
         error: "No saved vocal take found. Record each section, then Produce.",
+        vocalDiag,
       });
       await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
       return { complete: false, error: "No vocal take" };

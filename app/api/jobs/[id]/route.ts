@@ -5,6 +5,9 @@ import { createServiceClient } from "@/lib/supabase/server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/** Full AP produce needs multi-minute ticks on Vercel (default limit kills mid-restore). */
+export const maxDuration = 300;
+
 /** GET /api/jobs/:id — also advances PRODUCE_SONG jobs while polling. */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
