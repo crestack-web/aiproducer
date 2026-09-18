@@ -1,7 +1,6 @@
 /**
- * ElevenLabs Music API ("Eleven Music") — text-to-music with force_instrumental.
- * Docs: POST https://api.elevenlabs.io/v1/music
- * Duration: 3s–4min product max (API allows up to 10min). Returns audio bytes directly.
+ * ElevenLabs Music API — POST /v1/music
+ * Tries api.elevenlabs.io then api.us.elevenlabs.io on auth failures (workspace region).
  */
 import type { MusicGenerationProvider } from "./provider";
 import type {
@@ -12,10 +11,12 @@ import type {
 } from "./types";
 import { MusicGenerationError } from "./types";
 
-const BASE = (process.env.ELEVENLABS_API_BASE || "https://api.elevenlabs.io").replace(/\/$/, "");
-
-/** Max product beat length (4 minutes). */
 export const MAX_BEAT_DURATION_SEC = 240;
+
+const DEFAULT_BASES = [
+  process.env.ELEVENLABS_API_BASE?.replace(/\/$/, "") || "https://api.elevenlabs.io",
+  "https://api.us.elevenlabs.io",
+].filter((v, i, a) => v && a.indexOf(v) === i);
 
 function cleanKey(raw: string | undefined | null): string {
   if (!raw) return "";
@@ -23,6 +24,8 @@ function cleanKey(raw: string | undefined | null): string {
   if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
     k = k.slice(1, -1).trim();
   }
+  // Remove accidental "Bearer " prefix if pasted into env
+  if (/^bearer\s+/i.test(k)) k = k.replace(/^bearer\s+/i, "").trim();
   k = k.replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
   return k;
 }
@@ -33,45 +36,40 @@ function apiKey(): string {
     cleanKey(process.env.ELEVEN_API_KEY) ||
     cleanKey(process.env.XI_API_KEY);
   if (!k) {
-    throw new MusicGenerationError("NOT_CONFIGURED", "ELEVENLABS_API_KEY is not configured", {
+    throw new MusicGenerationError("NOT_CONFIGURED", "ELEVENLABS_API_KEY is not configured on this deployment", {
       provider: "elevenlabs",
     });
   }
   return k;
 }
 
-function modelId(): string {
-  // Docs default is music_v1; music_v2 / music_v2_5 may need higher Music access
-  return (
+function modelCandidates(): string[] {
+  const preferred =
     cleanKey(process.env.ELEVENLABS_MUSIC_MODEL) ||
     cleanKey(process.env.ELEVEN_MUSIC_MODEL) ||
-    "music_v1"
-  );
+    "music_v1";
+  const list = [preferred, "music_v1", "music_v2"];
+  return list.filter((v, i, a) => v && a.indexOf(v) === i);
 }
 
 function outputFormat(): string {
   return cleanKey(process.env.ELEVENLABS_MUSIC_OUTPUT_FORMAT) || "mp3_44100_128";
 }
 
-function authHeaders(): Record<string, string> {
-  // Official docs: xi-api-key only
-  return { "xi-api-key": apiKey() };
-}
-
-function classifyHttpError(status: number, body: string): MusicGenerationError {
+function classifyHttpError(status: number, body: string, base: string): MusicGenerationError {
   const lower = body.toLowerCase();
   if (status === 401) {
     return new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      "ElevenLabs API key was rejected. Check ELEVENLABS_API_KEY on Vercel (no quotes, full key, redeploy after changing).",
-      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400) } }
+      `ElevenLabs rejected the API key (HTTP 401 via ${base}). Confirm ELEVENLABS_API_KEY is the full key from elevenlabs.io → Profile → API keys, set for Production on Vercel, and redeployed.`,
+      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 500), base } }
     );
   }
   if (status === 403) {
     return new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      "ElevenLabs Music API is not enabled for this key. Music requires a paid ElevenLabs plan with Music API access. Enable Music on elevenlabs.io then retry.",
-      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400) } }
+      `ElevenLabs blocked Music on this key (HTTP 403 via ${base}). The key is valid for the account, but Music API is not enabled — open elevenlabs.io with that account, confirm a paid plan with Music, and generate once in their UI to activate.`,
+      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 500), base } }
     );
   }
   if (
@@ -84,28 +82,28 @@ function classifyHttpError(status: number, body: string): MusicGenerationError {
   ) {
     return new MusicGenerationError(
       "BILLING_REQUIRED",
-      "ElevenLabs Music needs more credits or an upgraded plan on the ElevenLabs account.",
-      { provider: "elevenlabs", retryable: false, details: { httpStatus: status } }
+      "ElevenLabs Music needs more credits on the ElevenLabs account that owns this API key.",
+      { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400), base } }
     );
   }
-  if (status === 429 || lower.includes("rate limit") || lower.includes("too many")) {
+  if (status === 429) {
     return new MusicGenerationError("RATE_LIMITED", "ElevenLabs rate limit exceeded. Try again shortly.", {
       provider: "elevenlabs",
       retryable: true,
-      details: { httpStatus: status },
+      details: { httpStatus: status, base },
     });
   }
   if (status >= 500) {
     return new MusicGenerationError("PROVIDER_ERROR", "ElevenLabs server error", {
       provider: "elevenlabs",
       retryable: true,
-      details: { httpStatus: status },
+      details: { httpStatus: status, body: body.slice(0, 300), base },
     });
   }
   return new MusicGenerationError(
     "PROVIDER_ERROR",
     body.slice(0, 280) || `ElevenLabs request failed (${status})`,
-    { provider: "elevenlabs", retryable: false, details: { httpStatus: status } }
+    { provider: "elevenlabs", retryable: false, details: { httpStatus: status, body: body.slice(0, 400), base } }
   );
 }
 
@@ -113,11 +111,7 @@ async function readErrorBody(res: Response): Promise<string> {
   try {
     const text = await res.text();
     try {
-      const j = JSON.parse(text) as {
-        detail?: unknown;
-        message?: string;
-        error?: string;
-      };
+      const j = JSON.parse(text) as { detail?: unknown; message?: string; error?: string };
       if (typeof j.message === "string") return j.message;
       if (typeof j.error === "string") return j.error;
       if (typeof j.detail === "string") return j.detail;
@@ -164,7 +158,7 @@ export function buildElevenLabsCompositionPlan(opts: {
     }
   }
   if (opts.bpm) styles.push(`${opts.bpm} bpm`);
-  styles.push("instrumental", "no vocals", "no lyrics", "vocal-ready midrange");
+  styles.push("instrumental", "no vocals", "no lyrics");
 
   const total = Math.max(6000, Math.min(240000, opts.durationMs));
   const intro = Math.round(total * 0.12);
@@ -178,29 +172,29 @@ export function buildElevenLabsCompositionPlan(opts: {
       {
         text: "[Intro] Instrumental opening, leave headroom for vocals",
         duration_ms: intro,
-        positive_styles: [...base, "intro", "sparse"],
-        negative_styles: ["vocals", "singing", "rap"],
+        positive_styles: [...base, "intro"],
+        negative_styles: ["vocals", "singing"],
         context_adherence: "high",
       },
       {
-        text: "[Verse] Instrumental verse with midrange space for a lead vocal",
+        text: "[Verse] Instrumental verse with space for lead vocal",
         duration_ms: verse,
-        positive_styles: [...base, "verse", "groove"],
-        negative_styles: ["vocals", "singing", "rap"],
+        positive_styles: [...base, "verse"],
+        negative_styles: ["vocals", "singing"],
         context_adherence: "high",
       },
       {
-        text: "[Chorus] Fuller instrumental chorus, still no vocals",
+        text: "[Chorus] Fuller instrumental chorus, no vocals",
         duration_ms: chorus,
-        positive_styles: [...base, "chorus", "wider"],
-        negative_styles: ["vocals", "singing", "rap"],
+        positive_styles: [...base, "chorus"],
+        negative_styles: ["vocals", "singing"],
         context_adherence: "high",
       },
       {
-        text: "[Outro] Instrumental outro, wind down",
+        text: "[Outro] Instrumental outro",
         duration_ms: outro,
         positive_styles: [...base, "outro"],
-        negative_styles: ["vocals", "singing", "rap"],
+        negative_styles: ["vocals", "singing"],
         context_adherence: "high",
       },
     ],
@@ -216,8 +210,16 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
   }
 
   async checkAvailability(): Promise<void> {
-    const res = await fetch(`${BASE}/v1/user`, { headers: { ...authHeaders() } });
-    if (!res.ok) throw classifyHttpError(res.status, await readErrorBody(res));
+    const key = apiKey();
+    let lastErr: MusicGenerationError | null = null;
+    for (const base of DEFAULT_BASES) {
+      const res = await fetch(`${base}/v1/user`, { headers: { "xi-api-key": key } });
+      if (res.ok) return;
+      lastErr = classifyHttpError(res.status, await readErrorBody(res), base);
+    }
+    throw lastErr || new MusicGenerationError("AUTHENTICATION_ERROR", "ElevenLabs user check failed", {
+      provider: "elevenlabs",
+    });
   }
 
   async submitPrediction(
@@ -257,102 +259,122 @@ export class ElevenLabsMusicProvider implements MusicGenerationProvider {
     const maxSec = this.maxDurationSec(kind);
     const durationSec = Math.min(Math.max(req.durationSec ?? maxSec, 3), MAX_BEAT_DURATION_SEC);
     const musicLengthMs = Math.round(durationSec * 1000);
-    let model = modelId();
+    const key = apiKey();
+    const models = modelCandidates();
+    const usePlan = (process.env.ELEVENLABS_MUSIC_USE_COMPOSITION_PLAN || "").trim() === "1";
 
-    const usePlan =
-      (process.env.ELEVENLABS_MUSIC_USE_COMPOSITION_PLAN || "").trim() === "1" && model !== "music_v1";
+    const prompt = /instrumental|no vocals|no lyrics/i.test(req.prompt)
+      ? req.prompt
+      : `${req.prompt}. Instrumental only. No vocals. No lyrics. No singing.`;
 
-    async function composeOnce(modelIdUsed: string): Promise<Response> {
-      const body: Record<string, unknown> = { model_id: modelIdUsed };
-      if (usePlan) {
-        body.composition_plan = buildElevenLabsCompositionPlan({
-          prompt: req.prompt,
-          durationMs: musicLengthMs,
-          genre: req.genre,
-          mood: req.mood,
-          energy: req.energy,
-          instrumentation: req.instrumentation,
-          bpm: req.bpm,
-        });
-      } else {
-        const prompt = /instrumental|no vocals|no lyrics/i.test(req.prompt)
-          ? req.prompt
-          : `${req.prompt}. Instrumental only. No vocals. No lyrics. No singing.`;
-        body.prompt = prompt.slice(0, 4100);
-        body.music_length_ms = musicLengthMs;
-        body.force_instrumental = true;
-      }
-      const url = `${BASE}/v1/music?output_format=${encodeURIComponent(outputFormat())}`;
-      return fetch(url, {
-        method: "POST",
-        headers: {
-          ...authHeaders(),
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg, application/json",
-        },
-        body: JSON.stringify(body),
-      });
-    }
+    let lastErr: MusicGenerationError | null = null;
 
-    let res = await composeOnce(model);
-    if (!res.ok && (res.status === 401 || res.status === 403) && model !== "music_v1") {
-      const firstBody = await readErrorBody(res);
-      console.warn("[elevenlabs-music] model denied, retrying music_v1", res.status, firstBody.slice(0, 120));
-      model = "music_v1";
-      res = await composeOnce(model);
-    }
+    for (const base of DEFAULT_BASES) {
+      for (const model of models) {
+        const body: Record<string, unknown> = { model_id: model };
+        if (usePlan && model !== "music_v1") {
+          body.composition_plan = buildElevenLabsCompositionPlan({
+            prompt: req.prompt,
+            durationMs: musicLengthMs,
+            genre: req.genre,
+            mood: req.mood,
+            energy: req.energy,
+            instrumentation: req.instrumentation,
+            bpm: req.bpm,
+          });
+        } else {
+          body.prompt = prompt.slice(0, 4100);
+          body.music_length_ms = musicLengthMs;
+          body.force_instrumental = true;
+        }
 
-    if (!res.ok) {
-      const errBody = await readErrorBody(res);
-      try {
-        const k = apiKey();
+        const url = `${base}/v1/music?output_format=${encodeURIComponent(outputFormat())}`;
+        let res: Response;
+        try {
+          res = await fetch(url, {
+            method: "POST",
+            headers: {
+              "xi-api-key": key,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg, application/json",
+            },
+            body: JSON.stringify(body),
+          });
+        } catch (netErr) {
+          lastErr = new MusicGenerationError(
+            "PROVIDER_ERROR",
+            `Network error reaching ${base}: ${netErr instanceof Error ? netErr.message : String(netErr)}`,
+            { provider: "elevenlabs", retryable: true, details: { base } }
+          );
+          continue;
+        }
+
+        if (res.ok) {
+          const songId = res.headers.get("song-id") || res.headers.get("Song-Id") || `el-${Date.now()}`;
+          const contentType = res.headers.get("content-type") || "audio/mpeg";
+          const buffer = Buffer.from(await res.arrayBuffer());
+          if (buffer.length < 500) {
+            throw new MusicGenerationError(
+              "AUDIO_VALIDATION_ERROR",
+              "ElevenLabs returned empty or tiny audio",
+              { provider: "elevenlabs", details: { bytes: buffer.length, base, model } }
+            );
+          }
+          const isWav =
+            contentType.includes("wav") || contentType.includes("pcm") || contentType.includes("octet");
+          const extension = isWav && !contentType.includes("mpeg") ? "wav" : "mp3";
+          return {
+            buffer,
+            contentType: contentType.includes("audio") ? contentType : "audio/mpeg",
+            extension,
+            durationSec,
+            providerPredictionId: songId,
+            model: `elevenlabs/${model}`,
+            metadata: {
+              music_length_ms: musicLengthMs,
+              force_instrumental: true,
+              base,
+              model,
+              song_id: songId,
+              keyLen: key.length,
+              keyLast4: key.slice(-4),
+            },
+          };
+        }
+
+        const errBody = await readErrorBody(res);
         console.error(
           "[elevenlabs-music]",
           JSON.stringify({
             status: res.status,
             body: errBody.slice(0, 300),
-            keyLen: k.length,
-            keyLast4: k.slice(-4),
+            base,
             model,
+            keyLen: key.length,
+            keyLast4: key.slice(-4),
             music_length_ms: musicLengthMs,
-            usePlan,
           })
         );
-      } catch {
-        console.error("[elevenlabs-music]", res.status, errBody.slice(0, 200));
+        lastErr = classifyHttpError(res.status, errBody, base);
+
+        // Auth on this base — try next base (region). Don't keep trying models on same base if 401.
+        if (res.status === 401) break;
+        // 403 might be model-specific — try next model
+        if (res.status === 403) continue;
+        // Other hard errors — still try other models/bases once
+        if (res.status >= 500) continue;
+        if (res.status === 422 || res.status === 400) {
+          // invalid request for this model — try next model
+          continue;
+        }
       }
-      throw classifyHttpError(res.status, errBody);
     }
 
-    const songId = res.headers.get("song-id") || res.headers.get("Song-Id") || `el-${Date.now()}`;
-    const contentType = res.headers.get("content-type") || "audio/mpeg";
-    const buffer = Buffer.from(await res.arrayBuffer());
-
-    if (buffer.length < 500) {
-      throw new MusicGenerationError(
-        "AUDIO_VALIDATION_ERROR",
-        "ElevenLabs returned empty or tiny audio",
-        { provider: "elevenlabs", details: { bytes: buffer.length } }
-      );
-    }
-
-    const isWav =
-      contentType.includes("wav") || contentType.includes("pcm") || contentType.includes("octet");
-    const extension = isWav && !contentType.includes("mpeg") ? "wav" : "mp3";
-
-    return {
-      buffer,
-      contentType: contentType.includes("audio") ? contentType : "audio/mpeg",
-      extension,
-      durationSec,
-      providerPredictionId: songId,
-      model: `elevenlabs/${model}`,
-      metadata: {
-        music_length_ms: musicLengthMs,
-        force_instrumental: !usePlan,
-        used_composition_plan: usePlan,
-        song_id: songId,
-      },
-    };
+    throw (
+      lastErr ||
+      new MusicGenerationError("AUTHENTICATION_ERROR", "ElevenLabs Music request failed on all endpoints", {
+        provider: "elevenlabs",
+      })
+    );
   }
 }
