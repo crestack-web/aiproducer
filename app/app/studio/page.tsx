@@ -595,10 +595,13 @@ function StudioPageInner() {
       <div
         style={{
           width: "100%",
-          maxWidth: 920,
+          maxWidth: 720,
           margin: "0 auto",
-          padding: "28px 20px 32px",
+          padding: "28px 20px 40px",
           boxSizing: "border-box",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "stretch",
         }}
       >
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 10 }}>
@@ -607,17 +610,19 @@ function StudioPageInner() {
         <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.5rem, 2.8vw, 2rem)", fontWeight: 500, margin: "0 0 6px", color: C.text }}>
           Create your beat
         </h1>
-        <p style={{ color: C.textMuted, fontSize: 13.5, lineHeight: 1.45, margin: "0 0 18px", maxWidth: 480 }}>
+        <p style={{ color: C.textMuted, fontSize: 13.5, lineHeight: 1.45, margin: "0 0 18px", maxWidth: "100%" }}>
           Prompt + a few controls — AP builds the instrumental.
         </p>
 
         <div
           style={{
+            width: "100%",
+            boxSizing: "border-box",
             background: C.surface,
             border: `1px solid ${C.border}`,
             borderRadius: 16,
-            padding: "14px 14px 16px",
-            maxWidth: 560,
+            padding: "16px 16px 18px",
+            margin: "0 auto",
           }}
         >
           {/* AI / Upload mode */}
@@ -956,7 +961,7 @@ function StudioPageInner() {
         </div>
 
         {!loading && beats.length > 0 && (
-          <div style={{ marginTop: 28, maxWidth: 560 }}>
+          <div style={{ marginTop: 28, width: "100%" }}>
             <div
               style={{
                 fontSize: 12,
