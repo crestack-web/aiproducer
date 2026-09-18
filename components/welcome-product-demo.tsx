@@ -14,28 +14,29 @@ type Slide = {
   imageAlt: string;
 };
 
+/** Desktop UI captures only — landscape frames on large screens. */
 const SLIDES: Slide[] = [
   {
     id: "console",
     title: "Your complete creative workspace",
     body:
-      "AP Studio Console is a web-based production desk that combines guided recording, timeline layers, and AI-assisted direction — so you build real songs with your voice, not synthetic vocals.",
-    imageSrc: "/welcome/console-workspace.jpg",
-    imageAlt: "AP Studio Console — tracks, Produce, and AI direction",
+      "AP Studio Console combines timeline layers, guided recording, and AI direction — build real songs with your voice, not synthetic vocals.",
+    imageSrc: "/welcome/console-desktop.jpg",
+    imageAlt: "AP Studio Console on desktop — timeline, tracks, and Produce",
   },
   {
-    id: "timeline",
-    title: "Arrange every vocal layer",
+    id: "studio",
+    title: "Create your beat",
     body:
-      "See intro, verse, and chorus on the timeline. Place leads, doubles, harmonies, and adlibs exactly where they belong — then Produce a finished song without opening a traditional DAW.",
-    imageSrc: "/welcome/timeline-arrangement.jpg",
-    imageAlt: "AP Studio timeline — lead, double, harmony, and adlib regions",
+      "Describe the mood, pick genre and instrumentation — AP builds the instrumental. Then open Booth or Console to record and produce.",
+    imageSrc: "/welcome/studio-desktop.jpg",
+    imageAlt: "AP Studio Create your beat screen on desktop",
   },
 ];
 
 /**
- * Suno-style product demo — auto-rotating slides.
- * Dots are indicators only (not clickable controls).
+ * Suno-style product demo — auto-rotating desktop screenshots.
+ * Dots are indicators only (not clickable).
  */
 export function WelcomeProductDemo() {
   const [index, setIndex] = useState(0);
