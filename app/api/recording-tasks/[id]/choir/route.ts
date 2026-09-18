@@ -42,14 +42,59 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const service = createServiceClient();
-  const { data: task, error: taskErr } = await service
-    .from("recording_tasks")
-    .select("id, project_id, type, title, start_ms, end_ms, status, metadata, section_type, section_label")
-    .eq("id", taskId)
-    .maybeSingle();
+  // Schema-resilient: older DBs lack section_type / section_label columns.
+  // Selecting missing columns makes PostgREST fail the whole query → false "Task not found".
+  let task: Record<string, unknown> | null = null;
+  {
+    const full = await service
+      .from("recording_tasks")
+      .select(
+        "id, project_id, type, title, start_ms, end_ms, status, metadata, section_type, section_label"
+      )
+      .eq("id", taskId)
+      .maybeSingle();
+    if (full.data) {
+      task = full.data as Record<string, unknown>;
+    } else if (full.error) {
+      console.warn("[choir] full select failed, retrying slim", full.error.message);
+      const slim = await service
+        .from("recording_tasks")
+        .select("id, project_id, type, title, start_ms, end_ms, status, metadata")
+        .eq("id", taskId)
+        .maybeSingle();
+      if (slim.error) {
+        console.error("[choir] task lookup", slim.error.message, { taskId });
+      }
+      task = (slim.data as Record<string, unknown> | null) || null;
+    }
+  }
 
-  if (taskErr || !task) {
-    return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  if (!task?.id) {
+    // Last resort: resolve via recording that points at this task_id
+    const { data: viaRec } = await service
+      .from("recordings")
+      .select("task_id, project_id")
+      .eq("task_id", taskId)
+      .limit(1)
+      .maybeSingle();
+    if (viaRec?.task_id) {
+      const slim = await service
+        .from("recording_tasks")
+        .select("id, project_id, type, title, start_ms, end_ms, status, metadata")
+        .eq("id", viaRec.task_id)
+        .maybeSingle();
+      task = (slim.data as Record<string, unknown> | null) || null;
+    }
+  }
+
+  if (!task?.id) {
+    return NextResponse.json(
+      {
+        error: "Task not found",
+        details: { taskId, hint: "Refresh Console and pick a recorded vocal track." },
+      },
+      { status: 404 }
+    );
   }
 
   if (mode === "chorus_lift") {
@@ -63,6 +108,7 @@ export async function POST(req: Request, ctx: Ctx) {
       meta.section_type,
       meta.section_label,
       meta.section,
+      meta.sectionLabel,
       task.title,
     ]
       .filter(Boolean)
@@ -78,22 +124,44 @@ export async function POST(req: Request, ctx: Ctx) {
     }
   }
 
+  const projectId = String(task.project_id || "");
   const { data: project } = await service
     .from("projects")
     .select("id, user_id")
-    .eq("id", task.project_id)
+    .eq("id", projectId)
     .maybeSingle();
   if (!project || project.user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: recs } = await service
-    .from("recordings")
-    .select("id, audio_path, content_type")
-    .eq("task_id", taskId)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  const rec = recs?.[0];
+  // Prefer selected take, then newest with audio
+  let rec: { id?: string; audio_path?: string | null; content_type?: string | null } | null =
+    null;
+  {
+    const sel = await service
+      .from("recordings")
+      .select("id, audio_path, content_type, is_selected, created_at")
+      .eq("task_id", taskId)
+      .eq("is_selected", true)
+      .not("audio_path", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (sel.data?.audio_path) {
+      rec = sel.data;
+    } else {
+      // is_selected column may not exist — ignore error and fall through
+      const any = await service
+        .from("recordings")
+        .select("id, audio_path, content_type")
+        .eq("task_id", taskId)
+        .not("audio_path", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      const rows = any.data || [];
+      rec = rows.find((r) => r.audio_path) || null;
+    }
+  }
   if (!rec?.audio_path) {
     return NextResponse.json(
       { error: "No vocal take on this track — record or upload first" },

@@ -1190,7 +1190,15 @@ export function ProducerView({
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setEditMsg(typeof j.error === "string" ? j.error : "Could not build choir");
+        const hint =
+          typeof j.error === "string"
+            ? j.error
+            : "Could not build choir";
+        setEditMsg(
+          hint === "Task not found"
+            ? "Track not found — refresh Console and use a recorded vocal layer."
+            : hint
+        );
         return;
       }
       setEditMsg(null);
