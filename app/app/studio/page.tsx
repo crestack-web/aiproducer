@@ -100,7 +100,7 @@ const STYLE_PRESETS = [
 const LENGTH_PRESETS = [15, 30, 60, 120, 180, 240] as const;
 /** Estimated USD/sec — override via env on server; client mirror for preview. */
 const COST_PER_SEC_USD = 0.00583;
-const FREE_MAX_SEC = 30;
+const FREE_MAX_SEC = 180;
 const FREE_GEN_COUNT = 3;
 type Project = {
   id: string;
@@ -156,7 +156,7 @@ function StudioPageInner() {
   const [mood, setMood] = useState("Emotional");
   const [prompt, setPrompt] = useState("");
   const [tempo, setTempo] = useState(104);
-  const [beatDurationSec, setBeatDurationSec] = useState(60);
+  const [beatDurationSec, setBeatDurationSec] = useState(90);
   const [createPanel, setCreatePanel] = useState<"sound" | "vibe" | "style" | "length">("sound");
   const [energy, setEnergy] = useState("Driving");
   const [instrumentation, setInstrumentation] = useState("808-driven");
@@ -367,7 +367,7 @@ function StudioPageInner() {
       if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC) {
         // Soft client gate — server remains authoritative for free users
         setError(
-          `Free beats are limited to ${FREE_MAX_SEC}s. Choose ${FREE_MAX_SEC}s or shorter, or upgrade for longer beats.`
+          `Free beats are limited to ${Math.round(FREE_MAX_SEC / 60)} minutes (${FREE_MAX_SEC}s). Choose ${FREE_MAX_SEC}s or shorter, or upgrade for longer beats.`
         );
         setCreating(false);
         return;
@@ -845,14 +845,14 @@ function StudioPageInner() {
                     <div style={{ marginTop: 8, fontSize: 11.5, color: C.textFaint, lineHeight: 1.4 }}>
                       {beatDurationSec <= FREE_MAX_SEC ? (
                         <>
-                          <span style={{ color: C.brass }}>Free · up to {Math.floor(FREE_MAX_SEC / 60)} min</span>
+                          <span style={{ color: C.brass }}>Free · up to {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min</span>
                           {" · "}
                           Est. cost ~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
                           {" · "}AP covers {FREE_GEN_COUNT} gens
                         </>
                       ) : (
                         <>
-                          Above free {Math.floor(FREE_MAX_SEC / 60)} min — shorten or upgrade · Est. ~$
+                          Above free {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min — shorten or upgrade · Est. ~$
                           {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
                         </>
                       )}
@@ -942,15 +942,19 @@ function StudioPageInner() {
             <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
               Free AP beats
             </div>
-            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} beat generations</strong> (up to{" "}
-            <strong style={{ color: C.text }}>{Math.floor(FREE_MAX_SEC / 60)} minutes</strong> each).
-            After you use them, unlock another by finishing a song — <strong style={{ color: C.text }}>Produce</strong>, then{" "}
-            <strong style={{ color: C.text }}>pay to download</strong>. Creator &amp; Pro plans include monthly beat time
-            (Creator ~10 × 3 min, Pro ~30 × 3 min).
+            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> (up to{" "}
+            <strong style={{ color: C.text }}>{Math.max(1, Math.round(FREE_MAX_SEC / 60))} minutes</strong> each).
+            Generate one at a time — the next free beat unlocks after you{" "}
+            <strong style={{ color: C.text }}>record and Produce</strong> the current one.
+            After all {FREE_GEN_COUNT} free beats, AP still generates; the{" "}
+            <strong style={{ color: C.text }}>beat cost is added to your song download</strong> after Produce.
             <div style={{ marginTop: 6, color: C.text }}>
               This length (~{beatDurationSec}s) estimates{" "}
-              <strong>~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}</strong> at provider rates
-              {beatDurationSec <= FREE_MAX_SEC ? " — covered on free when allowance remains" : ""}.
+              <strong>~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}</strong>
+              {beatDurationSec <= FREE_MAX_SEC
+                ? " — free while sequential free slots remain"
+                : " — above free length; upgrade or shorten"}
+              .
             </div>
           </div>
 

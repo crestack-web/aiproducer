@@ -169,7 +169,7 @@ export async function enqueueMusicGeneration(
 
   // New generation only — successful COMPLETED jobs consume quota; failures do not
   const requestedSec = Math.round(req.durationSec || DEFAULT_FULL_BEAT_SEC);
-  await assertBeatGenAllowed(req.userId, requestedSec);
+  const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec);
   await assertWithinDailyLimits(req.userId, kind);
 
   const { data: project } = await supabase
@@ -217,6 +217,8 @@ export async function enqueueMusicGeneration(
         duration_sec: plan.durationSec ?? requestedSec,
         estimated_cost_usd: estimateBeatCostUsd(plan.durationSec ?? requestedSec),
         cost_rate_usd_per_sec: Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || 0.00583),
+        free_beat_generation: !quotaSnap.billableGeneration && !quotaSnap.isPaid,
+        billable_generation: Boolean(quotaSnap.billableGeneration),
       },
     })
     .select("id, status")
@@ -417,7 +419,39 @@ export async function tickMusicGenerationJob(jobId: string) {
       })
       .eq("id", jobId);
 
-    await supabase.from("projects").update({ status: "beat_ready" }).eq("id", job.project_id);
+    {
+      const { data: projRow } = await supabase
+        .from("projects")
+        .select("metadata")
+        .eq("id", job.project_id)
+        .maybeSingle();
+      const prevMeta =
+        projRow?.metadata && typeof projRow.metadata === "object"
+          ? (projRow.metadata as Record<string, unknown>)
+          : {};
+      const input =
+        job.input_data && typeof job.input_data === "object"
+          ? (job.input_data as Record<string, unknown>)
+          : {};
+      const billable = input.billable_generation === true;
+      const freeSlot = input.free_beat_generation === true || (!billable && !input.billable_generation);
+      const costUsd =
+        typeof input.estimated_cost_usd === "number"
+          ? input.estimated_cost_usd
+          : estimateBeatCostUsd(Number(job.duration_sec) || result.durationSec || 60);
+      const nextMeta: Record<string, unknown> = {
+        ...prevMeta,
+        free_beat_generation: freeSlot && !billable,
+        free_beat_slot: freeSlot && !billable,
+        beat_generation_billable: billable,
+        beat_cost_usd: billable ? costUsd : prevMeta.beat_cost_usd ?? 0,
+        beat_duration_sec: result.durationSec || job.duration_sec,
+      };
+      await supabase
+        .from("projects")
+        .update({ status: "beat_ready", metadata: nextMeta })
+        .eq("id", job.project_id);
+    }
 
     logJob({
       event: "completed",

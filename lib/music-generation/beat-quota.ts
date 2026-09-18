@@ -75,8 +75,15 @@ export type BeatQuotaSnapshot = {
   remaining: number;
   remainingSeconds?: number;
   message?: string;
-  upgradePath?: "plan" | "finish_download" | "shorten_duration";
+  upgradePath?: "plan" | "finish_download" | "shorten_duration" | "finish_produce";
   costPerSecUsd: number;
+  /** Next free slot requires prior free project to be recorded + produced */
+  sequentialBlocked?: boolean;
+  /** Free slots left in the 3 (before sequential gate) */
+  freeSlotsLeft?: number;
+  /** After free exhausted, generation is allowed but billable on song download */
+  billableGeneration?: boolean;
+  finishedFreeProjects?: number;
 };
 
 export async function getSubscriberPlanName(userId: string): Promise<string> {
@@ -202,6 +209,41 @@ async function countDownloadUnlocks(userId: string): Promise<number> {
   }
 }
 
+
+/** Free AI beat projects that reached produce/complete (unlocks next sequential free gen). */
+async function countFinishedFreeBeatProjects(userId: string): Promise<number> {
+  const supabase = createServiceClient();
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, status, metadata")
+      .eq("user_id", userId)
+      .limit(300);
+    if (error) {
+      console.warn("[beat-quota] finished free projects", error.message);
+      return 0;
+    }
+    let n = 0;
+    for (const row of data || []) {
+      const m = (row as { metadata?: Record<string, unknown> }).metadata || {};
+      if (m.free_beat_generation !== true && m.free_beat_slot !== true) continue;
+      const st = String((row as { status?: string }).status || "").toLowerCase();
+      if (
+        st === "complete" ||
+        st === "completed" ||
+        st === "produced" ||
+        st === "mastering" ||
+        m.has_master === true
+      ) {
+        n += 1;
+      }
+    }
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot> {
   const freeBaseAllowance = FREE_BEAT_GEN_COUNT;
   const freeMaxDurationSec = FREE_MAX_DURATION_SEC;
@@ -258,9 +300,58 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     };
   }
 
-  const remaining = Math.max(0, freeLimit - usedSuccessful);
+  const finishedFree = await countFinishedFreeBeatProjects(userId);
+  const freeSlotsLeft = Math.max(0, freeLimit - usedSuccessful);
+  // Sequential: next free gen only after prior free projects are produced
+  const sequentialBlocked =
+    freeSlotsLeft > 0 && usedSuccessful > 0 && finishedFree < usedSuccessful;
+
+  if (sequentialBlocked) {
+    return {
+      allowed: false,
+      isPaid: false,
+      usedSuccessful,
+      freeBaseAllowance,
+      downloadUnlocks,
+      freeLimit,
+      usedSecondsThisMonth,
+      paidSecondsBudget,
+      freeMaxDurationSec,
+      remaining: freeSlotsLeft,
+      freeSlotsLeft,
+      sequentialBlocked: true,
+      finishedFreeProjects: finishedFree,
+      billableGeneration: false,
+      message:
+        "Record and Produce your current free beat before generating the next free one. You still have free slots left after you finish.",
+      upgradePath: "finish_produce",
+      costPerSecUsd,
+    };
+  }
+
+  if (freeSlotsLeft > 0) {
+    return {
+      allowed: true,
+      isPaid: false,
+      usedSuccessful,
+      freeBaseAllowance,
+      downloadUnlocks,
+      freeLimit,
+      usedSecondsThisMonth,
+      paidSecondsBudget,
+      freeMaxDurationSec,
+      remaining: freeSlotsLeft,
+      freeSlotsLeft,
+      sequentialBlocked: false,
+      finishedFreeProjects: finishedFree,
+      billableGeneration: false,
+      costPerSecUsd,
+    };
+  }
+
+  // Free exhausted — still allow generation; cost is added at song download
   return {
-    allowed: remaining > 0,
+    allowed: true,
     isPaid: false,
     usedSuccessful,
     freeBaseAllowance,
@@ -269,12 +360,14 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     usedSecondsThisMonth,
     paidSecondsBudget,
     freeMaxDurationSec,
-    remaining,
+    remaining: 0,
+    freeSlotsLeft: 0,
+    sequentialBlocked: false,
+    finishedFreeProjects: finishedFree,
+    billableGeneration: true,
     message:
-      remaining > 0
-        ? undefined
-        : "You've used your 3 free AP beats. Finish a song, Produce, and unlock download to get another — or subscribe for monthly beat time.",
-    upgradePath: remaining > 0 ? undefined : "finish_download",
+      "Free beats used. New beats are still available — the beat cost is added to your song download after you Produce.",
+    upgradePath: "finish_download",
     costPerSecUsd,
   };
 }
@@ -301,11 +394,11 @@ export async function assertBeatGenAllowed(
   );
 
   if (!snap.isPaid) {
-    // Use >= so exact free max is allowed (30s free when cap is 30)
-    if (want > snap.freeMaxDurationSec) {
+    // Free + billable-after-free share the same max length for free accounts unless paid
+    if (want > snap.freeMaxDurationSec && !snap.billableGeneration) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
-        `Free beats are limited to ${snap.freeMaxDurationSec}s. Shorten the length or upgrade for longer beats.`,
+        `Free beats are limited to ${snap.freeMaxDurationSec}s (${Math.round(snap.freeMaxDurationSec / 60)} min). Shorten the length or upgrade for longer beats.`,
         {
           details: {
             code: "FREE_DURATION_CAP",
@@ -317,15 +410,20 @@ export async function assertBeatGenAllowed(
         }
       );
     }
-    if (!snap.allowed) {
-      throw new MusicGenerationError("LIMIT_EXCEEDED", snap.message || "Beat generation limit reached", {
-        details: {
-          code: "FREE_COUNT_EXCEEDED",
-          remaining: 0,
-          usedSuccessful: snap.usedSuccessful,
-          freeLimit: snap.freeLimit,
-        },
-      });
+    if (snap.sequentialBlocked || (!snap.allowed && !snap.billableGeneration)) {
+      throw new MusicGenerationError(
+        "LIMIT_EXCEEDED",
+        snap.message || "Finish recording and Produce your current free beat first.",
+        {
+          details: {
+            code: snap.sequentialBlocked ? "SEQUENTIAL_FREE_BLOCKED" : "FREE_COUNT_EXCEEDED",
+            remaining: snap.remaining,
+            usedSuccessful: snap.usedSuccessful,
+            freeLimit: snap.freeLimit,
+            finishedFreeProjects: snap.finishedFreeProjects,
+          },
+        }
+      );
     }
     return snap;
   }

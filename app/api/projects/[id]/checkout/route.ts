@@ -78,7 +78,14 @@ export async function POST(
   }
 
   const currency = paystackCurrency();
-  const usd = planChargeUsd(plan, interval);
+  let usd = planChargeUsd(plan, interval);
+  // After free beats are used, AP-generated beat cost is added to session download price
+  if (plan === "session") {
+    const beatCost = Number(meta.beat_cost_usd) || 0;
+    if (meta.beat_generation_billable === true && beatCost > 0) {
+      usd = Math.round((usd + beatCost) * 100) / 100;
+    }
+  }
   const major = usdToChargeMajor(usd);
   const amountMinor = toPaystackAmount(major, currency);
 
@@ -118,6 +125,8 @@ export async function POST(
     await service.from("projects").update({ metadata: meta }).eq("id", projectId);
 
     return NextResponse.json({
+      amountUsd: usd,
+      beatCostUsd: plan === "session" && meta.beat_generation_billable ? Number(meta.beat_cost_usd) || 0 : 0,
       checkoutUrl: init.authorization_url,
       reference: init.reference,
       accessCode: init.access_code,
