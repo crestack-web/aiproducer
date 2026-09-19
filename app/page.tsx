@@ -34,7 +34,7 @@ export default function WelcomePage() {
             <span className="theme-slot" aria-label="Theme">
               <ThemeToggle compact />
             </span>
-            <Link href="/auth?mode=login&next=/onboarding" className="ghost">Log in</Link>
+            <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>
         </div>

@@ -84,6 +84,36 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
+  // Onboarding is one-time: completed → leave /onboarding; incomplete → enter from /app once
+  if (user && (isOnboarding || path.startsWith("/app"))) {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("onboarding_completed_at")
+        .eq("id", user.id)
+        .maybeSingle();
+      const done = Boolean(
+        profile &&
+          (profile as { onboarding_completed_at?: string | null }).onboarding_completed_at
+      );
+      if (isOnboarding && done) {
+        const redirect = request.nextUrl.clone();
+        redirect.pathname = "/app";
+        redirect.search = "";
+        return NextResponse.redirect(redirect);
+      }
+      // Only force onboarding on top-level /app (not deep studio/console links mid-session)
+      if (path === "/app" && !done) {
+        const redirect = request.nextUrl.clone();
+        redirect.pathname = "/onboarding";
+        redirect.search = "";
+        return NextResponse.redirect(redirect);
+      }
+    } catch {
+      /* fail open */
+    }
+  }
+
   return supabaseResponse;
 }
 

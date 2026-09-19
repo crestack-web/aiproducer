@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -12,7 +12,32 @@ const ROLES = [
   { value: "both", label: "Both / hybrid", desc: "Sing and rap — flexible sessions" },
   { value: "creator", label: "Creator / content", desc: "Songs for social, YouTube, brand work" },
 ];
-const GENRES = ["R&B", "Afrobeats", "Hip-Hop", "Pop", "Amapiano", "Gospel"];
+const GENRES = [
+  "R&B",
+  "Afrobeats",
+  "Amapiano",
+  "Hip-Hop",
+  "Trap",
+  "Drill",
+  "Pop",
+  "Gospel",
+  "Highlife",
+  "Afro-fusion",
+  "Dancehall",
+  "Reggaeton",
+  "Soul",
+  "Neo-soul",
+  "Lo-fi",
+  "House",
+  "EDM",
+  "Indie",
+  "Rock",
+  "Jazz",
+  "Country",
+  "Folk",
+  "Latin",
+  "Hyperpop",
+];
 const LEVELS = [
   { value: "beginner", label: "I’m new", desc: "I’ve never finished a full song in a studio" },
   { value: "some", label: "Some experience", desc: "I’ve recorded before, but mixing is hard" },
@@ -44,6 +69,44 @@ export default function OnboardingPage() {
   const [level, setLevel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  // Already finished onboarding → never show this flow again
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) {
+          if (!cancelled) router.replace("/auth?mode=login&next=/app");
+          return;
+        }
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("onboarding_completed_at")
+          .eq("id", user.id)
+          .maybeSingle();
+        const done = Boolean(
+          (profile as { onboarding_completed_at?: string | null } | null)
+            ?.onboarding_completed_at
+        );
+        if (done && !cancelled) {
+          router.replace("/app");
+          return;
+        }
+      } catch {
+        /* stay on onboarding */
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const canContinue = useMemo(() => {
     if (step === 0) return name.trim().length >= 2;
@@ -119,6 +182,19 @@ export default function OnboardingPage() {
   }
 
   const meta = STEP_META[step];
+
+  if (checking) {
+    return (
+      <>
+        <style>{css}</style>
+        <div className="ob-root">
+          <div className="ob-shell" style={{ textAlign: "center", color: "#9B96A3" }}>
+            Loading…
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -295,7 +371,7 @@ const css = `
   border-color:rgba(240,188,128,.5);background:rgba(240,188,128,.1);
   box-shadow:0 0 0 1px rgba(240,188,128,.15);
 }
-.ob-genres{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ob-genres{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-height:min(52vh,420px);overflow-y:auto;padding-right:4px}
 .ob-chip{
   padding:16px 12px;border-radius:14px;cursor:pointer;font-family:inherit;
   border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);
@@ -322,6 +398,7 @@ const css = `
 }
 .ob-next:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
 @media (min-width:520px){
+  .ob-genres{grid-template-columns:1fr 1fr 1fr}
   .ob-shell{padding:32px 28px 40px;min-height:auto;margin:40px 0;border-radius:24px;
     border:1px solid rgba(255,255,255,.07);background:rgba(12,11,16,.9);
     box-shadow:0 24px 64px rgba(0,0,0,.35)}

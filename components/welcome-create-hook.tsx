@@ -102,7 +102,8 @@ export function WelcomeCreateHook() {
   }
 
   function authHref(mode: "signup" | "login") {
-    const q = new URLSearchParams({ mode, next: "/onboarding" });
+    // Signup → onboarding once; login → app (callback/middleware send incomplete profiles to onboarding)
+    const q = new URLSearchParams({ mode, next: mode === "signup" ? "/onboarding" : "/app" });
     if (prompt.trim()) q.set("intent", prompt.trim().slice(0, 120));
     if (beatFile) q.set("beat", "1");
     return `/auth?${q.toString()}`;
@@ -118,7 +119,7 @@ export function WelcomeCreateHook() {
       const { error: oauthErr } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/onboarding")}`,
+          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/app")}`,
           queryParams: { access_type: "offline", prompt: "consent" },
         },
       });
