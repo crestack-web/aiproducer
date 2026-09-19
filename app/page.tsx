@@ -276,6 +276,14 @@ export default function WelcomePage() {
             </Link>
             <span className="footer-tag">Your voice. Produced.</span>
           </div>
+          <nav className="footer-legal" aria-label="Legal">
+            <Link href="/privacy" className="footer-legal-link">
+              Privacy Policy
+            </Link>
+            <Link href="/terms" className="footer-legal-link">
+              Terms of Service
+            </Link>
+          </nav>
           <div className="footer-socials">
             <a
               href="https://www.instagram.com/Apstudio.site"
@@ -408,6 +416,7 @@ html[data-theme="light"] .chip{
     color:var(--text);
   }
   .site-footer-inner{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px 28px;
     max-width:1200px;margin:0 auto;width:100%;
     padding:28px 24px 36px;box-sizing:border-box;
     display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;
@@ -419,6 +428,14 @@ html[data-theme="light"] .chip{
   }
   .site-footer .footer-logo:hover{opacity:.9}
   .site-footer .footer-tag{font-size:13px;color:var(--muted)}
+  .site-footer .footer-legal{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+  .site-footer .footer-legal-link{
+    font-size:13px;font-weight:600;color:var(--muted);text-decoration:none;
+    padding:6px 0;border-bottom:1px solid transparent;
+  }
+  .site-footer .footer-legal-link:hover{color:var(--brass);border-bottom-color:rgba(231,169,97,.35)}
+  html[data-theme="light"] .site-footer .footer-legal-link{color:var(--muted)}
+  html[data-theme="light"] .site-footer .footer-legal-link:hover{color:var(--brass)}
   .site-footer .footer-socials{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
   .site-footer .social-link{
     display:inline-flex;align-items:center;gap:8px;
