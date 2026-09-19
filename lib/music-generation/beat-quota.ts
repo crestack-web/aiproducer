@@ -373,9 +373,8 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
   // Jobs + projects: use the higher of successful jobs vs free project rows
   // (jobs can lag metadata; metadata is set on COMPLETED)
   const freeUsed = Math.max(usedSuccessful, freeProjects.lifetimeFree);
+  // freeLimit already = freeBaseAllowance + downloadUnlocks (set above)
   const freeSlotsLeft = Math.max(0, freeBaseAllowance - freeUsed);
-  // downloadUnlocks expands free allowance only after real paid downloads
-  const freeLimit = freeBaseAllowance + downloadUnlocks;
   const slotsLeftWithUnlocks = Math.max(0, freeLimit - freeUsed);
 
   // Hard sequential rule: any unfinished free beat blocks the next free gen.
