@@ -198,6 +198,62 @@ export async function enqueueMusicGeneration(
     .maybeSingle();
   if (!project) throw new MusicGenerationError("UNAUTHORIZED", "Project not found or not owned by user");
 
+  // Stamp free-slot metadata immediately so sequential gate sees an open free project
+  // even before the job reaches COMPLETED (prevents parallel free gens).
+  if (!quotaSnap.isPaid && !quotaSnap.billableGeneration) {
+    try {
+      const { data: projRow } = await supabase
+        .from("projects")
+        .select("metadata")
+        .eq("id", req.projectId)
+        .maybeSingle();
+      const prevMeta =
+        projRow?.metadata && typeof projRow.metadata === "object"
+          ? (projRow.metadata as Record<string, unknown>)
+          : {};
+      await supabase
+        .from("projects")
+        .update({
+          metadata: {
+            ...prevMeta,
+            free_beat_generation: true,
+            free_beat_slot: true,
+            beat_generation_billable: false,
+          },
+        })
+        .eq("id", req.projectId)
+        .eq("user_id", req.userId);
+    } catch (e) {
+      console.warn("[music-gen] free slot stamp failed", e);
+    }
+  } else if (!quotaSnap.isPaid && quotaSnap.billableGeneration) {
+    try {
+      const { data: projRow } = await supabase
+        .from("projects")
+        .select("metadata")
+        .eq("id", req.projectId)
+        .maybeSingle();
+      const prevMeta =
+        projRow?.metadata && typeof projRow.metadata === "object"
+          ? (projRow.metadata as Record<string, unknown>)
+          : {};
+      await supabase
+        .from("projects")
+        .update({
+          metadata: {
+            ...prevMeta,
+            free_beat_generation: false,
+            free_beat_slot: false,
+            beat_generation_billable: true,
+          },
+        })
+        .eq("id", req.projectId)
+        .eq("user_id", req.userId);
+    } catch {
+      /* ignore */
+    }
+  }
+
   const plan = createMusicGenerationPlan({
     genre: req.genre ?? project.genre,
     mood: req.mood ?? project.mood,

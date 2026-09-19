@@ -1122,7 +1122,7 @@ function StudioPageInner() {
             <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
               Free AP beats
             </div>
-            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time (up to{" "}
+            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time; next unlocks after you download a produced song (up to{" "}
             <strong style={{ color: C.text }}>{Math.max(1, Math.round(FREE_MAX_SEC / 60))} minutes</strong> each).
             Generate one at a time — the next free beat unlocks after you{" "}
             <strong style={{ color: C.text }}>record and Produce</strong> the current one.

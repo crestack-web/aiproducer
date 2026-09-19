@@ -210,35 +210,67 @@ async function countDownloadUnlocks(userId: string): Promise<number> {
 }
 
 
+type FreeProjectCounts = {
+  /** Free-slot projects still open (no paid download unlock) */
+  openFree: number;
+  /** Free-slot projects unlocked via paid download */
+  unlockedFree: number;
+  /** open + unlocked */
+  lifetimeFree: number;
+  /** True when we could not read projects — caller should fail closed */
+  readFailed: boolean;
+};
+
 /**
- * Free AI beats that fully completed the product loop:
- * record → produce → pay/download (beat_unlock_granted).
- * Produce alone is not enough — prevents free-tier spam of unused beats.
+ * Free AI beat projects from project metadata (authoritative for sequential gate).
+ * A free slot is "finished" only after paid download unlock — not after Produce alone.
  */
-async function countFinishedFreeBeatProjects(userId: string): Promise<number> {
+async function countFreeBeatProjects(userId: string): Promise<FreeProjectCounts> {
+  const empty: FreeProjectCounts = {
+    openFree: 0,
+    unlockedFree: 0,
+    lifetimeFree: 0,
+    readFailed: false,
+  };
   const supabase = createServiceClient();
   try {
     const { data, error } = await supabase
       .from("projects")
       .select("id, status, metadata")
       .eq("user_id", userId)
-      .limit(300);
+      .limit(400);
     if (error) {
-      console.warn("[beat-quota] finished free projects", error.message);
-      return 0;
+      console.warn("[beat-quota] free projects read failed", error.message);
+      return { ...empty, readFailed: true };
     }
-    let n = 0;
+    let openFree = 0;
+    let unlockedFree = 0;
     for (const row of data || []) {
       const m = (row as { metadata?: Record<string, unknown> }).metadata || {};
-      if (m.free_beat_generation !== true && m.free_beat_slot !== true) continue;
-      // Must have paid download / session unlock for this project
-      if (m.beat_unlock_granted === true || m.download_unlocked === true) {
-        n += 1;
-      }
+      const isFree =
+        m.free_beat_generation === true ||
+        m.free_beat_slot === true ||
+        // Legacy free gens: AI beat project not marked billable
+        (m.beat_generation_billable !== true &&
+          (m.beat_source === "ai" || m.has_ai_beat === true || m.generated_beat === true));
+      // Prefer explicit free flags; also treat projects with a completed free job path
+      const markedFree = m.free_beat_generation === true || m.free_beat_slot === true;
+      if (!markedFree && !isFree) continue;
+      // Only count explicitly marked free slots for hard quota (avoid false positives)
+      if (!markedFree) continue;
+      const unlocked = m.beat_unlock_granted === true || m.download_unlocked === true;
+      if (unlocked) unlockedFree += 1;
+      else openFree += 1;
     }
-    return n;
-  } catch {
-    return 0;
+    return {
+      openFree,
+      unlockedFree,
+      lifetimeFree: openFree + unlockedFree,
+      readFailed: false,
+    };
+  } catch (e) {
+    console.warn("[beat-quota] free projects exception", e);
+    return { ...empty, readFailed: true };
   }
 }
 
@@ -247,18 +279,26 @@ async function hasInFlightBeatGeneration(userId: string): Promise<boolean> {
   if (!userId) return false;
   const supabase = createServiceClient();
   try {
+    // Must match statuses written by lib/music-generation/service.ts
     const { count, error } = await supabase
       .from("music_generation_jobs")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
-      .in("status", ["PENDING", "QUEUED", "RUNNING", "PROCESSING", "STARTED", "IN_PROGRESS"]);
+      .in("status", [
+        "CREATED",
+        "SUBMITTING",
+        "GENERATING",
+        "DOWNLOADING",
+        "PROCESSING",
+      ]);
     if (error) {
       console.warn("[beat-quota] in-flight check", error.message);
-      return false;
+      // Fail closed: block parallel spam if we cannot verify
+      return true;
     }
     return (count || 0) > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -291,8 +331,9 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
   paidSecondsBudget = isPaid ? getPaidSecondsBudgetForPlan(planName) : 0;
   const usedSuccessful = await countSuccessfulGens(userId);
   const downloadUnlocks = await countDownloadUnlocks(userId);
-  const freeLimit = freeBaseAllowance + downloadUnlocks;
   const usedSecondsThisMonth = await sumSuccessfulSecondsThisMonth(userId);
+  // freeLimit for paid branch display; free branch recomputes with project counts
+  const freeLimit = freeBaseAllowance + downloadUnlocks;
 
   if (isPaid) {
     const remainingSeconds = Math.max(0, paidSecondsBudget - usedSecondsThisMonth);
@@ -318,13 +359,22 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     };
   }
 
-  const finishedFree = await countFinishedFreeBeatProjects(userId);
-  const freeSlotsLeft = Math.max(0, freeLimit - usedSuccessful);
-  // Sequential: next free gen only after prior free projects are produced
-  const sequentialBlocked =
-    freeSlotsLeft > 0 && usedSuccessful > 0 && finishedFree < usedSuccessful;
+  const freeProjects = await countFreeBeatProjects(userId);
+  // Jobs + projects: use the higher of successful jobs vs free project rows
+  // (jobs can lag metadata; metadata is set on COMPLETED)
+  const freeUsed = Math.max(usedSuccessful, freeProjects.lifetimeFree);
+  const freeSlotsLeft = Math.max(0, freeBaseAllowance - freeUsed);
+  // downloadUnlocks expands free allowance only after real paid downloads
+  const freeLimit = freeBaseAllowance + downloadUnlocks;
+  const slotsLeftWithUnlocks = Math.max(0, freeLimit - freeUsed);
 
-  if (sequentialBlocked) {
+  // Hard sequential rule: any unfinished free beat blocks the next free gen.
+  // Prefer project metadata; also use job count vs unlocks when metadata was missing on older projects.
+  const sequentialBlocked =
+    freeProjects.openFree > 0 ||
+    (usedSuccessful > freeProjects.unlockedFree && freeProjects.unlockedFree < freeBaseAllowance);
+
+  if (freeProjects.readFailed) {
     return {
       allowed: false,
       isPaid: false,
@@ -335,43 +385,67 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
       usedSecondsThisMonth,
       paidSecondsBudget,
       freeMaxDurationSec,
-      remaining: freeSlotsLeft,
-      freeSlotsLeft,
+      remaining: 0,
+      freeSlotsLeft: 0,
       sequentialBlocked: true,
-      finishedFreeProjects: finishedFree,
+      finishedFreeProjects: freeProjects.unlockedFree,
       billableGeneration: false,
       message:
-        "Use your current free beat first: record, Produce, then download (pay to unlock). Then your next free beat unlocks. One generation at a time.",
+        "Could not verify your free beat limit. Please try again in a moment.",
       upgradePath: "finish_download",
       costPerSecUsd,
     };
   }
 
-  if (freeSlotsLeft > 0) {
+  if (sequentialBlocked) {
     return {
-      allowed: true,
+      allowed: false,
       isPaid: false,
-      usedSuccessful,
+      usedSuccessful: freeUsed,
       freeBaseAllowance,
       downloadUnlocks,
       freeLimit,
       usedSecondsThisMonth,
       paidSecondsBudget,
       freeMaxDurationSec,
-      remaining: freeSlotsLeft,
-      freeSlotsLeft,
+      remaining: slotsLeftWithUnlocks,
+      freeSlotsLeft: slotsLeftWithUnlocks,
+      sequentialBlocked: true,
+      finishedFreeProjects: freeProjects.unlockedFree,
+      billableGeneration: false,
+      message:
+        "Finish your current free beat first: record, Produce, then download (pay). That unlocks your next free beat. You get 3 free beats total — one at a time.",
+      upgradePath: "finish_download",
+      costPerSecUsd,
+    };
+  }
+
+  // Still have free slots and no open free beat
+  if (slotsLeftWithUnlocks > 0) {
+    return {
+      allowed: true,
+      isPaid: false,
+      usedSuccessful: freeUsed,
+      freeBaseAllowance,
+      downloadUnlocks,
+      freeLimit,
+      usedSecondsThisMonth,
+      paidSecondsBudget,
+      freeMaxDurationSec,
+      remaining: slotsLeftWithUnlocks,
+      freeSlotsLeft: slotsLeftWithUnlocks,
       sequentialBlocked: false,
-      finishedFreeProjects: finishedFree,
+      finishedFreeProjects: freeProjects.unlockedFree,
       billableGeneration: false,
       costPerSecUsd,
     };
   }
 
-  // Free exhausted — still allow generation; cost is added at song download
+  // Free allowance exhausted — do NOT auto-generate. Require explicit billable or subscription.
   return {
-    allowed: true,
+    allowed: false,
     isPaid: false,
-    usedSuccessful,
+    usedSuccessful: freeUsed,
     freeBaseAllowance,
     downloadUnlocks,
     freeLimit,
@@ -381,10 +455,10 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     remaining: 0,
     freeSlotsLeft: 0,
     sequentialBlocked: false,
-    finishedFreeProjects: finishedFree,
+    finishedFreeProjects: freeProjects.unlockedFree,
     billableGeneration: true,
     message:
-      "Free beats used. New beats are still available — the beat cost is added to your song download after you Produce.",
+      "You've used your 3 free beats. Subscribe to Creator/Pro, or continue with a paid beat (cost added when you download the song).",
     upgradePath: "finish_download",
     costPerSecUsd,
   };
