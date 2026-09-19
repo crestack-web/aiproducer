@@ -210,7 +210,11 @@ async function countDownloadUnlocks(userId: string): Promise<number> {
 }
 
 
-/** Free AI beat projects that reached produce/complete (unlocks next sequential free gen). */
+/**
+ * Free AI beats that fully completed the product loop:
+ * record → produce → pay/download (beat_unlock_granted).
+ * Produce alone is not enough — prevents free-tier spam of unused beats.
+ */
 async function countFinishedFreeBeatProjects(userId: string): Promise<number> {
   const supabase = createServiceClient();
   try {
@@ -227,20 +231,34 @@ async function countFinishedFreeBeatProjects(userId: string): Promise<number> {
     for (const row of data || []) {
       const m = (row as { metadata?: Record<string, unknown> }).metadata || {};
       if (m.free_beat_generation !== true && m.free_beat_slot !== true) continue;
-      const st = String((row as { status?: string }).status || "").toLowerCase();
-      if (
-        st === "complete" ||
-        st === "completed" ||
-        st === "produced" ||
-        st === "mastering" ||
-        m.has_master === true
-      ) {
+      // Must have paid download / session unlock for this project
+      if (m.beat_unlock_granted === true || m.download_unlocked === true) {
         n += 1;
       }
     }
     return n;
   } catch {
     return 0;
+  }
+}
+
+/** True if a beat generation job is already running for this user. */
+async function hasInFlightBeatGeneration(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  const supabase = createServiceClient();
+  try {
+    const { count, error } = await supabase
+      .from("music_generation_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("status", ["PENDING", "QUEUED", "RUNNING", "PROCESSING", "STARTED", "IN_PROGRESS"]);
+    if (error) {
+      console.warn("[beat-quota] in-flight check", error.message);
+      return false;
+    }
+    return (count || 0) > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -323,8 +341,8 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
       finishedFreeProjects: finishedFree,
       billableGeneration: false,
       message:
-        "Record and Produce your current free beat before generating the next free one. You still have free slots left after you finish.",
-      upgradePath: "finish_produce",
+        "Use your current free beat first: record, Produce, then download (pay to unlock). Then your next free beat unlocks. One generation at a time.",
+      upgradePath: "finish_download",
       costPerSecUsd,
     };
   }
@@ -377,6 +395,19 @@ export async function assertBeatGenAllowed(
   durationSec?: number,
   opts?: { forceBillable?: boolean }
 ): Promise<BeatQuotaSnapshot> {
+  if (await hasInFlightBeatGeneration(userId)) {
+    throw new MusicGenerationError(
+      "LIMIT_EXCEEDED",
+      "A beat is already generating. Wait for it to finish before starting another — one at a time.",
+      {
+        details: {
+          code: "BEAT_GEN_IN_FLIGHT",
+          canBillable: false,
+          canSubscribe: false,
+        },
+      }
+    );
+  }
   const snap = await getBeatGenQuota(userId);
   const want = Math.max(5, Math.min(240, Math.round(durationSec || DEFAULT_FULL_BEAT_SEC)));
   const forceBillable = Boolean(opts?.forceBillable);
@@ -412,18 +443,40 @@ export async function assertBeatGenAllowed(
         }
       );
     }
-    // Sequential free gate — unless user accepts billable generation (cost on song download)
+    // Sequential free gate: must finish current free beat (record → produce → paid download)
+    // before the next free slot. forceBillable still allowed only when free slots are exhausted
+    // (billableGeneration) — not to skip an unfinished free beat.
+    if (snap.sequentialBlocked && !snap.isPaid) {
+      throw new MusicGenerationError(
+        "LIMIT_EXCEEDED",
+        snap.message ||
+          "Finish your current free beat first: record, Produce, then download (pay). One free beat at a time.",
+        {
+          details: {
+            code: "SEQUENTIAL_FREE_BLOCKED",
+            remaining: snap.remaining,
+            usedSuccessful: snap.usedSuccessful,
+            freeLimit: snap.freeLimit,
+            finishedFreeProjects: snap.finishedFreeProjects,
+            estimatedCostUsd: estimateBeatCostUsd(want),
+            canBillable: false,
+            canSubscribe: true,
+          },
+        }
+      );
+    }
     if (
       !forceBillable &&
-      (snap.sequentialBlocked || (!snap.allowed && !snap.billableGeneration))
+      !snap.allowed &&
+      !snap.billableGeneration
     ) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
         snap.message ||
-          "Record and Produce your current free beat before generating the next free one — or continue with a paid beat (cost added at download).",
+          "Free beat limit reached. Subscribe or continue with a paid beat (cost added at download).",
         {
           details: {
-            code: snap.sequentialBlocked ? "SEQUENTIAL_FREE_BLOCKED" : "FREE_COUNT_EXCEEDED",
+            code: "FREE_COUNT_EXCEEDED",
             remaining: snap.remaining,
             usedSuccessful: snap.usedSuccessful,
             freeLimit: snap.freeLimit,

@@ -13,6 +13,7 @@ import {
 } from "@/components/beat-preview-player";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { useTheme } from "@/lib/theme";
+import { ApPaywall } from "@/components/ap-paywall";
 
 const GENRES = [
   "R&B",
@@ -182,6 +183,8 @@ function StudioPageInner() {
   const [versionsProjectId, setVersionsProjectId] = useState<string | null>(null);
   const [selectingBeatId, setSelectingBeatId] = useState<string | null>(null);
   const [editGateModal, setEditGateModal] = useState(false);
+  const [subscribePaywallOpen, setSubscribePaywallOpen] = useState(false);
+  const [subscribePaywallProjectId, setSubscribePaywallProjectId] = useState<string | null>(null);
   const [isPaidPlan, setIsPaidPlan] = useState(false);
 
 
@@ -495,7 +498,7 @@ function StudioPageInner() {
   }
 
   async function createAndGenerate(opts?: { billable?: boolean }) {
-
+    if (creating) return; // one generation at a time (client)
     setCreating(true);
     setError(null);
     setLimitMessage(null);
@@ -582,8 +585,10 @@ function StudioPageInner() {
                 ? j.error
                 : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
             setLimitMessage(msg);
-            if (
-              details.code === "SEQUENTIAL_FREE_BLOCKED" ||
+            if (details.code === "SEQUENTIAL_FREE_BLOCKED") {
+              setLimitMessage(msg);
+              // Do not offer another paid spam path — must finish current free beat first
+            } else if (
               details.code === "FREE_COUNT_EXCEEDED" ||
               details.canBillable
             ) {
@@ -594,6 +599,8 @@ function StudioPageInner() {
                     ? details.estimatedCostUsd
                     : Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
               });
+            } else if (details.code === "BEAT_GEN_IN_FLIGHT") {
+              setLimitMessage(msg);
             }
             throw new Error(msg);
           }
@@ -1115,7 +1122,7 @@ function StudioPageInner() {
             <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
               Free AP beats
             </div>
-            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> (up to{" "}
+            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time (up to{" "}
             <strong style={{ color: C.text }}>{Math.max(1, Math.round(FREE_MAX_SEC / 60))} minutes</strong> each).
             Generate one at a time — the next free beat unlocks after you{" "}
             <strong style={{ color: C.text }}>record and Produce</strong> the current one.
@@ -1291,10 +1298,16 @@ function StudioPageInner() {
               />
               <button
                 type="button"
-                disabled={tweaking || !tweakPrompt.trim()}
+                disabled={tweaking || (isPaidPlan && !tweakPrompt.trim())}
                 onClick={() => {
                   if (!isPaidPlan) {
-                    setEditGateModal(true);
+                    // Open subscription paywall (not a dead-end profile redirect only)
+                    if (readyBeat?.projectId) {
+                      setSubscribePaywallProjectId(readyBeat.projectId);
+                      setSubscribePaywallOpen(true);
+                    } else {
+                      setEditGateModal(true);
+                    }
                     return;
                   }
                   void tweakReadyBeat();
@@ -1310,7 +1323,7 @@ function StudioPageInner() {
                   fontSize: 13,
                   cursor: tweaking ? "wait" : "pointer",
                   fontFamily: "inherit",
-                  opacity: tweaking || (!tweakPrompt.trim() && isPaidPlan) ? 0.55 : 1,
+                  opacity: tweaking || (isPaidPlan && !tweakPrompt.trim()) ? 0.55 : 1,
                 }}
               >
                 {tweaking
@@ -1661,7 +1674,12 @@ function StudioPageInner() {
               type="button"
               onClick={() => {
                 setEditGateModal(false);
-                router.push("/app?tab=profile");
+                if (readyBeat?.projectId) {
+                  setSubscribePaywallProjectId(readyBeat.projectId);
+                  setSubscribePaywallOpen(true);
+                } else {
+                  router.push("/app?tab=profile");
+                }
               }}
               style={{
                 width: "100%",
@@ -1677,7 +1695,7 @@ function StudioPageInner() {
                 marginBottom: 8,
               }}
             >
-              Subscribe to monthly plans
+              View subscription plans
             </button>
             <button
               type="button"
@@ -1722,6 +1740,37 @@ function StudioPageInner() {
           </div>
         </div>
       )}
+
+
+      {subscribePaywallOpen && subscribePaywallProjectId ? (
+        <ApPaywall
+          open={subscribePaywallOpen}
+          onClose={() => {
+            setSubscribePaywallOpen(false);
+            setSubscribePaywallProjectId(null);
+          }}
+          projectId={subscribePaywallProjectId}
+          songTitle={readyBeat?.title || "Your song"}
+          onUnlocked={() => {
+            setSubscribePaywallOpen(false);
+            setSubscribePaywallProjectId(null);
+            // Refresh plan flags after checkout return
+            try {
+              window.location.reload();
+            } catch {
+              /* ignore */
+            }
+          }}
+          colors={{
+            text: C.text,
+            textMuted: C.textMuted,
+            surface: C.surface || "#16140f",
+            border: C.border,
+            accent: C.brass,
+            bg: C.bg,
+          }}
+        />
+      ) : null}
 
 {upgradeModal && (
         <div
