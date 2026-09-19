@@ -102,7 +102,7 @@ export async function middleware(request: NextRequest) {
         redirect.search = "";
         return NextResponse.redirect(redirect);
       }
-      // Only force onboarding on top-level /app (not deep studio/console links mid-session)
+      // Only force onboarding on top-level /app (not deep studio/console/admin links)
       if (path === "/app" && !done) {
         const redirect = request.nextUrl.clone();
         redirect.pathname = "/onboarding";
