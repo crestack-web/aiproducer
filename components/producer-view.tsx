@@ -140,6 +140,37 @@ function humanProduceStage(stage: string | null | undefined): string {
   return "AP is producing your song…";
 }
 
+function humanProduceError(raw: string | null | undefined, stage?: string | null): string {
+  const s = String(raw || "").trim();
+  const stageHint = stage ? ` (stage: ${stage})` : "";
+  if (!s) {
+    return `Production stopped before a master was ready${stageHint}. Try Produce again — if it keeps failing, re-record the quietest section and ensure the beat is loaded.`;
+  }
+  // Already user-facing AP copy
+  if (/^AP /i.test(s) || /record/i.test(s) || /beat/i.test(s) || /vocal/i.test(s)) {
+    return s.replace(/\bRoEx\b/gi, "AP").slice(0, 220);
+  }
+  if (/RoEx produce path not loaded/i.test(s)) {
+    return "Production engine was misconfigured. Please try Produce again.";
+  }
+  if (/No vocal|no saved vocal|no recordings/i.test(s)) {
+    return "No saved vocal take found. Record at least one section, then Produce.";
+  }
+  if (/Beat validation|add a beat|no beat/i.test(s)) {
+    return "Beat is missing or invalid. Add or regenerate a beat, then Produce.";
+  }
+  if (/Could not decode|decode any vocal/i.test(s)) {
+    return "Could not read your vocal files. Re-save a take in Review, then Produce again.";
+  }
+  if (/timeout|TIMED_OUT|deadline|maxDuration/i.test(s)) {
+    return "Production timed out. Tap Produce again — progress usually resumes.";
+  }
+  if (/storage|upload|download|not found|404/i.test(s)) {
+    return "Could not load audio from storage. Check your connection and try Produce again.";
+  }
+  return s.replace(/\bRoEx\b/gi, "AP").replace(/\bmixer\b/gi, "production").slice(0, 220);
+}
+
 function formatPlayhead(ms: number): string {
   const totalSec = Math.max(0, ms / 1000);
   const m = Math.floor(totalSec / 60);
@@ -2640,10 +2671,7 @@ export function ProducerView({
           if (jr.ok) {
             if (jj.stage) setProduceStage(String(jj.stage));
             if (jj.status === "failed" || jj.status === "FAILED") {
-              const raw = jj.error || "AP couldn’t finish producing this version.";
-              setProduceError(
-                String(raw).replace(/\bRoEx\b/gi, "AP").replace(/\bmixer\b/gi, "production").slice(0, 180)
-              );
+              setProduceError(humanProduceError(jj.error, jj.stage));
               setProduceUi("failed");
               return "failed";
             }
@@ -2681,13 +2709,7 @@ export function ProducerView({
       const projectStatus = String(st.project?.status || st.status || "").toLowerCase();
 
       if (jobStatus === "failed" || projectStatus === "failed") {
-        const raw = produceJob?.error || "AP couldn’t finish producing this version.";
-        // Strip provider-ish language
-        const clean = String(raw)
-          .replace(/\bRoEx\b/gi, "AP")
-          .replace(/\bmixer\b/gi, "production")
-          .slice(0, 180);
-        setProduceError(clean || "AP couldn’t finish producing this version.");
+        setProduceError(humanProduceError(produceJob?.error, produceJob?.stage));
         setProduceUi("failed");
         return "failed";
       }
@@ -2779,6 +2801,7 @@ export function ProducerView({
           type?: string;
           status?: string;
           stage?: string;
+          error?: string;
         }[];
         const produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
         const js = (produceJob?.status || "").toLowerCase();
@@ -2790,7 +2813,12 @@ export function ProducerView({
           scheduleProducePoll();
         } else if (js === "failed") {
           setProduceUi("failed");
-          setProduceError("AP couldn’t finish this production.");
+          setProduceError(
+            humanProduceError(
+              (produceJob as { error?: string } | undefined)?.error,
+              produceJob?.stage
+            )
+          );
           setProduceStage("failed");
         } else if (st.master_url) {
           setMasterUrl(String(st.master_url));
@@ -5068,13 +5096,12 @@ export function ProducerView({
             {produceUi === "failed" ? (
               <>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#F07167", marginBottom: 6 }}>
-                  AP couldn’t finish producing this version
+                  Production didn’t finish
                 </div>
-                {produceError ? (
-                  <div style={{ fontSize: 12, color: mutedText, marginBottom: 10, lineHeight: 1.4 }}>
-                    {produceError}
-                  </div>
-                ) : null}
+                <div style={{ fontSize: 12, color: mutedText, marginBottom: 10, lineHeight: 1.4 }}>
+                  {produceError ||
+                    humanProduceError(null, produceStage)}
+                </div>
                 <div style={{ display: "flex", gap: 8 }}>
                 <button
                   type="button"

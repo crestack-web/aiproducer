@@ -23,21 +23,16 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
   let out = asOutput(job);
   const userId = (out.user_id as string) || "";
 
+  // RoEx is optional; this build's tick always runs the internal AP engine.
+  // Never fail the job solely because AUDIO_PIPELINE_MODE=roex — that produced
+  // "AP couldn't finish" with a confusing RoEx-path error in production.
   if (mode === "roex") {
     logProduce({
-      event: "tick_roex_not_in_impl",
+      event: "tick_roex_fallback_to_ap",
       jobId,
       projectId,
-      note: "RoEx path not in minimal tick; use AP mode",
+      note: "RoEx tick not bundled; running internal AP engine",
     });
-    await patchJob(supabase, jobId, {
-      status: "failed",
-      stage: "failed",
-      progress: 100,
-      error: "RoEx produce path not loaded in this build — use AP mode",
-      completed_at: new Date().toISOString(),
-    });
-    return job;
   }
 
   logProduce({
