@@ -3249,6 +3249,8 @@ export function ProducerView({
           flexWrap: "nowrap",
           overflowX: isNarrow ? "auto" : "visible",
           WebkitOverflowScrolling: "touch",
+          // Keep toolbar controls at intrinsic size while the row scrolls
+          scrollbarWidth: "none",
         }}
       >
         <a
@@ -3380,6 +3382,9 @@ export function ProducerView({
               ...iconBtn(border, surface, text),
               width: isNarrow ? 34 : 36,
               height: isNarrow ? 34 : 36,
+              minWidth: isNarrow ? 34 : 36,
+              minHeight: isNarrow ? 34 : 36,
+              flexShrink: 0,
               opacity: undoEnabled ? 1 : 0.35,
               cursor: undoEnabled ? "pointer" : "default",
               fontSize: 14,
@@ -3398,6 +3403,9 @@ export function ProducerView({
               ...iconBtn(border, surface, text),
               width: isNarrow ? 34 : 36,
               height: isNarrow ? 34 : 36,
+              minWidth: isNarrow ? 34 : 36,
+              minHeight: isNarrow ? 34 : 36,
+              flexShrink: 0,
               opacity: redoEnabled ? 1 : 0.35,
               cursor: redoEnabled ? "pointer" : "default",
               fontSize: 14,
@@ -3459,8 +3467,11 @@ export function ProducerView({
           onClick={() => void toggleConsoleRecord()}
           style={{
             ...iconBtn(border, surface, text),
-            width: isNarrow ? 36 : 40,
-            height: isNarrow ? 36 : 40,
+            width: isNarrow ? 40 : 44,
+            height: isNarrow ? 40 : 44,
+            minWidth: isNarrow ? 40 : 44,
+            minHeight: isNarrow ? 40 : 44,
+            flexShrink: 0,
             borderRadius: 999,
             color: "#F07167",
             boxShadow: isConsoleRecording ? "0 0 0 3px rgba(240,113,103,0.35)" : undefined,
@@ -3479,7 +3490,7 @@ export function ProducerView({
           />
         </button>
         {isConsoleRecording && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#F07167", fontVariantNumeric: "tabular-nums" }}>
               {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}
             </span>
@@ -6184,6 +6195,9 @@ function iconBtn(border: string, surface: string, text: string): React.CSSProper
   return {
     width: 40,
     height: 40,
+    minWidth: 40,
+    minHeight: 40,
+    flexShrink: 0,
     borderRadius: 12,
     border: `1px solid ${border}`,
     background: surface,
