@@ -100,7 +100,12 @@ const STYLE_PRESETS = [
 /** Beat length presets (seconds). Free tier covers ≤30s. */
 const LENGTH_PRESETS = [15, 30, 60, 120, 180, 240] as const;
 /** Estimated USD/sec — override via env on server; client mirror for preview. */
-const COST_PER_SEC_USD = 0.00583;
+/** $1.00 per 2 minutes (120s) — scales with selected length */
+const COST_PER_SEC_USD = 1 / 120;
+function estimateStudioBeatCostUsd(sec: number): number {
+  const s = Math.max(5, Math.min(240, Math.round(sec || 60)));
+  return Math.max(0.25, Math.round(s * COST_PER_SEC_USD * 100) / 100);
+}
 const FREE_MAX_SEC = 180;
 const FREE_GEN_COUNT = 3;
 type Project = {
@@ -585,22 +590,22 @@ function StudioPageInner() {
                 ? j.error
                 : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
             setLimitMessage(msg);
-            if (details.code === "SEQUENTIAL_FREE_BLOCKED") {
+            if (details.code === "BEAT_GEN_IN_FLIGHT") {
               setLimitMessage(msg);
-              // Do not offer another paid spam path — must finish current free beat first
             } else if (
+              details.code === "SEQUENTIAL_FREE_BLOCKED" ||
               details.code === "FREE_COUNT_EXCEEDED" ||
               details.canBillable
             ) {
+              const cost =
+                typeof details.estimatedCostUsd === "number"
+                  ? details.estimatedCostUsd
+                  : estimateStudioBeatCostUsd(beatDurationSec);
+              setLimitMessage(msg);
               setUpgradeModal({
                 message: msg,
-                estimatedCostUsd:
-                  typeof details.estimatedCostUsd === "number"
-                    ? details.estimatedCostUsd
-                    : Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+                estimatedCostUsd: cost,
               });
-            } else if (details.code === "BEAT_GEN_IN_FLIGHT") {
-              setLimitMessage(msg);
             }
             throw new Error(msg);
           }
@@ -1015,13 +1020,13 @@ function StudioPageInner() {
                         <>
                           <span style={{ color: C.brass }}>Free · up to {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min</span>
                           {" · "}
-                          Est. cost ~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                          Est. cost ~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}
                           {" · "}AP covers {FREE_GEN_COUNT} gens
                         </>
                       ) : (
                         <>
                           Above free {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min — shorten or upgrade · Est. ~$
-                          {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                          {estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}
                         </>
                       )}
                     </div>
@@ -1085,7 +1090,7 @@ function StudioPageInner() {
                   onClick={() =>
                     setUpgradeModal({
                       message: limitMessage,
-                      estimatedCostUsd: Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+                      estimatedCostUsd: estimateStudioBeatCostUsd(beatDurationSec),
                     })
                   }
                   style={{ ...chip(false), borderColor: C.brass, color: C.brass, fontWeight: 650 }}
@@ -1130,7 +1135,7 @@ function StudioPageInner() {
             <strong style={{ color: C.text }}>beat cost is added to your song download</strong> after Produce.
             <div style={{ marginTop: 6, color: C.text }}>
               This length (~{beatDurationSec}s) estimates{" "}
-              <strong>~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}</strong>
+              <strong>~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}</strong>
               {beatDurationSec <= FREE_MAX_SEC
                 ? " — free while sequential free slots remain"
                 : " — above free length; upgrade or shorten"}
@@ -1799,16 +1804,33 @@ function StudioPageInner() {
               color: C.text,
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Generate another beat?</div>
-            <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Free beat locked — paid path</div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
               {upgradeModal.message}
             </p>
-            <p style={{ margin: "0 0 14px", fontSize: 12.5, color: C.textMuted }}>
-              Continue with a paid beat (~$
-              {(upgradeModal.estimatedCostUsd ?? beatDurationSec * COST_PER_SEC_USD).toFixed(2)}) —
-              you can record and Produce now; download unlocks after payment for{" "}
-              <strong style={{ color: C.text }}>session + beat</strong>.
-            </p>
+            <div
+              style={{
+                margin: "0 0 14px",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.brass}`,
+                background: "rgba(231,169,97,0.1)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.brass, marginBottom: 4 }}>
+                Paid beat price
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>
+                $
+                {(upgradeModal.estimatedCostUsd ?? estimateStudioBeatCostUsd(beatDurationSec)).toFixed(2)}
+              </div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                Based on your selected length ({beatDurationSec}s). Pricing:{" "}
+                <strong style={{ color: C.text }}>$1.00 for 2 minutes</strong>
+                {" "}(30s ≈ $0.25 · 1 min ≈ $0.50 · 3 min ≈ $1.50).
+                Charged when you download the produced song.
+              </div>
+            </div>
             <button
               type="button"
               disabled={creating}
@@ -1831,7 +1853,7 @@ function StudioPageInner() {
                 marginBottom: 8,
               }}
             >
-              Generate paid beat
+              {`Generate paid beat · $${(upgradeModal.estimatedCostUsd ?? estimateStudioBeatCostUsd(beatDurationSec)).toFixed(2)}`}
             </button>
             <button
               type="button"

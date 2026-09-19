@@ -33,14 +33,24 @@ export const FREE_MAX_DURATION_SEC = envInt("BEAT_GEN_FREE_MAX_SEC", 180, 5);
 /** Default full beat length when user does not pick (seconds). */
 export const DEFAULT_FULL_BEAT_SEC = envInt("MUSIC_FULL_DURATION_SEC", 60, 5);
 
+/**
+ * Product pricing: $1.00 for a 2-minute (120s) beat.
+ * Longer/shorter scale linearly. Override with BEAT_PAID_USD_PER_120S or per-sec env.
+ */
 export function estimatedMusicCostUsdPerSec(): number {
-  const n = Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || 0.00583);
-  return Number.isFinite(n) && n >= 0 ? n : 0.00583;
+  const per120 = Number(process.env.BEAT_PAID_USD_PER_120S || 1);
+  const fromAnchor =
+    Number.isFinite(per120) && per120 > 0 ? per120 / 120 : 1 / 120;
+  const n = Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || process.env.BEAT_COST_PER_SEC_USD || "");
+  if (Number.isFinite(n) && n > 0) return n;
+  return fromAnchor;
 }
 
 export function estimateBeatCostUsd(durationSec: number): number {
-  const sec = Math.max(0, durationSec);
-  return Math.round(sec * estimatedMusicCostUsdPerSec() * 10000) / 10000;
+  const sec = Math.max(5, Math.min(240, Math.round(durationSec || 60)));
+  // Round to cents; minimum $0.25 so short previews still show a clear price
+  const raw = sec * estimatedMusicCostUsdPerSec();
+  return Math.max(0.25, Math.round(raw * 100) / 100);
 }
 
 /**
@@ -414,7 +424,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
       finishedFreeProjects: freeProjects.unlockedFree,
       billableGeneration: false,
       message:
-        "Finish your current free beat first: record, Produce, then download (pay). That unlocks your next free beat. You get 3 free beats total — one at a time.",
+        "Your next free beat unlocks after you download a produced song. Or generate a paid beat now — $1 for 2 minutes (scales with length).",
       upgradePath: "finish_download",
       costPerSecUsd,
     };
@@ -458,7 +468,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     finishedFreeProjects: freeProjects.unlockedFree,
     billableGeneration: true,
     message:
-      "You've used your 3 free beats. Subscribe to Creator/Pro, or continue with a paid beat (cost added when you download the song).",
+      "You've used your 3 free beats. Subscribe to Creator/Pro, or generate a paid beat — $1 for 2 minutes (scales with length).",
     upgradePath: "finish_download",
     costPerSecUsd,
   };
@@ -520,11 +530,11 @@ export async function assertBeatGenAllowed(
     // Sequential free gate: must finish current free beat (record → produce → paid download)
     // before the next free slot. forceBillable still allowed only when free slots are exhausted
     // (billableGeneration) — not to skip an unfinished free beat.
-    if (snap.sequentialBlocked && !snap.isPaid) {
+    if (snap.sequentialBlocked && !snap.isPaid && !forceBillable) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
         snap.message ||
-          "Finish your current free beat first: record, Produce, then download (pay). One free beat at a time.",
+          "Your next free beat unlocks after you download a produced song. Or generate a paid beat now — price depends on length ($1 for 2 minutes).",
         {
           details: {
             code: "SEQUENTIAL_FREE_BLOCKED",
@@ -533,16 +543,17 @@ export async function assertBeatGenAllowed(
             freeLimit: snap.freeLimit,
             finishedFreeProjects: snap.finishedFreeProjects,
             estimatedCostUsd: estimateBeatCostUsd(want),
-            canBillable: false,
+            canBillable: true,
             canSubscribe: true,
+            durationSec: want,
           },
         }
       );
     }
+    // Exhausted free OR denied — allow explicit forceBillable paid path
     if (
       !forceBillable &&
-      !snap.allowed &&
-      !snap.billableGeneration
+      !snap.allowed
     ) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
