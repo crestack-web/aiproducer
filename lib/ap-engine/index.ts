@@ -635,8 +635,11 @@ export async function runApArrangement(
       };
       // boost lead on retry if quiet (legacy issue codes may still appear pre-soft-pass)
       if (
-        qc.issues.includes("VOCAL_TOO_QUIET") ||
-        qc.warnings.some((w) => w.includes("quiet") || w.includes("low_level"))
+        (Array.isArray(qc.issues) && qc.issues.includes("VOCAL_TOO_QUIET")) ||
+        (Array.isArray(qc.warnings) &&
+          qc.warnings.some(
+            (w) => typeof w === "string" && (w.includes("quiet") || w.includes("low_level"))
+          ))
       ) {
         layerDecisions = layerDecisions.map((d) => {
           if (d.role === "lead") {
@@ -777,7 +780,8 @@ export async function runApArrangement(
     return {
       ok: false,
       stage: "failed",
-      error: "Production engine failed",
+      // Include real exception so jobs.error is actionable (was swallowing detail)
+      error: msg ? `Production engine failed: ${msg}` : "Production engine failed",
       detail: msg,
       engineVersion: AP_ENGINE_VERSION,
     };

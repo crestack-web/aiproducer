@@ -142,7 +142,15 @@ export async function runInternalApProduceJob(opts: {
       userId,
       beatPath: beat.audio_path,
       vocals,
-      genre: project?.genre,
+      genre: (() => {
+        const g = (project as { genre?: unknown } | null)?.genre;
+        if (typeof g === "string") return g;
+        if (Array.isArray(g)) return g.filter((x) => typeof x === "string").join(" ");
+        if (g && typeof g === "object" && typeof (g as { name?: string }).name === "string") {
+          return (g as { name: string }).name;
+        }
+        return null;
+      })(),
       productionDirection,
       placementLog,
       report,

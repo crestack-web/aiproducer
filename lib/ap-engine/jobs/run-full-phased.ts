@@ -246,15 +246,19 @@ export async function runFullProduceWithCheckpoints(opts: {
     cp.stageTimingsMs.arrange = Date.now() - tArr;
 
     if (!result.ok) {
+      const errMsg =
+        result.detail && result.error && !String(result.error).includes(String(result.detail))
+          ? `${result.error}: ${result.detail}`
+          : result.error || result.detail || "Production engine failed";
       await patch("failed", 100, {
-        error: result.error,
+        error: errMsg,
         detail: result.detail,
         engineVersion: "ap-full",
         placementLog,
         ap_checkpoint: cp,
         tick_count: cp.tickCount,
       });
-      return { complete: false, error: result.error };
+      return { complete: false, error: errMsg };
     }
 
     const engineVersion = result.engineVersion || "ap-full";

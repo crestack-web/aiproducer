@@ -5,6 +5,25 @@
  * AI may suggest many layers; they must NOT become independent song sections.
  */
 
+function asStr(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(asStr).filter(Boolean).join(" ");
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    for (const k of ["name", "label", "type", "value", "id", "title"]) {
+      if (typeof o[k] === "string") return o[k] as string;
+    }
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 export type LayerRole =
   | "lead"
   | "double"
@@ -28,7 +47,7 @@ export const DEFAULT_LAYER_LINEAR_GAIN: Record<LayerRole, number> = {
 };
 
 export function normalizeLayerRole(type: string | null | undefined): LayerRole {
-  const t = (type || "").toLowerCase();
+  const t = asStr(type).toLowerCase();
   if (t.includes("lead") || t === "main") return "lead";
   if (t.includes("double") || t.includes("doubler")) return "double";
   if (t.includes("harmony") && (t.includes("2") || t.includes("low") || t.includes("second"))) {

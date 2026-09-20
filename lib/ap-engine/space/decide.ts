@@ -35,7 +35,7 @@ function clamp(n: number, lo: number, hi: number) {
 }
 
 function sectionKindFromLabel(label?: string | null): SongSectionKind {
-  const s = (label || "").toLowerCase();
+  const s = String(label ?? "").toLowerCase();
   if (s.includes("pre") && s.includes("chorus")) return "pre_chorus";
   if (s.includes("chorus") || s.includes("hook")) return "chorus";
   if (s.includes("verse")) return "verse";
@@ -46,7 +46,7 @@ function sectionKindFromLabel(label?: string | null): SongSectionKind {
 }
 
 function roleFromType(type?: string | null): VocalRole {
-  const t = (type || "lead").toLowerCase();
+  const t = String(type ?? "lead").toLowerCase();
   if (t.includes("double")) return "double";
   if (t.includes("adlib") || t.includes("ad-lib") || t.includes("ad_lib")) return "adlib";
   if (t.includes("background") || t.includes("bgv")) return "background";

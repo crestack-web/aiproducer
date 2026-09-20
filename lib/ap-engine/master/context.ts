@@ -24,9 +24,9 @@ export function resolveMasterContext(opts: {
   knownIssues?: string[] | null;
   targetLufsHint?: number | null;
 }): MasterContext {
-  const g = (opts.genre || "rnb").toLowerCase();
+  const g = String(opts.genre ?? "rnb").toLowerCase();
   let mood: MasterMood = "loud";
-  const m = (opts.mood || "").toLowerCase();
+  const m = String(opts.mood ?? "").toLowerCase();
   if (m.includes("spacious") || m.includes("dynamic") || m.includes("soft") || m.includes("ballad")) {
     mood = "spacious";
   } else if (m.includes("balanced") || m.includes("natural")) {
@@ -36,11 +36,11 @@ export function resolveMasterContext(opts: {
   }
 
   let vocalSit: VocalSit = "forward";
-  const v = (opts.vocalSit || "").toLowerCase();
+  const v = String(opts.vocalSit ?? "").toLowerCase();
   if (v.includes("blend") || v.includes("inside") || v.includes("pocket")) vocalSit = "blend";
 
   let platform: PlatformTarget = "both";
-  const p = (opts.platform || "").toLowerCase();
+  const p = String(opts.platform ?? "").toLowerCase();
   if (p.includes("social") && !p.includes("stream")) platform = "social";
   else if (p.includes("stream") && !p.includes("social")) platform = "streaming";
 

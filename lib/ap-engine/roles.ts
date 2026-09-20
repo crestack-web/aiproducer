@@ -5,6 +5,26 @@
 
 import { normalizeLayerRole } from "@/lib/layer-model";
 
+/** Coerce DB/json values to string before .includes / .toLowerCase */
+function asStr(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(asStr).filter(Boolean).join(" ");
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    for (const k of ["name", "label", "type", "value", "id", "title"]) {
+      if (typeof o[k] === "string") return o[k] as string;
+    }
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 export type VocalRole =
   | "lead"
   | "double"
@@ -39,8 +59,8 @@ export const ROLE_PRIORITY: Record<VocalRole, number> = {
 };
 
 export function resolveVocalRole(taskType: string | null | undefined, sectionLabel?: string | null): VocalRole {
-  const t = (taskType || "").toLowerCase();
-  const sec = (sectionLabel || "").toLowerCase();
+  const t = asStr(taskType).toLowerCase();
+  const sec = asStr(sectionLabel).toLowerCase();
 
   if (t.includes("intro") || (sec.includes("intro") && t.includes("lead") === false && t.includes("ad"))) {
     if (t.includes("intro")) return "intro";
@@ -77,7 +97,7 @@ export function resolveVocalRole(taskType: string | null | undefined, sectionLab
 }
 
 export function resolveSectionKind(label: string | null | undefined, type?: string | null): SongSectionKind {
-  const s = `${label || ""} ${type || ""}`.toLowerCase();
+  const s = `${asStr(label)} ${asStr(type)}`.toLowerCase();
   if (s.includes("pre") && s.includes("chorus")) return "pre_chorus";
   if (s.includes("chorus") || s.includes("hook")) return "chorus";
   if (s.includes("verse")) return "verse";

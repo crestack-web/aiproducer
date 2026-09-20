@@ -192,7 +192,14 @@ const PROFILES: Record<string, GenreProfile> = {
 };
 
 export function resolveGenreProfile(genre?: string | null): GenreProfile {
-  const g = (genre || "rnb").toLowerCase();
+  // genre may arrive as string | string[] | {name} from project rows — never call .includes on non-strings
+  let raw: unknown = genre;
+  if (Array.isArray(raw)) raw = raw.filter(Boolean).join(" ");
+  else if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    raw = o.name ?? o.label ?? o.value ?? o.id ?? "";
+  }
+  const g = (typeof raw === "string" && raw.trim() ? raw : "rnb").toLowerCase();
   if (g.includes("trap")) return PROFILES.trap;
   if (g.includes("hip") || g.includes("rap")) return PROFILES.hiphop;
   if (g.includes("amapiano") || g.includes("piano")) return PROFILES.amapiano;
