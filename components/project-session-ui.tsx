@@ -31,6 +31,7 @@ import {
   openRecordingStream,
   createVocalRecorder,
   describeInputQualityWarning,
+  formatMicOpenError,
 } from "@/lib/audio/recording-engine";
 import {
   startSpeakerMonitorDuck,
