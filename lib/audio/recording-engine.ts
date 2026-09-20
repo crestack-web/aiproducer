@@ -172,10 +172,57 @@ function isHeadphonesOutputPreference(pref: string): boolean {
  * repeated getUserMedia retries when Bluetooth forces a headset mic — that
  * override is reported as OS_OVERRIDE instead of silently claiming phone mic.
  */
+function mediaErrorName(e: unknown): string {
+  if (e instanceof DOMException) return e.name;
+  if (e && typeof e === "object" && "name" in e) return String((e as { name: unknown }).name || "");
+  return "";
+}
+
+/** User-facing mic open failures (desktop interfaces often surface as NotReadableError). */
+export function formatMicOpenError(e: unknown): string {
+  const name = mediaErrorName(e);
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return (
+      "Microphone access blocked. In the browser address bar, allow microphone for this site, " +
+      "and on Windows/macOS check System Settings → Privacy → Microphone for your browser."
+    );
+  }
+  if (name === "NotReadableError" || name === "AbortError") {
+    return (
+      "Microphone is busy or locked by another app (DAW, Zoom, Discord, Windows “Exclusive Mode”). " +
+      "Close other audio apps, disable exclusive mode on the interface, then try again."
+    );
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No microphone found. Plug in your audio interface and select it again.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return (
+      "That audio interface isn’t available right now (unplugged or ID changed). " +
+      "Pick the mic again from the list, or use the system default."
+    );
+  }
+  if (name === "SecurityError") {
+    return "Microphone requires a secure page (HTTPS). Open the site over https and try again.";
+  }
+  if (e instanceof Error && e.message) return e.message;
+  return "Could not open the microphone.";
+}
+
 export async function openRecordingStream(opts: {
   preferredInputId: string;
   outputPreference?: string;
 }): Promise<OpenRecordingResult> {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    throw new DOMException(
+      "Microphone requires a secure page (HTTPS).",
+      "SecurityError"
+    );
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("This browser does not support microphone capture.");
+  }
+
   const requestedInputDeviceId = opts.preferredInputId || "";
   const requestedOutputDeviceId = opts.outputPreference || "__headphones__";
   const headphonesMonitoring = isHeadphonesOutputPreference(requestedOutputDeviceId);
@@ -183,27 +230,56 @@ export async function openRecordingStream(opts: {
     ? "music_headphones"
     : "music_speaker";
 
-  let inputs: { deviceId: string; label: string }[] = [];
-
-  if (navigator.mediaDevices?.enumerateDevices) {
+  const listInputs = async () => {
     try {
       const all = await navigator.mediaDevices.enumerateDevices();
-      inputs = all
+      return all
         .filter((d) => d.kind === "audioinput")
         .map((d, i) => ({
           deviceId: d.deviceId,
           label: d.label?.trim() || `Microphone ${i + 1}`,
         }));
     } catch {
-      /* ignore */
+      return [] as { deviceId: string; label: string }[];
+    }
+  };
+
+  let inputs = await listInputs();
+
+  // Desktop: if labels are blank, permission was never granted — unlock once with a default open
+  // (then stop tracks) so the selected interface ID is valid for the next getUserMedia.
+  const labelsMissing = inputs.length > 0 && inputs.every((d) => !d.label || /^Microphone \d+$/i.test(d.label));
+  if (labelsMissing || (requestedInputDeviceId && !inputs.some((d) => d.deviceId === requestedInputDeviceId))) {
+    try {
+      const unlock = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        },
+      });
+      unlock.getTracks().forEach((tr) => tr.stop());
+      inputs = await listInputs();
+    } catch (e) {
+      // Real permission denial — don't hide it behind a generic device error
+      if (
+        mediaErrorName(e) === "NotAllowedError" ||
+        mediaErrorName(e) === "PermissionDeniedError"
+      ) {
+        throw e;
+      }
     }
   }
 
   const requestedLabel =
     inputs.find((d) => d.deviceId === requestedInputDeviceId)?.label || "";
-  const explicitSelection = Boolean(requestedInputDeviceId);
-  // Explicit choice → that deviceId only. Empty → system default (no force-built-in).
-  const targetId = requestedInputDeviceId;
+  // Stale localStorage IDs (unplug/replug) are common on desktop interfaces
+  const idStillPresent =
+    !requestedInputDeviceId ||
+    inputs.some((d) => d.deviceId === requestedInputDeviceId);
+  const explicitSelection = Boolean(requestedInputDeviceId) && idStillPresent;
+  const targetId = explicitSelection ? requestedInputDeviceId : "";
 
   const tryOpen = async (id: string, mode: "exact" | "ideal" | "default") => {
     const base = buildMusicMicConstraints(
@@ -214,29 +290,43 @@ export async function openRecordingStream(opts: {
     if (mode === "ideal" && id) {
       constraints = { ...base, deviceId: { ideal: id } };
     }
-    // exact path already embeds deviceId: { exact } via buildMusicMicConstraints
     return navigator.mediaDevices.getUserMedia({ audio: constraints });
   };
 
   let stream: MediaStream;
   let fellBack = false;
+  let lastError: unknown = null;
 
-  if (explicitSelection) {
+  if (explicitSelection && targetId) {
+    // Prefer ideal first on desktop: {exact} often fails when the interface is
+    // briefly busy or the OS remaps the device after selection.
     try {
-      // Strongest: honor artist’s exact mic choice
-      stream = await tryOpen(targetId, "exact");
-    } catch {
-      // Platform rejected exact (unplugged / OS block) — one soft ideal, then default
-      fellBack = true;
+      stream = await tryOpen(targetId, "ideal");
+    } catch (e1) {
+      lastError = e1;
+      const n1 = mediaErrorName(e1);
+      if (n1 === "NotAllowedError" || n1 === "PermissionDeniedError") throw e1;
       try {
-        stream = await tryOpen(targetId, "ideal");
-      } catch {
-        stream = await tryOpen("", "default");
+        stream = await tryOpen(targetId, "exact");
+      } catch (e2) {
+        lastError = e2;
+        const n2 = mediaErrorName(e2);
+        if (n2 === "NotAllowedError" || n2 === "PermissionDeniedError") throw e2;
+        fellBack = true;
+        try {
+          stream = await tryOpen("", "default");
+        } catch (e3) {
+          lastError = e3;
+          throw lastError;
+        }
       }
     }
   } else {
-    // No explicit pick: system/default mic (do not force built-in over Bluetooth)
-    stream = await tryOpen("", "default");
+    try {
+      stream = await tryOpen("", "default");
+    } catch (e) {
+      throw e;
+    }
   }
 
   const track = stream.getAudioTracks()[0];

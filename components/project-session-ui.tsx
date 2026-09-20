@@ -2122,14 +2122,7 @@ export default function ProjectDetailPage() {
     } catch (e) {
       setMicStream(null);
       setPhase("ready");
-      const name = e instanceof DOMException ? e.name : "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("Microphone permission denied. Enable mic access to record.");
-      } else if (name === "NotFoundError") {
-        setError("No microphone found.");
-      } else {
-        setError(e instanceof Error ? e.message : "Microphone error");
-      }
+      setError(formatMicOpenError(e));
     }
   }
 

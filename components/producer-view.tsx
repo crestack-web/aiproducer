@@ -12,7 +12,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
-import { openRecordingStream, createVocalRecorder } from "@/lib/audio/recording-engine";
+import { openRecordingStream, createVocalRecorder,
+  formatMicOpenError,
+} from "@/lib/audio/recording-engine";
 import {
   parseConsoleCommands,
   AP_SUGGESTIONS,
@@ -1612,7 +1614,7 @@ export function ProducerView({
       }
       setEditMsg(`Recording into track… (${mimeType.split(";")[0]})`);
     } catch (e) {
-      setEditMsg(e instanceof Error ? e.message : "Mic permission failed");
+      setEditMsg(formatMicOpenError(e));
       setIsConsoleRecording(false);
       stopLiveMeter();
     }
