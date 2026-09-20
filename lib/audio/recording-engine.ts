@@ -183,14 +183,16 @@ export function formatMicOpenError(e: unknown): string {
   const name = mediaErrorName(e);
   if (name === "NotAllowedError" || name === "PermissionDeniedError") {
     return (
-      "Microphone access blocked. In the browser address bar, allow microphone for this site, " +
-      "and on Windows/macOS check System Settings → Privacy → Microphone for your browser."
+      "Could not open that input. This is often the audio interface being locked — not the browser “Sound” toggle. " +
+      "Check: (1) Site permission is Microphone (not only Sound), (2) close DAW/Zoom/Discord, " +
+      "(3) Windows: Sound → your interface → Properties → Advanced → uncheck Exclusive Mode, " +
+      "(4) try “Default microphone” in the list. macOS: System Settings → Privacy → Microphone → enable your browser."
     );
   }
   if (name === "NotReadableError" || name === "AbortError") {
     return (
-      "Microphone is busy or locked by another app (DAW, Zoom, Discord, Windows “Exclusive Mode”). " +
-      "Close other audio apps, disable exclusive mode on the interface, then try again."
+      "Audio interface is busy or in Exclusive Mode. Close other audio apps (DAW, Voicemeeter, Zoom), " +
+      "disable Exclusive Mode on the device in Windows Sound settings, then select it again — or use Default microphone."
     );
   }
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
@@ -298,26 +300,40 @@ export async function openRecordingStream(opts: {
   let lastError: unknown = null;
 
   if (explicitSelection && targetId) {
-    // Prefer ideal first on desktop: {exact} often fails when the interface is
-    // briefly busy or the OS remaps the device after selection.
+    // Interfaces often return NotAllowed/NotReadable when exclusive-locked even if
+    // site mic permission is granted. Try ideal → exact → default; only throw if all fail.
     try {
       stream = await tryOpen(targetId, "ideal");
     } catch (e1) {
       lastError = e1;
-      const n1 = mediaErrorName(e1);
-      if (n1 === "NotAllowedError" || n1 === "PermissionDeniedError") throw e1;
       try {
         stream = await tryOpen(targetId, "exact");
       } catch (e2) {
         lastError = e2;
-        const n2 = mediaErrorName(e2);
-        if (n2 === "NotAllowedError" || n2 === "PermissionDeniedError") throw e2;
         fellBack = true;
         try {
-          stream = await tryOpen("", "default");
-        } catch (e3) {
-          lastError = e3;
-          throw lastError;
+          // Minimal constraints — some USB interfaces reject AEC/NS flags
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: { ideal: targetId },
+              channelCount: 1,
+            },
+          });
+          fellBack = false;
+        } catch (e2b) {
+          lastError = e2b;
+          try {
+            stream = await tryOpen("", "default");
+            fellBack = true;
+          } catch (e3) {
+            lastError = e3;
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              fellBack = true;
+            } catch (e4) {
+              throw lastError || e4;
+            }
+          }
         }
       }
     }
@@ -325,7 +341,11 @@ export async function openRecordingStream(opts: {
     try {
       stream = await tryOpen("", "default");
     } catch (e) {
-      throw e;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e2) {
+        throw e;
+      }
     }
   }
 
