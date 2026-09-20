@@ -73,12 +73,7 @@ export async function POST(req: Request) {
 
 async function sendConfirm(email: string, actionLink: string) {
   const subject = `Confirm your ${STUDIO_NAME} account`;
-  const html = shellEmail(
-    "Confirm your email",
-    `<p style="margin:0 0 14px;">Tap the button to confirm your email and open AP Studio.</p>
-     <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:700;">Confirm email</a></p>
-     <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t sign up, ignore this email.</p>`
-  );
+  const html = confirmationEmailHtml({ confirmUrl: actionLink, email });
   const sent = await sendResendEmail({
     to: email,
     subject,
