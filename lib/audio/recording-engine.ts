@@ -130,13 +130,11 @@ export function buildMusicMicConstraints(
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          channelCount: 1,
         }
       : {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: false,
-          channelCount: 1,
           // Soft vendor hints — never {exact} (fails hard on unsupported browsers)
           advanced: [
             {
@@ -172,6 +170,61 @@ function isHeadphonesOutputPreference(pref: string): boolean {
  * repeated getUserMedia retries when Bluetooth forces a headset mic — that
  * override is reported as OS_OVERRIDE instead of silently claiming phone mic.
  */
+
+/**
+ * Sum all input channels to mono for MediaRecorder.
+ * USB interfaces often expose stereo (In 1 / In 2); forcing mono at getUserMedia
+ * can pick the empty side. Downmixing after capture keeps the live mic signal.
+ */
+function createMonoDownmixStream(source: MediaStream): {
+  stream: MediaStream;
+  dispose: () => void;
+} {
+  const AC =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AC) {
+    return { stream: source, dispose: () => undefined };
+  }
+  const ctx = new AC();
+  const srcNode = ctx.createMediaStreamSource(source);
+  const ch = Math.max(1, Math.min(8, srcNode.channelCount || 2));
+  const splitter = ctx.createChannelSplitter(ch);
+  const sum = ctx.createGain();
+  sum.gain.value = 1;
+  srcNode.connect(splitter);
+  for (let i = 0; i < ch; i++) {
+    const g = ctx.createGain();
+    g.gain.value = 1;
+    try {
+      splitter.connect(g, i);
+      g.connect(sum);
+    } catch {
+      /* channel may not exist on some drivers */
+    }
+  }
+  const dest = ctx.createMediaStreamDestination();
+  sum.connect(dest);
+  void ctx.resume();
+  return {
+    stream: dest.stream,
+    dispose: () => {
+      try {
+        srcNode.disconnect();
+        sum.disconnect();
+        splitter.disconnect();
+      } catch {
+        /* ignore */
+      }
+      try {
+        void ctx.close();
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
 function mediaErrorName(e: unknown): string {
   if (e instanceof DOMException) return e.name;
   if (e && typeof e === "object" && "name" in e) return String((e as { name: unknown }).name || "");
@@ -258,7 +311,6 @@ export async function openRecordingStream(opts: {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          channelCount: 1,
         },
       });
       unlock.getTracks().forEach((tr) => tr.stop());
@@ -316,7 +368,6 @@ export async function openRecordingStream(opts: {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: {
               deviceId: { ideal: targetId },
-              channelCount: 1,
             },
           });
           fellBack = false;
@@ -396,8 +447,10 @@ export async function openRecordingStream(opts: {
     routingStatus = "MATCHED";
   }
 
-  // recordStream is the same mic MediaStream — beat is never mixed in
-  const recordStream = stream;
+  // Downmix all channels → mono for MediaRecorder (interface In1/In2 safe).
+  // Beat never enters this graph — only the mic MediaStream tracks.
+  const downmix = createMonoDownmixStream(stream);
+  const recordStream = downmix.stream;
 
   const info: RecordingDeviceInfo = {
     requestedInputDeviceId,
@@ -446,7 +499,11 @@ export async function openRecordingStream(opts: {
     info,
     fellBack,
     dispose: () => {
-      /* no extra Web Audio graph — mic stream only */
+      try {
+        downmix.dispose();
+      } catch {
+        /* ignore */
+      }
     },
   };
 }
