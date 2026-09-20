@@ -19,7 +19,7 @@ process.env.PRODUCE_EXECUTION = process.env.PRODUCE_EXECUTION || "worker";
 
 import { claimNextProduceJob, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
 import { tickProduceJob } from "../lib/audio/pipeline";
-import { createServiceClient } from "../lib/supabase/server";
+import { createServiceClient } from "../lib/supabase/service";
 import { getSupabaseUrl, getSupabaseServiceRoleKey } from "../lib/supabase/env";
 import {
   produceWorkerTickBudgetMs,

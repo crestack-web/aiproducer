@@ -1,24 +1,24 @@
 import { createServerClient } from "@supabase/ssr";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
-import {
-  getSupabaseUrl,
-  getSupabaseAnonKey,
-  getSupabaseServiceRoleKey,
-} from "@/lib/supabase/env";
+import { getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase/env";
+
+export { createServiceClient } from "@/lib/supabase/service";
 
 type CookieToSet = { name: string; value: string; options?: Record<string, unknown> };
 
+/**
+ * User-scoped server client (App Router). Uses next/headers only when called.
+ */
 export async function createClient() {
-  const cookieStore = await cookies();
   const url = getSupabaseUrl();
   const key = getSupabaseAnonKey();
-
   if (!url || !key) {
     throw new Error(
-      "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY (or Vercel Supabase integration vars)."
+      "Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY (or publishable key)."
     );
   }
+
+  const { cookies } = await import("next/headers");
+  const cookieStore = await cookies();
 
   return createServerClient(url, key, {
     cookies: {
@@ -31,23 +31,9 @@ export async function createClient() {
             cookieStore.set(name, value, options)
           );
         } catch {
-          // Called from a Server Component — ignore if middleware handles refresh.
+          // Called from a Server Component — middleware handles refresh.
         }
       },
     },
-  });
-}
-
-/** Service-role client for background jobs / admin ops. Never expose to the browser. */
-export function createServiceClient() {
-  const url = getSupabaseUrl();
-  const key = getSupabaseServiceRoleKey();
-  if (!url || !key) {
-    throw new Error(
-      "Supabase service role is not configured. Set SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY."
-    );
-  }
-  return createSupabaseClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
   });
 }
