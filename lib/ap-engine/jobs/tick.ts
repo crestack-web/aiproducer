@@ -3,7 +3,7 @@
  * Assembles ALL recorded sections onto the beat timeline (full song).
  */
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import {
   productionMasterPath,
   productionMixPath,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/storage";
 import type { ApStage } from "../types";
 import { collectVocalsForProduce } from "./collect-vocals";
+import { runFastArrangement } from "@/lib/ap-engine/jobs/fast-produce";
 import { runFullProduceWithCheckpoints } from "./run-full-phased";
 
 export async function runInternalApProduceJob(opts: {
@@ -117,7 +118,47 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    // Full AP engine only — multi-tick checkpoints (no fast path).
+    // Fast path unless PRODUCE_FULL_QUALITY=1 (full engine can take many minutes per song).
+    if (process.env.PRODUCE_FULL_QUALITY !== "1") {
+      await patch("mixing", 35, { message: "Fast mix — assemble + polish" });
+      const mixPath = productionMixPath(userId, projectId, jobId, "wav");
+      const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
+      try {
+        const fast = await runFastArrangement({
+          beatPath: String(beat.audio_path),
+          vocals: vocals as import("@/lib/ap-engine/jobs/fast-produce").FastVocalLayer[],
+          genre: (project as { genre?: string | null }).genre ?? null,
+          onStage: async (stage) => {
+            await patch(String(stage), 55, { message: String(stage) });
+          },
+        });
+        const wavBuf: Buffer = Buffer.isBuffer(fast.wav)
+          ? fast.wav
+          : Buffer.from(fast.wav as Uint8Array);
+        await uploadBuffer(masterPath, wavBuf, "audio/wav");
+        await uploadBuffer(mixPath, wavBuf, "audio/wav");
+        await patch("complete", 100, {
+          master_path: masterPath,
+          mix_path: mixPath,
+          mode: "ap-fast",
+          duration_ms: fast.durationMs,
+          layer_count: fast.layerCount,
+        });
+        await supabase
+          .from("projects")
+          .update({ status: "complete" })
+          .eq("id", projectId);
+        return { complete: true };
+      } catch (fe) {
+        const msg = fe instanceof Error ? fe.message : String(fe);
+        console.error("[ap-tick] fast path failed, falling through to full engine", msg);
+        // Fall through to full engine rather than hard-fail
+      }
+    }
+
+    // Full AP engine — multi-tick checkpoints.
+// Full AP engine — multi-tick checkpoints.
+
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
     let mp3Path: string | null = null;
