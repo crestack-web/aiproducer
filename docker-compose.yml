@@ -37,7 +37,7 @@ services:
       NODE_ENV: production
       FFMPEG_PATH: /usr/bin/ffmpeg
       PRODUCE_WORKER: "1"
-      PRODUCE_FULL_QUALITY: "0"
+      PRODUCE_FULL_QUALITY: "1"
       PRODUCE_EXECUTION: worker
       WORKER_TICK_MS: "1200000"
       PRODUCE_JOB_MAX_MS: "1800000"

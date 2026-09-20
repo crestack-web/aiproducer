@@ -118,8 +118,12 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    // Fast path unless PRODUCE_FULL_QUALITY=1 (full engine can take many minutes per song).
-    if (process.env.PRODUCE_FULL_QUALITY !== "1") {
+    // Full AP engine is the default. Opt into fast mix with PRODUCE_FULL_QUALITY=0 or PRODUCE_FAST=1.
+    const useFast =
+      process.env.PRODUCE_FAST === "1" ||
+      process.env.PRODUCE_FULL_QUALITY === "0" ||
+      process.env.PRODUCE_FULL_QUALITY === "false";
+    if (useFast) {
       await patch("mixing", 35, { message: "Fast mix — assemble + polish" });
       const mixPath = productionMixPath(userId, projectId, jobId, "wav");
       const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
