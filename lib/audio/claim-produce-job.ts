@@ -2,7 +2,7 @@
  * Safe claim for PRODUCE_SONG jobs so only one worker processes a job at a time.
  * Uses conditional status updates (no Redis). Stale processing locks can be reclaimed.
  */
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 
 /** Must exceed WORKER_TICK_MS (default 240s). Heartbeat runs between ticks, not during. */
 /** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */

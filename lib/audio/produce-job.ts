@@ -1,4 +1,4 @@
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { MockMixProvider } from "@/lib/providers/mock-mix";
 import { RoExMixProvider } from "@/lib/providers/roex";
 import type { AudioMixProvider, StemKind } from "@/lib/audio/types";

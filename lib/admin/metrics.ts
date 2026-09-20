@@ -3,7 +3,7 @@
  * Best-effort over existing tables — no new schema required.
  */
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { SESSION_PRICE_USD, PLANS } from "@/lib/plans";
 
 export type AdminMetrics = {

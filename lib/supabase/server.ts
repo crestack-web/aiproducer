@@ -1,12 +1,14 @@
-import { createServerClient } from "@supabase/ssr";
 import { getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase/env";
 
+/** Service-role client — no Next.js / @supabase/ssr (safe for worker). */
 export { createServiceClient } from "@/lib/supabase/service";
 
 type CookieToSet = { name: string; value: string; options?: Record<string, unknown> };
 
 /**
- * User-scoped server client (App Router). Uses next/headers only when called.
+ * User-scoped App Router client.
+ * Dynamically imports @supabase/ssr + next/headers so Node workers that only
+ * re-export createServiceClient never resolve those packages at load time.
  */
 export async function createClient() {
   const url = getSupabaseUrl();
@@ -17,7 +19,11 @@ export async function createClient() {
     );
   }
 
-  const { cookies } = await import("next/headers");
+  const [{ createServerClient }, { cookies }] = await Promise.all([
+    import("@supabase/ssr"),
+    import("next/headers"),
+  ]);
+
   const cookieStore = await cookies();
 
   return createServerClient(url, key, {
@@ -31,7 +37,7 @@ export async function createClient() {
             cookieStore.set(name, value, options)
           );
         } catch {
-          // Called from a Server Component — middleware handles refresh.
+          // Server Component — middleware refreshes sessions.
         }
       },
     },

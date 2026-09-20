@@ -7,7 +7,7 @@ import {
   recoverMissingTaskTakes,
   type PlanTaskFlags,
 } from "@/lib/audio/active-plan-membership";
-import type { createServiceClient } from "@/lib/supabase/server";
+import type { createServiceClient } from "@/lib/supabase/service";
 
 type Service = ReturnType<typeof createServiceClient>;
 
