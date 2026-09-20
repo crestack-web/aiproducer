@@ -1747,7 +1747,7 @@ function StudioPageInner() {
       )}
 
 
-      {subscribePaywallOpen && subscribePaywallProjectId ? (
+      {subscribePaywallOpen ? (
         <ApPaywall
           open={subscribePaywallOpen}
           onClose={() => {
@@ -1858,32 +1858,10 @@ function StudioPageInner() {
             <button
               type="button"
               onClick={() => {
-                void (async () => {
-                  setUpgradeModal(null);
-                  let projectId: string | null = projects[0]?.id ?? null;
-                  if (!projectId) {
-                    try {
-                      const res = await fetch("/api/projects", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ title: "Studio subscription" }),
-                      });
-                      const j = (await res.json().catch(() => ({}))) as {
-                        project?: { id?: string };
-                        id?: string;
-                      };
-                      if (res.ok) projectId = j.project?.id || j.id || null;
-                    } catch {
-                      /* ignore */
-                    }
-                  }
-                  if (!projectId) {
-                    router.push("/app?tab=profile");
-                    return;
-                  }
-                  setSubscribePaywallProjectId(projectId);
-                  setSubscribePaywallOpen(true);
-                })();
+                setUpgradeModal(null);
+                const projectId = projects[0]?.id ?? null;
+                setSubscribePaywallProjectId(projectId);
+                setSubscribePaywallOpen(true);
               }}
               style={{
                 width: "100%",

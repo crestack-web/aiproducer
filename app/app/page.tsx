@@ -34,7 +34,23 @@ function AppInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { colors: C } = useTheme();
-  const [userName, setUserName] = useState("Artist");
+  const [userName, setUserName]
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/metrics");
+        if (!cancelled) setIsAdmin(res.ok);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+ = useState("Artist");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("home");
@@ -784,6 +800,22 @@ function AppInner() {
             <button type="button" style={{ ...secondary, marginTop: 24, width: "100%" }} onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}>
               How Studio works (tour)
             </button>
+            {isAdmin && (
+              <Link
+                href="/app/admin"
+                style={{
+                  ...secondary,
+                  marginTop: 12,
+                  width: "100%",
+                  display: "block",
+                  textAlign: "center",
+                  textDecoration: "none",
+                  boxSizing: "border-box",
+                }}
+              >
+                Admin dashboard
+              </Link>
+            )}
             <button type="button" style={{ ...secondary, marginTop: 12, width: "100%" }} onClick={signOut}>
               Log out
             </button>

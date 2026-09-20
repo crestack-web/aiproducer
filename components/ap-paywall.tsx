@@ -14,7 +14,7 @@ type Props = {
   songTitle?: string | null;
   /** Called after successful unlock / checkout redirect handled */
   onUnlocked?: () => void;
-  projectId: string;
+  projectId?: string | null;
   colors: {
     text: string;
     textMuted: string;
@@ -30,7 +30,7 @@ export function ApPaywall({
   onClose,
   songTitle,
   onUnlocked,
-  projectId,
+  projectId: projectIdProp,
   colors: C,
 }: Props) {
   const [interval, setInterval] = useState<BillingInterval>("year");
@@ -40,10 +40,29 @@ export function ApPaywall({
 
   if (!open) return null;
 
+  async function ensureProjectId(): Promise<string> {
+    if (projectIdProp) return projectIdProp;
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "AP Studio plan" }),
+    });
+    const j = (await res.json().catch(() => ({}))) as {
+      project?: { id?: string };
+      id?: string;
+      error?: string;
+    };
+    if (!res.ok) throw new Error(j.error || "Could not start checkout");
+    const id = j.project?.id || j.id;
+    if (!id) throw new Error("Could not start checkout");
+    return id;
+  }
+
   async function continuePurchase() {
     setBusy(true);
     setError(null);
     try {
+      const projectId = await ensureProjectId();
       const res = await fetch(`/api/projects/${projectId}/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
