@@ -22,6 +22,7 @@ import { normalizeToInternalPcm } from "../ingestion/normalize";
 import { encodeStereoWav } from "../dsp";
 import { validateAudioBuffer } from "../ingestion/validate";
 import type { PlacementLog } from "./collect-vocals";
+import { isFullQualityProduce, produceWorkerTickBudgetMs } from "@/lib/produce/execution-mode";
 
 type ReportFn = (stage: ApStage) => Promise<void>;
 type PatchFn = (stage: string, progress: number, extra?: Record<string, unknown>) => Promise<void>;
@@ -58,8 +59,10 @@ export async function runFullProduceWithCheckpoints(opts: {
   if (!cp.wallStartedAt) cp.wallStartedAt = new Date().toISOString();
   cp.tickCount = (cp.tickCount || 0) + 1;
   const tickStarted = Date.now();
-  const deadlineAt = tickStarted + 220_000;
-  const budgetOk = () => Date.now() < deadlineAt - 15_000;
+  // Worker / full-quality: long budget (default 20m). Inline Vercel: keep ~3.5m soft budget.
+  const tickBudgetMs = isFullQualityProduce() ? produceWorkerTickBudgetMs() : 220_000;
+  const deadlineAt = tickStarted + tickBudgetMs;
+  const budgetOk = () => Date.now() < deadlineAt - (isFullQualityProduce() ? 60_000 : 15_000);
 
   console.info(
     "[ap-tick] checkpoint",

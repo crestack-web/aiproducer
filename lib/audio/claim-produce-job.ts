@@ -5,7 +5,8 @@
 import { createServiceClient } from "@/lib/supabase/server";
 
 /** Must exceed WORKER_TICK_MS (default 240s). Heartbeat runs between ticks, not during. */
-const STALE_MS = 15 * 60 * 1000; // 15 minutes without lock/update → reclaim
+/** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */
+const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 45 * 60 * 1000);
 
 export type ClaimedJob = {
   id: string;

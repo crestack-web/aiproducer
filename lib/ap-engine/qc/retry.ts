@@ -5,8 +5,8 @@ import { adjustDecisionForRetry } from "../production/decision-engine";
  * Retry once when QC soft-warns about level (quiet/loud/peak) even if soft-passed,
  * or when a fatal issue remains.
  */
-export function shouldRetry(qc: QcResult, retryCount: number): boolean {
-  if (retryCount >= 1) return false;
+export function shouldRetry(qc: QcResult, retryCount: number, maxRetries = 1): boolean {
+  if (retryCount >= maxRetries) return false;
   if (!qc.passed) return true;
   const levelWarn = qc.warnings.some(
     (w) =>

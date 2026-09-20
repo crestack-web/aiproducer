@@ -49,6 +49,7 @@ import {
 import { decidePitchTimingForPhrase, aggregatePitchTiming } from "./producer-mind/pitch-timing";
 import { applyCreativeFxToPlacedVocal } from "./creative-fx/apply";
 import type { DecisionMap } from "./producer-mind";
+import { isFullQualityProduce } from "@/lib/produce/execution-mode";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
@@ -242,15 +243,23 @@ export async function runApArrangement(
     const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = [];
     for (let i = 0; i < normalizedLayers.length; i++) {
       const layer = normalizedLayers[i];
-      if (input.deadlineAt && Date.now() > input.deadlineAt - 25_000) {
+      // Full-quality worker: never cut ASR short for time. Inline/Vercel may still budget.
+      if (
+        !isFullQualityProduce() &&
+        input.deadlineAt &&
+        Date.now() > input.deadlineAt - 25_000
+      ) {
         logAp("transcription_budget", { jobId: input.jobId, at: i, total: normalizedLayers.length });
         for (let j = i; j < normalizedLayers.length; j++) layerLyrics.push(null);
         break;
       }
+      // ASR: lead + double always; full-quality also runs harmony. Ad-libs/background skip
+      // intentionally (not time-driven — phrase-level lyric mind is for primary stack).
       const shouldAsr =
         layer.role === "lead" ||
         layer.role === "double" ||
-        normalizedLayers.length <= 3;
+        (isFullQualityProduce() && String(layer.role).startsWith("harmony")) ||
+        (!isFullQualityProduce() && normalizedLayers.length <= 3);
       if (!shouldAsr) {
         layerLyrics.push(null);
         continue;
@@ -606,9 +615,10 @@ export async function runApArrangement(
     await stage("quality_check");
     let qc = runQc(rendered.master, rendered.mix);
     let retryCount = 0;
+    const maxQcRetries = isFullQualityProduce() ? 2 : 1;
 
-    if (shouldRetry(qc, retryCount)) {
-      retryCount = 1;
+    while (shouldRetry(qc, retryCount, maxQcRetries)) {
+      retryCount += 1;
       logAp("qc_retry", { jobId: input.jobId, issues: qc.issues, warnings: qc.warnings });
       arrMix = {
         mix: adjustDecisionForRetry(
@@ -655,12 +665,12 @@ export async function runApArrangement(
         ...rendered,
         master: safetyLimitMaster(rendered.master, -1),
       };
-      await stage("quality_check", { retry: 1 });
+      await stage("quality_check", { retry: retryCount });
       qc = runQc(rendered.master, rendered.mix);
     }
 
-    // Only fail on truly unusable audio (silence / broken / invalid duration).
-    // Level warnings still deliver the song — product > perfectionist QC block.
+    // Fatal QC still fails the job. Soft level issues remain warnings (commercial polish
+    // is pursued via retries above when full-quality / worker path).
     if (!qc.passed) {
       logAp("qc_failed_fatal", {
         jobId: input.jobId,

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { tickProduceJob } from "@/lib/audio/pipeline";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getProduceExecutionMode } from "@/lib/produce/execution-mode";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -34,7 +35,13 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (job.type === "PRODUCE_SONG" && (job.status === "queued" || job.status === "processing")) {
+  // Heavy produce runs on the dedicated worker (workers/production-worker.ts).
+  // Vercel poll must only read status — never burn the 300s function ceiling mid-arrange.
+  if (
+    job.type === "PRODUCE_SONG" &&
+    (job.status === "queued" || job.status === "processing") &&
+    getProduceExecutionMode() === "inline"
+  ) {
     try {
       await tickProduceJob(job.id, { maxWorkMs: 240_000 });
       const { data: refreshed } = await service.from("jobs").select("*").eq("id", id).maybeSingle();
