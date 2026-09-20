@@ -15,6 +15,15 @@ import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { openRecordingStream, createVocalRecorder,
   formatMicOpenError,
 } from "@/lib/audio/recording-engine";
+import { MicInputPicker, SpeakerOutputPicker } from "@/components/mic-input-picker";
+import {
+  readPreferredMicId,
+  readPreferredSpeakerId,
+  writePreferredMicId,
+  writePreferredSpeakerId,
+  micSummaryLabel,
+  speakerSummaryLabel,
+} from "@/lib/audio/device-prefs";
 import {
   parseConsoleCommands,
   AP_SUGGESTIONS,
@@ -710,6 +719,9 @@ export function ProducerView({
   }, []);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [selectedMicId, setSelectedMicId] = useState("");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
+  const [audioSetupOpen, setAudioSetupOpen] = useState(false);
   /** Live input level 0–1 — passive analyser tap, not in monitor/capture path */
   const [liveLevel, setLiveLevel] = useState(0);
   /** Rolling peak samples for in-clip live waveform while recording */
@@ -735,6 +747,17 @@ export function ProducerView({
   const liveMeterCtxRef = useRef<AudioContext | null>(null);
   const livePeaksBufRef = useRef<number[]>([]);
   const beatFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    try {
+      setSelectedMicId(readPreferredMicId());
+      const spk = readPreferredSpeakerId();
+      if (spk) setSelectedSpeakerId(spk);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
@@ -1573,8 +1596,8 @@ export function ProducerView({
 
     try {
       const opened = await openRecordingStream({
-        preferredInputId: "",
-        outputPreference: "__headphones__",
+        preferredInputId: selectedMicId || "",
+        outputPreference: selectedSpeakerId || "__headphones__",
       });
       const { recorder, mimeType } = createVocalRecorder(opened.recordStream);
       const chunks: BlobPart[] = [];
@@ -1607,12 +1630,27 @@ export function ProducerView({
           const a = new Audio(beatUrl);
           a.currentTime = Math.max(0, fromMs / 1000);
           monitorAudioRef.current = a;
+          const sink =
+            selectedSpeakerId &&
+            selectedSpeakerId !== "__headphones__" &&
+            selectedSpeakerId !== "__speaker__" &&
+            selectedSpeakerId !== "__handset__"
+              ? selectedSpeakerId
+              : "";
+          if (sink && typeof (a as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId === "function") {
+            try {
+              await (a as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(sink);
+            } catch {
+              /* OS may ignore setSinkId */
+            }
+          }
           void a.play();
         } catch {
           /* ignore */
         }
       }
-      setEditMsg(`Recording into track… (${mimeType.split(";")[0]})`);
+      const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
+      setEditMsg(`Recording into track… (${mimeType.split(";")[0]}) · ${micNote}`);
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
       setIsConsoleRecording(false);
@@ -3501,6 +3539,29 @@ export function ProducerView({
 
         <button
           type="button"
+          title="Audio interface / microphone"
+          onClick={() => setAudioSetupOpen((o) => !o)}
+          disabled={isConsoleRecording}
+          style={{
+            ...iconBtn(border, surface, text),
+            width: isNarrow ? 36 : 40,
+            height: isNarrow ? 36 : 40,
+            minWidth: isNarrow ? 36 : 40,
+            minHeight: isNarrow ? 36 : 40,
+            flexShrink: 0,
+            borderRadius: 999,
+            border: audioSetupOpen ? `1px solid ${brass}` : `1px solid ${border}`,
+            color: audioSetupOpen ? brass : mutedText,
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+          aria-label="Audio interface"
+          aria-expanded={audioSetupOpen}
+        >
+          🎙
+        </button>
+        <button
+          type="button"
           title={isConsoleRecording ? "Stop recording" : "Record vocal into selected track (raw capture, same as Booth)"}
           onClick={() => void toggleConsoleRecord()}
           style={{
@@ -3864,6 +3925,77 @@ export function ProducerView({
         </div>
       )}
 
+
+
+      {audioSetupOpen && (
+        <div
+          style={{
+            flexShrink: 0,
+            margin: "0 12px 8px",
+            padding: 12,
+            borderRadius: 12,
+            border: `1px solid ${border}`,
+            background: surface,
+            maxHeight: "42vh",
+            overflowY: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", color: brass }}>
+              AUDIO INTERFACE
+            </div>
+            <button
+              type="button"
+              onClick={() => setAudioSetupOpen(false)}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: mutedText,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+              }}
+            >
+              Close
+            </button>
+          </div>
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+            Same capture path as Booth. Select your interface, then Record into the armed track.
+          </p>
+          <div style={{ fontSize: 11, color: faint, marginBottom: 6 }}>
+            Input: {micSummaryLabel(selectedMicId)}
+          </div>
+          <MicInputPicker
+            selectedDeviceId={selectedMicId}
+            disabled={isConsoleRecording}
+            compact
+            onSelect={(id) => {
+              setSelectedMicId(id);
+              writePreferredMicId(id);
+            }}
+          />
+          <div style={{ height: 12 }} />
+          <div style={{ fontSize: 11, color: faint, marginBottom: 6 }}>
+            Monitor: {speakerSummaryLabel(selectedSpeakerId)}
+          </div>
+          <SpeakerOutputPicker
+            selectedDeviceId={selectedSpeakerId}
+            disabled={isConsoleRecording}
+            onSelect={(id) => {
+              setSelectedSpeakerId(id);
+              writePreferredSpeakerId(id);
+            }}
+          />
+        </div>
+      )}
 
       {/* Shared beat picker for empty state + Add Track when no beat */}
       <input
