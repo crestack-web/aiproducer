@@ -84,8 +84,12 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
   // Prefer auth user count when available (service role)
   try {
     const { data: list } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1 });
-    if (typeof list?.total === "number" && list.total > usersTotal) {
-      usersTotal = list.total;
+    const total =
+      list && typeof list === "object" && "total" in list && typeof (list as { total?: unknown }).total === "number"
+        ? (list as { total: number }).total
+        : null;
+    if (total != null && total > usersTotal) {
+      usersTotal = total;
     }
   } catch {
     /* profiles only */
