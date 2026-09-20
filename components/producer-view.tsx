@@ -714,6 +714,10 @@ export function ProducerView({
   const [livePeaks, setLivePeaks] = useState<number[]>([]);
   /** Armed task — Record captures into this planned/mock clip */
   const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
+  /** Inline rename of vocal track display name */
+  const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
@@ -1140,7 +1144,7 @@ export function ProducerView({
 
   async function persistLayer(
     id: string,
-    patch: { start_ms?: number; end_ms?: number; status?: string }
+    patch: { start_ms?: number; end_ms?: number; status?: string; title?: string }
   ) {
     setSavingId(id);
     setEditMsg(null);
@@ -1354,6 +1358,38 @@ export function ProducerView({
       setEditMsg("Network error duplicating track");
     } finally {
       setSavingId(null);
+    }
+  }
+
+  function beginRenameTrack(tr: { id: string; label: string; kind: string }) {
+    if (tr.kind !== "vocal" || tr.id === "beat") return;
+    setRenamingTrackId(tr.id);
+    setRenameDraft(tr.label || "");
+    setSelectedTrackId(tr.id);
+  }
+
+  async function commitRenameTrack() {
+    const id = renamingTrackId;
+    if (!id) return;
+    const next = renameDraft.trim().slice(0, 80);
+    setRenamingTrackId(null);
+    if (!next) return;
+    const prev = layers.find((l) => l.id === id);
+    if (prev && prev.label === next) return;
+    setRenameBusy(true);
+    setEditMsg(null);
+    // Optimistic UI
+    setLayers((list) => list.map((l) => (l.id === id ? { ...l, label: next } : l)));
+    try {
+      const ok = await persistLayer(id, { title: next });
+      if (!ok) {
+        // revert via parent soft reload
+        onLayersChanged?.();
+      } else {
+        setEditMsg(`Renamed to “${next}”`);
+      }
+    } finally {
+      setRenameBusy(false);
     }
   }
 
@@ -4022,66 +4058,131 @@ export function ProducerView({
                     : undefined
                 }
               >
-                {/* Name row — always visible when panel open */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Click expands this track (and collapses others) — big panel like pre-record UX
-                    setExpandedId(isExpanded ? null : tr.id);
-                    setSelectedTrackId(tr.id);
-                    if (tr.kind === "vocal") setArmedTrackId(tr.id);
-                  }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: text,
-                    fontWeight: 700,
-                    fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
-                    lineHeight: 1.25,
-                    padding: 0,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    width: "100%",
-                    minWidth: 0,
-                    fontFamily: "inherit",
-                    display: sidebarCollapsed ? "none" : "flex",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6,
-                    overflow: "hidden",
-                    flexShrink: 0,
-                  }}
-                >
-                  <span
+                {/* Name row — double-click (or Rename when expanded) to rename vocal tracks */}
+                {renamingTrackId === tr.id && tr.kind === "vocal" ? (
+                  <div
                     style={{
-                      color: faint,
-                      fontSize: 10,
-                      fontVariantNumeric: "tabular-nums",
-                      minWidth: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: faint,
+                        fontSize: 10,
+                        fontVariantNumeric: "tabular-nums",
+                        minWidth: 14,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {trackIdx + 1}
+                    </span>
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      disabled={renameBusy}
+                      maxLength={80}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitRenameTrack();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setRenamingTrackId(null);
+                        }
+                      }}
+                      onBlur={() => void commitRenameTrack()}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        fontFamily: "inherit",
+                        color: text,
+                        background: "rgba(255,255,255,0.06)",
+                        border: `1px solid ${brass}`,
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        outline: "none",
+                      }}
+                      aria-label="Rename track"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpandedId(isExpanded ? null : tr.id);
+                      setSelectedTrackId(tr.id);
+                      if (tr.kind === "vocal") setArmedTrackId(tr.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      beginRenameTrack(tr);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: text,
+                      fontWeight: 700,
+                      fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
+                      lineHeight: 1.25,
+                      padding: 0,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      width: "100%",
+                      minWidth: 0,
+                      fontFamily: "inherit",
+                      display: sidebarCollapsed ? "none" : "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      overflow: "hidden",
                       flexShrink: 0,
                     }}
                   >
-                    {trackIdx + 1}
-                  </span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                    title={tr.label}
-                  >
-                    {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
-                  </span>
-                  {isExpanded ? (
-                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
-                  ) : (
-                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
-                  )}
-                </button>
-                {!sidebarCollapsed && tr.sub && isExpanded ? (
+                    <span
+                      style={{
+                        color: faint,
+                        fontSize: 10,
+                        fontVariantNumeric: "tabular-nums",
+                        minWidth: 14,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {trackIdx + 1}
+                    </span>
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                      title={
+                        tr.kind === "vocal"
+                          ? `${tr.label} — double-click to rename`
+                          : tr.label
+                      }
+                    >
+                      {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
+                    </span>
+                    {isExpanded ? (
+                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
+                    ) : (
+                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
+                    )}
+                  </button>
+                )}
+                {!sidebarCollapsed && tr.sub && isExpanded && renamingTrackId !== tr.id ? (
                   <div
                     style={{
                       fontSize: 11,
@@ -4096,6 +4197,31 @@ export function ProducerView({
                   >
                     {tr.sub}
                   </div>
+                ) : null}
+                {!sidebarCollapsed && isExpanded && tr.kind === "vocal" && renamingTrackId !== tr.id ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      beginRenameTrack(tr);
+                    }}
+                    style={{
+                      alignSelf: "flex-start",
+                      marginLeft: 20,
+                      padding: "2px 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      fontFamily: "inherit",
+                      color: brass,
+                      background: "transparent",
+                      border: `1px solid ${brass}66`,
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    Rename
+                  </button>
                 ) : null}
                 {!sidebarCollapsed ? (
                 <div

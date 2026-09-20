@@ -22,6 +22,8 @@ const PatchSchema = z.object({
   start_ms: z.number().min(0).optional(),
   end_ms: z.number().min(0).optional(),
   status: z.enum(["completed", "pending", "skipped", "cancelled"]).optional(),
+  /** Display name in Console — optional custom track title */
+  title: z.string().trim().min(1).max(80).optional(),
   track_fx: TrackFxSchema.optional(),
   track_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 });
@@ -108,6 +110,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (parsed.data.start_ms !== undefined) patch.start_ms = Math.round(parsed.data.start_ms);
   if (parsed.data.end_ms !== undefined) patch.end_ms = Math.round(parsed.data.end_ms);
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+  if (parsed.data.title !== undefined) patch.title = parsed.data.title;
 
   const prevMeta =
     task.metadata && typeof task.metadata === "object" && !Array.isArray(task.metadata)
@@ -157,6 +160,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (parsed.data.start_ms !== undefined) metaOnly.start_ms = Math.round(parsed.data.start_ms);
     if (parsed.data.end_ms !== undefined) metaOnly.end_ms = Math.round(parsed.data.end_ms);
     if (parsed.data.status !== undefined) metaOnly.status = parsed.data.status;
+    if (parsed.data.title !== undefined) metaOnly.title = parsed.data.title;
     if (patch.metadata) metaOnly.metadata = patch.metadata;
     if (Object.keys(metaOnly).length) {
       const res2 = await service

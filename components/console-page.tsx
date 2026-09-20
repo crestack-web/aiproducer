@@ -142,7 +142,6 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             const sectionLabel =
               meta.section_label ||
               tk.song_sections?.label ||
-              tk.title ||
               undefined;
             const place = placementByTask.get(tk.id);
             // Prefer session-preview placement (placementStartMs) over bare plan section times
@@ -153,7 +152,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               resolvedEnd = resolvedStart + place.durationMs;
             return {
               id: tk.id,
-              label: (tk.type || "lead").replace(/_/g, " "),
+              label: ((typeof tk.title === "string" && tk.title.trim()) || tk.type || "lead").replace(/_/g, " "),
               role: tk.type || "lead",
               sectionLabel,
               startMs: resolvedStart,
