@@ -4,7 +4,6 @@
  */
 import { createServiceClient } from "@/lib/supabase/service";
 
-/** Must exceed WORKER_TICK_MS (default 240s). Heartbeat runs between ticks, not during. */
 /** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */
 const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 45 * 60 * 1000);
 
@@ -17,19 +16,39 @@ export type ClaimedJob = {
   attempts: number;
 };
 
+/** Result of one claim attempt — always includes visibility for Railway logs */
+export type ClaimAttemptResult = {
+  job: ClaimedJob | null;
+  /** Rows returned by status=queued query (before claim update) */
+  queuedMatchCount: number;
+  /** Stale processing candidates considered */
+  staleProcessingCount: number;
+  /** Supabase error message if select/update failed */
+  queryError: string | null;
+};
+
 function asOut(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
 /**
  * Atomically claim a queued job, or reclaim a stale processing job.
- * Returns null if nothing available / race lost.
+ * Prefer claimNextProduceJobDetailed when the worker needs CLAIM_QUERY_RESULT logs.
  */
 export async function claimNextProduceJob(workerId: string): Promise<ClaimedJob | null> {
+  const r = await claimNextProduceJobDetailed(workerId);
+  return r.job;
+}
+
+/**
+ * Same as claimNextProduceJob but always reports how many rows the claim queries saw.
+ */
+export async function claimNextProduceJobDetailed(workerId: string): Promise<ClaimAttemptResult> {
   const supabase = createServiceClient();
+  let queryError: string | null = null;
 
   // 1) Prefer queued
-  const { data: queued } = await supabase
+  const { data: queued, error: qErr } = await supabase
     .from("jobs")
     .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
     .eq("type", "PRODUCE_SONG")
@@ -37,13 +56,31 @@ export async function claimNextProduceJob(workerId: string): Promise<ClaimedJob 
     .order("created_at", { ascending: true })
     .limit(5);
 
-  for (const row of queued || []) {
+  if (qErr) {
+    queryError = qErr.message || String(qErr);
+    return {
+      job: null,
+      queuedMatchCount: 0,
+      staleProcessingCount: 0,
+      queryError,
+    };
+  }
+
+  const queuedRows = queued || [];
+  for (const row of queuedRows) {
     const claimed = await tryClaim(supabase, row, workerId, "queued");
-    if (claimed) return claimed;
+    if (claimed) {
+      return {
+        job: claimed,
+        queuedMatchCount: queuedRows.length,
+        staleProcessingCount: 0,
+        queryError: null,
+      };
+    }
   }
 
   // 2) Reclaim stale processing (worker died mid-job)
-  const { data: processing } = await supabase
+  const { data: processing, error: pErr } = await supabase
     .from("jobs")
     .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
     .eq("type", "PRODUCE_SONG")
@@ -51,7 +88,18 @@ export async function claimNextProduceJob(workerId: string): Promise<ClaimedJob 
     .order("updated_at", { ascending: true })
     .limit(10);
 
+  if (pErr) {
+    queryError = pErr.message || String(pErr);
+    return {
+      job: null,
+      queuedMatchCount: queuedRows.length,
+      staleProcessingCount: 0,
+      queryError,
+    };
+  }
+
   const now = Date.now();
+  let staleProcessingCount = 0;
   for (const row of processing || []) {
     const out = asOut(row.output_data);
     const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
@@ -59,11 +107,24 @@ export async function claimNextProduceJob(workerId: string): Promise<ClaimedJob 
     const anchor = Math.max(lockAt || 0, updatedAt || 0);
     const stale = !anchor || now - anchor > STALE_MS;
     if (!stale) continue;
+    staleProcessingCount += 1;
     const claimed = await tryClaim(supabase, row, workerId, "processing");
-    if (claimed) return claimed;
+    if (claimed) {
+      return {
+        job: claimed,
+        queuedMatchCount: queuedRows.length,
+        staleProcessingCount,
+        queryError: null,
+      };
+    }
   }
 
-  return null;
+  return {
+    job: null,
+    queuedMatchCount: queuedRows.length,
+    staleProcessingCount,
+    queryError: null,
+  };
 }
 
 async function tryClaim(

@@ -17,7 +17,8 @@ process.env.PRODUCE_WORKER = "1";
 process.env.PRODUCE_FULL_QUALITY = process.env.PRODUCE_FULL_QUALITY || "1";
 process.env.PRODUCE_EXECUTION = process.env.PRODUCE_EXECUTION || "worker";
 
-import { claimNextProduceJob, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
+import { claimNextProduceJobDetailed, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
+import { getServiceRoleKeyDiagnostics, getSupabaseEnvDiagnostics } from "../lib/supabase/env";
 import { tickProduceJob } from "../lib/audio/pipeline";
 import { createServiceClient } from "../lib/supabase/service";
 import { getSupabaseUrl, getSupabaseServiceRoleKey } from "../lib/supabase/env";
@@ -127,9 +128,19 @@ async function loop() {
 
   for (;;) {
     try {
-      const claimed = await claimNextProduceJob(WORKER_ID);
-      if (claimed) {
-        await processJob(claimed.id);
+      const claim = await claimNextProduceJobDetailed(WORKER_ID);
+      log("CLAIM_QUERY_RESULT", {
+        matchCount: claim.queuedMatchCount,
+        staleProcessingCount: claim.staleProcessingCount,
+        claimed: Boolean(claim.job),
+        claimedJobId: claim.job?.id ?? null,
+        queryError: claim.queryError,
+      });
+      if (claim.queryError) {
+        log("CLAIM_QUERY_ERROR", { error: claim.queryError });
+      }
+      if (claim.job) {
+        await processJob(claim.job.id);
       } else {
         await sleep(POLL_MS);
       }

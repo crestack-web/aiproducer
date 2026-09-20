@@ -109,3 +109,62 @@ export function getSupabaseEnvDiagnostics() {
     ),
   };
 }
+
+
+/** Decode JWT payload role without verifying signature (diagnostics only). */
+export function decodeSupabaseJwtRole(key: string | undefined): string | null {
+  if (!key || !key.startsWith("eyJ")) return null;
+  try {
+    const parts = key.split(".");
+    if (parts.length < 2) return null;
+    const json = Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const payload = JSON.parse(json) as { role?: string };
+    return typeof payload.role === "string" ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Worker-safe key diagnostics — never logs full secrets.
+ * Detects accidental anon/publishable key in SERVICE_ROLE slot.
+ */
+export function getServiceRoleKeyDiagnostics() {
+  const raw =
+    (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim() ||
+    (process.env.SUPABASE_SECRET_KEY || "").trim() ||
+    (process.env.SUPABASE_SERVICE_KEY || "").trim() ||
+    "";
+  const source = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+    ? "SUPABASE_SERVICE_ROLE_KEY"
+    : process.env.SUPABASE_SECRET_KEY?.trim()
+      ? "SUPABASE_SECRET_KEY"
+      : process.env.SUPABASE_SERVICE_KEY?.trim()
+        ? "SUPABASE_SERVICE_KEY"
+        : "none";
+  const role = decodeSupabaseJwtRole(raw);
+  const prefix = raw ? raw.slice(0, 8) : null;
+  const kind = !raw
+    ? null
+    : raw.startsWith("eyJ")
+      ? "jwt"
+      : raw.startsWith("sb_secret_")
+        ? "sb_secret"
+        : raw.startsWith("sb_publishable_")
+          ? "sb_publishable"
+          : "other";
+  const looksWrong =
+    role === "anon" ||
+    role === "authenticated" ||
+    kind === "sb_publishable" ||
+    (kind === "jwt" && role !== null && role !== "service_role");
+  return {
+    source,
+    key_prefix: prefix,
+    key_kind: kind,
+    jwt_role: role,
+    /** true if this key will NOT bypass RLS / cannot claim jobs */
+    looks_like_non_service_role: looksWrong,
+    key_length: raw.length || 0,
+  };
+}
