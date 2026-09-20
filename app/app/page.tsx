@@ -34,7 +34,7 @@ function AppInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { colors: C } = useTheme();
-  const [userName, setUserName]
+  const [userName, setUserName] = useState("Artist");
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +50,6 @@ function AppInner() {
       cancelled = true;
     };
   }, []);
- = useState("Artist");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("home");

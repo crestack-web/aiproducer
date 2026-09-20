@@ -5,8 +5,6 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createClient } from "@/lib/supabase/server";
-import { createServiceClient } from "@/lib/supabase/service";
 
 export async function requireAdmin(): Promise<
   | { ok: true; userId: string; email: string }
