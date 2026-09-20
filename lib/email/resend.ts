@@ -225,6 +225,30 @@ Open APstudio: ${openUrl}
   return { subject, html, text };
 }
 
+
+export function confirmationEmailHtml(opts: {
+  confirmUrl: string;
+  email?: string;
+}): string {
+  const safeUrl = opts.confirmUrl.replace(/"/g, "&quot;");
+  const body = `
+    <p style="margin:0 0 12px;font-size:16px;color:#f4f0ea;">Welcome to ${STUDIO_NAME}.</p>
+    <p style="margin:0 0 20px;font-size:14px;color:#a8a29e;line-height:1.55;">
+      Confirm your email to unlock Studio — record with your real voice, produce, and download.
+    </p>
+    <p style="margin:0 0 28px;text-align:center;">
+      <a href="${safeUrl}" style="display:inline-block;padding:14px 28px;border-radius:12px;background:linear-gradient(135deg,#E7A961,#c4893f);color:#0a0a0c;font-weight:800;font-size:15px;text-decoration:none;">
+        Confirm email
+      </a>
+    </p>
+    <p style="margin:0;font-size:12px;color:#78716c;line-height:1.5;word-break:break-all;">
+      Or paste this link into your browser:<br/>
+      <a href="${safeUrl}" style="color:#E7A961;">${safeUrl}</a>
+    </p>
+  `;
+  return shellEmail("Confirm your email", body);
+}
+
 export function passwordResetEmailHtml(opts: {
   resetUrl: string;
 }): { subject: string; html: string; text: string } {

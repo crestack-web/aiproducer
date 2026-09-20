@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import {
   getAppOrigin,
   sendResendEmail,
-  shellEmail,
+  confirmationEmailHtml,
   welcomeEmailHtml,
 } from "@/lib/email/resend";
 import { STUDIO_NAME } from "@/lib/brand";
@@ -120,10 +120,7 @@ export async function POST(req: Request) {
     }
 
     const confirmSubject = `Confirm your ${STUDIO_NAME} account`;
-    const confirmHtml = shellEmail(
-      "Confirm your email",
-      `<p style="margin:0 0 14px;">Welcome to ${STUDIO_NAME}. Tap the button to confirm your email and open the booth.</p>
-       <p style="margin:0 0 20px;"><a href="${actionLink}" style="display:inline-block;background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:700;">Confirm email</a></p>
+    const confirmHtml = confirmationEmailHtml({ confirmUrl: actionLink, email });color:#1A1208;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:700;">Confirm email</a></p>
        <p style="margin:0;font-size:13px;color:#8a8a96;">If you didn’t sign up, ignore this email.</p>`
     );
 

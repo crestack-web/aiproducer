@@ -51,6 +51,8 @@ function StatCard({
 
 export default function AdminDashboardPage() {
   const { colors: C } = useTheme();
+  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [emailTestMsg, setEmailTestMsg] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -380,6 +382,83 @@ export default function AdminDashboardPage() {
           </>
         ) : null}
       </div>
+    
+            <div
+              style={{
+                marginTop: 28,
+                padding: 18,
+                borderRadius: 16,
+                border: `1px solid ${border}`,
+                background: surface,
+              }}
+            >
+              <h2 style={{ fontSize: 15, fontWeight: 800, color: text, margin: "0 0 10px" }}>
+                Email & system
+              </h2>
+              <p style={{ fontSize: 13, color: muted, margin: "0 0 12px", lineHeight: 1.5 }}>
+                Signup verification and password reset are sent via Resend (not Supabase Auth mail).
+                Set <code style={{ color: brass }}>RESEND_API_KEY</code> and a verified{" "}
+                <code style={{ color: brass }}>RESEND_FROM_EMAIL</code> on Vercel.
+              </p>
+              {health && (
+                <ul style={{ margin: "0 0 14px", paddingLeft: 18, color: muted, fontSize: 13, lineHeight: 1.6 }}>
+                  <li>
+                    Resend:{" "}
+                    <strong style={{ color: text }}>
+                      {(health as { email?: { resendConfigured?: boolean } }).email?.resendConfigured
+                        ? "configured"
+                        : "missing API key"}
+                    </strong>
+                  </li>
+                  <li>
+                    From:{" "}
+                    <strong style={{ color: text }}>
+                      {String((health as { email?: { from?: string } }).email?.from || "—")}
+                    </strong>
+                  </li>
+                  <li>
+                    Produce execution:{" "}
+                    <strong style={{ color: text }}>
+                      {String((health as { produce?: { execution?: string } }).produce?.execution || "—")}
+                    </strong>
+                  </li>
+                </ul>
+              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  setEmailTestMsg(null);
+                  try {
+                    const r = await fetch("/api/admin/test-email", { method: "POST" });
+                    const j = await r.json().catch(() => ({}));
+                    if (!r.ok) {
+                      setEmailTestMsg(j.error || "Test email failed");
+                      return;
+                    }
+                    setEmailTestMsg(`Sent test verification email to ${(j as { to?: string }).to || "you"}.`);
+                  } catch {
+                    setEmailTestMsg("Test email failed");
+                  }
+                }}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: `1px solid ${brass}`,
+                  background: brass,
+                  color: "#1a1208",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Send test verification email (Resend)
+              </button>
+              {emailTestMsg && (
+                <p style={{ margin: "10px 0 0", fontSize: 13, color: muted }}>{emailTestMsg}</p>
+              )}
+            </div>
+
     </AppShell>
   );
 }

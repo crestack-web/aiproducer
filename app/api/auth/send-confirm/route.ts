@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase/server";
-import { getAppOrigin, sendResendEmail, shellEmail } from "@/lib/email/resend";
+import { getAppOrigin, sendResendEmail, confirmationEmailHtml } from "@/lib/email/resend";
 import { STUDIO_NAME } from "@/lib/brand";
 
 const Body = z.object({
