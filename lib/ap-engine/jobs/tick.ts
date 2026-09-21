@@ -128,11 +128,28 @@ export async function runInternalApProduceJob(opts: {
     }
 
     await report("analyzing");
-    // Full AP engine is the default. Opt into fast mix with PRODUCE_FULL_QUALITY=0 or PRODUCE_FAST=1.
-    const useFast =
+    // Fast path for small sessions (≤3 vocal layers) so 1–2 take songs finish in minutes.
+    // Full engine: PRODUCE_FULL_QUALITY=1, or more than 3 layers (unless PRODUCE_FAST=1).
+    const forceFull =
+      process.env.PRODUCE_FULL_QUALITY === "1" ||
+      process.env.PRODUCE_FULL_QUALITY === "true";
+    const forceFast =
       process.env.PRODUCE_FAST === "1" ||
       process.env.PRODUCE_FULL_QUALITY === "0" ||
       process.env.PRODUCE_FULL_QUALITY === "false";
+    const smallSession = vocals.length <= 3;
+    const useFast = forceFast || (smallSession && !forceFull);
+    console.info(
+      "[ap-tick] path",
+      JSON.stringify({
+        jobId,
+        path: useFast ? "fast" : "full",
+        layers: vocals.length,
+        forceFull,
+        forceFast,
+        smallSession,
+      })
+    );
     if (useFast) {
       await patch("mixing", 35, { message: "Fast mix — assemble + polish" });
       const mixPath = productionMixPath(userId, projectId, jobId, "wav");
@@ -152,6 +169,7 @@ export async function runInternalApProduceJob(opts: {
         await uploadBuffer(masterPath, wavBuf, "audio/wav");
         await uploadBuffer(mixPath, wavBuf, "audio/wav");
         await patch("complete", 100, {
+          path: "fast",
           master_path: masterPath,
           mix_path: mixPath,
           mode: "ap-fast",

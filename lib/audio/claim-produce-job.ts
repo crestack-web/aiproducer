@@ -5,7 +5,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 
 /** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */
-const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 45 * 60 * 1000);
+const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 8 * 60 * 1000);
 
 export type ClaimedJob = {
   id: string;
