@@ -109,12 +109,22 @@ export async function runInternalApProduceJob(opts: {
     );
 
     if (!vocals.length) {
+      const diagHint = (vocalDiag || []).slice(0, 8).join(" | ");
+      const detail =
+        diagHint.includes("download_fail")
+          ? "Vocal files are in the database but could not be downloaded from storage (check R2 env on the worker)."
+          : diagHint.includes("no_usable_audio_path")
+            ? "Recording rows exist but have no storage path — the take may not have finished uploading."
+            : diagHint.includes("recordings=0")
+              ? "No recording rows for this project in the database the worker uses."
+              : "No usable vocal take after plan matching and download.";
+      const errorMsg = `No saved vocal take found. ${detail}${diagHint ? ` [${diagHint}]` : ""}`;
       await patch("failed", 100, {
-        error: "No saved vocal take found. Record each section, then Produce.",
+        error: errorMsg,
         vocalDiag,
       });
       await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-      return { complete: false, error: "No vocal take" };
+      return { complete: false, error: errorMsg };
     }
 
     await report("analyzing");
