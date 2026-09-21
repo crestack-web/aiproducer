@@ -166,9 +166,9 @@ function isHeadphonesOutputPreference(pref: string): boolean {
  *   OUTPUT: beat <audio> → setSinkId                     (monitor only)
  * The beat must never enter MediaRecorder / MediaStreamDestination.
  *
- * Explicit selection uses deviceId: { exact }. We do NOT fight the OS with
- * repeated getUserMedia retries when Bluetooth forces a headset mic — that
- * override is reported as OS_OVERRIDE instead of silently claiming phone mic.
+ * Explicit selection prefers deviceId: { exact }, then ideal, then default.
+ * OS overrides (e.g. Bluetooth) are reported as OS_OVERRIDE / FALLBACK — never
+ * treated as a successful match to the UI selection.
  */
 
 /**
@@ -205,7 +205,10 @@ function createMonoDownmixStream(source: MediaStream): {
   }
   const dest = ctx.createMediaStreamDestination();
   sum.connect(dest);
-  void ctx.resume();
+  // Suspended AudioContext → MediaStreamDestination is silent (empty recording).
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
   return {
     stream: dest.stream,
     dispose: () => {
@@ -352,37 +355,43 @@ export async function openRecordingStream(opts: {
   let lastError: unknown = null;
 
   if (explicitSelection && targetId) {
-    // Interfaces often return NotAllowed/NotReadable when exclusive-locked even if
-    // site mic permission is granted. Try ideal → exact → default; only throw if all fail.
+    // Prefer exact deviceId so UI selection is not cosmetic (ideal allows OS default).
+    // Interfaces may still fail exclusive-lock → then ideal → minimal → default.
     try {
-      stream = await tryOpen(targetId, "ideal");
+      stream = await tryOpen(targetId, "exact");
     } catch (e1) {
       lastError = e1;
       try {
-        stream = await tryOpen(targetId, "exact");
+        stream = await tryOpen(targetId, "ideal");
       } catch (e2) {
         lastError = e2;
-        fellBack = true;
         try {
           // Minimal constraints — some USB interfaces reject AEC/NS flags
           stream = await navigator.mediaDevices.getUserMedia({
             audio: {
-              deviceId: { ideal: targetId },
+              deviceId: { exact: targetId },
             },
           });
-          fellBack = false;
         } catch (e2b) {
           lastError = e2b;
           try {
-            stream = await tryOpen("", "default");
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: { deviceId: { ideal: targetId } },
+            });
+          } catch (e2c) {
+            lastError = e2c;
             fellBack = true;
-          } catch (e3) {
-            lastError = e3;
             try {
-              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              stream = await tryOpen("", "default");
               fellBack = true;
-            } catch (e4) {
-              throw lastError || e4;
+            } catch (e3) {
+              lastError = e3;
+              try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                fellBack = true;
+              } catch (e4) {
+                throw lastError || e4;
+              }
             }
           }
         }
@@ -400,10 +409,66 @@ export async function openRecordingStream(opts: {
     }
   }
 
-  const track = stream.getAudioTracks()[0];
-  const settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
-  const inputLabel = (track?.label || "").trim();
-  const inputDeviceId = settings.deviceId || targetId || "";
+  let track = stream.getAudioTracks()[0];
+  let settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+  let inputLabel = (track?.label || "").trim();
+  let inputDeviceId = settings.deviceId || targetId || "";
+
+  // If we asked for a specific device and the browser opened another, re-lock with exact.
+  // (Common when the first successful open used ideal constraints.)
+  if (
+    explicitSelection &&
+    targetId &&
+    settings.deviceId &&
+    settings.deviceId !== targetId
+  ) {
+    try {
+      stream.getTracks().forEach((tr) => tr.stop());
+      stream = await tryOpen(targetId, "exact");
+      track = stream.getAudioTracks()[0];
+      settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+      inputLabel = (track?.label || "").trim();
+      inputDeviceId = settings.deviceId || targetId || "";
+      fellBack = false;
+    } catch (reLockErr) {
+      lastError = reLockErr;
+      // Previous stream was stopped — must open something usable
+      try {
+        stream = await tryOpen(targetId, "ideal");
+        track = stream.getAudioTracks()[0];
+        settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+        inputLabel = (track?.label || "").trim();
+        inputDeviceId = settings.deviceId || targetId || "";
+      } catch {
+        try {
+          stream = await tryOpen("", "default");
+          fellBack = true;
+          track = stream.getAudioTracks()[0];
+          settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+          inputLabel = (track?.label || "").trim();
+          inputDeviceId = settings.deviceId || "";
+        } catch (eFinal) {
+          throw lastError || eFinal;
+        }
+      }
+    }
+  }
+
+  // Ensure live track before downmix / MediaRecorder
+  if (track && track.readyState !== "live") {
+    try {
+      stream.getTracks().forEach((tr) => tr.stop());
+    } catch {
+      /* ignore */
+    }
+    throw new DOMException(
+      "Microphone track is not live. Re-select the input and try again.",
+      "NotReadableError"
+    );
+  }
+  if (track && track.enabled === false) {
+    track.enabled = true;
+  }
 
   // —— Honest requested vs actual (no further getUserMedia fights) ——
   let inputMismatch = false;
@@ -439,12 +504,22 @@ export async function openRecordingStream(opts: {
         : "Recording will use the microphone the system actually provided.");
   } else if (fellBack && explicitSelection) {
     routingStatus = "FALLBACK";
-    if (requestedLabel && inputLabel && requestedLabel !== inputLabel) {
-      inputMismatch = true;
-      routingNote = `Could not lock “${requestedLabel}”; using “${inputLabel}”.`;
-    }
+    inputMismatch = true;
+    routingNote =
+      requestedLabel && inputLabel && requestedLabel !== inputLabel
+        ? `Could not lock “${requestedLabel}”; using “${inputLabel}”. Check interface gain / exclusive mode.`
+        : `Could not lock the selected microphone; using “${inputLabel || "system default"}”.`;
   } else if (explicitSelection) {
-    routingStatus = "MATCHED";
+    if (targetId && settings.deviceId && settings.deviceId !== targetId) {
+      routingStatus = "OS_OVERRIDE";
+      inputMismatch = true;
+      routingNote =
+        requestedLabel && inputLabel
+          ? `Selected “${requestedLabel}” but the browser opened “${inputLabel}”. Re-select the interface or close other apps using it.`
+          : "Selected microphone did not match the stream the browser opened.";
+    } else {
+      routingStatus = "MATCHED";
+    }
   }
 
   // Downmix all channels → mono for MediaRecorder (interface In1/In2 safe).
