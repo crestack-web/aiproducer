@@ -2842,10 +2842,27 @@ export function ProducerView({
     clearProducePoll();
     produceActiveRef.current = true;
     const PRODUCE_POLL_MS = 4000;
-    const PRODUCE_MAX_MS = 10 * 60 * 1000;
+    // Full AP engine often exceeds 10m (restore + arrange + mix + master). Align with worker ceiling.
+    const PRODUCE_MAX_MS = 30 * 60 * 1000;
     const tick = async () => {
       if (!produceActiveRef.current) return;
       if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
+        // Soft timeout: re-check once. If worker still processing, keep waiting — do not mark failed.
+        const result = await pollProduceOnce();
+        if (result === "complete" || result === "failed") {
+          produceActiveRef.current = false;
+          return;
+        }
+        if (result === "pending") {
+          // Extend another 15m while job is still alive on the server
+          produceStartedAtRef.current = Date.now() - PRODUCE_MAX_MS + 15 * 60 * 1000;
+          setProduceError(
+            "Still producing on the server — this can take a while on longer songs. Leave this open; progress will update."
+          );
+          setProduceUi("producing");
+          producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
+          return;
+        }
         setProduceUi("failed");
         setProduceError(
           "This is taking longer than expected. Tap Try again — if AP is still working, production will resume."

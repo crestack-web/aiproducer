@@ -865,9 +865,25 @@ export default function ProjectDetailPage() {
     const tick = async () => {
       if (!produceActiveRef.current) return;
       if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
-        setProducing(false);
-        setError("Produce is taking longer than expected. Refresh — if the job is still running it will resume.");
-        produceActiveRef.current = false;
+        const result = await pollProduceOnce();
+        if (result === "complete") {
+          setProducing(false);
+          setProduceStage("complete");
+          setScreen("done");
+          produceActiveRef.current = false;
+          return;
+        }
+        if (result === "failed") {
+          setProducing(false);
+          produceActiveRef.current = false;
+          return;
+        }
+        // Still running on worker — extend wait, do not treat as hard failure
+        produceStartedAtRef.current = Date.now() - PRODUCE_MAX_MS + 15 * 60 * 1000;
+        setError(
+          "Still producing on the server — longer songs can take a while. Leave this open or refresh later."
+        );
+        producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
         return;
       }
       const result = await pollProduceOnce();
