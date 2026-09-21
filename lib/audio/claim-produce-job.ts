@@ -48,9 +48,10 @@ export async function claimNextProduceJobDetailed(workerId: string): Promise<Cla
   let queryError: string | null = null;
 
   // 1) Prefer queued
+  // jobs schema: created_at, started_at, completed_at — no updated_at column
   const { data: queued, error: qErr } = await supabase
     .from("jobs")
-    .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
+    .select("id, project_id, status, stage, output_data, attempts, started_at, created_at")
     .eq("type", "PRODUCE_SONG")
     .eq("status", "queued")
     .order("created_at", { ascending: true })
@@ -82,10 +83,10 @@ export async function claimNextProduceJobDetailed(workerId: string): Promise<Cla
   // 2) Reclaim stale processing (worker died mid-job)
   const { data: processing, error: pErr } = await supabase
     .from("jobs")
-    .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
+    .select("id, project_id, status, stage, output_data, attempts, started_at, created_at")
     .eq("type", "PRODUCE_SONG")
     .eq("status", "processing")
-    .order("updated_at", { ascending: true })
+    .order("started_at", { ascending: true, nullsFirst: true })
     .limit(10);
 
   if (pErr) {
@@ -103,8 +104,12 @@ export async function claimNextProduceJobDetailed(workerId: string): Promise<Cla
   for (const row of processing || []) {
     const out = asOut(row.output_data);
     const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
-    const updatedAt = row.updated_at ? Date.parse(String(row.updated_at)) : 0;
-    const anchor = Math.max(lockAt || 0, updatedAt || 0);
+    const startedAt = row.started_at ? Date.parse(String(row.started_at)) : 0;
+    const createdAt = (row as { created_at?: string }).created_at
+      ? Date.parse(String((row as { created_at?: string }).created_at))
+      : 0;
+    // Prefer heartbeat in output_data, then started_at, then created_at (no updated_at on jobs)
+    const anchor = Math.max(lockAt || 0, startedAt || 0, createdAt || 0);
     const stale = !anchor || now - anchor > STALE_MS;
     if (!stale) continue;
     staleProcessingCount += 1;
