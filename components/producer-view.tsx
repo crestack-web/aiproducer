@@ -5807,9 +5807,26 @@ export function ProducerView({
               border: "1px solid rgba(255,255,255,0.1)",
               boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
               backdropFilter: "blur(16px)",
+              /* Mobile: many track chips must not push Close off-screen */
+              maxHeight: "min(78dvh, 640px)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 10,
+                flexShrink: 0,
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
+                background: "rgba(22, 22, 26, 0.98)",
+              }}
+            >
               <button
                 type="button"
                 onClick={() => {
@@ -5857,7 +5874,7 @@ export function ProducerView({
               </button>
             </div>
 
-            {/* Scope chips — tap a track to attach it here */}
+            {/* Scope chips — scroll when many tracks (choir stacks) */}
             <div
               style={{
                 display: "flex",
@@ -5865,6 +5882,13 @@ export function ProducerView({
                 gap: 6,
                 marginBottom: 10,
                 alignItems: "center",
+                alignContent: "flex-start",
+                maxHeight: "min(36dvh, 280px)",
+                overflowY: "auto",
+                overflowX: "hidden",
+                flexShrink: 1,
+                WebkitOverflowScrolling: "touch",
+                overscrollBehavior: "contain",
               }}
             >
               <button
@@ -5991,6 +6015,8 @@ export function ProducerView({
               </div>
             ) : null}
 
+            {/* Input + suggestions stay pinned under scrollable chips */}
+            <div style={{ flexShrink: 0, minHeight: 0 }}>
             {editMsg ? (
               <div
                 style={{
@@ -6118,6 +6144,7 @@ export function ProducerView({
               }}
             >
               Tell AP anything — mute, solo, pan, FX, jump to chorus, process a take. Tap a track to scope.
+            </div>
             </div>
           </div>
         </div>
