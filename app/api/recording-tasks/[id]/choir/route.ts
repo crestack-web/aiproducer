@@ -6,6 +6,7 @@ import { createSignedDownloadUrl, uploadBuffer, recordingPath } from "@/lib/stor
 import { encodeWavStereoFromMono } from "@/lib/audio/wav";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import { generateStack, type StackMode } from "@/lib/ap-engine/fullness";
+import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -174,6 +175,10 @@ export async function POST(req: Request, ctx: Ctx) {
     metadata?: Record<string, unknown> | null;
     created_at?: string;
     take_number?: number | null;
+    duration_ms?: number | null;
+    timeline_start_ms?: number | null;
+    timeline_end_ms?: number | null;
+    recording_offset_ms?: number | null;
   };
 
   const pickPath = (r: RecRow | null | undefined): string | null => {
@@ -184,8 +189,10 @@ export async function POST(req: Request, ctx: Ctx) {
   };
 
   const selects = [
-    "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at, take_number",
-    "id, task_id, project_id, audio_path, content_type, is_selected, metadata, created_at, take_number",
+    "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at, take_number, duration_ms, timeline_start_ms, timeline_end_ms, recording_offset_ms",
+    "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at, take_number, duration_ms, timeline_start_ms, recording_offset_ms",
+    "id, task_id, project_id, audio_path, content_type, is_selected, metadata, created_at, take_number, duration_ms",
+    "id, task_id, project_id, audio_path, is_selected, metadata, created_at, take_number",
     "id, task_id, project_id, audio_path, is_selected, metadata, created_at",
     "id, task_id, audio_path, is_selected, created_at",
     "id, task_id, audio_path, created_at",
@@ -419,10 +426,49 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const leadPcm = lead.pcm;
 
+  // Place choir on the SAME timeline window as the source vocal (not intro / 0).
+  const srcMeta =
+    rec?.metadata && typeof rec.metadata === "object" && !Array.isArray(rec.metadata)
+      ? (rec.metadata as Record<string, unknown>)
+      : {};
+  const offsetFromMeta =
+    typeof srcMeta.recording_offset_ms === "number"
+      ? (srcMeta.recording_offset_ms as number)
+      : null;
+  const placementFromMeta =
+    typeof srcMeta.placement_start_ms === "number"
+      ? (srcMeta.placement_start_ms as number)
+      : null;
+  const sourcePlaceStart = resolvePlacementStartMs({
+    sectionStartMs:
+      typeof task.start_ms === "number"
+        ? (task.start_ms as number)
+        : typeof rec?.timeline_start_ms === "number"
+          ? rec.timeline_start_ms
+          : null,
+    recordingOffsetMs:
+      typeof rec?.recording_offset_ms === "number"
+        ? rec.recording_offset_ms
+        : offsetFromMeta,
+    timelineStartMs:
+      typeof rec?.timeline_start_ms === "number" ? rec.timeline_start_ms : null,
+    placementStartMs: placementFromMeta,
+  });
+  const sourceDurationMs =
+    typeof rec?.duration_ms === "number" && rec.duration_ms > 0
+      ? Math.round(rec.duration_ms)
+      : lead.durationMs || Math.round((leadPcm.left.length / (leadPcm.sampleRate || 44100)) * 1000);
+  const sourcePlaceEnd =
+    typeof rec?.timeline_end_ms === "number" && rec.timeline_end_ms > sourcePlaceStart
+      ? Math.round(rec.timeline_end_ms)
+      : typeof task.end_ms === "number" && (task.end_ms as number) > sourcePlaceStart
+        ? Math.round(task.end_ms as number)
+        : sourcePlaceStart + sourceDurationMs;
+
   const voices = generateStack({
     lead: leadPcm,
     mode,
-    startMs: Number(task.start_ms) || 0,
+    startMs: sourcePlaceStart,
   });
 
   if (!voices.length) {
@@ -431,8 +477,9 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const created: { id: string; type: string; title: string }[] = [];
   const saveErrors: string[] = [];
-  const startMs = Number(task.start_ms) || 0;
-  const endMs = Number(task.end_ms) || startMs + 8000;
+  // Must match source vocal placement — never default to 0/intro when source is later.
+  const startMs = sourcePlaceStart;
+  const endMs = sourcePlaceEnd > startMs ? sourcePlaceEnd : startMs + Math.max(sourceDurationMs, 1000);
 
   const mapTaskType = (role: string): string => {
     const r = (role || "").toLowerCase();
@@ -507,6 +554,20 @@ export async function POST(req: Request, ctx: Ctx) {
         audio_path: row.audio_path,
         status: "ready",
         take_number: 1,
+        duration_ms: row.duration_ms,
+        timeline_start_ms: row.timeline_start_ms,
+        timeline_end_ms: row.timeline_end_ms,
+        recording_offset_ms: row.recording_offset_ms,
+        metadata: row.metadata,
+      },
+      {
+        task_id: row.task_id,
+        project_id: row.project_id,
+        audio_path: row.audio_path,
+        status: "ready",
+        take_number: 1,
+        duration_ms: row.duration_ms,
+        metadata: row.metadata,
       },
       {
         task_id: row.task_id,
@@ -553,11 +614,19 @@ export async function POST(req: Request, ctx: Ctx) {
       priority: 0,
       metadata: {
         choir_source_task_id: taskId,
+        choir_source_recording_id: rec?.id ?? null,
         choir_role: v.role,
         stack_mode: mode,
         generated_by: "ap_choir",
+        placement_start_ms: startMs,
+        section_label:
+          (task.section_label as string) ||
+          (task.section_type as string) ||
+          (srcMeta.section_label as string) ||
+          null,
       },
     };
+    if (task.section_id) taskRow.section_id = task.section_id;
 
     const newTask = await insertTask(taskRow);
     if (!newTask?.id) {
@@ -603,7 +672,18 @@ export async function POST(req: Request, ctx: Ctx) {
       status: "ready",
       content_type: "audio/wav",
       duration_ms: durationMs,
-      metadata: { generated_by: "ap_choir", choir_role: v.role, stack_mode: mode },
+      timeline_start_ms: startMs,
+      timeline_end_ms: endMs,
+      recording_offset_ms: 0,
+      is_selected: true,
+      metadata: {
+        generated_by: "ap_choir",
+        choir_role: v.role,
+        stack_mode: mode,
+        placement_start_ms: startMs,
+        choir_source_task_id: taskId,
+        choir_source_recording_id: rec?.id ?? null,
+      },
     });
     if (!okRec) {
       saveErrors.push(`recording_insert_failed ${title}`);
