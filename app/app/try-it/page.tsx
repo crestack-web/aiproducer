@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Try It — isolated voice-clone preview UI.
- * Immersive demo experience; does not share state with Booth Record.
+ * Try It — isolated produce-demo UI.
+ * Sing a short take → matched beat + light choir mix. Isolated from Booth.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -86,9 +86,7 @@ export default function TryItPage() {
           if (j.quota && typeof j.quota.remaining === "number") {
             setQuotaRemaining(j.quota.remaining);
           }
-          // Option A: sample optional — show genre/lyrics + generate immediately
-          setShowSetup(true);
-          setPhase("ready");
+          // Wait for a real sung take before produce
         }
       } catch {
         if (!cancelled) {
@@ -189,13 +187,13 @@ export default function TryItPage() {
 
     const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
     setPhase("uploading");
-    setMsg("Uploading your sample…");
+    setMsg("Saving your take…");
     try {
       const fd = new FormData();
       fd.append("file", blob, "try-it-sample.webm");
       fd.append("duration_ms", String(durationMs));
       setPhase("cloning");
-      setMsg("Cloning a temporary voice…");
+      setMsg("Saving your sung take…");
       const res = await fetch(`/api/try-it/session/${sessionId}/sample`, {
         method: "POST",
         body: fd,
@@ -203,7 +201,7 @@ export default function TryItPage() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         setPhase("error");
-        setMsg(typeof j.error === "string" ? j.error : "Clone failed");
+        setMsg(typeof j.error === "string" ? j.error : "Could not save take");
         return;
       }
       setPhase("ready");
@@ -239,7 +237,7 @@ export default function TryItPage() {
       fd.append("file", file);
       fd.append("duration_ms", String(durationMs));
       setPhase("cloning");
-      setMsg("Cloning a temporary voice…");
+      setMsg("Saving your sung take…");
       const res = await fetch(`/api/try-it/session/${sessionId}/sample`, {
         method: "POST",
         body: fd,
@@ -247,7 +245,7 @@ export default function TryItPage() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         setPhase("error");
-        setMsg(typeof j.error === "string" ? j.error : "Clone failed");
+        setMsg(typeof j.error === "string" ? j.error : "Could not save take");
         return;
       }
       setPhase("ready");
@@ -373,12 +371,12 @@ export default function TryItPage() {
     if (!sessionId) return;
     if (quotaRemaining !== null && quotaRemaining <= 0) {
       setPhase("error");
-      setMsg("You've used your free Try It previews. Record the real version in Booth.");
+      setMsg("You've used your free Try It previews. Finish the full song in Booth in Booth.");
       return;
     }
     stopPreview();
     setPhase("generating");
-    setMsg("Building a short draft preview…");
+    setMsg("Matching a beat to your voice and mixing…");
     setShowSetup(false);
     try {
       const res = await fetch(`/api/try-it/session/${sessionId}/generate`, {
@@ -460,9 +458,9 @@ export default function TryItPage() {
       : phase === "uploading"
         ? "Uploading…"
         : phase === "cloning"
-          ? "Cloning voice…"
+          ? "Saving take…"
           : phase === "generating"
-            ? "Generating preview…"
+            ? "Producing your section…"
             : phase === "ready"
               ? "Voice ready"
               : phase === "preview"
@@ -536,10 +534,10 @@ export default function TryItPage() {
             }}
           >
             {phase === "preview"
-              ? "Your draft preview"
+              ? "Your produced section"
               : phase === "ready"
-                ? "Ready to generate"
-                : "Sing or rap your favorite song"}
+                ? "Ready to produce"
+                : "Sing a short hook"}
           </h1>
           <p
             style={{
@@ -551,8 +549,8 @@ export default function TryItPage() {
             }}
           >
             {phase === "preview"
-              ? "Real section mix · ~18s · model vocals · not downloadable"
-              : "10s–2 min sample · temp voice · free demo"}
+              ? "Your voice · matched beat · light choir · ~15–20s · not downloadable"
+              : "Sing 10–20s · we build the beat · free demo"}
           </p>
         </div>
 
@@ -712,7 +710,7 @@ export default function TryItPage() {
                 cursor: "pointer",
               }}
             >
-              Record the real version →
+              Finish the full song in Booth →
             </button>
           </div>
         )}
@@ -786,7 +784,7 @@ export default function TryItPage() {
                     cursor: "pointer",
                   }}
                 >
-                  Record the real version
+                  Finish the full song in Booth
                 </button>
               ) : (
                 <button
@@ -806,7 +804,7 @@ export default function TryItPage() {
                     boxShadow: "0 8px 24px rgba(231,169,97,0.3)",
                   }}
                 >
-                  Generate chorus preview
+                  Produce my section
                 </button>
               )}
             </div>

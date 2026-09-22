@@ -1,9 +1,9 @@
 /**
  * Try It orchestration — isolated from Record / produce.
- * Hard cost controls: short preview, Flash TTS, per-user generate cap, clone reuse, usage log.
+ * Hard cost controls: short section, per-user generate cap, real take only, usage log.
  */
 import { createServiceClient } from "@/lib/supabase/server";
-import { createSignedDownloadUrl, uploadBuffer } from "@/lib/storage";
+import { createSignedDownloadUrl, uploadBuffer, downloadStorageObject } from "@/lib/storage";
 import {
   TRY_IT_MAX_GENERATES_PER_USER,
   TRY_IT_MAX_PROVIDER_RETRIES,
@@ -16,11 +16,8 @@ import {
   isTryItEnabled,
   tryItStoragePrefix,
 } from "./config";
-import {
-  createInstantVoiceClone,
-  deleteTrialVoice,
-} from "./elevenlabs-ivc";
-import { composeTryItSection } from "./music-section";
+import { deleteTrialVoice } from "./elevenlabs-ivc";
+import { produceFromVocalTake } from "./from-vocal";
 import type { TryItSessionRow, TryItStatus } from "./types";
 
 export { isTryItEnabled };
@@ -149,12 +146,12 @@ export async function ingestSample(opts: {
   if (!session) throw new Error("Session not found");
   if (session.status === "expired") throw new Error("Session expired");
   if (opts.durationMs < TRY_IT_MIN_SAMPLE_MS) {
-    throw new Error("Sample too short — need at least 10 seconds of clear voice");
+    throw new Error("Take too short — sing at least 10 seconds of a hook or verse");
   }
   if (opts.durationMs > TRY_IT_MAX_SAMPLE_MS) {
-    throw new Error("Sample too long — keep it under 2 minutes");
+    throw new Error("Take too long — keep the demo under 2 minutes");
   }
-  if (opts.buffer.length < 2000) throw new Error("Sample file is empty or invalid");
+  if (opts.buffer.length < 2000) throw new Error("Recording is empty or invalid");
 
   const prefix = tryItStoragePrefix(opts.userId, opts.sessionId);
   const ext = (opts.filename.split(".").pop() || "webm").toLowerCase().slice(0, 5);
@@ -162,88 +159,40 @@ export async function ingestSample(opts: {
   await uploadBuffer(samplePath, opts.buffer, opts.contentType || "audio/webm");
 
   const service = createServiceClient();
-  await service
+  // No voice clone — this is the artist's real sung take for a produce demo
+  const { data, error } = await service
     .from("try_it_sessions")
     .update({
       sample_path: samplePath,
-      sample_duration_ms: Math.round(opts.durationMs),
-      status: "sample_ready" satisfies TryItStatus,
+      eleven_voice_id: null,
+      status: "voice_ready" satisfies TryItStatus,
       error: null,
       updated_at: new Date().toISOString(),
+      metadata: {
+        ...(session.metadata || {}),
+        source: TRY_IT_SOURCE_META,
+        scope: TRY_IT_SCOPE,
+        pipeline: "from_vocal_take",
+        sample_duration_ms: opts.durationMs,
+        sample_content_type: opts.contentType,
+        no_clone: true,
+      },
     })
-    .eq("id", opts.sessionId);
+    .eq("id", opts.sessionId)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Could not save take");
 
-  // Reuse existing trial voice_id for this session — IVC is one call per session
-  if (session.eleven_voice_id) {
-    const { data } = await service
-      .from("try_it_sessions")
-      .update({
-        status: "voice_ready" satisfies TryItStatus,
-        updated_at: new Date().toISOString(),
-        metadata: {
-          ...(session.metadata || {}),
-          source: TRY_IT_SOURCE_META,
-          scope: TRY_IT_SCOPE,
-          voice_reused: true,
-        },
-      })
-      .eq("id", opts.sessionId)
-      .select("*")
-      .single();
-    return (data || session) as TryItSessionRow;
-  }
+  await logUsage({
+    userId: opts.userId,
+    sessionId: opts.sessionId,
+    event: "clone",
+    modelTier: "none_sample_only",
+    success: true,
+    metadata: { sample_duration_ms: opts.durationMs, no_clone: true },
+  });
 
-  // Explicit user upload only path reaches here without a voice — clone once
-  try {
-    const { voiceId } = await createInstantVoiceClone({
-      name: `AP TryIt ${opts.userId.slice(0, 8)} ${opts.sessionId.slice(0, 6)}`,
-      samples: [
-        {
-          buffer: opts.buffer,
-          filename: opts.filename || `sample.${ext}`,
-          contentType: opts.contentType || "audio/webm",
-        },
-      ],
-      removeBackgroundNoise: opts.removeNoise !== false,
-    });
-    await logUsage({
-      userId: opts.userId,
-      sessionId: opts.sessionId,
-      event: "clone",
-      modelTier: "elevenlabs_ivc",
-      success: true,
-      metadata: { sample_duration_ms: opts.durationMs },
-    });
-    const { data, error } = await service
-      .from("try_it_sessions")
-      .update({
-        eleven_voice_id: voiceId,
-        status: "voice_ready" satisfies TryItStatus,
-        updated_at: new Date().toISOString(),
-        metadata: {
-          ...(session.metadata || {}),
-          source: TRY_IT_SOURCE_META,
-          scope: TRY_IT_SCOPE,
-          voice_cloned_at: new Date().toISOString(),
-        },
-      })
-      .eq("id", opts.sessionId)
-      .select("*")
-      .single();
-    if (error || !data) throw new Error(error?.message || "Could not save voice clone");
-    return data as TryItSessionRow;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await logUsage({
-      userId: opts.userId,
-      sessionId: opts.sessionId,
-      event: "clone",
-      modelTier: "elevenlabs_ivc",
-      success: false,
-      errorSnippet: msg,
-    });
-    throw e;
-  }
+  return data as TryItSessionRow;
 }
 
 export async function generateTryItPreview(opts: {
@@ -254,17 +203,22 @@ export async function generateTryItPreview(opts: {
   lyrics?: string;
   section?: "chorus" | "verse";
   requestedDurationSec?: number;
+  /** Optional client-decoded WAV of the take (more reliable than server webm decode) */
+  clientWav?: Buffer | null;
 }): Promise<TryItSessionRow> {
   const session = await getTryItSession(opts.sessionId, opts.userId);
   if (!session) throw new Error("Session not found");
   if (session.status === "expired") throw new Error("Session expired");
+  if (!session.sample_path && !opts.clientWav) {
+    throw new Error("Record a short sung take first — we'll build a beat around your voice");
+  }
 
   if (
     typeof opts.requestedDurationSec === "number" &&
     opts.requestedDurationSec > TRY_IT_PREVIEW_MAX_SEC
   ) {
     throw new Error(
-      `Preview is capped at ${TRY_IT_PREVIEW_MAX_SEC} seconds — this is a short demo, not a full song`
+      `Preview is capped at ${TRY_IT_PREVIEW_MAX_SEC} seconds — this is a short demo section`
     );
   }
 
@@ -282,41 +236,51 @@ export async function generateTryItPreview(opts: {
     .eq("id", opts.sessionId);
 
   const genre = (opts.genre || "afrobeats").slice(0, 40);
-  const tempo = opts.tempo && opts.tempo > 60 && opts.tempo < 200 ? opts.tempo : 102;
-  const lyrics =
-    (opts.lyrics || "").trim().slice(0, 280) ||
-    "Yeah this is my sound, riding on the beat, feel the night, feel the heat";
-  const section = opts.section === "verse" ? "verse" : "chorus";
+  const tempoHint =
+    opts.tempo && opts.tempo >= 70 && opts.tempo <= 180 ? opts.tempo : null;
   const prefix = tryItStoragePrefix(opts.userId, opts.sessionId);
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= TRY_IT_MAX_PROVIDER_RETRIES; attempt++) {
     const isRetry = attempt > 0;
     try {
-      // Option A: single Music composition-plan call — vocals + beat in one mix
-      const composed = await composeTryItSection({
+      let sampleBuf: Buffer;
+      let pathHint = session.sample_path || "sample.wav";
+      if (opts.clientWav && opts.clientWav.length > 100) {
+        sampleBuf = opts.clientWav;
+        pathHint = "client.wav";
+      } else if (session.sample_path) {
+        sampleBuf = await downloadStorageObject(session.sample_path);
+      } else {
+        throw new Error("No sung take on this session");
+      }
+
+      const produced = await produceFromVocalTake({
+        sampleBuffer: sampleBuf,
+        pathHint,
+        sessionId: opts.sessionId,
+        userId: opts.userId,
         genre,
-        tempo,
-        lyrics,
-        section,
+        tempoHint,
+        addChoir: true,
       });
 
-      const mixPath = `${prefix}/section-mix.mp3`;
-      await uploadBuffer(mixPath, composed.buffer, composed.contentType || "audio/mpeg");
+      const mixPath = `${prefix}/section-mix.wav`;
+      await uploadBuffer(mixPath, produced.mixWav, "audio/wav");
 
       await logUsage({
         userId: opts.userId,
         sessionId: opts.sessionId,
         event: isRetry ? "generate_retry" : "generate",
-        modelTier: composed.modelId,
-        durationSec: composed.durationSec,
+        modelTier: "from_vocal+instrumental+choir_light",
+        durationSec: produced.durationSec,
         success: true,
         metadata: {
-          pipeline: "music_composition_plan",
-          section: composed.sectionLabel,
-          song_id: composed.songId,
-          draft_quality: true,
-          single_pass_mix: true,
+          pipeline: "from_vocal_take",
+          bpm: produced.bpm,
+          window_start_ms: produced.windowStartMs,
+          used_choir: produced.usedChoir,
+          vocal_rms: produced.vocalRms,
         },
       });
 
@@ -328,8 +292,8 @@ export async function generateTryItPreview(opts: {
           vocal_path: null,
           mix_path: mixPath,
           genre,
-          tempo,
-          lyrics,
+          tempo: produced.bpm,
+          lyrics: (opts.lyrics || "").slice(0, 280) || null,
           error: null,
           updated_at: new Date().toISOString(),
           metadata: {
@@ -338,11 +302,11 @@ export async function generateTryItPreview(opts: {
             scope: TRY_IT_SCOPE,
             download_blocked: true,
             share_blocked: true,
-            pipeline: "music_composition_plan",
-            section: composed.sectionLabel,
-            preview_duration_sec: composed.durationSec,
-            music_model: composed.modelId,
-            song_id: composed.songId,
+            pipeline: "from_vocal_take",
+            bpm: produced.bpm,
+            window_start_ms: produced.windowStartMs,
+            used_choir: produced.usedChoir,
+            preview_duration_sec: produced.durationSec,
           },
         })
         .eq("id", opts.sessionId)
@@ -356,7 +320,7 @@ export async function generateTryItPreview(opts: {
         userId: opts.userId,
         sessionId: opts.sessionId,
         event: isRetry ? "generate_retry" : "generate",
-        modelTier: "music_v2",
+        modelTier: "from_vocal_take",
         durationSec: TRY_IT_PREVIEW_MAX_SEC,
         success: false,
         errorSnippet: lastErr.message,
@@ -365,7 +329,7 @@ export async function generateTryItPreview(opts: {
     }
   }
 
-  const msg = lastErr?.message || "Generate failed";
+  const msg = lastErr?.message || "Produce preview failed";
   await service
     .from("try_it_sessions")
     .update({ status: "failed", error: msg.slice(0, 500), updated_at: new Date().toISOString() })

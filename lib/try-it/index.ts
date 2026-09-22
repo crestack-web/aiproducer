@@ -18,3 +18,5 @@ export {
 } from "./service";
 
 export { composeTryItSection, buildTryItSectionPlan } from "./music-section";
+
+export { produceFromVocalTake, trimToActiveWindow } from "./from-vocal";
