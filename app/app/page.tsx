@@ -16,7 +16,6 @@ import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 type Project = {
   id: string;
@@ -1049,22 +1048,6 @@ function AppInner() {
                 marginBottom: 16,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "14px 16px",
-                  borderBottom: `1px solid ${C.border}`,
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>Appearance</div>
-                  <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Light or dark mode</div>
-                </div>
-                <ThemeToggle compact />
-              </div>
               {[
                 {
                   key: "studio",
