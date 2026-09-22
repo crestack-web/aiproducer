@@ -430,14 +430,115 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const created: { id: string; type: string; title: string }[] = [];
+  const saveErrors: string[] = [];
   const startMs = Number(task.start_ms) || 0;
   const endMs = Number(task.end_ms) || startMs + 8000;
 
-  for (const v of voices) {
-    const title = v.label;
-    const type = v.role === "double" ? "double" : v.role;
+  const mapTaskType = (role: string): string => {
+    const r = (role || "").toLowerCase();
+    if (r.includes("double")) return "double";
+    if (r.includes("adlib") || r.includes("ad-lib")) return "adlib";
+    if (r.includes("harmony") || r.includes("choir")) return "harmony";
+    return "harmony";
+  };
 
-    const row: Record<string, unknown> = {
+  async function insertTask(base: Record<string, unknown>): Promise<{ id: string } | null> {
+    const attempts: Record<string, unknown>[] = [
+      base,
+      {
+        project_id: base.project_id,
+        type: base.type,
+        title: base.title,
+        instruction: base.instruction,
+        status: "pending",
+        required: false,
+        start_ms: base.start_ms,
+        end_ms: base.end_ms,
+        metadata: base.metadata,
+      },
+      {
+        project_id: base.project_id,
+        type: base.type,
+        instruction: base.instruction || "",
+        status: "pending",
+        required: false,
+        start_ms: base.start_ms,
+        end_ms: base.end_ms,
+      },
+      {
+        project_id: base.project_id,
+        type: base.type,
+        instruction: String(base.instruction || "AP choir layer"),
+        status: "pending",
+      },
+    ];
+    for (const attempt of attempts) {
+      const { data, error } = await service
+        .from("recording_tasks")
+        .insert(attempt)
+        .select("id")
+        .single();
+      if (!error && data?.id) return { id: String(data.id) };
+      if (error) {
+        // strip unknown column and retry once more inline
+        const msg = error.message || "";
+        const m = msg.match(/'([^']+)' column/i) || msg.match(/column "([^"]+)"/i);
+        if (m?.[1] && m[1] in attempt) {
+          const copy = { ...attempt };
+          delete copy[m[1]];
+          const retry = await service.from("recording_tasks").insert(copy).select("id").single();
+          if (!retry.error && retry.data?.id) return { id: String(retry.data.id) };
+          saveErrors.push(`task:${retry.error?.message || msg}`);
+        } else {
+          saveErrors.push(`task:${msg}`);
+        }
+      }
+    }
+    return null;
+  }
+
+  async function insertRecording(row: Record<string, unknown>): Promise<boolean> {
+    const attempts: Record<string, unknown>[] = [
+      { ...row, take_number: 1, is_selected: true },
+      { ...row, take_number: 1 },
+      {
+        task_id: row.task_id,
+        project_id: row.project_id,
+        audio_path: row.audio_path,
+        status: "ready",
+        take_number: 1,
+      },
+      {
+        task_id: row.task_id,
+        project_id: row.project_id,
+        audio_path: row.audio_path,
+        status: "uploaded",
+        take_number: 1,
+      },
+    ];
+    for (const attempt of attempts) {
+      const { error } = await service.from("recordings").insert(attempt);
+      if (!error) return true;
+      const msg = error.message || "";
+      const m = msg.match(/'([^']+)' column/i) || msg.match(/column "([^"]+)"/i);
+      if (m?.[1] && m[1] in attempt) {
+        const copy = { ...attempt };
+        delete copy[m[1]];
+        const { error: e2 } = await service.from("recordings").insert(copy);
+        if (!e2) return true;
+        saveErrors.push(`rec:${e2.message}`);
+      } else {
+        saveErrors.push(`rec:${msg}`);
+      }
+    }
+    return false;
+  }
+
+  for (const v of voices) {
+    const title = v.label || "Choir layer";
+    const type = mapTaskType(v.role);
+
+    const taskRow: Record<string, unknown> = {
       project_id: task.project_id,
       type,
       title,
@@ -446,7 +547,7 @@ export async function POST(req: Request, ctx: Ctx) {
       required: false,
       recommendation: "optional",
       selected_in_plan: true,
-      active: false,
+      active: true,
       start_ms: startMs,
       end_ms: endMs,
       priority: 0,
@@ -458,36 +559,19 @@ export async function POST(req: Request, ctx: Ctx) {
       },
     };
 
-    let newTask: Record<string, unknown> | null = null;
-    {
-      const res = await service.from("recording_tasks").insert(row).select("*").single();
-      newTask = res.data as Record<string, unknown> | null;
-      if (res.error) {
-        const slim = {
-          project_id: task.project_id,
-          type,
-          title,
-          instruction: row.instruction,
-          status: "pending",
-          required: false,
-          start_ms: startMs,
-          end_ms: endMs,
-        };
-        const res2 = await service.from("recording_tasks").insert(slim).select("*").single();
-        newTask = res2.data as Record<string, unknown> | null;
-        if (res2.error) {
-          console.error("[choir] task insert", res2.error);
-          continue;
-        }
-      }
+    const newTask = await insertTask(taskRow);
+    if (!newTask?.id) {
+      saveErrors.push(`no_task_id for ${title}`);
+      continue;
     }
-    if (!newTask?.id) continue;
 
-    // Mix L/R to mono-ish for encode helper: average
     const n = Math.min(v.pcm.left.length, v.pcm.right.length);
+    if (n < 256) {
+      saveErrors.push(`empty_pcm ${title} n=${n}`);
+      continue;
+    }
     const mono = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      // pan: -1..1 → weights
       const pan = Math.max(-1, Math.min(1, v.pan));
       const lW = pan <= 0 ? 1 : 1 - pan;
       const rW = pan >= 0 ? 1 : 1 + pan;
@@ -505,20 +589,24 @@ export async function POST(req: Request, ctx: Ctx) {
     try {
       await uploadBuffer(storagePath, wav, "audio/wav");
     } catch (e) {
-      console.error("[choir] upload", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[choir] upload", msg);
+      saveErrors.push(`upload:${msg}`);
       continue;
     }
 
-    const { error: recErr } = await service.from("recordings").insert({
+    const durationMs = Math.round((n / (v.pcm.sampleRate || 44100)) * 1000);
+    const okRec = await insertRecording({
       task_id: newTask.id,
       project_id: task.project_id,
       audio_path: storagePath,
       status: "ready",
       content_type: "audio/wav",
-      metadata: { generated_by: "ap_choir", choir_role: v.role },
+      duration_ms: durationMs,
+      metadata: { generated_by: "ap_choir", choir_role: v.role, stack_mode: mode },
     });
-    if (recErr) {
-      console.error("[choir] recording insert", recErr);
+    if (!okRec) {
+      saveErrors.push(`recording_insert_failed ${title}`);
       continue;
     }
 
@@ -528,14 +616,24 @@ export async function POST(req: Request, ctx: Ctx) {
       .eq("id", newTask.id);
 
     created.push({
-      id: newTask.id as string,
-      type: type as string,
+      id: newTask.id,
+      type,
       title,
     });
   }
 
   if (!created.length) {
-    return NextResponse.json({ error: "Could not save choir layers" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Could not save choir layers",
+        details: {
+          voices: voices.length,
+          saveErrors: saveErrors.slice(0, 12),
+          hint: "Task or recording insert failed — see saveErrors (schema or R2 upload).",
+        },
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({

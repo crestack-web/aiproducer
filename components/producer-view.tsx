@@ -1340,10 +1340,13 @@ export function ProducerView({
           det && typeof (det as { reason?: string }).reason === "string"
             ? `: ${(det as { reason: string }).reason}`
             : "";
+        const saveErrs = Array.isArray((det as { saveErrors?: string[] } | null)?.saveErrors)
+          ? ` — ${(det as { saveErrors: string[] }).saveErrors.slice(0, 2).join("; ")}`
+          : "";
         setEditMsg(
           hint === "Task not found"
             ? "Track not found — refresh Console and use a recorded vocal layer."
-            : `${hint}${found}${reason}`
+            : `${hint}${found}${reason}${saveErrs}`
         );
         return;
       }
