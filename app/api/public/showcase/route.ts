@@ -15,7 +15,8 @@ const MAX_TOTAL = 16;
 
 /**
  * GET /api/public/showcase
- * Pulls real beats + produced masters from R2 via DB audio_path → signed URL.
+ * Public welcome rail: AP-produced masters + AP-generated beats only.
+ * User-uploaded instrumentals are never shown (artists' private work).
  *
  * Optional:
  *   SHOWCASE_TRACKS_JSON — full track array
@@ -96,8 +97,10 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
     .from("beats")
     .select("id, project_id, audio_path, duration_ms, source, metadata, created_at, status")
     .not("audio_path", "is", null)
+    // Prefer generated rows; upload exclusion is enforced again in the loop
+    .neq("source", "upload")
     .order("created_at", { ascending: false })
-    .limit(MAX_BEATS * 2);
+    .limit(MAX_BEATS * 4);
 
   if (projectIds?.length) {
     beatQ = beatQ.in("project_id", projectIds);
@@ -165,14 +168,33 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
     if (pid && seenProjectBeat.has(pid)) continue;
     const path = b.audio_path as string;
     if (!path || !isStoragePath(path) || seenPaths.has(path)) continue;
-    const metaSkip = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
+    const meta = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
+      provider?: string;
       section_edit?: boolean;
       edit_section?: string;
+      source?: string;
     };
-    // Prefer primary generation over section-edit variants when ordering is mixed
-    if (metaSkip.section_edit || metaSkip.edit_section) {
-      // still allow if this is the only beat for project — we already skip duplicates by project
-    }
+    const source = String(b.source || meta.source || meta.provider || "").toLowerCase();
+    // Public page: never surface user-uploaded instrumentals — only AP-generated beats
+    const isUpload =
+      source === "upload" ||
+      source === "uploaded" ||
+      source === "user" ||
+      source === "file" ||
+      source === "import";
+    const isAi =
+      !isUpload &&
+      (source === "ai" ||
+        source === "elevenlabs" ||
+        source === "replicate" ||
+        source === "musicgen" ||
+        source === "generated" ||
+        Boolean(meta.provider) ||
+        // Path convention for AP-generated beats in R2
+        path.includes("/generated/") ||
+        path.includes("/ai/") ||
+        path.includes("music_generation"));
+    if (!isAi) continue;
     const st = String(b.status || "").toLowerCase();
     if (st === "failed" || st === "error") continue;
     const audioUrl = await safeSign(path);
@@ -180,15 +202,6 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
     seenPaths.add(path);
     if (pid) seenProjectBeat.add(pid);
     const proj = projectMap.get(b.project_id as string);
-    const meta = (b.metadata && typeof b.metadata === "object" ? b.metadata : {}) as {
-      provider?: string;
-    };
-    const source = String(b.source || meta.provider || "").toLowerCase();
-    const isAi =
-      source === "ai" ||
-      source === "elevenlabs" ||
-      source === "replicate" ||
-      Boolean(meta.provider);
     const title = proj?.title || "AP beat";
     tracks.push({
       id: `beat-${b.id}`,
@@ -197,7 +210,7 @@ async function loadFromBucketCatalog(projectIds: string[] | null): Promise<Showc
       kind: "beat",
       cover: coverForSeed(title + String(b.id)),
       audioUrl,
-      playsLabel: isAi ? "AP beat" : "Upload",
+      playsLabel: "AP beat",
     });
   }
 
