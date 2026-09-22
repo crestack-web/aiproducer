@@ -197,6 +197,25 @@ function asSessionTask(t: {
 const PRODUCE_POLL_MS = 3500;
 const PRODUCE_MAX_MS = 10 * 60 * 1000;
 
+
+function formatBoothTime(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "0:00";
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function formatBoothTimeline(
+  startMs: number | null | undefined,
+  endMs: number | null | undefined
+): string | null {
+  if (startMs == null && endMs == null) return null;
+  const a = formatBoothTime(startMs ?? 0);
+  const b = endMs != null ? formatBoothTime(endMs) : "—";
+  return `${a} – ${b}`;
+}
+
 function humanTitle(type: string) {
   const t = (type || "").toLowerCase();
   if (t.includes("harmony")) return "Harmony";
@@ -3175,13 +3194,77 @@ export default function ProjectDetailPage() {
                     Listen to take
                   </button>
                 )}
-                <button type="button" style={{ ...btn, marginTop: canRecordAgain ? 10 : 14 }} onClick={startRecording}>
-                  {canRecordAgain
-                    ? "Record again"
-                    : currentIsLayer
-                      ? layerRecommendationCopy(current.type).cta
-                      : "Record"}
-                </button>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: canRecordAgain ? 12 : 20 }}>
+                  {!canRecordAgain && current && (
+                    <div style={{ textAlign: "center", marginBottom: 18, maxWidth: 320 }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          letterSpacing: "0.14em",
+                          textTransform: "uppercase",
+                          color: C.brass,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {sectionLabel(current)}
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "Georgia, serif",
+                          fontSize: 22,
+                          fontWeight: 500,
+                          color: C.text,
+                          marginBottom: 6,
+                        }}
+                      >
+                        {current.title?.trim() || humanTitle(current.type)}
+                      </div>
+                      {formatBoothTimeline(current.start_ms, current.end_ms) && (
+                        <div style={{ fontSize: 13, color: C.textMuted }}>
+                          {formatBoothTimeline(current.start_ms, current.end_ms)}
+                          {sectionMs != null ? ` · ${Math.round(sectionMs / 1000)}s window` : ""}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    aria-label={
+                      canRecordAgain
+                        ? "Record again"
+                        : currentIsLayer
+                          ? layerRecommendationCopy(current.type).cta
+                          : "Record"
+                    }
+                    style={{
+                      width: 76,
+                      height: 76,
+                      borderRadius: "50%",
+                      border: "3px solid rgba(255,255,255,0.92)",
+                      background: "linear-gradient(180deg, #F07167 0%, #C93B3B 100%)",
+                      boxShadow:
+                        "0 0 0 6px rgba(201,59,59,0.2), 0 12px 32px rgba(201,59,59,0.4)",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  />
+                  <div
+                    style={{
+                      marginTop: 12,
+                      fontSize: 13,
+                      color: C.textMuted,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {canRecordAgain
+                      ? "Record again"
+                      : currentIsLayer
+                        ? layerRecommendationCopy(current.type).cta
+                        : "Tap to record"}
+                  </div>
+                </div>
                 <input
                   ref={uploadInputRef}
                   type="file"
@@ -3232,17 +3315,61 @@ export default function ProjectDetailPage() {
             )}
 
             {phase === "recording" && (
-              <div style={{ marginTop: 8 }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  marginLeft: -4,
+                  marginRight: -4,
+                  borderRadius: 24,
+                  overflow: "hidden",
+                  border: `1px solid ${C.border}`,
+                  boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+                }}
+              >
                 <RecordingVisualizer
                   stream={micStream}
                   seconds={recordSeconds}
                   maxSeconds={sectionMs != null ? sectionMs / 1000 : null}
                   label="Recording"
-                  seed={`rec-${current.id}`}
+                  seed={current ? `rec-${current.id}` : "rec"}
+                  title={current ? sectionLabel(current) : null}
+                  subtitle={
+                    current
+                      ? current.title?.trim() || humanTitle(current.type)
+                      : null
+                  }
+                  timeline={
+                    current
+                      ? formatBoothTimeline(current.start_ms, current.end_ms)
+                      : null
+                  }
                 />
-                <button type="button" style={{ ...btn, marginTop: 16, background: C.danger, color: "#fff" }} onClick={stopRecording}>
-                  Stop
-                </button>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: "4px 20px 28px",
+                    background: "#050506",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={stopRecording}
+                    aria-label="Stop recording"
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: "50%",
+                      border: "3px solid rgba(255,255,255,0.92)",
+                      background: "linear-gradient(180deg, #F07167 0%, #C93B3B 100%)",
+                      boxShadow:
+                        "0 0 0 6px rgba(201,59,59,0.22), 0 12px 32px rgba(201,59,59,0.4)",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  />
+                </div>
               </div>
             )}
 

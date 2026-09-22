@@ -257,45 +257,69 @@ export function RecordingVisualizer({
   label = "Recording",
   seed = "rec",
   maxSeconds,
+  title,
+  subtitle,
+  timeline,
 }: {
   stream: MediaStream | null;
   seconds: number;
   label?: string;
   seed?: string;
   maxSeconds?: number | null;
+  /** Section name e.g. Pre-Chorus */
+  title?: string | null;
+  /** Layer e.g. Lead vocal */
+  subtitle?: string | null;
+  /** e.g. 0:42 – 1:05 */
+  timeline?: string | null;
 }) {
-  const C = usePlayerColors();
-  const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0.15));
-  const rafRef = useRef<number | null>(null);
+  const C = useTheme().colors;
+  const bars = 56;
+  const [levels, setLevels] = useState<number[]>(() =>
+    Array.from({ length: bars }, (_, i) => 0.15 + 0.1 * Math.sin(i * 0.35))
+  );
+  const raf = useRef<number | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (!stream) return;
     let cancelled = false;
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
+    const AC =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AC();
+    ctxRef.current = ctx;
+    const src = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 256;
-    source.connect(analyser);
+    analyser.smoothingTimeConstant = 0.72;
+    src.connect(analyser);
+    analyserRef.current = analyser;
     const data = new Uint8Array(analyser.frequencyBinCount);
+
     const tick = () => {
       if (cancelled) return;
       analyser.getByteFrequencyData(data);
-      const step = Math.floor(data.length / 32);
       const next: number[] = [];
-      for (let i = 0; i < 32; i++) {
+      const step = Math.max(1, Math.floor(data.length / bars));
+      for (let i = 0; i < bars; i++) {
         let sum = 0;
         for (let j = 0; j < step; j++) sum += data[i * step + j] || 0;
-        next.push(Math.max(0.08, Math.min(1, sum / step / 180)));
+        const v = sum / step / 255;
+        // Emphasize mid curve like reference waveform
+        const envelope = 0.55 + 0.45 * Math.sin((i / (bars - 1)) * Math.PI);
+        next.push(Math.min(1, 0.08 + v * 1.35 * envelope));
       }
       setLevels(next);
-      rafRef.current = requestAnimationFrame(tick);
+      raf.current = requestAnimationFrame(tick);
     };
-    rafRef.current = requestAnimationFrame(tick);
+    raf.current = requestAnimationFrame(tick);
     return () => {
       cancelled = true;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (raf.current) cancelAnimationFrame(raf.current);
       try {
-        source.disconnect();
+        src.disconnect();
         analyser.disconnect();
         void ctx.close();
       } catch {
@@ -304,27 +328,145 @@ export function RecordingVisualizer({
     };
   }, [stream]);
 
+  // Idle pulse when no stream levels yet
+  useEffect(() => {
+    if (stream) return;
+    let frame = 0;
+    const id = window.setInterval(() => {
+      frame += 1;
+      setLevels((prev) =>
+        prev.map((_, i) => {
+          const wave = 0.2 + 0.15 * Math.sin(frame * 0.12 + i * 0.28);
+          return wave;
+        })
+      );
+    }, 80);
+    return () => window.clearInterval(id);
+  }, [stream]);
+
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-  const ss = String(seconds % 60).padStart(2, "0");
+  const ss = String(Math.floor(seconds % 60)).padStart(2, "0");
+  const maxLabel =
+    maxSeconds != null && maxSeconds > 0
+      ? ` / ${String(Math.floor(maxSeconds / 60)).padStart(2, "0")}:${String(Math.floor(maxSeconds % 60)).padStart(2, "0")}`
+      : "";
 
   return (
     <div
       style={{
-        marginTop: 12,
-        padding: 16,
-        borderRadius: 18,
-        border: `1px solid ${C.brassLine}`,
-        background: C.surface,
-        boxShadow: C.cardShadow,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 280,
+        padding: "28px 16px 8px",
+        borderRadius: 24,
+        overflow: "hidden",
+        background:
+          "radial-gradient(ellipse 80% 55% at 50% 42%, rgba(180,40,20,0.22) 0%, rgba(0,0,0,0) 70%), #050506",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.brass, textTransform: "uppercase" }}>{label}</span>
-        <span style={{ fontFamily: "Georgia, serif", fontSize: 18, color: C.text }}>
-          {mm}:{ss}
-        </span>
+      {/* Soft vignette */}
+      <div
+        aria-hidden
+        style={{
+          pointerEvents: "none",
+          position: "absolute",
+          inset: 0,
+          background:
+            "radial-gradient(circle at 50% 40%, transparent 30%, rgba(0,0,0,0.55) 100%)",
+        }}
+      />
+
+      {(title || subtitle || timeline) && (
+        <div style={{ position: "relative", zIndex: 1, textAlign: "center", marginBottom: 28, maxWidth: 340 }}>
+          {title && (
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: C.brass || "#E7A961",
+                marginBottom: 6,
+              }}
+            >
+              {title}
+            </div>
+          )}
+          {subtitle && (
+            <div
+              style={{
+                fontFamily: "Georgia, 'Times New Roman', serif",
+                fontSize: 22,
+                fontWeight: 500,
+                color: C.text || "#F4F1EC",
+                marginBottom: 6,
+              }}
+            >
+              {subtitle}
+            </div>
+          )}
+          {timeline && (
+            <div style={{ fontSize: 13, color: C.textMuted || "#9B96A3", letterSpacing: 0.02 }}>
+              {timeline}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Live bars — gold → orange gradient like reference */}
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 3,
+          height: 120,
+          width: "100%",
+          maxWidth: 360,
+          filter: "drop-shadow(0 0 18px rgba(231,169,97,0.35))",
+        }}
+        aria-hidden
+      >
+        {levels.map((lv, i) => {
+          const h = Math.max(8, Math.round(lv * 100));
+          return (
+            <div
+              key={`${seed}-${i}`}
+              style={{
+                width: 4,
+                height: h,
+                borderRadius: 2,
+                background: `linear-gradient(180deg, #F5D78E 0%, #E7A961 45%, #E07A3A 100%)`,
+                opacity: 0.85 + lv * 0.15,
+                transition: "height 60ms linear",
+              }}
+            />
+          );
+        })}
       </div>
-      <Waveform bars={levels} progress={1} activeColor={C.danger} height={52} />
+
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          marginTop: 36,
+          fontSize: 15,
+          fontWeight: 500,
+          color: "rgba(244,241,236,0.72)",
+          letterSpacing: 0.02,
+        }}
+      >
+        {label} · {Math.floor(seconds)}s{maxLabel ? maxLabel : ""}
+      </div>
+      {/* Keep mm:ss for a11y */}
+      <span className="sr-only">
+        {mm}:{ss}
+      </span>
     </div>
   );
 }
