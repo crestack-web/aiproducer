@@ -1281,13 +1281,8 @@ export function ProducerView({
     mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full"
   ) {
     if (!projectId || id === "beat") return;
-    const layer = layers.find((l) => l.id === id);
-    if (layer && !layer.audioUrl) {
-      setEditMsg(
-        "No vocal take on this track — record or upload in the Booth first, then open Stack again."
-      );
-      return;
-    }
+    // Plugin-style: one recorded take is enough. API resolves the take by task id
+    // (and same-section lead fallback). Do not require pre-planned choir tasks.
     const labels: Record<string, string> = {
       double: "Add tight doubles from this vocal?",
       choir_light: "Add a light choir (doubles + high harmony)?",

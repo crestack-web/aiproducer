@@ -14,6 +14,8 @@ const BodySchema = z.object({
   mode: z.enum(["double", "choir_light", "choir_full", "chorus_lift"]).optional(),
   /** @deprecated — maps to choir_light / choir_full */
   intensity: z.enum(["light", "full"]).optional(),
+  /** Optional explicit take (plugin-style: this audio is the choir source) */
+  recording_id: z.string().uuid().optional(),
 });
 
 /**
@@ -29,6 +31,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { id: taskId } = await ctx.params;
   let mode: StackMode = "choir_full";
+  let recordingIdHint: string | null = null;
   try {
     const body = await req.json().catch(() => ({}));
     const parsed = BodySchema.safeParse(body || {});
@@ -36,6 +39,7 @@ export async function POST(req: Request, ctx: Ctx) {
       if (parsed.data.mode) mode = parsed.data.mode;
       else if (parsed.data.intensity === "light") mode = "choir_light";
       else if (parsed.data.intensity === "full") mode = "choir_full";
+      if (parsed.data.recording_id) recordingIdHint = parsed.data.recording_id;
     }
   } catch {
     /* default choir_full */
@@ -134,13 +138,20 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Prefer selected take, then newest with audio_path or original_audio_path
+  /**
+   * Plugin-style source take resolution:
+   * One recorded vocal on a track is enough — no need for pre-planned harmony tasks.
+   * Prefer explicit recording_id, then any take on this task, then same-section lead.
+   */
   type RecRow = {
     id?: string;
+    task_id?: string | null;
     audio_path?: string | null;
     original_audio_path?: string | null;
     content_type?: string | null;
     is_selected?: boolean | null;
+    metadata?: Record<string, unknown> | null;
+    created_at?: string;
   };
   const pickPath = (r: RecRow | null | undefined): string | null => {
     if (!r) return null;
@@ -149,56 +160,102 @@ export async function POST(req: Request, ctx: Ctx) {
     return a || o || null;
   };
 
-  let rec: RecRow | null = null;
-  {
-    // 1) Selected take on this task
-    const sel = await service
+  const loadRecById = async (rid: string): Promise<RecRow | null> => {
+    const { data } = await service
       .from("recordings")
-      .select("id, audio_path, original_audio_path, content_type, is_selected, created_at")
+      .select(
+        "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
+      )
+      .eq("id", rid)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    return (data as RecRow) || null;
+  };
+
+  let rec: RecRow | null = null;
+
+  // 0) Explicit take id from Console (most reliable)
+  if (recordingIdHint) {
+    rec = await loadRecById(recordingIdHint);
+  }
+
+  // 1) Any take on this track/task
+  if (!pickPath(rec)) {
+    const any = await service
+      .from("recordings")
+      .select(
+        "id, task_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
+      )
       .eq("task_id", taskId)
-      .eq("is_selected", true)
       .order("created_at", { ascending: false })
-      .limit(3);
-    const selRows = (sel.data || []) as RecRow[];
-    rec = selRows.find((r) => pickPath(r)) || null;
+      .limit(12);
+    const rows = (any.data || []) as RecRow[];
+    rec =
+      rows.find((r) => r.is_selected && pickPath(r)) ||
+      rows.find((r) => pickPath(r)) ||
+      null;
+  }
 
-    // 2) Any take on this task (selected flag often false until explicit pick)
+  // 2) Metadata / reassigned task links on the project
+  if (!pickPath(rec) && projectId) {
+    const proj = await service
+      .from("recordings")
+      .select(
+        "id, task_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
+      )
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const rows = (proj.data || []) as RecRow[];
+    rec =
+      rows.find((r) => {
+        const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : {};
+        const metaTask = String(
+          (meta as { task_id?: string }).task_id ||
+            (meta as { recording_task_id?: string }).recording_task_id ||
+            ""
+        );
+        return (r.task_id === taskId || metaTask === taskId) && Boolean(pickPath(r));
+      }) || null;
+
+    // 3) Same musical window (section) — use a sibling lead take if this row is empty
     if (!pickPath(rec)) {
-      const any = await service
-        .from("recordings")
-        .select("id, audio_path, original_audio_path, content_type, is_selected, created_at")
-        .eq("task_id", taskId)
-        .order("created_at", { ascending: false })
-        .limit(10);
-      const rows = (any.data || []) as RecRow[];
-      rec =
-        rows.find((r) => r.is_selected && pickPath(r)) ||
-        rows.find((r) => pickPath(r)) ||
-        null;
-    }
-
-    // 3) Same project: take linked via metadata.task_id (legacy / reassigned rows)
-    if (!pickPath(rec) && projectId) {
-      const proj = await service
-        .from("recordings")
-        .select("id, task_id, audio_path, original_audio_path, content_type, metadata, created_at")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: false })
-        .limit(40);
-      const rows = (proj.data || []) as (RecRow & {
-        task_id?: string;
-        metadata?: Record<string, unknown> | null;
-      })[];
-      rec =
-        rows.find((r) => {
-          const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : {};
-          const metaTask = String(
-            (meta as { task_id?: string }).task_id ||
-              (meta as { recording_task_id?: string }).recording_task_id ||
-              ""
-          );
-          return (r.task_id === taskId || metaTask === taskId) && Boolean(pickPath(r));
-        }) || null;
+      const winStart = Number(task.start_ms);
+      const winEnd = Number(task.end_ms);
+      if (Number.isFinite(winStart)) {
+        const { data: siblingTasks } = await service
+          .from("recording_tasks")
+          .select("id, type, start_ms, end_ms, status")
+          .eq("project_id", projectId)
+          .limit(80);
+        const near = (siblingTasks || []).filter((st) => {
+          const s = Number(st.start_ms);
+          if (!Number.isFinite(s)) return false;
+          if (Math.abs(s - winStart) > 400) return false;
+          if (Number.isFinite(winEnd) && st.end_ms != null) {
+            return Math.abs(Number(st.end_ms) - winEnd) < 800;
+          }
+          return true;
+        });
+        const nearIds = new Set(near.map((st) => String(st.id)));
+        // Prefer completed lead on same section
+        const leadNear = near.find(
+          (st) =>
+            String(st.type || "").toLowerCase() === "lead" &&
+            /complete|done|recorded|ready/i.test(String(st.status || ""))
+        );
+        const preferIds = leadNear
+          ? [String(leadNear.id), ...[...nearIds].filter((x) => x !== String(leadNear.id))]
+          : [...nearIds];
+        for (const nid of preferIds) {
+          if (nid === taskId) continue;
+          const hit = rows.find((r) => r.task_id === nid && pickPath(r));
+          if (hit) {
+            rec = hit;
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -209,7 +266,8 @@ export async function POST(req: Request, ctx: Ctx) {
         error: "No vocal take on this track — record or upload first",
         details: {
           taskId,
-          hint: "Open Booth, record this part until Saved, then try Stack again on the same vocal track.",
+          recordingIdHint,
+          hint: "Stack uses the saved take on this track (or the lead on the same section). Record in Booth until Saved, refresh Console, then Stack again.",
         },
       },
       { status: 400 }
@@ -232,7 +290,7 @@ export async function POST(req: Request, ctx: Ctx) {
 
   let lead;
   try {
-    lead = await normalizeToInternalPcm(raw, rec.audio_path);
+    lead = await normalizeToInternalPcm(raw, vocalPath);
   } catch (e) {
     console.error("[choir] decode", e);
     return NextResponse.json({ error: "Could not decode vocal audio" }, { status: 500 });
