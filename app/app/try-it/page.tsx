@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Try It — isolated voice-clone preview.
- * Does not share state with Booth Record pipeline.
+ * Try It — isolated voice-clone preview UI.
+ * Immersive demo experience; does not share state with Booth Record.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,11 +11,23 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { useTheme } from "@/lib/theme";
 
-type Phase = "idle" | "recording" | "uploading" | "cloning" | "ready" | "generating" | "preview" | "error";
+type Phase =
+  | "idle"
+  | "recording"
+  | "uploading"
+  | "cloning"
+  | "ready"
+  | "generating"
+  | "preview"
+  | "error";
+
+const BAR_COUNT = 56;
 
 export default function TryItPage() {
   const router = useRouter();
-  const { colors: C } = useTheme();
+  const { colors: C, mode } = useTheme();
+  const isDark = mode !== "light";
+
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -24,9 +36,15 @@ export default function TryItPage() {
   const [lyrics, setLyrics] = useState(
     "Yeah this is my sound, riding on the beat, feel the night, feel the heat"
   );
+  const [showSetup, setShowSetup] = useState(false);
   const [beatUrl, setBeatUrl] = useState<string | null>(null);
   const [vocalUrl, setVocalUrl] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
+  const [recSec, setRecSec] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [animTick, setAnimTick] = useState(0);
 
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -35,6 +53,18 @@ export default function TryItPage() {
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const vocalAudioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef(0);
+  const recTimerRef = useRef(0);
+
+  // Ambient bar animation
+  useEffect(() => {
+    let id = 0;
+    const loop = () => {
+      setAnimTick((t) => t + 1);
+      id = requestAnimationFrame(loop);
+    };
+    id = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +96,9 @@ export default function TryItPage() {
       cancelled = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       cancelAnimationFrame(rafRef.current);
+      window.clearInterval(recTimerRef.current);
+      beatAudioRef.current?.pause();
+      vocalAudioRef.current?.pause();
     };
   }, []);
 
@@ -76,8 +109,15 @@ export default function TryItPage() {
 
   const startRecord = useCallback(async () => {
     setMsg(null);
+    setShowSetup(false);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
       const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
@@ -89,10 +129,15 @@ export default function TryItPage() {
       };
       mediaRef.current = rec;
       startedAtRef.current = Date.now();
-      rec.start(200);
+      setRecSec(0);
+      rec.start(120);
       setPhase("recording");
 
-      // simple level meter
+      window.clearInterval(recTimerRef.current);
+      recTimerRef.current = window.setInterval(() => {
+        setRecSec(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      }, 250);
+
       const ctx = new AudioContext();
       const src = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
@@ -103,7 +148,7 @@ export default function TryItPage() {
         analyser.getByteFrequencyData(data);
         let s = 0;
         for (let i = 0; i < data.length; i++) s += data[i];
-        setLevel(Math.min(1, s / (data.length * 180)));
+        setLevel(Math.min(1, s / (data.length * 140)));
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -117,6 +162,7 @@ export default function TryItPage() {
     const rec = mediaRef.current;
     if (!rec || !sessionId) return;
     stopMeter();
+    window.clearInterval(recTimerRef.current);
     const durationMs = Date.now() - startedAtRef.current;
     await new Promise<void>((resolve) => {
       rec.onstop = () => resolve();
@@ -126,7 +172,7 @@ export default function TryItPage() {
     streamRef.current = null;
 
     if (durationMs < 10_000) {
-      setMsg("Keep singing for at least 10 seconds");
+      setMsg("Keep going — need at least 10 seconds");
       setPhase("idle");
       return;
     }
@@ -138,13 +184,13 @@ export default function TryItPage() {
 
     const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
     setPhase("uploading");
-    setMsg("Uploading sample…");
+    setMsg("Uploading your sample…");
     try {
       const fd = new FormData();
       fd.append("file", blob, "try-it-sample.webm");
       fd.append("duration_ms", String(durationMs));
       setPhase("cloning");
-      setMsg("Cloning your voice (trial only)…");
+      setMsg("Cloning a temporary voice…");
       const res = await fetch(`/api/try-it/session/${sessionId}/sample`, {
         method: "POST",
         body: fd,
@@ -156,7 +202,8 @@ export default function TryItPage() {
         return;
       }
       setPhase("ready");
-      setMsg("Voice ready — pick a vibe and generate a preview");
+      setShowSetup(true);
+      setMsg(null);
     } catch {
       setPhase("error");
       setMsg("Upload failed");
@@ -187,7 +234,7 @@ export default function TryItPage() {
       fd.append("file", file);
       fd.append("duration_ms", String(durationMs));
       setPhase("cloning");
-      setMsg("Cloning your voice (trial only)…");
+      setMsg("Cloning a temporary voice…");
       const res = await fetch(`/api/try-it/session/${sessionId}/sample`, {
         method: "POST",
         body: fd,
@@ -199,22 +246,124 @@ export default function TryItPage() {
         return;
       }
       setPhase("ready");
-      setMsg("Voice ready — generate a preview");
+      setShowSetup(true);
+      setMsg(null);
     } catch {
       setPhase("error");
       setMsg("Could not read that audio file");
     }
   };
 
+  const stopPreview = useCallback(() => {
+    beatAudioRef.current?.pause();
+    vocalAudioRef.current?.pause();
+    if (beatAudioRef.current) beatAudioRef.current.currentTime = 0;
+    if (vocalAudioRef.current) vocalAudioRef.current.currentTime = 0;
+    setPlaying(false);
+    setProgress(0);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    const beat = beatAudioRef.current;
+    const vocal = vocalAudioRef.current;
+    if (!beat || !vocal) return;
+    if (playing) {
+      beat.pause();
+      vocal.pause();
+      setPlaying(false);
+      return;
+    }
+    const start = async () => {
+      try {
+        if (beat.ended || vocal.ended) {
+          beat.currentTime = 0;
+          vocal.currentTime = 0;
+        }
+        // Sync start
+        vocal.currentTime = beat.currentTime;
+        await Promise.all([beat.play(), vocal.play()]);
+        setPlaying(true);
+      } catch {
+        setMsg("Could not play preview — tap again");
+      }
+    };
+    void start();
+  }, [playing]);
+
+  // Wire audio elements when preview URLs arrive
+  useEffect(() => {
+    if (phase !== "preview" || !beatUrl || !vocalUrl) return;
+
+    const beat = new Audio(beatUrl);
+    const vocal = new Audio(vocalUrl);
+    beat.preload = "auto";
+    vocal.preload = "auto";
+    beat.volume = 0.72;
+    vocal.volume = 1;
+    beatAudioRef.current = beat;
+    vocalAudioRef.current = vocal;
+
+    const onTime = () => {
+      const t = beat.currentTime;
+      const d = beat.duration || vocal.duration || 0;
+      setProgress(t);
+      setDuration(Number.isFinite(d) ? d : 0);
+      // keep vocal roughly in sync
+      if (Math.abs(vocal.currentTime - t) > 0.12) {
+        vocal.currentTime = t;
+      }
+    };
+    const onEnded = () => {
+      setPlaying(false);
+      setProgress(0);
+      vocal.pause();
+      vocal.currentTime = 0;
+    };
+    const onMeta = () => {
+      const d = Math.max(beat.duration || 0, vocal.duration || 0);
+      if (Number.isFinite(d)) setDuration(d);
+    };
+
+    beat.addEventListener("timeupdate", onTime);
+    beat.addEventListener("ended", onEnded);
+    beat.addEventListener("loadedmetadata", onMeta);
+    vocal.addEventListener("loadedmetadata", onMeta);
+
+    // Auto-play once ready
+    const tryAuto = async () => {
+      try {
+        await Promise.all([beat.play(), vocal.play()]);
+        setPlaying(true);
+      } catch {
+        /* user gesture may be required on some browsers */
+      }
+    };
+    void tryAuto();
+
+    return () => {
+      beat.pause();
+      vocal.pause();
+      beat.removeEventListener("timeupdate", onTime);
+      beat.removeEventListener("ended", onEnded);
+      beat.removeEventListener("loadedmetadata", onMeta);
+      vocal.removeEventListener("loadedmetadata", onMeta);
+      beatAudioRef.current = null;
+      vocalAudioRef.current = null;
+      setPlaying(false);
+    };
+  }, [phase, beatUrl, vocalUrl]);
+
   const generate = async () => {
     if (!sessionId) return;
     if (quotaRemaining !== null && quotaRemaining <= 0) {
       setPhase("error");
-      setMsg("You've used your free Try It previews. Record the real version in Booth to continue.");
+      setMsg("You've used your free Try It previews. Record the real version in Booth.");
       return;
     }
+    stopPreview();
     setPhase("generating");
-    setMsg("Building a short draft preview (~18s)…");
+    setMsg("Building a short draft preview…");
+    setShowSetup(false);
     try {
       const res = await fetch(`/api/try-it/session/${sessionId}/generate`, {
         method: "POST",
@@ -227,337 +376,582 @@ export default function TryItPage() {
       }
       if (!res.ok) {
         setPhase("error");
-        setMsg(
-          typeof j.error === "string"
-            ? j.error
-            : "Generate failed"
-        );
+        setMsg(typeof j.error === "string" ? j.error : "Generate failed");
         return;
       }
       setBeatUrl(j.preview?.beat_url || null);
       setVocalUrl(j.preview?.vocal_url || null);
       setPhase("preview");
-      setMsg("Draft preview only (~18s) — not downloadable. Record the real version when ready.");
+      setMsg(null);
     } catch {
       setPhase("error");
       setMsg("Generate failed");
     }
   };
 
-  useEffect(() => {
-    if (phase !== "preview" || !beatUrl || !vocalUrl) return;
-    const beat = new Audio(beatUrl);
-    const vocal = new Audio(vocalUrl);
-    beat.volume = 0.75;
-    vocal.volume = 1;
-    beatAudioRef.current = beat;
-    vocalAudioRef.current = vocal;
-    void beat.play().catch(() => undefined);
-    void vocal.play().catch(() => undefined);
-    return () => {
-      beat.pause();
-      vocal.pause();
-    };
-  }, [phase, beatUrl, vocalUrl]);
-
   const goRealRecord = () => {
-    // Discard stays server-side on next expire; deep-link Booth with genre only
+    stopPreview();
     router.push(`/app/studio?tryIt=1&genre=${encodeURIComponent(genre)}`);
   };
 
-  const bars = Array.from({ length: 48 }, (_, i) => {
-    const wave =
-      phase === "recording"
-        ? 0.25 + level * (0.5 + 0.5 * Math.sin(i * 0.4 + level * 8))
-        : phase === "preview"
-          ? 0.35 + 0.4 * Math.abs(Math.sin(i * 0.35))
-          : 0.15 + 0.1 * Math.abs(Math.sin(i * 0.2));
-    return wave;
+  const fmt = (s: number) => {
+    if (!Number.isFinite(s) || s < 0) return "0:00";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  // Waveform heights driven by phase
+  const bars = Array.from({ length: BAR_COUNT }, (_, i) => {
+    const t = animTick * 0.08;
+    if (phase === "recording") {
+      const pulse = 0.2 + level * (0.55 + 0.45 * Math.sin(i * 0.35 + t * 3));
+      return Math.min(1, Math.max(0.08, pulse));
+    }
+    if (phase === "generating" || phase === "cloning" || phase === "uploading") {
+      const wave = 0.25 + 0.55 * Math.abs(Math.sin(i * 0.22 + t * 2.2));
+      return wave;
+    }
+    if (phase === "preview" && playing) {
+      const wave =
+        0.3 +
+        0.5 * Math.abs(Math.sin(i * 0.28 + progress * 6 + t)) *
+          (0.6 + 0.4 * Math.sin(i * 0.1));
+      return wave;
+    }
+    if (phase === "preview") {
+      return 0.18 + 0.12 * Math.abs(Math.sin(i * 0.2));
+    }
+    if (phase === "ready") {
+      return 0.2 + 0.15 * Math.abs(Math.sin(i * 0.25 + t * 0.5));
+    }
+    // idle breathing
+    return 0.12 + 0.1 * Math.abs(Math.sin(i * 0.18 + t * 0.4));
   });
+
+  const bg = isDark
+    ? "radial-gradient(ellipse 120% 80% at 50% 0%, #1a1520 0%, #0B0A0F 55%, #07060a 100%)"
+    : "radial-gradient(ellipse 120% 80% at 50% 0%, #F7F0E6 0%, #EFE6DA 50%, #E8DFD2 100%)";
+  const text = isDark ? "#F4F1EC" : "#1A1510";
+  const muted = isDark ? "#9B96A3" : "#6B635A";
+  const card = isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.55)";
+  const border = isDark ? "rgba(255,255,255,0.1)" : "rgba(48,36,22,0.12)";
+
+  const statusLabel =
+    phase === "recording"
+      ? `Recording · ${recSec}s`
+      : phase === "uploading"
+        ? "Uploading…"
+        : phase === "cloning"
+          ? "Cloning voice…"
+          : phase === "generating"
+            ? "Generating preview…"
+            : phase === "ready"
+              ? "Voice ready"
+              : phase === "preview"
+                ? playing
+                  ? "Playing draft"
+                  : "Preview ready"
+                : phase === "error"
+                  ? "Something went wrong"
+                  : "Tap to record";
 
   return (
     <AppShell>
       <div
         style={{
           minHeight: "100dvh",
-          background: C.bg || "#0B0A0F",
-          color: C.text || "#F4F1EC",
-          fontFamily: "system-ui, sans-serif",
+          background: bg,
+          color: text,
+          fontFamily: "system-ui, -apple-system, sans-serif",
           display: "flex",
           flexDirection: "column",
-          padding: "16px 16px max(24px, env(safe-area-inset-bottom))",
+          padding: "12px 18px max(20px, env(safe-area-inset-bottom))",
           maxWidth: 480,
           margin: "0 auto",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <Link href="/app" style={{ color: C.textMuted || "#9B96A3", textDecoration: "none", fontSize: 14 }}>
+        {/* Soft glow behind waveform */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "42%",
+            transform: "translate(-50%, -50%)",
+            width: "90%",
+            height: 180,
+            borderRadius: "50%",
+            background: isDark
+              ? "radial-gradient(circle, rgba(239,68,68,0.18), transparent 70%)"
+              : "radial-gradient(circle, rgba(239,68,68,0.12), transparent 70%)",
+            pointerEvents: "none",
+            opacity: phase === "recording" || phase === "generating" ? 1 : 0.5,
+            transition: "opacity 0.4s ease",
+          }}
+        />
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4, zIndex: 1 }}>
+          <Link
+            href="/app"
+            style={{ color: muted, textDecoration: "none", fontSize: 14, fontWeight: 600 }}
+          >
             ← Back
           </Link>
-          <span style={{ flex: 1, textAlign: "center", fontWeight: 700, fontSize: 15, opacity: 0.9 }}>
+          <span style={{ flex: 1, textAlign: "center", fontWeight: 800, fontSize: 16, letterSpacing: "-0.02em" }}>
             Try It
           </span>
-          <span style={{ width: 48 }} />
+          <span style={{ width: 48, textAlign: "right", fontSize: 11, color: muted, fontWeight: 600 }}>
+            {quotaRemaining != null ? `${quotaRemaining} left` : ""}
+          </span>
         </div>
 
-        <p style={{ textAlign: "center", fontSize: 18, fontWeight: 600, margin: "12px 0 8px", opacity: 0.95 }}>
-          Sing or rap your favorite song
-        </p>
-        <p style={{ textAlign: "center", fontSize: 12, color: C.textMuted || "#9B96A3", margin: "0 0 24px" }}>
-          10s–2 min sample · temp clone · ~18s draft preview · 2 free generates max
-        </p>
+        <div style={{ textAlign: "center", marginTop: 8, zIndex: 1 }}>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 800,
+              letterSpacing: "-0.03em",
+              lineHeight: 1.25,
+            }}
+          >
+            {phase === "preview"
+              ? "Your draft preview"
+              : phase === "ready"
+                ? "Ready to generate"
+                : "Sing or rap your favorite song"}
+          </h1>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 13,
+              color: muted,
+              lineHeight: 1.45,
+              padding: "0 8px",
+            }}
+          >
+            {phase === "preview"
+              ? "Draft only · ~18s · not downloadable"
+              : "10s–2 min sample · temp voice · free demo"}
+          </p>
+        </div>
 
-        {/* Waveform visual */}
+        {/* Waveform */}
         <div
           style={{
             flex: 1,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            minHeight: 160,
-            gap: 3,
-            padding: "0 8px",
+            minHeight: 200,
+            gap: 2.5,
+            padding: "24px 4px",
+            zIndex: 1,
           }}
         >
           {bars.map((h, i) => (
             <div
               key={i}
               style={{
-                width: 4,
-                height: `${Math.round(h * 100)}%`,
-                maxHeight: 120,
-                minHeight: 8,
-                borderRadius: 2,
-                background: `linear-gradient(180deg, #FBBF24, #F97316, #EF4444)`,
-                opacity: 0.85,
+                width: 3.5,
+                height: `${Math.round(12 + h * 110)}px`,
+                borderRadius: 3,
+                background:
+                  phase === "recording"
+                    ? `linear-gradient(180deg, #FBBF24 0%, #F97316 45%, #EF4444 100%)`
+                    : phase === "generating" || phase === "cloning"
+                      ? `linear-gradient(180deg, #F0BC80 0%, #E7A961 50%, #F97316 100%)`
+                      : phase === "preview"
+                        ? `linear-gradient(180deg, #FBBF24 0%, #EF4444 100%)`
+                        : `linear-gradient(180deg, #FBBF24 0%, #FB923C 50%, #EF4444 100%)`,
+                opacity: 0.75 + h * 0.25,
+                transform: `scaleY(${0.85 + h * 0.2})`,
+                transition: phase === "recording" ? "none" : "height 0.08s linear",
+                boxShadow:
+                  phase === "recording" || phase === "generating"
+                    ? "0 0 12px rgba(239,68,68,0.25)"
+                    : "none",
               }}
             />
           ))}
         </div>
 
-        {msg ? (
+        {/* Status / error */}
+        <div style={{ textAlign: "center", minHeight: 28, zIndex: 1 }}>
           <p
             style={{
-              textAlign: "center",
-              fontSize: 13,
-              color: phase === "error" ? "#F07167" : C.textMuted || "#9B96A3",
-              margin: "8px 0 16px",
-              lineHeight: 1.4,
+              margin: 0,
+              fontSize: 14,
+              fontWeight: 600,
+              color: phase === "error" ? (C.danger || "#F07167") : muted,
             }}
           >
-            {msg}
+            {msg || statusLabel}
           </p>
-        ) : null}
+        </div>
 
-        {(phase === "ready" || phase === "generating" || phase === "preview") && (
-          <div style={{ marginBottom: 16, display: "y 10px" }}>
-            <label style={{ fontSize: 12, color: C.textMuted }}>Genre</label>
-            <input
-              value={genre}
-              onChange={(e) => setGenre(e.target.value)}
+        {/* Preview transport */}
+        {phase === "preview" && beatUrl && vocalUrl && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: "14px 16px",
+              borderRadius: 18,
+              background: card,
+              border: `1px solid ${border}`,
+              backdropFilter: "blur(12px)",
+              zIndex: 1,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={playing ? "Pause" : "Play preview"}
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 999,
+                  border: "none",
+                  background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                  color: "#1A1208",
+                  fontSize: 22,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  boxShadow: "0 8px 24px rgba(231,169,97,0.35)",
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                {playing ? "❚❚" : "▶"}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    height: 6,
+                    borderRadius: 99,
+                    background: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)",
+                    overflow: "hidden",
+                    cursor: "pointer",
+                  }}
+                  onClick={(e) => {
+                    const beat = beatAudioRef.current;
+                    const vocal = vocalAudioRef.current;
+                    if (!beat || !duration) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    const t = ratio * duration;
+                    beat.currentTime = t;
+                    if (vocal) vocal.currentTime = t;
+                    setProgress(t);
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${duration ? (progress / duration) * 100 : 0}%`,
+                      background: "linear-gradient(90deg, #E7A961, #EF4444)",
+                      borderRadius: 99,
+                      transition: "width 0.1s linear",
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginTop: 6,
+                    fontSize: 11,
+                    color: muted,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span>{fmt(progress)}</span>
+                  <span>{fmt(duration)}</span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={goRealRecord}
               style={{
+                marginTop: 14,
                 width: "100%",
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: `1px solid ${C.border || "rgba(255,255,255,0.12)"}`,
-                background: "rgba(255,255,255,0.04)",
-                color: "inherit",
+                padding: "14px 16px",
+                borderRadius: 999,
+                border: "none",
+                background: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+                color: text,
+                fontWeight: 800,
                 fontSize: 14,
+                cursor: "pointer",
               }}
-            />
-            <label style={{ fontSize: 12, color: C.textMuted }}>Short lyrics (hook)</label>
-            <textarea
-              value={lyrics}
-              onChange={(e) => setLyrics(e.target.value)}
-              rows={2}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: `1px solid ${C.border || "rgba(255,255,255,0.12)"}`,
-                background: "rgba(255,255,255,0.04)",
-                color: "inherit",
-                fontSize: 14,
-                resize: "vertical",
-              }}
-            />
+            >
+              Record the real version →
+            </button>
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 28 }}>
-          <label
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 6,
-              cursor: phase === "recording" ? "default" : "pointer",
-              opacity: phase === "recording" ? 0.4 : 1,
-            }}
-          >
-            <span
+        {/* Setup after clone */}
+        {(phase === "ready" || (showSetup && phase !== "preview" && phase !== "generating")) &&
+          phase !== "error" && (
+            <div
               style={{
-                width: 44,
-                height: 44,
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.08)",
-                display: "grid",
-                placeItems: "center",
-                fontSize: 18,
+                marginTop: 14,
+                padding: "14px 14px 12px",
+                borderRadius: 16,
+                background: card,
+                border: `1px solid ${border}`,
+                zIndex: 1,
               }}
             >
-              ↑
-            </span>
-            <span style={{ fontSize: 11, color: C.textMuted }}>Upload</span>
-            <input
-              type="file"
-              accept="audio/*,.wav,.mp3,.m4a,.webm"
-              hidden
-              disabled={phase === "recording" || phase === "uploading" || phase === "cloning"}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onFile(f);
-              }}
-            />
-          </label>
+              <label style={{ fontSize: 11, fontWeight: 700, color: muted, letterSpacing: "0.04em" }}>
+                GENRE
+              </label>
+              <input
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                style={{
+                  width: "100%",
+                  marginTop: 6,
+                  marginBottom: 12,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: isDark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.8)",
+                  color: text,
+                  fontSize: 15,
+                  fontFamily: "inherit",
+                }}
+              />
+              <label style={{ fontSize: 11, fontWeight: 700, color: muted, letterSpacing: "0.04em" }}>
+                SHORT LYRICS
+              </label>
+              <textarea
+                value={lyrics}
+                onChange={(e) => setLyrics(e.target.value.slice(0, 220))}
+                rows={2}
+                style={{
+                  width: "100%",
+                  marginTop: 6,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: isDark ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.8)",
+                  color: text,
+                  fontSize: 14,
+                  fontFamily: "inherit",
+                  resize: "none",
+                }}
+              />
+              {quotaRemaining !== null && quotaRemaining <= 0 ? (
+                <button
+                  type="button"
+                  onClick={goRealRecord}
+                  style={{
+                    marginTop: 12,
+                    width: "100%",
+                    padding: "14px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    color: "#1A1208",
+                    fontWeight: 800,
+                    fontSize: 15,
+                    cursor: "pointer",
+                  }}
+                >
+                  Record the real version
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void generate()}
+                  style={{
+                    marginTop: 12,
+                    width: "100%",
+                    padding: "14px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    color: "#1A1208",
+                    fontWeight: 800,
+                    fontSize: 15,
+                    cursor: "pointer",
+                    boxShadow: "0 8px 24px rgba(231,169,97,0.3)",
+                  }}
+                >
+                  Generate draft preview
+                </button>
+              )}
+            </div>
+          )}
 
+        {/* Record controls — hide in preview */}
+        {phase !== "preview" && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 36,
+              marginTop: 20,
+              zIndex: 1,
+            }}
+          >
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+                cursor:
+                  phase === "recording" || phase === "uploading" || phase === "cloning"
+                    ? "default"
+                    : "pointer",
+                opacity:
+                  phase === "recording" || phase === "uploading" || phase === "cloning" ? 0.35 : 1,
+              }}
+            >
+              <span
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 999,
+                  background: card,
+                  border: `1px solid ${border}`,
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 18,
+                }}
+              >
+                ↑
+              </span>
+              <span style={{ fontSize: 11, color: muted, fontWeight: 600 }}>Upload</span>
+              <input
+                type="file"
+                accept="audio/*,.wav,.mp3,.m4a,.webm"
+                hidden
+                disabled={
+                  phase === "recording" ||
+                  phase === "uploading" ||
+                  phase === "cloning" ||
+                  phase === "generating"
+                }
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onFile(f);
+                }}
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (phase === "recording") void stopAndUpload();
+                else if (
+                  phase === "idle" ||
+                  phase === "error" ||
+                  phase === "ready"
+                )
+                  void startRecord();
+              }}
+              disabled={
+                !sessionId ||
+                phase === "uploading" ||
+                phase === "cloning" ||
+                phase === "generating"
+              }
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: 999,
+                border: phase === "recording" ? "3px solid rgba(255,255,255,0.9)" : "none",
+                background:
+                  phase === "recording"
+                    ? "#DC2626"
+                    : "radial-gradient(circle at 35% 30%, #F87171, #EF4444 55%, #B91C1C)",
+                boxShadow:
+                  phase === "recording"
+                    ? "0 0 0 8px rgba(239,68,68,0.25), 0 12px 32px rgba(239,68,68,0.45)"
+                    : "0 12px 36px rgba(239,68,68,0.4)",
+                cursor: "pointer",
+                transition: "transform 0.15s ease, box-shadow 0.2s ease",
+                transform: phase === "recording" ? "scale(0.92)" : "scale(1)",
+                animation:
+                  phase === "recording" ? "tryItPulse 1.4s ease-in-out infinite" : undefined,
+              }}
+              aria-label={phase === "recording" ? "Stop recording" : "Start recording"}
+            />
+
+            <button
+              type="button"
+              onClick={() => router.push("/app?tab=library")}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+                background: "none",
+                border: "none",
+                color: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              <span
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 999,
+                  background: card,
+                  border: `1px solid ${border}`,
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 16,
+                }}
+              >
+                ▤
+              </span>
+              <span style={{ fontSize: 11, color: muted, fontWeight: 600 }}>Library</span>
+            </button>
+          </div>
+        )}
+
+        {phase === "error" && (
           <button
             type="button"
             onClick={() => {
-              if (phase === "recording") void stopAndUpload();
-              else if (phase === "idle" || phase === "error" || phase === "ready") void startRecord();
+              setPhase("idle");
+              setMsg(null);
             }}
-            disabled={
-              !sessionId ||
-              phase === "uploading" ||
-              phase === "cloning" ||
-              phase === "generating"
-            }
-            style={{
-              width: 72,
-              height: 72,
-              borderRadius: 999,
-              border: "none",
-              background: phase === "recording" ? "#DC2626" : "#EF4444",
-              boxShadow: "0 8px 28px rgba(239,68,68,0.45)",
-              cursor: "pointer",
-            }}
-            aria-label={phase === "recording" ? "Stop" : "Record"}
-          />
-
-          <button
-            type="button"
-            onClick={() => router.push("/app")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 6,
-              background: "none",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            <span
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.08)",
-                display: "grid",
-                placeItems: "center",
-                fontSize: 16,
-              }}
-            >
-              ▤
-            </span>
-            <span style={{ fontSize: 11, color: C.textMuted }}>Library</span>
-          </button>
-        </div>
-
-        <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: C.textMuted }}>
-          {phase === "recording"
-            ? "Recording… tap the red button to stop"
-            : phase === "idle"
-              ? "Tap to Record"
-              : phase === "ready"
-                ? "Voice cloned (trial)"
-                : phase === "preview"
-                  ? "Playing preview"
-                  : phase}
-        </p>
-
-        {phase === "ready" && quotaRemaining !== null && quotaRemaining <= 0 ? (
-          <div style={{ marginTop: 16, space: "y 10px" }}>
-            <p style={{ textAlign: "center", fontSize: 13, color: C.textMuted, lineHeight: 1.4 }}>
-              You&apos;ve used your free Try It previews. Continue in the real Record flow.
-            </p>
-            <button
-              type="button"
-              onClick={goRealRecord}
-              style={{
-                width: "100%",
-                padding: "14px 16px",
-                borderRadius: 999,
-                border: "none",
-                background: "linear-gradient(180deg, #F0BC80, #E7A961)",
-                color: "#1A1208",
-                fontWeight: 800,
-                fontSize: 15,
-                cursor: "pointer",
-              }}
-            >
-              Record the real version
-            </button>
-          </div>
-        ) : null}
-
-        {phase === "ready" && (quotaRemaining === null || quotaRemaining > 0) && (
-          <button
-            type="button"
-            onClick={() => void generate()}
             style={{
               marginTop: 16,
               width: "100%",
-              padding: "14px 16px",
+              padding: "12px",
               borderRadius: 999,
-              border: "none",
-              background: "linear-gradient(180deg, #F0BC80, #E7A961)",
-              color: "#1A1208",
-              fontWeight: 800,
-              fontSize: 15,
+              border: `1px solid ${border}`,
+              background: card,
+              color: text,
+              fontWeight: 700,
               cursor: "pointer",
+              zIndex: 1,
             }}
           >
-            Generate draft preview (~18s)
+            Try again
           </button>
         )}
 
-        {phase === "preview" && (
-          <div style={{ marginTop: 16, display: "y 10px" }}>
-            <button
-              type="button"
-              onClick={goRealRecord}
-              style={{
-                width: "100%",
-                padding: "14px 16px",
-                borderRadius: 999,
-                border: "none",
-                background: "linear-gradient(180deg, #F0BC80, #E7A961)",
-                color: "#1A1208",
-                fontWeight: 800,
-                fontSize: 15,
-                cursor: "pointer",
-              }}
-            >
-              Record the real version
-            </button>
-            <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, margin: 0 }}>
-              No download or share on Try It previews. Trial voice is not saved to your artist profile.
-            </p>
-          </div>
-        )}
+        <style>{`
+          @keyframes tryItPulse {
+            0%, 100% { box-shadow: 0 0 0 6px rgba(239,68,68,0.2), 0 12px 32px rgba(239,68,68,0.4); }
+            50% { box-shadow: 0 0 0 14px rgba(239,68,68,0.12), 0 12px 32px rgba(239,68,68,0.5); }
+          }
+        `}</style>
       </div>
     </AppShell>
   );
