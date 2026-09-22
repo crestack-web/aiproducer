@@ -273,7 +273,7 @@ export default function TryItPage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <Link href="/app" style={{ color: C.muted || "#9B96A3", textDecoration: "none", fontSize: 14 }}>
+          <Link href="/app" style={{ color: C.textMuted || "#9B96A3", textDecoration: "none", fontSize: 14 }}>
             ← Back
           </Link>
           <span style={{ flex: 1, textAlign: "center", fontWeight: 700, fontSize: 15, opacity: 0.9 }}>
@@ -285,7 +285,7 @@ export default function TryItPage() {
         <p style={{ textAlign: "center", fontSize: 18, fontWeight: 600, margin: "12px 0 8px", opacity: 0.95 }}>
           Sing or rap your favorite song
         </p>
-        <p style={{ textAlign: "center", fontSize: 12, color: C.muted || "#9B96A3", margin: "0 0 24px" }}>
+        <p style={{ textAlign: "center", fontSize: 12, color: C.textMuted || "#9B96A3", margin: "0 0 24px" }}>
           10s–2 min sample · temporary voice clone · preview only (not a real Record session)
         </p>
 
@@ -322,7 +322,7 @@ export default function TryItPage() {
             style={{
               textAlign: "center",
               fontSize: 13,
-              color: phase === "error" ? "#F07167" : C.muted || "#9B96A3",
+              color: phase === "error" ? "#F07167" : C.textMuted || "#9B96A3",
               margin: "8px 0 16px",
               lineHeight: 1.4,
             }}
@@ -333,7 +333,7 @@ export default function TryItPage() {
 
         {(phase === "ready" || phase === "generating" || phase === "preview") && (
           <div style={{ marginBottom: 16, display: "y 10px" }}>
-            <label style={{ fontSize: 12, color: C.muted }}>Genre</label>
+            <label style={{ fontSize: 12, color: C.textMuted }}>Genre</label>
             <input
               value={genre}
               onChange={(e) => setGenre(e.target.value)}
@@ -347,7 +347,7 @@ export default function TryItPage() {
                 fontSize: 14,
               }}
             />
-            <label style={{ fontSize: 12, color: C.muted }}>Short lyrics (hook)</label>
+            <label style={{ fontSize: 12, color: C.textMuted }}>Short lyrics (hook)</label>
             <textarea
               value={lyrics}
               onChange={(e) => setLyrics(e.target.value)}
@@ -390,7 +390,7 @@ export default function TryItPage() {
             >
               ↑
             </span>
-            <span style={{ fontSize: 11, color: C.muted }}>Upload</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Upload</span>
             <input
               type="file"
               accept="audio/*,.wav,.mp3,.m4a,.webm"
@@ -454,11 +454,11 @@ export default function TryItPage() {
             >
               ▤
             </span>
-            <span style={{ fontSize: 11, color: C.muted }}>Library</span>
+            <span style={{ fontSize: 11, color: C.textMuted }}>Library</span>
           </button>
         </div>
 
-        <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: C.muted }}>
+        <p style={{ textAlign: "center", fontSize: 13, marginTop: 14, color: C.textMuted }}>
           {phase === "recording"
             ? "Recording… tap the red button to stop"
             : phase === "idle"
@@ -510,7 +510,7 @@ export default function TryItPage() {
             >
               Record the real version
             </button>
-            <p style={{ textAlign: "center", fontSize: 11, color: C.muted, margin: 0 }}>
+            <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, margin: 0 }}>
               No download or share on Try It previews. Trial voice is not saved to your artist profile.
             </p>
           </div>
