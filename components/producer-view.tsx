@@ -880,6 +880,12 @@ export function ProducerView({
         setExpandedId(action.trackId);
         setFxOpenId(action.trackId);
         break;
+      case "choir": {
+        setSelectedTrackId(action.trackId);
+        setExpandedId(action.trackId);
+        await makeChoir(action.trackId, action.mode, { confirm: false });
+        break;
+      }
       default:
         break;
     }
@@ -1280,9 +1286,10 @@ export function ProducerView({
 
   async function makeChoir(
     id: string,
-    mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full"
-  ) {
-    if (!projectId || id === "beat") return;
+    mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full",
+    opts?: { confirm?: boolean }
+  ): Promise<boolean> {
+    if (!projectId || id === "beat") return false;
     // Plugin-style: one recorded take is enough. API resolves the take by task id
     // (and same-section lead fallback). Do not require pre-planned choir tasks.
     const labels: Record<string, string> = {
@@ -1291,7 +1298,9 @@ export function ProducerView({
       choir_full: "Turn this vocal into a full choir stack?",
       chorus_lift: "Lift this section (chorus-style doubles + high)?",
     };
-    if (!window.confirm(labels[mode] || labels.choir_full)) return;
+    if (opts?.confirm !== false) {
+      if (!window.confirm(labels[mode] || labels.choir_full)) return false;
+    }
     setSavingId(id);
     setEditMsg(null);
     try {
@@ -1348,9 +1357,16 @@ export function ProducerView({
             ? "Track not found — refresh Console and use a recorded vocal layer."
             : `${hint}${found}${reason}${saveErrs}`
         );
-        return;
+        return false;
       }
-      setEditMsg(null);
+      setEditMsg(
+        typeof j.message === "string"
+          ? j.message
+          : mode === "choir_full"
+            ? "Full choir stacked on this vocal — same section timeline."
+            : "Choir layers added on this vocal."
+      );
+      setTimeout(() => setEditMsg(null), 5000);
       onLayersChanged?.();
       // soft refresh layers list from parent
       const tr = await fetch(`/api/projects/${projectId}/recording-tasks`);
@@ -1365,9 +1381,11 @@ export function ProducerView({
       }
     } catch {
       setEditMsg("Network error building choir");
+      return false;
     } finally {
       setSavingId(null);
     }
+    return true;
   }
 
   async function duplicateLayer(id: string) {

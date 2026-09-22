@@ -30,7 +30,13 @@ export type DawAction =
   | { type: "pause"; label: string }
   | { type: "seek"; ms: number; label: string }
   | { type: "expand"; trackId: string; label: string }
-  | { type: "open_fx"; trackId: string; label: string };
+  | { type: "open_fx"; trackId: string; label: string }
+  | {
+      type: "choir";
+      trackId: string;
+      mode: "double" | "choir_light" | "choir_full" | "chorus_lift";
+      label: string;
+    };
 
 export type ConsoleCommandPlan = {
   actions: DawAction[];
@@ -140,6 +146,41 @@ export function parseConsoleCommands(opts: {
     opts.tracks.find((t) => t.id === opts.selectedTrackId) ||
     opts.tracks.find((t) => t.kind === "vocal") ||
     opts.tracks[0];
+
+
+  // —— Choir / stack (uses selected vocal + same-section placement on server) ——
+  if (
+    /\b(make (this |it |the vocal )?(a |into )?(full )?choir|turn (this |it )?into (a )?choir|add (a )?choir|choir (stack|layers)|stack (this |it )?(as |into )?(a )?choir|build (a )?choir)\b/.test(
+      p
+    ) ||
+    (/\bchoir\b/.test(p) && /\b(make|add|build|create|turn|stack|full)\b/.test(p))
+  ) {
+    const t =
+      targets.find((x) => x.kind === "vocal") ||
+      (defaultTarget?.kind === "vocal" ? defaultTarget : null) ||
+      opts.tracks.find((x) => x.id === opts.selectedTrackId && x.kind === "vocal") ||
+      opts.tracks.find((x) => x.kind === "vocal");
+    if (t) {
+      let mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full";
+      if (/\b(light|subtle|soft) choir\b/.test(p) || /\bchoir light\b/.test(p)) mode = "choir_light";
+      else if (/\b(just |only )?double/.test(p) && !/\bchoir\b/.test(p)) mode = "double";
+      else if (/\bchorus lift|lift (the )?chorus\b/.test(p)) mode = "chorus_lift";
+      else mode = "choir_full";
+      actions.push({
+        type: "choir",
+        trackId: t.id,
+        mode,
+        label:
+          mode === "double"
+            ? `Stack doubles on ${t.label}`
+            : mode === "choir_light"
+              ? `Light choir on ${t.label}`
+              : mode === "chorus_lift"
+                ? `Chorus lift on ${t.label}`
+                : `Full choir on ${t.label}`,
+      });
+    }
+  }
 
   // —— Transport ——
   if (/\b(play|start playback|hit play)\b/.test(p) && !/\bplay\s*back\b/.test(p)) {
@@ -353,15 +394,18 @@ export function parseConsoleCommands(opts: {
   }
 
   // Server needed for offline processing language that goes beyond monitor FX
+  const hasChoir = actions.some((a) => a.type === "choir");
   const needsServer =
-    /\b(fix|pitch|tune|align|timing|master|mix down|render|produce|stem|denoise|noise|restore|take|re-?record|generate)\b/.test(
+    !hasChoir &&
+    (/\b(fix|pitch|tune|align|timing|master|mix down|render|produce|stem|denoise|noise|restore|take|re-?record|generate)\b/.test(
       p
     ) ||
-    // explicit process verbs without only local UI intent
-    (/\b(process|apply to (the )?take|print|bounce)\b/.test(p) && actions.length === 0);
+      // explicit process verbs without only local UI intent
+      (/\b(process|apply to (the )?take|print|bounce)\b/.test(p) && actions.length === 0));
 
   // Pure creative language with no local match → still try server
   const needsServerFallback =
+    !hasChoir &&
     actions.length === 0 &&
     request.length > 2 &&
     !/\b(play|pause|stop)\b/.test(p);
@@ -388,6 +432,7 @@ export function parseConsoleCommands(opts: {
 export const AP_SUGGESTIONS = [
   "Mute the beat",
   "Solo lead",
+  "Make this a full choir",
   "Pan harmony left",
   "More reverb on lead",
   "Louder doubles",
