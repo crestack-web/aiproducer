@@ -183,7 +183,7 @@ export async function generateTryItPreview(opts: {
       bpm: tempo,
       instrumentation: "drums, bass, synth, no vocals",
     });
-    const beatResult = await provider.generate({
+    const genReq = {
       projectId: opts.sessionId,
       userId: opts.userId,
       prompt,
@@ -191,10 +191,26 @@ export async function generateTryItPreview(opts: {
       genre,
       mood: "energetic",
       bpm: tempo,
-      kind: "preview",
+      kind: "preview" as const,
       instrumentalOnly: true,
-    });
-    const beatBuf = beatResult.buffer;
+    };
+    let beatBuf: Buffer;
+    if (typeof provider.generate === "function") {
+      const beatResult = await provider.generate(genReq);
+      beatBuf = beatResult.buffer;
+    } else {
+      const submitted = await provider.submitPrediction(genReq);
+      let poll = await provider.pollPrediction(submitted.providerPredictionId);
+      for (let i = 0; i < 40 && poll.status !== "succeeded" && poll.status !== "failed"; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        poll = await provider.pollPrediction(submitted.providerPredictionId);
+      }
+      if (poll.status !== "succeeded" || !poll.outputUrl) {
+        throw new Error(poll.error || "Beat generation did not complete");
+      }
+      const dl = await provider.downloadOutput(poll.outputUrl);
+      beatBuf = dl.buffer;
+    }
     if (!beatBuf || beatBuf.length < 1000) throw new Error("Beat generation returned empty audio");
     const beatPath = `${prefix}/beat.mp3`;
     await uploadBuffer(beatPath, Buffer.from(beatBuf), "audio/mpeg");
