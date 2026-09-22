@@ -535,6 +535,14 @@ function AppInner() {
               <button
                 type="button"
                 style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
+                onClick={() => router.push("/app/try-it")}
+                title="Preview a song in a temporary clone of your voice — not the full Record flow"
+              >
+                Try It
+              </button>
+              <button
+                type="button"
+                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
                 onClick={() => {
                   setTab("library");
                   router.replace("/app?tab=library");
