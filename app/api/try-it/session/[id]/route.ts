@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { getTryItSession, isTryItEnabled, signedPreviewUrls } from "@/lib/try-it/service";
+import {
+  getTryItQuota,
+  getTryItSession,
+  isTryItEnabled,
+  signedPreviewUrls,
+} from "@/lib/try-it/service";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -15,6 +20,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const session = await getTryItSession(id, user.id);
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const urls = await signedPreviewUrls(session);
+  const quota = await getTryItQuota(user.id);
   return NextResponse.json({
     id: session.id,
     status: session.status,
@@ -26,13 +32,14 @@ export async function GET(_req: Request, ctx: Ctx) {
     error: session.error,
     sample_duration_ms: session.sample_duration_ms,
     has_voice: Boolean(session.eleven_voice_id),
-    // Preview stream only — no download/share
+    quota,
     preview: {
       beat_url: urls.beatUrl,
       vocal_url: urls.vocalUrl,
       source: "try_it_preview",
       download_blocked: true,
       share_blocked: true,
+      max_duration_sec: 20,
     },
   });
 }

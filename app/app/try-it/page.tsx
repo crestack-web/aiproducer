@@ -17,6 +17,7 @@ export default function TryItPage() {
   const router = useRouter();
   const { colors: C } = useTheme();
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [msg, setMsg] = useState<string | null>(null);
   const [genre, setGenre] = useState("afrobeats");
@@ -48,7 +49,12 @@ export default function TryItPage() {
           }
           return;
         }
-        if (!cancelled) setSessionId(j.id as string);
+        if (!cancelled) {
+          setSessionId(j.id as string);
+          if (j.quota && typeof j.quota.remaining === "number") {
+            setQuotaRemaining(j.quota.remaining);
+          }
+        }
       } catch {
         if (!cancelled) {
           setPhase("error");
@@ -202,8 +208,13 @@ export default function TryItPage() {
 
   const generate = async () => {
     if (!sessionId) return;
+    if (quotaRemaining !== null && quotaRemaining <= 0) {
+      setPhase("error");
+      setMsg("You've used your free Try It previews. Record the real version in Booth to continue.");
+      return;
+    }
     setPhase("generating");
-    setMsg("Building beat + vocal preview…");
+    setMsg("Building a short draft preview (~18s)…");
     try {
       const res = await fetch(`/api/try-it/session/${sessionId}/generate`, {
         method: "POST",
@@ -211,15 +222,22 @@ export default function TryItPage() {
         body: JSON.stringify({ genre, lyrics, tempo: 100 }),
       });
       const j = await res.json().catch(() => ({}));
+      if (j.quota && typeof j.quota.remaining === "number") {
+        setQuotaRemaining(j.quota.remaining);
+      }
       if (!res.ok) {
         setPhase("error");
-        setMsg(typeof j.error === "string" ? j.error : "Generate failed");
+        setMsg(
+          typeof j.error === "string"
+            ? j.error
+            : "Generate failed"
+        );
         return;
       }
       setBeatUrl(j.preview?.beat_url || null);
       setVocalUrl(j.preview?.vocal_url || null);
       setPhase("preview");
-      setMsg("Preview only — not downloadable. Record the real version when you are ready.");
+      setMsg("Draft preview only (~18s) — not downloadable. Record the real version when ready.");
     } catch {
       setPhase("error");
       setMsg("Generate failed");
@@ -286,7 +304,7 @@ export default function TryItPage() {
           Sing or rap your favorite song
         </p>
         <p style={{ textAlign: "center", fontSize: 12, color: C.textMuted || "#9B96A3", margin: "0 0 24px" }}>
-          10s–2 min sample · temporary voice clone · preview only (not a real Record session)
+          10s–2 min sample · temp clone · ~18s draft preview · 2 free generates max
         </p>
 
         {/* Waveform visual */}
@@ -470,7 +488,32 @@ export default function TryItPage() {
                   : phase}
         </p>
 
-        {phase === "ready" && (
+        {phase === "ready" && quotaRemaining !== null && quotaRemaining <= 0 ? (
+          <div style={{ marginTop: 16, space: "y 10px" }}>
+            <p style={{ textAlign: "center", fontSize: 13, color: C.textMuted, lineHeight: 1.4 }}>
+              You&apos;ve used your free Try It previews. Continue in the real Record flow.
+            </p>
+            <button
+              type="button"
+              onClick={goRealRecord}
+              style={{
+                width: "100%",
+                padding: "14px 16px",
+                borderRadius: 999,
+                border: "none",
+                background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                color: "#1A1208",
+                fontWeight: 800,
+                fontSize: 15,
+                cursor: "pointer",
+              }}
+            >
+              Record the real version
+            </button>
+          </div>
+        ) : null}
+
+        {phase === "ready" && (quotaRemaining === null || quotaRemaining > 0) && (
           <button
             type="button"
             onClick={() => void generate()}
@@ -487,7 +530,7 @@ export default function TryItPage() {
               cursor: "pointer",
             }}
           >
-            Generate preview
+            Generate draft preview (~18s)
           </button>
         )}
 

@@ -1,7 +1,9 @@
 /**
- * ElevenLabs Instant Voice Cloning (IVC) + TTS for Try It only.
+ * ElevenLabs Instant Voice Cloning (IVC) + low-cost TTS for Try It only.
  * Do not import from Record / produce pipelines.
  */
+
+import { TRY_IT_TTS_MODEL, TRY_IT_TTS_MODEL_FALLBACKS } from "./config";
 
 const BASES = [
   (process.env.ELEVENLABS_API_BASE || "https://api.elevenlabs.io").replace(/\/$/, ""),
@@ -72,38 +74,56 @@ export async function deleteTrialVoice(voiceId: string): Promise<void> {
   }
 }
 
-/** TTS with cloned voice — draft preview vocal (not full singing model). */
+/**
+ * Draft TTS with Flash/Turbo tier only (cost-controlled).
+ * Caps text length so spoken output stays near the 15–20s demo window.
+ */
 export async function synthesizeWithVoice(
   voiceId: string,
   text: string
-): Promise<{ buffer: Buffer; contentType: string }> {
-  const clean = text.replace(/\s+/g, " ").trim().slice(0, 800);
+): Promise<{ buffer: Buffer; contentType: string; modelUsed: string }> {
+  // ~18s of speech ≈ short hook; hard truncate regardless of client input
+  const clean = text.replace(/\s+/g, " ").trim().slice(0, 220);
   if (!clean) throw new Error("Empty lyrics");
 
-  const res = await elFetch(
-    `/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "audio/mpeg",
-      },
-      body: JSON.stringify({
-        text: clean,
-        model_id: process.env.ELEVENLABS_TTS_MODEL || "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.85,
-          style: 0.35,
-          use_speaker_boost: true,
-        },
-      }),
-    }
+  const models = [TRY_IT_TTS_MODEL, ...TRY_IT_TTS_MODEL_FALLBACKS].filter(
+    (v, i, a) => v && a.indexOf(v) === i
   );
-  if (!res.ok) {
-    throw new Error(`TTS failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+
+  let lastErr = "TTS failed";
+  for (const modelId of models) {
+    const res = await elFetch(
+      `/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text: clean,
+          model_id: modelId,
+          voice_settings: {
+            stability: 0.45,
+            similarity_boost: 0.8,
+            style: 0.2,
+            use_speaker_boost: true,
+          },
+        }),
+      }
+    );
+    if (res.ok) {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.length < 200) {
+        lastErr = "TTS returned empty audio";
+        continue;
+      }
+      return { buffer, contentType: "audio/mpeg", modelUsed: modelId };
+    }
+    lastErr = `TTS failed (${res.status}): ${(await res.text()).slice(0, 200)}`;
+    // model not available → try next flash/turbo fallback
+    if (res.status === 400 || res.status === 422 || res.status === 404) continue;
+    throw new Error(lastErr);
   }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (buffer.length < 200) throw new Error("TTS returned empty audio");
-  return { buffer, contentType: "audio/mpeg" };
+  throw new Error(lastErr);
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { createTryItSession, isTryItEnabled } from "@/lib/try-it/service";
+import { createTryItSession, getTryItQuota, isTryItEnabled } from "@/lib/try-it/service";
 
 /** POST /api/try-it/session — start isolated Try It session */
 export async function POST() {
@@ -11,11 +11,13 @@ export async function POST() {
   }
   try {
     const session = await createTryItSession(user.id);
+    const quota = await getTryItQuota(user.id);
     return NextResponse.json({
       id: session.id,
       status: session.status,
       expires_at: session.expires_at,
       scope: session.scope,
+      quota,
     });
   } catch (e) {
     return NextResponse.json(
