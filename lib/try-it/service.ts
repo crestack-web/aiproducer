@@ -4,27 +4,23 @@
  */
 import { createServiceClient } from "@/lib/supabase/server";
 import { createSignedDownloadUrl, uploadBuffer } from "@/lib/storage";
-import { getMusicProvider } from "@/lib/music-generation/service";
-import { buildInstrumentalPrompt } from "@/lib/music-generation/provider";
 import {
   TRY_IT_MAX_GENERATES_PER_USER,
   TRY_IT_MAX_PROVIDER_RETRIES,
   TRY_IT_MAX_SAMPLE_MS,
   TRY_IT_MIN_SAMPLE_MS,
-  TRY_IT_PREVIEW_BEAT_SEC,
   TRY_IT_PREVIEW_MAX_SEC,
   TRY_IT_SCOPE,
   TRY_IT_SOURCE_META,
   TRY_IT_TTL_HOURS,
-  TRY_IT_TTS_MODEL,
   isTryItEnabled,
   tryItStoragePrefix,
 } from "./config";
 import {
   createInstantVoiceClone,
   deleteTrialVoice,
-  synthesizeWithVoice,
 } from "./elevenlabs-ivc";
+import { composeTryItSection } from "./music-section";
 import type { TryItSessionRow, TryItStatus } from "./types";
 
 export { isTryItEnabled };
@@ -250,55 +246,17 @@ export async function ingestSample(opts: {
   }
 }
 
-async function generateBeatOnce(opts: {
-  sessionId: string;
-  userId: string;
-  prompt: string;
-  genre: string;
-  tempo: number;
-}): Promise<Buffer> {
-  const durationSec = Math.min(TRY_IT_PREVIEW_BEAT_SEC, TRY_IT_PREVIEW_MAX_SEC);
-  const provider = getMusicProvider();
-  const genReq = {
-    projectId: opts.sessionId,
-    userId: opts.userId,
-    prompt: opts.prompt,
-    durationSec,
-    genre: opts.genre,
-    mood: "energetic",
-    bpm: opts.tempo,
-    kind: "preview" as const,
-    instrumentalOnly: true,
-  };
-  if (typeof provider.generate === "function") {
-    const beatResult = await provider.generate(genReq);
-    return beatResult.buffer;
-  }
-  const submitted = await provider.submitPrediction(genReq);
-  let poll = await provider.pollPrediction(submitted.providerPredictionId);
-  for (let i = 0; i < 40 && poll.status !== "succeeded" && poll.status !== "failed"; i++) {
-    await new Promise((r) => setTimeout(r, 1500));
-    poll = await provider.pollPrediction(submitted.providerPredictionId);
-  }
-  if (poll.status !== "succeeded" || !poll.outputUrl) {
-    throw new Error(poll.error || "Beat generation did not complete");
-  }
-  const dl = await provider.downloadOutput(poll.outputUrl);
-  return dl.buffer;
-}
-
 export async function generateTryItPreview(opts: {
   sessionId: string;
   userId: string;
   genre?: string;
   tempo?: number;
   lyrics?: string;
-  /** Reject client attempts to request longer previews */
+  section?: "chorus" | "verse";
   requestedDurationSec?: number;
 }): Promise<TryItSessionRow> {
   const session = await getTryItSession(opts.sessionId, opts.userId);
   if (!session) throw new Error("Session not found");
-  if (!session.eleven_voice_id) throw new Error("Clone a voice sample first");
   if (session.status === "expired") throw new Error("Session expired");
 
   if (
@@ -324,58 +282,41 @@ export async function generateTryItPreview(opts: {
     .eq("id", opts.sessionId);
 
   const genre = (opts.genre || "afrobeats").slice(0, 40);
-  const tempo = opts.tempo && opts.tempo > 60 && opts.tempo < 200 ? opts.tempo : 100;
-  // Short hook only — keeps TTS near 15–20s with Flash model
+  const tempo = opts.tempo && opts.tempo > 60 && opts.tempo < 200 ? opts.tempo : 102;
   const lyrics =
-    (opts.lyrics || "").trim().slice(0, 220) ||
-    "Yeah this is my sound, riding on the beat.";
-
-  const durationSec = Math.min(TRY_IT_PREVIEW_BEAT_SEC, TRY_IT_PREVIEW_MAX_SEC);
+    (opts.lyrics || "").trim().slice(0, 280) ||
+    "Yeah this is my sound, riding on the beat, feel the night, feel the heat";
+  const section = opts.section === "verse" ? "verse" : "chorus";
   const prefix = tryItStoragePrefix(opts.userId, opts.sessionId);
-  const prompt = buildInstrumentalPrompt({
-    genre,
-    mood: "energetic",
-    energy: "medium",
-    bpm: tempo,
-    instrumentation: "drums, bass, synth, no vocals",
-  });
 
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= TRY_IT_MAX_PROVIDER_RETRIES; attempt++) {
     const isRetry = attempt > 0;
     try {
-      // Reuse session.eleven_voice_id — never re-clone on regenerate
-      const beatBuf = await generateBeatOnce({
-        sessionId: opts.sessionId,
-        userId: opts.userId,
-        prompt,
+      // Option A: single Music composition-plan call — vocals + beat in one mix
+      const composed = await composeTryItSection({
         genre,
         tempo,
+        lyrics,
+        section,
       });
-      if (!beatBuf || beatBuf.length < 1000) throw new Error("Beat generation returned empty audio");
 
-      const beatPath = `${prefix}/beat.mp3`;
-      await uploadBuffer(beatPath, Buffer.from(beatBuf), "audio/mpeg");
-
-      const { buffer: vocalBuf, modelUsed } = await synthesizeWithVoice(
-        session.eleven_voice_id,
-        lyrics
-      );
-      const vocalPath = `${prefix}/vocal.mp3`;
-      await uploadBuffer(vocalPath, vocalBuf, "audio/mpeg");
+      const mixPath = `${prefix}/section-mix.mp3`;
+      await uploadBuffer(mixPath, composed.buffer, composed.contentType || "audio/mpeg");
 
       await logUsage({
         userId: opts.userId,
         sessionId: opts.sessionId,
         event: isRetry ? "generate_retry" : "generate",
-        modelTier: modelUsed || TRY_IT_TTS_MODEL,
-        durationSec,
+        modelTier: composed.modelId,
+        durationSec: composed.durationSec,
         success: true,
         metadata: {
-          beat_sec: durationSec,
-          genre,
-          voice_reused: true,
+          pipeline: "music_composition_plan",
+          section: composed.sectionLabel,
+          song_id: composed.songId,
           draft_quality: true,
+          single_pass_mix: true,
         },
       });
 
@@ -383,9 +324,9 @@ export async function generateTryItPreview(opts: {
         .from("try_it_sessions")
         .update({
           status: "preview_ready" satisfies TryItStatus,
-          beat_path: beatPath,
-          vocal_path: vocalPath,
-          mix_path: null,
+          beat_path: null,
+          vocal_path: null,
+          mix_path: mixPath,
           genre,
           tempo,
           lyrics,
@@ -397,9 +338,11 @@ export async function generateTryItPreview(opts: {
             scope: TRY_IT_SCOPE,
             download_blocked: true,
             share_blocked: true,
-            draft_mix: "client_layer",
-            preview_duration_sec: durationSec,
-            tts_model: modelUsed || TRY_IT_TTS_MODEL,
+            pipeline: "music_composition_plan",
+            section: composed.sectionLabel,
+            preview_duration_sec: composed.durationSec,
+            music_model: composed.modelId,
+            song_id: composed.songId,
           },
         })
         .eq("id", opts.sessionId)
@@ -413,13 +356,12 @@ export async function generateTryItPreview(opts: {
         userId: opts.userId,
         sessionId: opts.sessionId,
         event: isRetry ? "generate_retry" : "generate",
-        modelTier: TRY_IT_TTS_MODEL,
-        durationSec,
+        modelTier: "music_v2",
+        durationSec: TRY_IT_PREVIEW_MAX_SEC,
         success: false,
         errorSnippet: lastErr.message,
       });
       if (attempt >= TRY_IT_MAX_PROVIDER_RETRIES) break;
-      // Single automatic retry only
     }
   }
 
@@ -432,17 +374,26 @@ export async function generateTryItPreview(opts: {
 }
 
 export async function signedPreviewUrls(session: TryItSessionRow): Promise<{
+  mixUrl: string | null;
   beatUrl: string | null;
   vocalUrl: string | null;
 }> {
-  if (session.status !== "preview_ready") return { beatUrl: null, vocalUrl: null };
+  if (session.status !== "preview_ready") {
+    return { mixUrl: null, beatUrl: null, vocalUrl: null };
+  }
+  // Option A: single mixed section
+  if (session.mix_path) {
+    const mixUrl = await createSignedDownloadUrl(session.mix_path, 1800);
+    return { mixUrl, beatUrl: null, vocalUrl: null };
+  }
+  // Legacy dual-stream (pre Option A)
   const beatUrl = session.beat_path
     ? await createSignedDownloadUrl(session.beat_path, 1800)
     : null;
   const vocalUrl = session.vocal_path
     ? await createSignedDownloadUrl(session.vocal_path, 1800)
     : null;
-  return { beatUrl, vocalUrl };
+  return { mixUrl: null, beatUrl, vocalUrl };
 }
 
 export async function discardTryItSession(sessionId: string, userId: string): Promise<void> {

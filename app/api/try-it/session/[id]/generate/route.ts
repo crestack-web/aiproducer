@@ -18,6 +18,7 @@ const Body = z.object({
   genre: z.string().max(40).optional(),
   tempo: z.number().int().min(60).max(200).optional(),
   lyrics: z.string().max(400).optional(),
+  section: z.enum(["chorus", "verse"]).optional(),
   /** Client may send; server rejects if above hard cap */
   duration_sec: z.number().optional(),
 });
@@ -47,6 +48,7 @@ export async function POST(req: Request, ctx: Ctx) {
       genre: body.genre,
       tempo: body.tempo,
       lyrics: body.lyrics,
+      section: body.section,
       requestedDurationSec: body.duration_sec,
     });
     const urls = await signedPreviewUrls(session);
@@ -59,11 +61,13 @@ export async function POST(req: Request, ctx: Ctx) {
       lyrics: session.lyrics,
       quota,
       preview: {
+        mix_url: urls.mixUrl,
         beat_url: urls.beatUrl,
         vocal_url: urls.vocalUrl,
         source: "try_it_preview",
         download_blocked: true,
         share_blocked: true,
+        pipeline: "music_composition_plan",
         max_duration_sec: TRY_IT_PREVIEW_MAX_SEC,
         draft_quality: true,
       },

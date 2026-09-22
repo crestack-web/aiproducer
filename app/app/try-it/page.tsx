@@ -37,6 +37,7 @@ export default function TryItPage() {
     "Yeah this is my sound, riding on the beat, feel the night, feel the heat"
   );
   const [showSetup, setShowSetup] = useState(false);
+  const [mixUrl, setMixUrl] = useState<string | null>(null);
   const [beatUrl, setBeatUrl] = useState<string | null>(null);
   const [vocalUrl, setVocalUrl] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
@@ -50,6 +51,7 @@ export default function TryItPage() {
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const startedAtRef = useRef(0);
+  const mixAudioRef = useRef<HTMLAudioElement | null>(null);
   const beatAudioRef = useRef<HTMLAudioElement | null>(null);
   const vocalAudioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef(0);
@@ -84,6 +86,9 @@ export default function TryItPage() {
           if (j.quota && typeof j.quota.remaining === "number") {
             setQuotaRemaining(j.quota.remaining);
           }
+          // Option A: sample optional — show genre/lyrics + generate immediately
+          setShowSetup(true);
+          setPhase("ready");
         }
       } catch {
         if (!cancelled) {
@@ -255,6 +260,8 @@ export default function TryItPage() {
   };
 
   const stopPreview = useCallback(() => {
+    mixAudioRef.current?.pause();
+    if (mixAudioRef.current) mixAudioRef.current.currentTime = 0;
     beatAudioRef.current?.pause();
     vocalAudioRef.current?.pause();
     if (beatAudioRef.current) beatAudioRef.current.currentTime = 0;
@@ -264,6 +271,16 @@ export default function TryItPage() {
   }, []);
 
   const togglePlay = useCallback(() => {
+    const mix = mixAudioRef.current;
+    if (mix) {
+      if (playing) {
+        mix.pause();
+        setPlaying(false);
+        return;
+      }
+      void mix.play().then(() => setPlaying(true)).catch(() => setMsg("Could not play preview — tap again"));
+      return;
+    }
     const beat = beatAudioRef.current;
     const vocal = vocalAudioRef.current;
     if (!beat || !vocal) return;
@@ -273,27 +290,52 @@ export default function TryItPage() {
       setPlaying(false);
       return;
     }
-    const start = async () => {
+    void (async () => {
       try {
         if (beat.ended || vocal.ended) {
           beat.currentTime = 0;
           vocal.currentTime = 0;
         }
-        // Sync start
         vocal.currentTime = beat.currentTime;
         await Promise.all([beat.play(), vocal.play()]);
         setPlaying(true);
       } catch {
         setMsg("Could not play preview — tap again");
       }
-    };
-    void start();
+    })();
   }, [playing]);
 
-  // Wire audio elements when preview URLs arrive
+  // Wire audio when preview is ready (prefer single mix from Music composition plan)
   useEffect(() => {
-    if (phase !== "preview" || !beatUrl || !vocalUrl) return;
+    if (phase !== "preview") return;
 
+    if (mixUrl) {
+      const mix = new Audio(mixUrl);
+      mix.preload = "auto";
+      mix.volume = 1;
+      mixAudioRef.current = mix;
+      const onTime = () => {
+        setProgress(mix.currentTime);
+        if (Number.isFinite(mix.duration)) setDuration(mix.duration);
+      };
+      const onEnded = () => {
+        setPlaying(false);
+        setProgress(0);
+      };
+      mix.addEventListener("timeupdate", onTime);
+      mix.addEventListener("ended", onEnded);
+      mix.addEventListener("loadedmetadata", onTime);
+      void mix.play().then(() => setPlaying(true)).catch(() => undefined);
+      return () => {
+        mix.pause();
+        mix.removeEventListener("timeupdate", onTime);
+        mix.removeEventListener("ended", onEnded);
+        mixAudioRef.current = null;
+        setPlaying(false);
+      };
+    }
+
+    if (!beatUrl || !vocalUrl) return;
     const beat = new Audio(beatUrl);
     const vocal = new Audio(vocalUrl);
     beat.preload = "auto";
@@ -302,16 +344,12 @@ export default function TryItPage() {
     vocal.volume = 1;
     beatAudioRef.current = beat;
     vocalAudioRef.current = vocal;
-
     const onTime = () => {
-      const t = beat.currentTime;
+      const tm = beat.currentTime;
       const d = beat.duration || vocal.duration || 0;
-      setProgress(t);
+      setProgress(tm);
       setDuration(Number.isFinite(d) ? d : 0);
-      // keep vocal roughly in sync
-      if (Math.abs(vocal.currentTime - t) > 0.12) {
-        vocal.currentTime = t;
-      }
+      if (Math.abs(vocal.currentTime - tm) > 0.12) vocal.currentTime = tm;
     };
     const onEnded = () => {
       setPlaying(false);
@@ -319,39 +357,17 @@ export default function TryItPage() {
       vocal.pause();
       vocal.currentTime = 0;
     };
-    const onMeta = () => {
-      const d = Math.max(beat.duration || 0, vocal.duration || 0);
-      if (Number.isFinite(d)) setDuration(d);
-    };
-
     beat.addEventListener("timeupdate", onTime);
     beat.addEventListener("ended", onEnded);
-    beat.addEventListener("loadedmetadata", onMeta);
-    vocal.addEventListener("loadedmetadata", onMeta);
-
-    // Auto-play once ready
-    const tryAuto = async () => {
-      try {
-        await Promise.all([beat.play(), vocal.play()]);
-        setPlaying(true);
-      } catch {
-        /* user gesture may be required on some browsers */
-      }
-    };
-    void tryAuto();
-
+    void Promise.all([beat.play(), vocal.play()]).then(() => setPlaying(true)).catch(() => undefined);
     return () => {
       beat.pause();
       vocal.pause();
-      beat.removeEventListener("timeupdate", onTime);
-      beat.removeEventListener("ended", onEnded);
-      beat.removeEventListener("loadedmetadata", onMeta);
-      vocal.removeEventListener("loadedmetadata", onMeta);
       beatAudioRef.current = null;
       vocalAudioRef.current = null;
       setPlaying(false);
     };
-  }, [phase, beatUrl, vocalUrl]);
+  }, [phase, mixUrl, beatUrl, vocalUrl]);
 
   const generate = async () => {
     if (!sessionId) return;
@@ -368,7 +384,7 @@ export default function TryItPage() {
       const res = await fetch(`/api/try-it/session/${sessionId}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ genre, lyrics, tempo: 100 }),
+        body: JSON.stringify({ genre, lyrics, tempo: 100, section: "chorus" }),
       });
       const j = await res.json().catch(() => ({}));
       if (j.quota && typeof j.quota.remaining === "number") {
@@ -379,6 +395,7 @@ export default function TryItPage() {
         setMsg(typeof j.error === "string" ? j.error : "Generate failed");
         return;
       }
+      setMixUrl(j.preview?.mix_url || null);
       setBeatUrl(j.preview?.beat_url || null);
       setVocalUrl(j.preview?.vocal_url || null);
       setPhase("preview");
@@ -534,7 +551,7 @@ export default function TryItPage() {
             }}
           >
             {phase === "preview"
-              ? "Draft only · ~18s · not downloadable"
+              ? "Real section mix · ~18s · model vocals · not downloadable"
               : "10s–2 min sample · temp voice · free demo"}
           </p>
         </div>
@@ -594,7 +611,7 @@ export default function TryItPage() {
         </div>
 
         {/* Preview transport */}
-        {phase === "preview" && beatUrl && vocalUrl && (
+        {phase === "preview" && (mixUrl || (beatUrl && vocalUrl)) && (
           <div
             style={{
               marginTop: 16,
@@ -639,14 +656,17 @@ export default function TryItPage() {
                     cursor: "pointer",
                   }}
                   onClick={(e) => {
-                    const beat = beatAudioRef.current;
-                    const vocal = vocalAudioRef.current;
-                    if (!beat || !duration) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
                     const t = ratio * duration;
-                    beat.currentTime = t;
-                    if (vocal) vocal.currentTime = t;
+                    if (mixAudioRef.current) {
+                      mixAudioRef.current.currentTime = t;
+                    } else {
+                      const beat = beatAudioRef.current;
+                      const vocal = vocalAudioRef.current;
+                      if (beat) beat.currentTime = t;
+                      if (vocal) vocal.currentTime = t;
+                    }
                     setProgress(t);
                   }}
                 >
@@ -786,7 +806,7 @@ export default function TryItPage() {
                     boxShadow: "0 8px 24px rgba(231,169,97,0.3)",
                   }}
                 >
-                  Generate draft preview
+                  Generate chorus preview
                 </button>
               )}
             </div>

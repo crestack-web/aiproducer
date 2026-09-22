@@ -16,3 +16,5 @@ export {
   getTryItQuota,
   TryItQuotaError,
 } from "./service";
+
+export { composeTryItSection, buildTryItSectionPlan } from "./music-section";
