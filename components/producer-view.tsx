@@ -83,6 +83,8 @@ export type ProducerLayer = {
   startMs: number;
   endMs: number;
   audioUrl?: string | null;
+  /** Saved take id from session-preview — used by Stack/choir */
+  recordingId?: string | null;
   color?: string;
   trackFx?: TrackFx | null;
 };
