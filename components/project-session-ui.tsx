@@ -31,6 +31,7 @@ import {
   openRecordingStream,
   createVocalRecorder,
   describeInputQualityWarning,
+  formatMicOpenError,
 } from "@/lib/audio/recording-engine";
 import {
   startSpeakerMonitorDuck,
@@ -109,24 +110,28 @@ function humanProduceStage(stage: string | null | undefined): string {
   if (!stage) return "AP is getting everything ready…";
   const s = stage.toLowerCase().trim();
   const map: Record<string, string> = {
-    queued: "AP is getting everything ready…",
-    prepare_vocals: "AP is getting everything ready…",
-    arrange: "AP is getting everything ready…",
-    render_stems: "AP is getting everything ready…",
-    analyzing: "AP is listening to your recording…",
-    restoring: "Cleaning up your vocal…",
+    queued: "Job queued — waiting for the studio engine…",
+    preparing: "Preparing your vocal takes…",
+    "preparing takes": "Preparing your vocal takes…",
+    prepare_vocals: "Preparing your vocal takes…",
+    arrange: "Arranging vocals on the beat…",
+    arranging: "Arranging vocals on the beat…",
+    render_stems: "Building audio stems…",
+    analyzing: "Listening to your recording…",
+    restoring: "Cleaning up noise and room tone…",
+    polishing: "Polishing vocal tone…",
     producing: "Building your vocal sound…",
     mixing: "Blending your voice with the beat…",
     mix: "Blending your voice with the beat…",
-    mix_submit: "Blending your voice with the beat…",
-    mix_poll: "Blending your voice with the beat…",
-    mix_store: "Blending your voice with the beat…",
+    mix_submit: "Sending mix for processing…",
+    mix_poll: "Finishing the mix…",
+    mix_store: "Saving the mix…",
     mastering: "Adding the final polish…",
     master: "Adding the final polish…",
-    master_submit: "Adding the final polish…",
-    master_poll: "Adding the final polish…",
-    quality_check: "AP is checking your final mix…",
-    webhook_received: "Adding the final polish…",
+    master_submit: "Mastering your track…",
+    master_poll: "Finishing the master…",
+    quality_check: "Checking the final mix…",
+    webhook_received: "Finalizing export…",
     complete: "Your song is ready.",
     completed: "Your song is ready.",
     failed: "Production could not finish.",
@@ -352,6 +357,8 @@ export default function ProjectDetailPage() {
   const [layerSuggestion, setLayerSuggestion] = useState<LayerRefinementSuggestionClient | null>(null);
   const [producing, setProducing] = useState(false);
   const [produceStage, setProduceStage] = useState<string | null>(null);
+  const [produceJobId, setProduceJobId] = useState<string | null>(null);
+  const [produceProgress, setProduceProgress] = useState(0);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
@@ -809,12 +816,29 @@ export default function ProjectDetailPage() {
       if (!sr.ok) return "error";
 
       if (st.project) setProject(st.project);
-      const jobs = (st.jobs || []) as { type?: string; status?: string; stage?: string; error?: string }[];
+      const jobs = (st.jobs || []) as {
+        id?: string;
+        type?: string;
+        status?: string;
+        stage?: string;
+        progress?: number;
+        error?: string;
+      }[];
       const produceJob =
+        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined) ||
+        jobs.find(
+          (j) =>
+            j.type === "PRODUCE_SONG" &&
+            ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+        ) ||
         jobs.find((j) => j.type === "PRODUCE_SONG") ||
         jobs.find((j) => (j.status || "").includes("process"));
 
+      if (produceJob?.id) setProduceJobId(String(produceJob.id));
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+      if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+        setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+      }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
       const projectStatus = String(st.project?.status || "").toLowerCase();
@@ -849,7 +873,7 @@ export default function ProjectDetailPage() {
     } catch {
       return "error";
     }
-  }, [id]);
+  }, [id, produceJobId]);
 
 
   // When opening a finished song, resolve master URL for full playback + download
@@ -883,9 +907,25 @@ export default function ProjectDetailPage() {
     const tick = async () => {
       if (!produceActiveRef.current) return;
       if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
-        setProducing(false);
-        setError("Produce is taking longer than expected. Refresh — if the job is still running it will resume.");
-        produceActiveRef.current = false;
+        const result = await pollProduceOnce();
+        if (result === "complete") {
+          setProducing(false);
+          setProduceStage("complete");
+          setScreen("done");
+          produceActiveRef.current = false;
+          return;
+        }
+        if (result === "failed") {
+          setProducing(false);
+          produceActiveRef.current = false;
+          return;
+        }
+        // Still running on worker — extend wait, do not treat as hard failure
+        produceStartedAtRef.current = Date.now() - PRODUCE_MAX_MS + 15 * 60 * 1000;
+        setError(
+          "Still producing on the server — longer songs can take a while. Leave this open or refresh later."
+        );
+        producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
         return;
       }
       const result = await pollProduceOnce();
@@ -2141,14 +2181,7 @@ export default function ProjectDetailPage() {
     } catch (e) {
       setMicStream(null);
       setPhase("ready");
-      const name = e instanceof DOMException ? e.name : "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("Microphone permission denied. Enable mic access to record.");
-      } else if (name === "NotFoundError") {
-        setError("No microphone found.");
-      } else {
-        setError(e instanceof Error ? e.message : "Microphone error");
-      }
+      setError(formatMicOpenError(e));
     }
   }
 
@@ -2749,6 +2782,16 @@ export default function ProjectDetailPage() {
       const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
+
+      const jid = j.jobId || j.job_id;
+      if (!jid) {
+        throw new Error(
+          "Production job was not created. Check your connection and try Produce again."
+        );
+      }
+      setProduceJobId(String(jid));
+      setProduceStage(String(j.stage || j.status || "queued"));
+      setProduceProgress(5);
 
       if (j.master_url && res.status === 200 && j.status === "complete") {
         setMasterUrl(j.master_url);
@@ -3865,7 +3908,9 @@ export default function ProjectDetailPage() {
               <>
                 <PlayerLoadingState
                   title="Producing your song"
-                  subtitle={humanProduceStage(produceStage)}
+                  subtitle={`${humanProduceStage(produceStage)}${
+                    produceProgress > 0 ? ` · ${produceProgress}%` : ""
+                  }${produceJobId ? ` · Job ${String(produceJobId).slice(0, 8)}…` : ""}`}
                   seed={`produce-${id}`}
                 />
                 <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12, lineHeight: 1.45 }}>

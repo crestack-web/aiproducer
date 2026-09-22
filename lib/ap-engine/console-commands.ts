@@ -30,7 +30,15 @@ export type DawAction =
   | { type: "pause"; label: string }
   | { type: "seek"; ms: number; label: string }
   | { type: "expand"; trackId: string; label: string }
-  | { type: "open_fx"; trackId: string; label: string };
+  | { type: "open_fx"; trackId: string; label: string }
+  | {
+      type: "choir";
+      trackId: string;
+      mode: "double" | "choir_light" | "choir_full" | "chorus_lift";
+      label: string;
+    }
+  | { type: "rename"; trackId: string; title: string; label: string }
+  | { type: "color"; trackId: string | "all"; color: string; label: string };
 
 export type ConsoleCommandPlan = {
   actions: DawAction[];
@@ -140,6 +148,41 @@ export function parseConsoleCommands(opts: {
     opts.tracks.find((t) => t.id === opts.selectedTrackId) ||
     opts.tracks.find((t) => t.kind === "vocal") ||
     opts.tracks[0];
+
+
+  // —— Choir / stack (uses selected vocal + same-section placement on server) ——
+  if (
+    /\b(make (this |it |the vocal )?(a |into )?(full )?choir|turn (this |it )?into (a )?choir|add (a )?choir|choir (stack|layers)|stack (this |it )?(as |into )?(a )?choir|build (a )?choir)\b/.test(
+      p
+    ) ||
+    (/\bchoir\b/.test(p) && /\b(make|add|build|create|turn|stack|full)\b/.test(p))
+  ) {
+    const t =
+      targets.find((x) => x.kind === "vocal") ||
+      (defaultTarget?.kind === "vocal" ? defaultTarget : null) ||
+      opts.tracks.find((x) => x.id === opts.selectedTrackId && x.kind === "vocal") ||
+      opts.tracks.find((x) => x.kind === "vocal");
+    if (t) {
+      let mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full";
+      if (/\b(light|subtle|soft) choir\b/.test(p) || /\bchoir light\b/.test(p)) mode = "choir_light";
+      else if (/\b(just |only )?double/.test(p) && !/\bchoir\b/.test(p)) mode = "double";
+      else if (/\bchorus lift|lift (the )?chorus\b/.test(p)) mode = "chorus_lift";
+      else mode = "choir_full";
+      actions.push({
+        type: "choir",
+        trackId: t.id,
+        mode,
+        label:
+          mode === "double"
+            ? `Stack doubles on ${t.label}`
+            : mode === "choir_light"
+              ? `Light choir on ${t.label}`
+              : mode === "chorus_lift"
+                ? `Chorus lift on ${t.label}`
+                : `Full choir on ${t.label}`,
+      });
+    }
+  }
 
   // —— Transport ——
   if (/\b(play|start playback|hit play)\b/.test(p) && !/\bplay\s*back\b/.test(p)) {
@@ -332,6 +375,133 @@ export function parseConsoleCommands(opts: {
     }
   }
 
+
+  // —— Rename track ——
+  {
+    const renameRe =
+      /\b(?:rename|call|name)\s+(?:this\s+(?:track|layer|vocal)?|it|the\s+\w+)?\s*(?:to|as)?\s*["“]?([^"”\n]{1,60})["”]?$/i;
+    const renameRe2 =
+      /\b(?:change\s+(?:the\s+)?name\s+(?:of\s+)?(?:this\s+)?(?:track|layer)?\s+to|set\s+(?:track\s+)?name\s+to)\s*["“]?([^"”\n]{1,60})["”]?/i;
+    const renameRe3 =
+      /\b(?:rename\s+(?:this\s+)?(?:track|layer)?\s+to)\s*["“]?([^"”\n]{1,60})["”]?/i;
+    let newName: string | null = null;
+    for (const re of [renameRe3, renameRe2, renameRe]) {
+      const m = request.match(re);
+      if (m?.[1]) {
+        newName = m[1].trim().replace(/^["'“”]+|["'“”]+$/g, "").slice(0, 80);
+        break;
+      }
+    }
+    // “name this Chorus Lead”
+    if (!newName) {
+      const m = request.match(
+        /\bname\s+(?:this|it|selected)\s+(?:track\s+)?["“]?([A-Za-z0-9][^"”\n]{0,50})["”]?$/i
+      );
+      if (m?.[1] && !/\b(to|as)\b/i.test(m[1])) {
+        newName = m[1].trim().slice(0, 80);
+      }
+    }
+    if (newName && newName.length >= 1 && !/\b(choir|mute|solo|pan|reverb)\b/i.test(newName)) {
+      const t =
+        targets.find((x) => x.kind === "vocal") ||
+        (defaultTarget?.kind === "vocal" ? defaultTarget : null) ||
+        opts.tracks.find((x) => x.id === opts.selectedTrackId && x.kind === "vocal");
+      if (t && t.id !== "beat") {
+        actions.push({
+          type: "rename",
+          trackId: t.id,
+          title: newName,
+          label: `Rename ${t.label} → ${newName}`,
+        });
+      }
+    }
+  }
+
+  // —— Track color (one track or all) ——
+  {
+    const COLOR_MAP: Record<string, string> = {
+      red: "#F87171",
+      crimson: "#FB7185",
+      pink: "#F472B6",
+      magenta: "#E879F9",
+      purple: "#A78BFA",
+      violet: "#C084FC",
+      indigo: "#818CF8",
+      blue: "#38BDF8",
+      cyan: "#67E8F9",
+      teal: "#34D399",
+      green: "#4ADE80",
+      lime: "#4ADE80",
+      yellow: "#FBBF24",
+      gold: "#E7A961",
+      brass: "#E7A961",
+      orange: "#F59E0B",
+      amber: "#F59E0B",
+      gray: "#94A3B8",
+      grey: "#94A3B8",
+      silver: "#94A3B8",
+      white: "#E2E8F0",
+    };
+    const hexM = p.match(/#([0-9a-f]{6})\b/);
+    let colorHex: string | null = hexM ? `#${hexM[1].toUpperCase()}` : null;
+    if (!colorHex) {
+      for (const [name, hex] of Object.entries(COLOR_MAP)) {
+        if (new RegExp(`\\b${name}\\b`).test(p)) {
+          // avoid "green room" false positives unless color intent
+          colorHex = hex;
+          break;
+        }
+      }
+    }
+    const colorIntent =
+      /\b(color|colour|paint|tint|recolor|recolour)\b/.test(p) ||
+      /\b(make|set|change)\b.+\b(tracks?|layers?|vocals?)\b.+\b(red|blue|green|purple|pink|orange|gold|yellow|cyan|teal|gray|grey|violet|indigo|brass|amber)\b/.test(
+        p
+      ) ||
+      /\b(all tracks?|every track|all layers?)\b.+\b(red|blue|green|purple|pink|orange|gold|yellow|cyan|teal|gray|grey|violet)\b/.test(
+        p
+      ) ||
+      (/\b(red|blue|green|purple|pink|orange|gold|brass)\b/.test(p) &&
+        /\b(track|layer|color|colour|make this|make it|make all)\b/.test(p));
+
+    if (colorHex && colorIntent) {
+      const allTracks =
+        /\b(all tracks?|every track|all layers?|all vocals?|every layer)\b/.test(p);
+      if (allTracks) {
+        actions.push({
+          type: "color",
+          trackId: "all",
+          color: colorHex,
+          label: `Color all tracks ${colorHex}`,
+        });
+      } else {
+        const list =
+          targets.length > 0
+            ? targets.filter((x) => x.kind === "vocal")
+            : defaultTarget?.kind === "vocal"
+              ? [defaultTarget]
+              : opts.tracks.filter((x) => x.id === opts.selectedTrackId && x.kind === "vocal");
+        for (const tr of list.length ? list : []) {
+          if (tr.id === "beat") continue;
+          actions.push({
+            type: "color",
+            trackId: tr.id,
+            color: colorHex,
+            label: `Color ${tr.label} ${colorHex}`,
+          });
+        }
+        if (!list.length && opts.selectedTrackId && opts.selectedTrackId !== "beat") {
+          actions.push({
+            type: "color",
+            trackId: opts.selectedTrackId,
+            color: colorHex,
+            label: `Color track ${colorHex}`,
+          });
+        }
+      }
+    }
+  }
+
   // —— Selection / arm / FX panel ——
   if (/\b(select|focus|show|open)\b/.test(p) && targets[0]) {
     actions.push({ type: "select", trackId: targets[0].id, label: `Select ${targets[0].label}` });
@@ -353,15 +523,20 @@ export function parseConsoleCommands(opts: {
   }
 
   // Server needed for offline processing language that goes beyond monitor FX
+  const hasLocalChrome = actions.some(
+    (a) => a.type === "choir" || a.type === "rename" || a.type === "color"
+  );
   const needsServer =
-    /\b(fix|pitch|tune|align|timing|master|mix down|render|produce|stem|denoise|noise|restore|take|re-?record|generate)\b/.test(
+    !hasLocalChrome &&
+    (/\b(fix|pitch|tune|align|timing|master|mix down|render|produce|stem|denoise|noise|restore|take|re-?record|generate)\b/.test(
       p
     ) ||
-    // explicit process verbs without only local UI intent
-    (/\b(process|apply to (the )?take|print|bounce)\b/.test(p) && actions.length === 0);
+      // explicit process verbs without only local UI intent
+      (/\b(process|apply to (the )?take|print|bounce)\b/.test(p) && actions.length === 0));
 
   // Pure creative language with no local match → still try server
   const needsServerFallback =
+    !hasLocalChrome &&
     actions.length === 0 &&
     request.length > 2 &&
     !/\b(play|pause|stop)\b/.test(p);
@@ -388,10 +563,11 @@ export function parseConsoleCommands(opts: {
 export const AP_SUGGESTIONS = [
   "Mute the beat",
   "Solo lead",
+  "Make this a full choir",
+  "Rename this to Lead V1",
+  "Make all tracks purple",
+  "Color this gold",
   "Pan harmony left",
   "More reverb on lead",
-  "Louder doubles",
   "Go to chorus",
-  "Warmer vocal",
-  "Pull adlibs back",
 ] as const;

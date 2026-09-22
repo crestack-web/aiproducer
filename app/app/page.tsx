@@ -35,6 +35,14 @@ function AppInner() {
   const searchParams = useSearchParams();
   const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userGenre, setUserGenre] = useState<string | null>(null);
+  const [userPlan, setUserPlan] = useState<string | null>(null);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editGenre, setEditGenre] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -110,10 +118,25 @@ function AppInner() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("display_name")
+        .select("display_name, genre, metadata")
         .eq("id", user.id)
         .maybeSingle();
-      setUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
+      const name =
+        (profile as { display_name?: string } | null)?.display_name ||
+        user.email?.split("@")[0] ||
+        "Artist";
+      setUserName(name);
+      setUserEmail(user.email || null);
+      setUserGenre(((profile as { genre?: string | null } | null)?.genre as string) || null);
+      const meta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
+        {}) as Record<string, unknown>;
+      const plan =
+        (typeof meta.subscription_plan === "string" && meta.subscription_plan) ||
+        (typeof meta.plan === "string" && meta.plan) ||
+        null;
+      setUserPlan(plan ? String(plan) : "Free");
+      setEditName(name);
+      setEditGenre(((profile as { genre?: string | null } | null)?.genre as string) || "");
       const res = await fetch("/api/projects");
       if (res.ok) {
         const json = await res.json();
@@ -132,6 +155,41 @@ function AppInner() {
   async function signOut() {
     await createClient().auth.signOut();
     router.replace("/");
+  }
+
+  async function saveProfile() {
+    if (profileSaving) return;
+    const name = editName.trim();
+    if (!name) {
+      setProfileMsg("Display name is required");
+      return;
+    }
+    setProfileSaving(true);
+    setProfileMsg(null);
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in");
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          display_name: name,
+          genre: editGenre.trim() || null,
+        })
+        .eq("id", user.id);
+      if (error) throw new Error(error.message || "Could not save");
+      setUserName(name);
+      setUserGenre(editGenre.trim() || null);
+      setEditProfileOpen(false);
+      setProfileMsg("Profile updated");
+      setTimeout(() => setProfileMsg(null), 2500);
+    } catch (e) {
+      setProfileMsg(e instanceof Error ? e.message : "Could not save profile");
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   async function deleteProject(projectId: string, title: string) {
@@ -477,6 +535,14 @@ function AppInner() {
               <button
                 type="button"
                 style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
+                onClick={() => router.push("/app/try-it")}
+                title="Preview a song in a temporary clone of your voice — not the full Record flow"
+              >
+                Try It
+              </button>
+              <button
+                type="button"
+                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
                 onClick={() => {
                   setTab("library");
                   router.replace("/app?tab=library");
@@ -787,35 +853,310 @@ function AppInner() {
         )}
 
         {tab === "profile" && (
-          <div style={{ textAlign: "center", maxWidth: 420, margin: "0 auto" }}>
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              margin: "0 auto",
+              paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
+            }}
+          >
             <div style={eyebrow}>◆ PROFILE</div>
-            <div style={{ ...avatar, width: 72, height: 72, fontSize: 24, margin: "16px auto" }}>
-              {initials || "A"}
-            </div>
-            <div style={{ fontFamily: "Georgia, serif", fontSize: 22, color: C.text }}>{userName}</div>
-            <p style={{ color: C.textMuted, marginTop: 8 }}>
-              {projects.length} session{projects.length === 1 ? "" : "s"}
-            </p>
-            <button type="button" style={{ ...secondary, marginTop: 24, width: "100%" }} onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}>
-              How Studio works (tour)
-            </button>
-            {isAdmin && (
-              <Link
-                href="/app/admin"
+
+            {/* Identity */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 16,
+                padding: "16px 16px",
+                borderRadius: 18,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                marginBottom: 16,
+              }}
+            >
+              <div
                 style={{
-                  ...secondary,
-                  marginTop: 12,
-                  width: "100%",
-                  display: "block",
-                  textAlign: "center",
-                  textDecoration: "none",
-                  boxSizing: "border-box",
+                  ...avatar,
+                  width: 64,
+                  height: 64,
+                  fontSize: 22,
+                  flexShrink: 0,
+                  margin: 0,
                 }}
               >
-                Admin dashboard
-              </Link>
+                {initials || "A"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontSize: "clamp(1.15rem, 4vw, 1.35rem)",
+                    color: C.text,
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {userName}
+                </div>
+                {userEmail && (
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: C.textMuted,
+                      marginTop: 4,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {userEmail}
+                  </div>
+                )}
+                <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 6 }}>
+                  {projects.length} session{projects.length === 1 ? "" : "s"}
+                  {userGenre ? ` · ${userGenre}` : ""}
+                  {userPlan ? ` · ${userPlan}` : ""}
+                </div>
+              </div>
+            </div>
+
+            {profileMsg && (
+              <p
+                style={{
+                  fontSize: 13,
+                  color: profileMsg.includes("updated") ? C.brass : "#f07167",
+                  margin: "0 0 12px",
+                }}
+              >
+                {profileMsg}
+              </p>
             )}
-            <button type="button" style={{ ...secondary, marginTop: 12, width: "100%" }} onClick={signOut}>
+
+            {/* Edit profile */}
+            {!editProfileOpen ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditName(userName);
+                  setEditGenre(userGenre || "");
+                  setEditProfileOpen(true);
+                  setProfileMsg(null);
+                }}
+                style={{
+                  ...secondary,
+                  width: "100%",
+                  marginBottom: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                Edit profile
+              </button>
+            ) : (
+              <div
+                style={{
+                  padding: 16,
+                  borderRadius: 18,
+                  background: C.surface,
+                  border: `1px solid ${C.border}`,
+                  marginBottom: 20,
+                }}
+              >
+                <div style={{ fontWeight: 650, fontSize: 14, marginBottom: 12, color: C.text }}>
+                  Edit profile
+                </div>
+                <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+                  Display name
+                </label>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  maxLength={64}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: C.bgDeep || C.bg,
+                    color: C.text,
+                    fontSize: 15,
+                    marginBottom: 12,
+                    fontFamily: "inherit",
+                  }}
+                />
+                <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+                  Primary genre
+                </label>
+                <input
+                  value={editGenre}
+                  onChange={(e) => setEditGenre(e.target.value)}
+                  placeholder="e.g. R&B, Afrobeats, Gospel"
+                  maxLength={48}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: C.bgDeep || C.bg,
+                    color: C.text,
+                    fontSize: 15,
+                    marginBottom: 14,
+                    fontFamily: "inherit",
+                  }}
+                />
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={profileSaving}
+                    onClick={() => void saveProfile()}
+                    style={{
+                      ...primary,
+                      flex: 1,
+                      minWidth: 120,
+                      padding: "12px 16px",
+                      opacity: profileSaving ? 0.7 : 1,
+                    }}
+                  >
+                    {profileSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={profileSaving}
+                    onClick={() => {
+                      setEditProfileOpen(false);
+                      setProfileMsg(null);
+                    }}
+                    style={{ ...secondary, flex: 1, minWidth: 100, padding: "12px 16px" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Settings */}
+            <div style={{ fontWeight: 650, fontSize: 13, color: C.textMuted, marginBottom: 10, letterSpacing: 0.04 }}>
+              App settings
+            </div>
+            <div
+              style={{
+                borderRadius: 18,
+                border: `1px solid ${C.border}`,
+                background: C.surface,
+                overflow: "hidden",
+                marginBottom: 16,
+              }}
+            >
+              {[
+                {
+                  key: "studio",
+                  label: "Studio",
+                  sub: "Create beats and open sessions",
+                  href: "/app/studio",
+                },
+                {
+                  key: "library",
+                  label: "Library",
+                  sub: "Songs, beats, and recordings",
+                  action: () => setTab("library"),
+                },
+                {
+                  key: "tour",
+                  label: "How Studio works",
+                  sub: "Quick product tour",
+                  action: () => window.dispatchEvent(new Event("studio-tour-start")),
+                },
+                {
+                  key: "terms",
+                  label: "Terms of use",
+                  sub: "Legal terms",
+                  href: "/terms",
+                },
+                {
+                  key: "privacy",
+                  label: "Privacy",
+                  sub: "How we handle your data",
+                  href: "/privacy",
+                },
+              ].map((row, i, arr) => {
+                const inner = (
+                  <>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{row.label}</div>
+                      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{row.sub}</div>
+                    </div>
+                    <span style={{ color: C.brass, fontSize: 18, flexShrink: 0 }}>›</span>
+                  </>
+                );
+                const style: React.CSSProperties = {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "14px 16px",
+                  borderBottom: i < arr.length - 1 || isAdmin ? `1px solid ${C.border}` : "none",
+                  textDecoration: "none",
+                  color: "inherit",
+                  background: "transparent",
+                  border: "none",
+                  width: "100%",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  boxSizing: "border-box",
+                };
+                if (row.href) {
+                  return (
+                    <Link key={row.key} href={row.href} style={style}>
+                      {inner}
+                    </Link>
+                  );
+                }
+                return (
+                  <button key={row.key} type="button" style={style} onClick={row.action}>
+                    {inner}
+                  </button>
+                );
+              })}
+              {isAdmin && (
+                <Link
+                  href="/app/admin"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "14px 16px",
+                    textDecoration: "none",
+                    color: "inherit",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>Admin dashboard</div>
+                    <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Internal metrics</div>
+                  </div>
+                  <span style={{ color: C.brass, fontSize: 18 }}>›</span>
+                </Link>
+              )}
+            </div>
+
+            <button
+              type="button"
+              style={{
+                ...secondary,
+                width: "100%",
+                color: "#f07167",
+                borderColor: "rgba(240,113,103,0.35)",
+              }}
+              onClick={signOut}
+            >
               Log out
             </button>
           </div>

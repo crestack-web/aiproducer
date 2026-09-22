@@ -298,6 +298,20 @@ export function generateStack(opts: {
 
   if (mode === "choir_light" || mode === "chorus_lift") return voices;
 
+  // Full: extra tight center double so the stack reads as a real choir, not one harmony
+  {
+    const center = generateDouble({ pcm: lead, startMs, section, side: "left" });
+    applyGainStereo(center.pcm, dbToGain(-8));
+    voices.push({
+      role: "double",
+      label: "Choir center",
+      gainDb: -8,
+      pan: 0.05,
+      pcm: center.pcm,
+      mode,
+    });
+  }
+
   // Full only: fifth + low third
   const mid = generateHarmony({
     pcm: lead,

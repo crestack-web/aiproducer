@@ -811,7 +811,7 @@ function StudioPageInner() {
             }}
           >
             <button type="button" style={modeTab(beatMode === "ai")} onClick={() => setBeatMode("ai")}>
-              AI beat
+              AP beat
             </button>
             <button type="button" style={modeTab(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
               Upload

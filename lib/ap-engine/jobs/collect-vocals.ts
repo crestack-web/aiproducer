@@ -61,7 +61,11 @@ function pickPath(rec: RecRow): string | null {
     rec.audio_path,
   ];
   for (const p of candidates) {
-    if (p && isStoragePath(p)) return p;
+    if (!p || typeof p !== "string") continue;
+    const s = p.trim();
+    if (!s) continue;
+    // R2 object keys (users/...) or legacy absolute URLs
+    if (isStoragePath(s) || s.startsWith("http://") || s.startsWith("https://")) return s;
   }
   return null;
 }
@@ -155,14 +159,23 @@ export async function collectVocalsForProduce(
     `takes_after_membership=${takes.length} matched=${matched.length} recordings=${recordings.length}`
   );
 
-  // Ultimate fallback: one take per task_id among all project recordings with paths
-  if (takes.length <= 1 && recordings.length > 1) {
-    const withPath = recordings.filter((r) => pickPath(r));
+  // Fallback: use any recording with a usable path when plan membership yields nothing
+  // (common after re-plan, missing selected_in_plan flags, or task_id drift).
+  const withPath = recordings.filter((r) => pickPath(r));
+  if (takes.length === 0 && withPath.length > 0) {
+    takes = oneTakePerTask(withPath);
+    diagnostics.push(`takes_fallback_all_with_path=${takes.length}`);
+  } else if (takes.length <= 1 && withPath.length > takes.length) {
     const expanded = oneTakePerTask(withPath);
     if (expanded.length > takes.length) {
       takes = expanded;
       diagnostics.push(`takes_expanded_all_recordings=${takes.length}`);
     }
+  }
+  if (recordings.length > 0 && withPath.length === 0) {
+    diagnostics.push(
+      "recordings_rows_exist_but_no_usable_audio_path — takes may not have finished upload/complete"
+    );
   }
 
   const taskById = new Map(allTasks.map((t) => [t.id, t]));

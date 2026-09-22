@@ -4,9 +4,8 @@
  */
 import { createServiceClient } from "@/lib/supabase/service";
 
-/** Must exceed WORKER_TICK_MS (default 240s). Heartbeat runs between ticks, not during. */
 /** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */
-const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 45 * 60 * 1000);
+const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 8 * 60 * 1000);
 
 export type ClaimedJob = {
   id: string;
@@ -17,53 +16,120 @@ export type ClaimedJob = {
   attempts: number;
 };
 
+/** Result of one claim attempt — always includes visibility for Railway logs */
+export type ClaimAttemptResult = {
+  job: ClaimedJob | null;
+  /** Rows returned by status=queued query (before claim update) */
+  queuedMatchCount: number;
+  /** Stale processing candidates considered */
+  staleProcessingCount: number;
+  /** Supabase error message if select/update failed */
+  queryError: string | null;
+};
+
 function asOut(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
 /**
  * Atomically claim a queued job, or reclaim a stale processing job.
- * Returns null if nothing available / race lost.
+ * Prefer claimNextProduceJobDetailed when the worker needs CLAIM_QUERY_RESULT logs.
  */
 export async function claimNextProduceJob(workerId: string): Promise<ClaimedJob | null> {
+  const r = await claimNextProduceJobDetailed(workerId);
+  return r.job;
+}
+
+/**
+ * Same as claimNextProduceJob but always reports how many rows the claim queries saw.
+ */
+export async function claimNextProduceJobDetailed(workerId: string): Promise<ClaimAttemptResult> {
   const supabase = createServiceClient();
+  let queryError: string | null = null;
 
   // 1) Prefer queued
-  const { data: queued } = await supabase
+  // jobs schema: created_at, started_at, completed_at — no updated_at column
+  const { data: queued, error: qErr } = await supabase
     .from("jobs")
-    .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
+    .select("id, project_id, status, stage, output_data, attempts, started_at, created_at")
     .eq("type", "PRODUCE_SONG")
     .eq("status", "queued")
     .order("created_at", { ascending: true })
     .limit(5);
 
-  for (const row of queued || []) {
+  if (qErr) {
+    queryError = qErr.message || String(qErr);
+    return {
+      job: null,
+      queuedMatchCount: 0,
+      staleProcessingCount: 0,
+      queryError,
+    };
+  }
+
+  const queuedRows = queued || [];
+  for (const row of queuedRows) {
     const claimed = await tryClaim(supabase, row, workerId, "queued");
-    if (claimed) return claimed;
+    if (claimed) {
+      return {
+        job: claimed,
+        queuedMatchCount: queuedRows.length,
+        staleProcessingCount: 0,
+        queryError: null,
+      };
+    }
   }
 
   // 2) Reclaim stale processing (worker died mid-job)
-  const { data: processing } = await supabase
+  const { data: processing, error: pErr } = await supabase
     .from("jobs")
-    .select("id, project_id, status, stage, output_data, attempts, updated_at, started_at")
+    .select("id, project_id, status, stage, output_data, attempts, started_at, created_at")
     .eq("type", "PRODUCE_SONG")
     .eq("status", "processing")
-    .order("updated_at", { ascending: true })
+    .order("started_at", { ascending: true, nullsFirst: true })
     .limit(10);
 
+  if (pErr) {
+    queryError = pErr.message || String(pErr);
+    return {
+      job: null,
+      queuedMatchCount: queuedRows.length,
+      staleProcessingCount: 0,
+      queryError,
+    };
+  }
+
   const now = Date.now();
+  let staleProcessingCount = 0;
   for (const row of processing || []) {
     const out = asOut(row.output_data);
     const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
-    const updatedAt = row.updated_at ? Date.parse(String(row.updated_at)) : 0;
-    const anchor = Math.max(lockAt || 0, updatedAt || 0);
+    const startedAt = row.started_at ? Date.parse(String(row.started_at)) : 0;
+    const createdAt = (row as { created_at?: string }).created_at
+      ? Date.parse(String((row as { created_at?: string }).created_at))
+      : 0;
+    // Prefer heartbeat in output_data, then started_at, then created_at (no updated_at on jobs)
+    const anchor = Math.max(lockAt || 0, startedAt || 0, createdAt || 0);
     const stale = !anchor || now - anchor > STALE_MS;
     if (!stale) continue;
+    staleProcessingCount += 1;
     const claimed = await tryClaim(supabase, row, workerId, "processing");
-    if (claimed) return claimed;
+    if (claimed) {
+      return {
+        job: claimed,
+        queuedMatchCount: queuedRows.length,
+        staleProcessingCount,
+        queryError: null,
+      };
+    }
   }
 
-  return null;
+  return {
+    job: null,
+    queuedMatchCount: queuedRows.length,
+    staleProcessingCount,
+    queryError: null,
+  };
 }
 
 async function tryClaim(

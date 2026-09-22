@@ -12,7 +12,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
-import { openRecordingStream, createVocalRecorder } from "@/lib/audio/recording-engine";
+import { openRecordingStream, createVocalRecorder,
+  formatMicOpenError,
+} from "@/lib/audio/recording-engine";
+import { MicInputPicker, SpeakerOutputPicker } from "@/components/mic-input-picker";
+import {
+  readPreferredMicId,
+  readPreferredSpeakerId,
+  writePreferredMicId,
+  writePreferredSpeakerId,
+  micSummaryLabel,
+  speakerSummaryLabel,
+} from "@/lib/audio/device-prefs";
 import {
   parseConsoleCommands,
   AP_SUGGESTIONS,
@@ -72,6 +83,8 @@ export type ProducerLayer = {
   startMs: number;
   endMs: number;
   audioUrl?: string | null;
+  /** Saved take id from session-preview — used by Stack/choir */
+  recordingId?: string | null;
   color?: string;
   trackFx?: TrackFx | null;
 };
@@ -108,25 +121,28 @@ function humanProduceStage(stage: string | null | undefined): string {
   if (!stage) return "AP is getting everything ready…";
   const s = stage.toLowerCase().trim();
   const map: Record<string, string> = {
-    queued: "AP is getting everything ready…",
-    prepare_vocals: "AP is getting everything ready…",
-    arrange: "AP is getting everything ready…",
-    render_stems: "AP is getting everything ready…",
-    "preparing takes": "AP is getting everything ready…",
-    analyzing: "AP is listening to your recording…",
-    restoring: "Cleaning up your vocal…",
+    queued: "Job queued — waiting for the studio engine…",
+    starting: "Starting production…",
+    prepare_vocals: "Preparing your vocal takes…",
+    arrange: "Arranging vocals on the beat…",
+    arranging: "Arranging vocals on the beat…",
+    render_stems: "Building audio stems…",
+    "preparing takes": "Preparing your vocal takes…",
+    analyzing: "Listening to your recording…",
+    restoring: "Cleaning up noise and room tone…",
+    polishing: "Polishing vocal tone…",
     producing: "Building your vocal sound…",
     mixing: "Blending your voice with the beat…",
     mix: "Blending your voice with the beat…",
-    mix_submit: "Blending your voice with the beat…",
-    mix_poll: "Blending your voice with the beat…",
-    mix_store: "Blending your voice with the beat…",
+    mix_submit: "Sending mix for processing…",
+    mix_poll: "Finishing the mix…",
+    mix_store: "Saving the mix…",
     mastering: "Adding the final polish…",
     master: "Adding the final polish…",
-    master_submit: "Adding the final polish…",
-    master_poll: "Adding the final polish…",
-    quality_check: "AP is checking your final mix…",
-    webhook_received: "Adding the final polish…",
+    master_submit: "Mastering your track…",
+    master_poll: "Finishing the master…",
+    quality_check: "Checking the final mix…",
+    webhook_received: "Finalizing export…",
     complete: "Your song is ready.",
     completed: "Your song is ready.",
     failed: "Production could not finish.",
@@ -708,12 +724,19 @@ export function ProducerView({
   }, []);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [selectedMicId, setSelectedMicId] = useState("");
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
+  const [audioSetupOpen, setAudioSetupOpen] = useState(false);
   /** Live input level 0–1 — passive analyser tap, not in monitor/capture path */
   const [liveLevel, setLiveLevel] = useState(0);
   /** Rolling peak samples for in-clip live waveform while recording */
   const [livePeaks, setLivePeaks] = useState<number[]>([]);
   /** Armed task — Record captures into this planned/mock clip */
   const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
+  /** Inline rename of vocal track display name */
+  const [renamingTrackId, setRenamingTrackId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
@@ -729,6 +752,17 @@ export function ProducerView({
   const liveMeterCtxRef = useRef<AudioContext | null>(null);
   const livePeaksBufRef = useRef<number[]>([]);
   const beatFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    try {
+      setSelectedMicId(readPreferredMicId());
+      const spk = readPreferredSpeakerId();
+      if (spk) setSelectedSpeakerId(spk);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
@@ -747,6 +781,8 @@ export function ProducerView({
   type ProduceUi = "idle" | "starting" | "producing" | "complete" | "failed";
   const [produceUi, setProduceUi] = useState<ProduceUi>("idle");
   const [produceStage, setProduceStage] = useState<string | null>(null);
+  const [produceProgress, setProduceProgress] = useState(0);
+  const [produceJobStatus, setProduceJobStatus] = useState<string | null>(null);
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   /** Job id that owns the currently shown master — avoid stale “ready” after re-produce */
@@ -844,6 +880,47 @@ export function ProducerView({
         setExpandedId(action.trackId);
         setFxOpenId(action.trackId);
         break;
+      case "choir": {
+        setSelectedTrackId(action.trackId);
+        setExpandedId(action.trackId);
+        await makeChoir(action.trackId, action.mode, { confirm: false });
+        break;
+      }
+      case "rename": {
+        if (action.trackId === "beat") break;
+        const next = action.title.trim().slice(0, 80);
+        if (!next) break;
+        setSelectedTrackId(action.trackId);
+        setLayers((list) =>
+          list.map((l) => (l.id === action.trackId ? { ...l, label: next } : l))
+        );
+        await persistLayer(action.trackId, { title: next });
+        break;
+      }
+      case "color": {
+        const hex = action.color;
+        if (action.trackId === "all") {
+          const ids = layers
+            .filter((l) => l.id !== "beat")
+            .map((l) => l.id);
+          setColorById((prev) => {
+            const next = { ...prev };
+            for (const id of ids) next[id] = hex;
+            return next;
+          });
+          setLayers((list) =>
+            list.map((l) => (l.id === "beat" ? l : { ...l, color: hex }))
+          );
+          await Promise.all(ids.map((id) => persistColor(id, hex)));
+        } else if (action.trackId !== "beat") {
+          setSelectedTrackId(action.trackId);
+          setLayers((list) =>
+            list.map((l) => (l.id === action.trackId ? { ...l, color: hex } : l))
+          );
+          await persistColor(action.trackId, hex);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -1140,7 +1217,7 @@ export function ProducerView({
 
   async function persistLayer(
     id: string,
-    patch: { start_ms?: number; end_ms?: number; status?: string }
+    patch: { start_ms?: number; end_ms?: number; status?: string; title?: string }
   ) {
     setSavingId(id);
     setEditMsg(null);
@@ -1244,38 +1321,87 @@ export function ProducerView({
 
   async function makeChoir(
     id: string,
-    mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full"
-  ) {
-    if (!projectId || id === "beat") return;
+    mode: "double" | "choir_light" | "choir_full" | "chorus_lift" = "choir_full",
+    opts?: { confirm?: boolean }
+  ): Promise<boolean> {
+    if (!projectId || id === "beat") return false;
+    // Plugin-style: one recorded take is enough. API resolves the take by task id
+    // (and same-section lead fallback). Do not require pre-planned choir tasks.
     const labels: Record<string, string> = {
       double: "Add tight doubles from this vocal?",
       choir_light: "Add a light choir (doubles + high harmony)?",
       choir_full: "Turn this vocal into a full choir stack?",
       chorus_lift: "Lift this section (chorus-style doubles + high)?",
     };
-    if (!window.confirm(labels[mode] || labels.choir_full)) return;
+    if (opts?.confirm !== false) {
+      if (!window.confirm(labels[mode] || labels.choir_full)) return false;
+    }
     setSavingId(id);
     setEditMsg(null);
     try {
-      const res = await fetch(`/api/recording-tasks/${id}/choir`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
-      });
+      const layer = layers.find((l) => l.id === id);
+      // Browser can decode webm/opus; Vercel API often cannot (no ffmpeg).
+      // Send a WAV so Stack never depends on server-side conversion.
+      let res: Response;
+      if (layer?.audioUrl) {
+        const actx = new AudioContext();
+        try {
+          const audioBuf = await decodeAudioUrl(actx, layer.audioUrl);
+          const wavBlob = encodeWavBlob(audioBuf);
+          const fd = new FormData();
+          fd.append("mode", mode);
+          if (layer.recordingId) fd.append("recording_id", layer.recordingId);
+          fd.append("file", wavBlob, "lead.wav");
+          res = await fetch(`/api/recording-tasks/${id}/choir`, {
+            method: "POST",
+            body: fd,
+          });
+        } finally {
+          void actx.close().catch(() => undefined);
+        }
+      } else {
+        res = await fetch(`/api/recording-tasks/${id}/choir`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            ...(layer?.recordingId ? { recording_id: layer.recordingId } : {}),
+          }),
+        });
+      }
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         const hint =
           typeof j.error === "string"
             ? j.error
             : "Could not build choir";
+        const det = j.details && typeof j.details === "object" ? j.details : null;
+        const found =
+          det && typeof (det as { recordings_found?: number }).recordings_found === "number"
+            ? ` (${(det as { recordings_found: number }).recordings_found} takes in project)`
+            : "";
+        const reason =
+          det && typeof (det as { reason?: string }).reason === "string"
+            ? `: ${(det as { reason: string }).reason}`
+            : "";
+        const saveErrs = Array.isArray((det as { saveErrors?: string[] } | null)?.saveErrors)
+          ? ` — ${(det as { saveErrors: string[] }).saveErrors.slice(0, 2).join("; ")}`
+          : "";
         setEditMsg(
           hint === "Task not found"
             ? "Track not found — refresh Console and use a recorded vocal layer."
-            : hint
+            : `${hint}${found}${reason}${saveErrs}`
         );
-        return;
+        return false;
       }
-      setEditMsg(null);
+      setEditMsg(
+        typeof j.message === "string"
+          ? j.message
+          : mode === "choir_full"
+            ? "Full choir stacked on this vocal — same section timeline."
+            : "Choir layers added on this vocal."
+      );
+      setTimeout(() => setEditMsg(null), 5000);
       onLayersChanged?.();
       // soft refresh layers list from parent
       const tr = await fetch(`/api/projects/${projectId}/recording-tasks`);
@@ -1290,9 +1416,11 @@ export function ProducerView({
       }
     } catch {
       setEditMsg("Network error building choir");
+      return false;
     } finally {
       setSavingId(null);
     }
+    return true;
   }
 
   async function duplicateLayer(id: string) {
@@ -1354,6 +1482,38 @@ export function ProducerView({
       setEditMsg("Network error duplicating track");
     } finally {
       setSavingId(null);
+    }
+  }
+
+  function beginRenameTrack(tr: { id: string; label: string; kind: string }) {
+    if (tr.kind !== "vocal" || tr.id === "beat") return;
+    setRenamingTrackId(tr.id);
+    setRenameDraft(tr.label || "");
+    setSelectedTrackId(tr.id);
+  }
+
+  async function commitRenameTrack() {
+    const id = renamingTrackId;
+    if (!id) return;
+    const next = renameDraft.trim().slice(0, 80);
+    setRenamingTrackId(null);
+    if (!next) return;
+    const prev = layers.find((l) => l.id === id);
+    if (prev && prev.label === next) return;
+    setRenameBusy(true);
+    setEditMsg(null);
+    // Optimistic UI
+    setLayers((list) => list.map((l) => (l.id === id ? { ...l, label: next } : l)));
+    try {
+      const ok = await persistLayer(id, { title: next });
+      if (!ok) {
+        // revert via parent soft reload
+        onLayersChanged?.();
+      } else {
+        setEditMsg(`Renamed to “${next}”`);
+      }
+    } finally {
+      setRenameBusy(false);
     }
   }
 
@@ -1535,8 +1695,8 @@ export function ProducerView({
 
     try {
       const opened = await openRecordingStream({
-        preferredInputId: "",
-        outputPreference: "__headphones__",
+        preferredInputId: selectedMicId || "",
+        outputPreference: selectedSpeakerId || "__headphones__",
       });
       const { recorder, mimeType } = createVocalRecorder(opened.recordStream);
       const chunks: BlobPart[] = [];
@@ -1569,14 +1729,29 @@ export function ProducerView({
           const a = new Audio(beatUrl);
           a.currentTime = Math.max(0, fromMs / 1000);
           monitorAudioRef.current = a;
+          const sink =
+            selectedSpeakerId &&
+            selectedSpeakerId !== "__headphones__" &&
+            selectedSpeakerId !== "__speaker__" &&
+            selectedSpeakerId !== "__handset__"
+              ? selectedSpeakerId
+              : "";
+          if (sink && typeof (a as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId === "function") {
+            try {
+              await (a as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(sink);
+            } catch {
+              /* OS may ignore setSinkId */
+            }
+          }
           void a.play();
         } catch {
           /* ignore */
         }
       }
-      setEditMsg(`Recording into track… (${mimeType.split(";")[0]})`);
+      const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
+      setEditMsg(`Recording into track… (${mimeType.split(";")[0]}) · ${micNote}`);
     } catch (e) {
-      setEditMsg(e instanceof Error ? e.message : "Mic permission failed");
+      setEditMsg(formatMicOpenError(e));
       setIsConsoleRecording(false);
       stopLiveMeter();
     }
@@ -2670,6 +2845,10 @@ export function ProducerView({
           const jj = await jr.json().catch(() => ({}));
           if (jr.ok) {
             if (jj.stage) setProduceStage(String(jj.stage));
+            if (jj.status) setProduceJobStatus(String(jj.status));
+            if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
+              setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
+            }
             if (jj.status === "failed" || jj.status === "FAILED") {
               setProduceError(humanProduceError(jj.error, jj.stage));
               setProduceUi("failed");
@@ -2696,14 +2875,25 @@ export function ProducerView({
         type?: string;
         status?: string;
         stage?: string;
+        progress?: number;
         error?: string;
+        output_data?: Record<string, unknown>;
       }[];
       const produceJob =
-        jobs.find((j) => j.type === "PRODUCE_SONG") ||
-        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined);
+        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined) ||
+        jobs.find(
+          (j) =>
+            j.type === "PRODUCE_SONG" &&
+            ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+        ) ||
+        jobs.find((j) => j.type === "PRODUCE_SONG");
 
       if (produceJob?.id) setProduceJobId(String(produceJob.id));
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+      if (produceJob?.status) setProduceJobStatus(String(produceJob.status));
+      if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+        setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+      }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
       const projectStatus = String(st.project?.status || st.status || "").toLowerCase();
@@ -2766,10 +2956,27 @@ export function ProducerView({
     clearProducePoll();
     produceActiveRef.current = true;
     const PRODUCE_POLL_MS = 4000;
-    const PRODUCE_MAX_MS = 10 * 60 * 1000;
+    // Full AP engine often exceeds 10m (restore + arrange + mix + master). Align with worker ceiling.
+    const PRODUCE_MAX_MS = 30 * 60 * 1000;
     const tick = async () => {
       if (!produceActiveRef.current) return;
       if (Date.now() - produceStartedAtRef.current > PRODUCE_MAX_MS) {
+        // Soft timeout: re-check once. If worker still processing, keep waiting — do not mark failed.
+        const result = await pollProduceOnce();
+        if (result === "complete" || result === "failed") {
+          produceActiveRef.current = false;
+          return;
+        }
+        if (result === "pending") {
+          // Extend another 15m while job is still alive on the server
+          produceStartedAtRef.current = Date.now() - PRODUCE_MAX_MS + 15 * 60 * 1000;
+          setProduceError(
+            "Still producing on the server — this can take a while on longer songs. Leave this open; progress will update."
+          );
+          setProduceUi("producing");
+          producePollRef.current = setTimeout(() => void tick(), PRODUCE_POLL_MS);
+          return;
+        }
         setProduceUi("failed");
         setProduceError(
           "This is taking longer than expected. Tap Try again — if AP is still working, production will resume."
@@ -2930,18 +3137,17 @@ export function ProducerView({
         throw new Error(String(msg).replace(/\bRoEx\b/gi, "AP"));
       }
       const jid = j.jobId || j.job_id;
-      if (jid) {
-        setProduceJobId(String(jid));
-        // Kick first tick immediately so production doesn't sit idle without a worker
-        void fetch(`/api/jobs/${jid}`).catch(() => undefined);
+      if (!jid) {
+        throw new Error(
+          "Production job was not created. Check your connection and try Produce again."
+        );
       }
-
-      if (j.deduped && (j.status === "queued" || j.status === "processing")) {
-        setProduceStage(j.stage || "queued");
-        produceStartedAtRef.current = Date.now();
-        scheduleProducePoll();
-        return;
-      }
+      setProduceJobId(String(jid));
+      setProduceJobStatus(String(j.status || "queued"));
+      setProduceStage(String(j.stage || j.status || "queued"));
+      setProduceProgress(j.status === "processing" ? 10 : 5);
+      // Read status (worker owns heavy work; inline mode may tick on GET)
+      void fetch(`/api/jobs/${jid}`).catch(() => undefined);
 
       if (
         j.master_url &&
@@ -2949,13 +3155,13 @@ export function ProducerView({
         (j.status === "complete" || j.status === "completed")
       ) {
         setMasterUrl(String(j.master_url));
-        if (jid) setMasterJobId(String(jid));
+        setMasterJobId(String(jid));
         setProduceUi("complete");
         setProduceStage("complete");
+        setProduceProgress(100);
         return;
       }
 
-      setProduceStage(j.stage || "queued");
       produceStartedAtRef.current = Date.now();
       scheduleProducePoll();
     } catch (e) {
@@ -3463,6 +3669,29 @@ export function ProducerView({
 
         <button
           type="button"
+          title="Audio interface / microphone"
+          onClick={() => setAudioSetupOpen((o) => !o)}
+          disabled={isConsoleRecording}
+          style={{
+            ...iconBtn(border, surface, text),
+            width: isNarrow ? 36 : 40,
+            height: isNarrow ? 36 : 40,
+            minWidth: isNarrow ? 36 : 40,
+            minHeight: isNarrow ? 36 : 40,
+            flexShrink: 0,
+            borderRadius: 999,
+            border: audioSetupOpen ? `1px solid ${brass}` : `1px solid ${border}`,
+            color: audioSetupOpen ? brass : mutedText,
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+          aria-label="Audio interface"
+          aria-expanded={audioSetupOpen}
+        >
+          🎙
+        </button>
+        <button
+          type="button"
           title={isConsoleRecording ? "Stop recording" : "Record vocal into selected track (raw capture, same as Booth)"}
           onClick={() => void toggleConsoleRecord()}
           style={{
@@ -3827,6 +4056,77 @@ export function ProducerView({
       )}
 
 
+
+      {audioSetupOpen && (
+        <div
+          style={{
+            flexShrink: 0,
+            margin: "0 12px 8px",
+            padding: 12,
+            borderRadius: 12,
+            border: `1px solid ${border}`,
+            background: surface,
+            maxHeight: "42vh",
+            overflowY: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", color: brass }}>
+              AUDIO INTERFACE
+            </div>
+            <button
+              type="button"
+              onClick={() => setAudioSetupOpen(false)}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: mutedText,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 12,
+              }}
+            >
+              Close
+            </button>
+          </div>
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+            Same capture path as Booth. Select your interface, then Record into the armed track.
+          </p>
+          <div style={{ fontSize: 11, color: faint, marginBottom: 6 }}>
+            Input: {micSummaryLabel(selectedMicId)}
+          </div>
+          <MicInputPicker
+            selectedDeviceId={selectedMicId}
+            disabled={isConsoleRecording}
+            compact
+            onSelect={(id) => {
+              setSelectedMicId(id);
+              writePreferredMicId(id);
+            }}
+          />
+          <div style={{ height: 12 }} />
+          <div style={{ fontSize: 11, color: faint, marginBottom: 6 }}>
+            Monitor: {speakerSummaryLabel(selectedSpeakerId)}
+          </div>
+          <SpeakerOutputPicker
+            selectedDeviceId={selectedSpeakerId}
+            disabled={isConsoleRecording}
+            onSelect={(id) => {
+              setSelectedSpeakerId(id);
+              writePreferredSpeakerId(id);
+            }}
+          />
+        </div>
+      )}
+
       {/* Shared beat picker for empty state + Add Track when no beat */}
       <input
         ref={beatFileInputRef}
@@ -4022,66 +4322,131 @@ export function ProducerView({
                     : undefined
                 }
               >
-                {/* Name row — always visible when panel open */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Click expands this track (and collapses others) — big panel like pre-record UX
-                    setExpandedId(isExpanded ? null : tr.id);
-                    setSelectedTrackId(tr.id);
-                    if (tr.kind === "vocal") setArmedTrackId(tr.id);
-                  }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: text,
-                    fontWeight: 700,
-                    fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
-                    lineHeight: 1.25,
-                    padding: 0,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    width: "100%",
-                    minWidth: 0,
-                    fontFamily: "inherit",
-                    display: sidebarCollapsed ? "none" : "flex",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6,
-                    overflow: "hidden",
-                    flexShrink: 0,
-                  }}
-                >
-                  <span
+                {/* Name row — double-click (or Rename when expanded) to rename vocal tracks */}
+                {renamingTrackId === tr.id && tr.kind === "vocal" ? (
+                  <div
                     style={{
-                      color: faint,
-                      fontSize: 10,
-                      fontVariantNumeric: "tabular-nums",
-                      minWidth: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: faint,
+                        fontSize: 10,
+                        fontVariantNumeric: "tabular-nums",
+                        minWidth: 14,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {trackIdx + 1}
+                    </span>
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      disabled={renameBusy}
+                      maxLength={80}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitRenameTrack();
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setRenamingTrackId(null);
+                        }
+                      }}
+                      onBlur={() => void commitRenameTrack()}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        fontFamily: "inherit",
+                        color: text,
+                        background: "rgba(255,255,255,0.06)",
+                        border: `1px solid ${brass}`,
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        outline: "none",
+                      }}
+                      aria-label="Rename track"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpandedId(isExpanded ? null : tr.id);
+                      setSelectedTrackId(tr.id);
+                      if (tr.kind === "vocal") setArmedTrackId(tr.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      beginRenameTrack(tr);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: text,
+                      fontWeight: 700,
+                      fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
+                      lineHeight: 1.25,
+                      padding: 0,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      width: "100%",
+                      minWidth: 0,
+                      fontFamily: "inherit",
+                      display: sidebarCollapsed ? "none" : "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      overflow: "hidden",
                       flexShrink: 0,
                     }}
                   >
-                    {trackIdx + 1}
-                  </span>
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
-                    }}
-                    title={tr.label}
-                  >
-                    {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
-                  </span>
-                  {isExpanded ? (
-                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
-                  ) : (
-                    <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
-                  )}
-                </button>
-                {!sidebarCollapsed && tr.sub && isExpanded ? (
+                    <span
+                      style={{
+                        color: faint,
+                        fontSize: 10,
+                        fontVariantNumeric: "tabular-nums",
+                        minWidth: 14,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {trackIdx + 1}
+                    </span>
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                      title={
+                        tr.kind === "vocal"
+                          ? `${tr.label} — double-click to rename`
+                          : tr.label
+                      }
+                    >
+                      {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
+                    </span>
+                    {isExpanded ? (
+                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
+                    ) : (
+                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
+                    )}
+                  </button>
+                )}
+                {!sidebarCollapsed && tr.sub && isExpanded && renamingTrackId !== tr.id ? (
                   <div
                     style={{
                       fontSize: 11,
@@ -4096,6 +4461,31 @@ export function ProducerView({
                   >
                     {tr.sub}
                   </div>
+                ) : null}
+                {!sidebarCollapsed && isExpanded && tr.kind === "vocal" && renamingTrackId !== tr.id ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      beginRenameTrack(tr);
+                    }}
+                    style={{
+                      alignSelf: "flex-start",
+                      marginLeft: 20,
+                      padding: "2px 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      fontFamily: "inherit",
+                      color: brass,
+                      background: "transparent",
+                      border: `1px solid ${brass}66`,
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    Rename
+                  </button>
                 ) : null}
                 {!sidebarCollapsed ? (
                 <div
@@ -4895,34 +5285,88 @@ export function ProducerView({
               backdropFilter: "blur(12px)",
             }}
           >
-            {produceUi === "producing" ? (
+            {produceUi === "producing" || produceUi === "starting" ? (
               <>
                 <div style={{ fontSize: 13, fontWeight: 800, color: brass, marginBottom: 4 }}>
-                  AP is producing your song
+                  {produceUi === "starting" ? "Starting production…" : "AP is producing your song"}
                 </div>
-                <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+                <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45, marginBottom: 6 }}>
                   {humanProduceStage(produceStage)}
+                </div>
+                <div style={{ fontSize: 11, color: mutedText, marginBottom: 8 }}>
+                  {produceJobStatus
+                    ? produceJobStatus === "queued"
+                      ? "Status: queued — waiting for the studio worker"
+                      : produceJobStatus === "processing"
+                        ? "Status: processing on the studio engine"
+                        : `Status: ${produceJobStatus}`
+                    : "Connecting to production…"}
+                  {typeof produceProgress === "number" && produceProgress > 0
+                    ? ` · ${produceProgress}%`
+                    : ""}
                 </div>
                 <div
                   style={{
-                    marginTop: 10,
-                    height: 3,
+                    height: 4,
                     borderRadius: 999,
                     background: "rgba(255,255,255,0.08)",
                     overflow: "hidden",
+                    marginBottom: 10,
                   }}
                 >
                   <div
                     style={{
                       height: "100%",
-                      width: "45%",
+                      width: `${Math.max(8, produceProgress || 8)}%`,
                       borderRadius: 999,
-                      background: `linear-gradient(90deg, transparent, ${brass}, transparent)`,
-                      backgroundSize: "200% 100%",
-                      animation: "apShimmer 1.2s linear infinite",
+                      background: `linear-gradient(90deg, ${brass}, #F0BC80)`,
+                      transition: "width 0.4s ease",
                     }}
                   />
                 </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {(
+                    [
+                      ["queued", "Queue job"],
+                      ["analyzing", "Analyze vocals"],
+                      ["restoring", "Clean vocals"],
+                      ["mixing", "Mix with beat"],
+                      ["mastering", "Master"],
+                      ["complete", "Export"],
+                    ] as const
+                  ).map(([key, label]) => {
+                    const order = ["queued", "analyzing", "restoring", "producing", "mixing", "mastering", "complete"];
+                    const cur = String(produceStage || "queued").toLowerCase();
+                    let curIdx = order.findIndex((k) => cur.includes(k));
+                    if (curIdx < 0) curIdx = produceJobStatus === "processing" ? 2 : 0;
+                    const stepIdx = order.indexOf(key === "queued" ? "queued" : key);
+                    const done = stepIdx >= 0 && curIdx > stepIdx;
+                    const active = stepIdx >= 0 && (cur.includes(key) || (key === "queued" && curIdx === 0));
+                    return (
+                      <div
+                        key={key}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontSize: 11,
+                          color: active ? brass : done ? mutedText : "rgba(255,255,255,0.28)",
+                          fontWeight: active ? 700 : 500,
+                        }}
+                      >
+                        <span style={{ width: 12, textAlign: "center" }}>
+                          {done ? "✓" : active ? "●" : "○"}
+                        </span>
+                        {label}
+                      </div>
+                    );
+                  })}
+                </div>
+                {produceJobId ? (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 8 }}>
+                    Job {String(produceJobId).slice(0, 8)}…
+                  </div>
+                ) : null}
               </>
             ) : null}
 
@@ -5416,9 +5860,26 @@ export function ProducerView({
               border: "1px solid rgba(255,255,255,0.1)",
               boxShadow: "0 12px 40px rgba(0,0,0,0.55)",
               backdropFilter: "blur(16px)",
+              /* Mobile: many track chips must not push Close off-screen */
+              maxHeight: "min(78dvh, 640px)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 10,
+                flexShrink: 0,
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
+                background: "rgba(22, 22, 26, 0.98)",
+              }}
+            >
               <button
                 type="button"
                 onClick={() => {
@@ -5466,7 +5927,7 @@ export function ProducerView({
               </button>
             </div>
 
-            {/* Scope chips — tap a track to attach it here */}
+            {/* Scope chips — scroll when many tracks (choir stacks) */}
             <div
               style={{
                 display: "flex",
@@ -5474,6 +5935,13 @@ export function ProducerView({
                 gap: 6,
                 marginBottom: 10,
                 alignItems: "center",
+                alignContent: "flex-start",
+                maxHeight: "min(36dvh, 280px)",
+                overflowY: "auto",
+                overflowX: "hidden",
+                flexShrink: 1,
+                WebkitOverflowScrolling: "touch",
+                overscrollBehavior: "contain",
               }}
             >
               <button
@@ -5600,6 +6068,8 @@ export function ProducerView({
               </div>
             ) : null}
 
+            {/* Input + suggestions stay pinned under scrollable chips */}
+            <div style={{ flexShrink: 0, minHeight: 0 }}>
             {editMsg ? (
               <div
                 style={{
@@ -5727,6 +6197,7 @@ export function ProducerView({
               }}
             >
               Tell AP anything — mute, solo, pan, FX, jump to chorus, process a take. Tap a track to scope.
+            </div>
             </div>
           </div>
         </div>
