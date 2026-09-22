@@ -886,6 +886,41 @@ export function ProducerView({
         await makeChoir(action.trackId, action.mode, { confirm: false });
         break;
       }
+      case "rename": {
+        if (action.trackId === "beat") break;
+        const next = action.title.trim().slice(0, 80);
+        if (!next) break;
+        setSelectedTrackId(action.trackId);
+        setLayers((list) =>
+          list.map((l) => (l.id === action.trackId ? { ...l, label: next } : l))
+        );
+        await persistLayer(action.trackId, { title: next });
+        break;
+      }
+      case "color": {
+        const hex = action.color;
+        if (action.trackId === "all") {
+          const ids = layers
+            .filter((l) => l.id !== "beat")
+            .map((l) => l.id);
+          setColorById((prev) => {
+            const next = { ...prev };
+            for (const id of ids) next[id] = hex;
+            return next;
+          });
+          setLayers((list) =>
+            list.map((l) => (l.id === "beat" ? l : { ...l, color: hex }))
+          );
+          await Promise.all(ids.map((id) => persistColor(id, hex)));
+        } else if (action.trackId !== "beat") {
+          setSelectedTrackId(action.trackId);
+          setLayers((list) =>
+            list.map((l) => (l.id === action.trackId ? { ...l, color: hex } : l))
+          );
+          await persistColor(action.trackId, hex);
+        }
+        break;
+      }
       default:
         break;
     }
