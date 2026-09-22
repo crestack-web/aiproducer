@@ -56,6 +56,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         fetch(`/api/projects/${projectId}/session-preview`),
       ]);
       const audioByTask = new Map<string, string>();
+      const recordingIdByTask = new Map<string, string>();
       /** Canonical timeline placement from session-preview (includes recordingOffset). */
       const placementByTask = new Map<
         string,
@@ -66,6 +67,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
           const pj = await prev.json();
           const layersIn = (pj.layers || pj.recordings || []) as {
             task_id?: string;
+            recording_id?: string;
             audio_url?: string;
             start_ms?: number;
             end_ms?: number | null;
@@ -73,6 +75,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
           }[];
           for (const row of layersIn) {
             if (row.task_id && row.audio_url) audioByTask.set(row.task_id, row.audio_url);
+            if (row.task_id && row.recording_id) recordingIdByTask.set(row.task_id, row.recording_id);
             if (row.task_id && typeof row.start_ms === "number") {
               placementByTask.set(row.task_id, {
                 startMs: row.start_ms,
@@ -158,6 +161,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               startMs: resolvedStart,
               endMs: resolvedEnd,
               audioUrl: audioByTask.get(tk.id) || null,
+              recordingId: recordingIdByTask.get(tk.id) || null,
               color: colorRaw,
               trackFx: tfRaw
                 ? {

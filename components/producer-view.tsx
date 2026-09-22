@@ -1293,10 +1293,14 @@ export function ProducerView({
     setSavingId(id);
     setEditMsg(null);
     try {
+      const layer = layers.find((l) => l.id === id);
       const res = await fetch(`/api/recording-tasks/${id}/choir`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({
+          mode,
+          ...(layer?.recordingId ? { recording_id: layer.recordingId } : {}),
+        }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1304,10 +1308,15 @@ export function ProducerView({
           typeof j.error === "string"
             ? j.error
             : "Could not build choir";
+        const det = j.details && typeof j.details === "object" ? j.details : null;
+        const found =
+          det && typeof det.recordings_found === "number"
+            ? ` (${det.recordings_found} takes in project)`
+            : "";
         setEditMsg(
           hint === "Task not found"
             ? "Track not found — refresh Console and use a recorded vocal layer."
-            : hint
+            : `${hint}${found}`
         );
         return;
       }

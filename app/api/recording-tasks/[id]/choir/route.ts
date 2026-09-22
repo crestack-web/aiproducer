@@ -139,20 +139,23 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   /**
-   * Plugin-style source take resolution:
-   * One recorded vocal on a track is enough — no need for pre-planned harmony tasks.
-   * Prefer explicit recording_id, then any take on this task, then same-section lead.
+   * Plugin-style source take: one saved vocal is enough.
+   * Load project recordings with schema-resilient selects (missing columns
+   * must not empty the result set — that caused false "No vocal take").
    */
   type RecRow = {
     id?: string;
     task_id?: string | null;
+    project_id?: string | null;
     audio_path?: string | null;
     original_audio_path?: string | null;
     content_type?: string | null;
     is_selected?: boolean | null;
     metadata?: Record<string, unknown> | null;
     created_at?: string;
+    take_number?: number | null;
   };
+
   const pickPath = (r: RecRow | null | undefined): string | null => {
     if (!r) return null;
     const a = typeof r.audio_path === "string" ? r.audio_path.trim() : "";
@@ -160,102 +163,156 @@ export async function POST(req: Request, ctx: Ctx) {
     return a || o || null;
   };
 
-  const loadRecById = async (rid: string): Promise<RecRow | null> => {
-    const { data } = await service
+  const selects = [
+    "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at, take_number",
+    "id, task_id, project_id, audio_path, content_type, is_selected, metadata, created_at, take_number",
+    "id, task_id, project_id, audio_path, is_selected, metadata, created_at",
+    "id, task_id, audio_path, is_selected, created_at",
+    "id, task_id, audio_path, created_at",
+  ];
+
+  let projectRecs: RecRow[] = [];
+  let loadDiag: string[] = [];
+
+  for (const cols of selects) {
+    const { data, error } = await service
       .from("recordings")
-      .select(
-        "id, task_id, project_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
-      )
-      .eq("id", rid)
+      .select(cols)
       .eq("project_id", projectId)
-      .maybeSingle();
-    return (data as RecRow) || null;
-  };
+      .order("created_at", { ascending: false })
+      .limit(80);
+    if (!error && data) {
+      projectRecs = data as RecRow[];
+      loadDiag.push(`by_project=${projectRecs.length} cols=${cols.split(",").length}`);
+      break;
+    }
+    if (error) loadDiag.push(`by_project fail: ${error.message}`);
+  }
+
+  // Fallback: by this task_id only (project_id may be null on older rows)
+  if (projectRecs.length === 0) {
+    for (const cols of selects) {
+      const { data, error } = await service
+        .from("recordings")
+        .select(cols)
+        .eq("task_id", taskId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (!error && data) {
+        projectRecs = data as RecRow[];
+        loadDiag.push(`by_task=${projectRecs.length}`);
+        break;
+      }
+      if (error) loadDiag.push(`by_task fail: ${error.message}`);
+    }
+  }
+
+  // Fallback: all task ids for this project
+  if (projectRecs.length === 0) {
+    const { data: tasks } = await service
+      .from("recording_tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .limit(100);
+    const ids = (tasks || []).map((x) => String(x.id));
+    if (ids.length) {
+      for (const cols of selects) {
+        const { data, error } = await service
+          .from("recordings")
+          .select(cols)
+          .in("task_id", ids)
+          .order("created_at", { ascending: false })
+          .limit(80);
+        if (!error && data) {
+          projectRecs = data as RecRow[];
+          loadDiag.push(`by_task_ids=${projectRecs.length}`);
+          break;
+        }
+        if (error) loadDiag.push(`by_task_ids fail: ${error.message}`);
+      }
+    }
+  }
 
   let rec: RecRow | null = null;
 
-  // 0) Explicit take id from Console (most reliable)
+  // 0) Explicit recording_id from Console
   if (recordingIdHint) {
-    rec = await loadRecById(recordingIdHint);
+    rec =
+      projectRecs.find((r) => r.id === recordingIdHint && pickPath(r)) ||
+      null;
+    if (!rec) {
+      for (const cols of selects) {
+        const { data } = await service
+          .from("recordings")
+          .select(cols)
+          .eq("id", recordingIdHint)
+          .maybeSingle();
+        if (data && pickPath(data as RecRow)) {
+          rec = data as RecRow;
+          break;
+        }
+      }
+    }
   }
 
-  // 1) Any take on this track/task
+  // 1) Takes on this track
   if (!pickPath(rec)) {
-    const any = await service
-      .from("recordings")
-      .select(
-        "id, task_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
-      )
-      .eq("task_id", taskId)
-      .order("created_at", { ascending: false })
-      .limit(12);
-    const rows = (any.data || []) as RecRow[];
+    const onTask = projectRecs.filter((r) => r.task_id === taskId && pickPath(r));
     rec =
-      rows.find((r) => r.is_selected && pickPath(r)) ||
-      rows.find((r) => pickPath(r)) ||
+      onTask.find((r) => r.is_selected) ||
+      onTask[0] ||
       null;
   }
 
-  // 2) Metadata / reassigned task links on the project
-  if (!pickPath(rec) && projectId) {
-    const proj = await service
-      .from("recordings")
-      .select(
-        "id, task_id, audio_path, original_audio_path, content_type, is_selected, metadata, created_at"
-      )
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    const rows = (proj.data || []) as RecRow[];
+  // 2) Metadata link
+  if (!pickPath(rec)) {
     rec =
-      rows.find((r) => {
+      projectRecs.find((r) => {
         const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : {};
         const metaTask = String(
           (meta as { task_id?: string }).task_id ||
             (meta as { recording_task_id?: string }).recording_task_id ||
             ""
         );
-        return (r.task_id === taskId || metaTask === taskId) && Boolean(pickPath(r));
+        return metaTask === taskId && Boolean(pickPath(r));
       }) || null;
+  }
 
-    // 3) Same musical window (section) — use a sibling lead take if this row is empty
-    if (!pickPath(rec)) {
-      const winStart = Number(task.start_ms);
-      const winEnd = Number(task.end_ms);
-      if (Number.isFinite(winStart)) {
-        const { data: siblingTasks } = await service
-          .from("recording_tasks")
-          .select("id, type, start_ms, end_ms, status")
-          .eq("project_id", projectId)
-          .limit(80);
-        const near = (siblingTasks || []).filter((st) => {
-          const s = Number(st.start_ms);
-          if (!Number.isFinite(s)) return false;
-          if (Math.abs(s - winStart) > 400) return false;
-          if (Number.isFinite(winEnd) && st.end_ms != null) {
-            return Math.abs(Number(st.end_ms) - winEnd) < 800;
-          }
-          return true;
-        });
-        const nearIds = new Set(near.map((st) => String(st.id)));
-        // Prefer completed lead on same section
-        const leadNear = near.find(
-          (st) =>
-            String(st.type || "").toLowerCase() === "lead" &&
-            /complete|done|recorded|ready/i.test(String(st.status || ""))
-        );
-        const preferIds = leadNear
-          ? [String(leadNear.id), ...[...nearIds].filter((x) => x !== String(leadNear.id))]
-          : [...nearIds];
-        for (const nid of preferIds) {
-          if (nid === taskId) continue;
-          const hit = rows.find((r) => r.task_id === nid && pickPath(r));
-          if (hit) {
-            rec = hit;
-            break;
-          }
+  // 3) Same section window — sibling lead with audio
+  if (!pickPath(rec)) {
+    const winStart = Number(task.start_ms);
+    if (Number.isFinite(winStart)) {
+      const { data: siblingTasks } = await service
+        .from("recording_tasks")
+        .select("id, type, start_ms, end_ms, status")
+        .eq("project_id", projectId)
+        .limit(100);
+      const near = (siblingTasks || []).filter((st) => {
+        const s = Number(st.start_ms);
+        return Number.isFinite(s) && Math.abs(s - winStart) <= 500;
+      });
+      const ordered = [
+        ...near.filter((st) => String(st.type || "").toLowerCase() === "lead"),
+        ...near.filter((st) => String(st.type || "").toLowerCase() !== "lead"),
+      ];
+      for (const st of ordered) {
+        if (String(st.id) === taskId) continue;
+        const hit = projectRecs.find((r) => r.task_id === st.id && pickPath(r));
+        if (hit) {
+          rec = hit;
+          loadDiag.push(`sibling_task=${st.id}`);
+          break;
         }
       }
+    }
+  }
+
+  // 4) Last resort: any playable take on the project (plugin: use whatever vocal exists)
+  if (!pickPath(rec)) {
+    const anyPlayable = projectRecs.find((r) => pickPath(r));
+    if (anyPlayable) {
+      rec = anyPlayable;
+      loadDiag.push(`fallback_any_project_take=${anyPlayable.id}`);
     }
   }
 
@@ -267,7 +324,15 @@ export async function POST(req: Request, ctx: Ctx) {
         details: {
           taskId,
           recordingIdHint,
-          hint: "Stack uses the saved take on this track (or the lead on the same section). Record in Booth until Saved, refresh Console, then Stack again.",
+          projectId,
+          recordings_found: projectRecs.length,
+          task_ids_with_audio: [
+            ...new Set(
+              projectRecs.filter((r) => pickPath(r)).map((r) => r.task_id).filter(Boolean)
+            ),
+          ].slice(0, 12),
+          loadDiag,
+          hint: "If Produce worked on this song, takes exist — refresh Console and Stack the track that shows a waveform. Or run SQL: select id, task_id, audio_path from recordings where project_id = '<project>'.",
         },
       },
       { status: 400 }
@@ -279,12 +344,24 @@ export async function POST(req: Request, ctx: Ctx) {
     url = await createSignedDownloadUrl(vocalPath, 3600);
   } catch (e) {
     console.error("[choir] signed url", e);
-    return NextResponse.json({ error: "Could not load vocal take" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Could not load vocal take from storage",
+        details: { path: vocalPath, recording_id: rec?.id },
+      },
+      { status: 500 }
+    );
   }
 
   const audioRes = await fetch(url);
   if (!audioRes.ok) {
-    return NextResponse.json({ error: "Could not download vocal take" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Could not download vocal take",
+        details: { status: audioRes.status, path: vocalPath },
+      },
+      { status: 500 }
+    );
   }
   const raw = Buffer.from(await audioRes.arrayBuffer());
 
