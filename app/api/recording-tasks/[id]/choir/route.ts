@@ -134,44 +134,91 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Prefer selected take, then newest with audio
-  let rec: { id?: string; audio_path?: string | null; content_type?: string | null } | null =
-    null;
+  // Prefer selected take, then newest with audio_path or original_audio_path
+  type RecRow = {
+    id?: string;
+    audio_path?: string | null;
+    original_audio_path?: string | null;
+    content_type?: string | null;
+    is_selected?: boolean | null;
+  };
+  const pickPath = (r: RecRow | null | undefined): string | null => {
+    if (!r) return null;
+    const a = typeof r.audio_path === "string" ? r.audio_path.trim() : "";
+    const o = typeof r.original_audio_path === "string" ? r.original_audio_path.trim() : "";
+    return a || o || null;
+  };
+
+  let rec: RecRow | null = null;
   {
+    // 1) Selected take on this task
     const sel = await service
       .from("recordings")
-      .select("id, audio_path, content_type, is_selected, created_at")
+      .select("id, audio_path, original_audio_path, content_type, is_selected, created_at")
       .eq("task_id", taskId)
       .eq("is_selected", true)
-      .not("audio_path", "is", null)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (sel.data?.audio_path) {
-      rec = sel.data;
-    } else {
-      // is_selected column may not exist — ignore error and fall through
+      .limit(3);
+    const selRows = (sel.data || []) as RecRow[];
+    rec = selRows.find((r) => pickPath(r)) || null;
+
+    // 2) Any take on this task (selected flag often false until explicit pick)
+    if (!pickPath(rec)) {
       const any = await service
         .from("recordings")
-        .select("id, audio_path, content_type")
+        .select("id, audio_path, original_audio_path, content_type, is_selected, created_at")
         .eq("task_id", taskId)
-        .not("audio_path", "is", null)
         .order("created_at", { ascending: false })
-        .limit(5);
-      const rows = any.data || [];
-      rec = rows.find((r) => r.audio_path) || null;
+        .limit(10);
+      const rows = (any.data || []) as RecRow[];
+      rec =
+        rows.find((r) => r.is_selected && pickPath(r)) ||
+        rows.find((r) => pickPath(r)) ||
+        null;
+    }
+
+    // 3) Same project: take linked via metadata.task_id (legacy / reassigned rows)
+    if (!pickPath(rec) && projectId) {
+      const proj = await service
+        .from("recordings")
+        .select("id, task_id, audio_path, original_audio_path, content_type, metadata, created_at")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: false })
+        .limit(40);
+      const rows = (proj.data || []) as (RecRow & {
+        task_id?: string;
+        metadata?: Record<string, unknown> | null;
+      })[];
+      rec =
+        rows.find((r) => {
+          const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : {};
+          const metaTask = String(
+            (meta as { task_id?: string }).task_id ||
+              (meta as { recording_task_id?: string }).recording_task_id ||
+              ""
+          );
+          return (r.task_id === taskId || metaTask === taskId) && Boolean(pickPath(r));
+        }) || null;
     }
   }
-  if (!rec?.audio_path) {
+
+  const vocalPath = pickPath(rec);
+  if (!vocalPath) {
     return NextResponse.json(
-      { error: "No vocal take on this track — record or upload first" },
+      {
+        error: "No vocal take on this track — record or upload first",
+        details: {
+          taskId,
+          hint: "Open Booth, record this part until Saved, then try Stack again on the same vocal track.",
+        },
+      },
       { status: 400 }
     );
   }
 
   let url: string;
   try {
-    url = await createSignedDownloadUrl(rec.audio_path, 3600);
+    url = await createSignedDownloadUrl(vocalPath, 3600);
   } catch (e) {
     console.error("[choir] signed url", e);
     return NextResponse.json({ error: "Could not load vocal take" }, { status: 500 });
