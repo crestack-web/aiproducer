@@ -32,14 +32,34 @@ export async function POST(req: Request, ctx: Ctx) {
   const { id: taskId } = await ctx.params;
   let mode: StackMode = "choir_full";
   let recordingIdHint: string | null = null;
+  /** Client-decoded WAV (browser can decode webm; Vercel often cannot) */
+  let clientWav: Buffer | null = null;
   try {
-    const body = await req.json().catch(() => ({}));
-    const parsed = BodySchema.safeParse(body || {});
-    if (parsed.success) {
-      if (parsed.data.mode) mode = parsed.data.mode;
-      else if (parsed.data.intensity === "light") mode = "choir_light";
-      else if (parsed.data.intensity === "full") mode = "choir_full";
-      if (parsed.data.recording_id) recordingIdHint = parsed.data.recording_id;
+    const ct = (req.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("multipart/form-data")) {
+      const form = await req.formData();
+      const modeRaw = form.get("mode");
+      const intensityRaw = form.get("intensity");
+      const rid = form.get("recording_id");
+      if (typeof modeRaw === "string" && ["double", "choir_light", "choir_full", "chorus_lift"].includes(modeRaw)) {
+        mode = modeRaw as StackMode;
+      } else if (intensityRaw === "light") mode = "choir_light";
+      else if (intensityRaw === "full") mode = "choir_full";
+      if (typeof rid === "string" && rid.length > 8) recordingIdHint = rid;
+      const file = form.get("file");
+      if (file && typeof file === "object" && "arrayBuffer" in file) {
+        const ab = await (file as File).arrayBuffer();
+        if (ab.byteLength > 44) clientWav = Buffer.from(ab);
+      }
+    } else {
+      const body = await req.json().catch(() => ({}));
+      const parsed = BodySchema.safeParse(body || {});
+      if (parsed.success) {
+        if (parsed.data.mode) mode = parsed.data.mode;
+        else if (parsed.data.intensity === "light") mode = "choir_light";
+        else if (parsed.data.intensity === "full") mode = "choir_full";
+        if (parsed.data.recording_id) recordingIdHint = parsed.data.recording_id;
+      }
     }
   } catch {
     /* default choir_full */
@@ -317,60 +337,84 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const vocalPath = pickPath(rec);
-  if (!vocalPath) {
-    return NextResponse.json(
-      {
-        error: "No vocal take on this track — record or upload first",
-        details: {
-          taskId,
-          recordingIdHint,
-          projectId,
-          recordings_found: projectRecs.length,
-          task_ids_with_audio: [
-            ...new Set(
-              projectRecs.filter((r) => pickPath(r)).map((r) => r.task_id).filter(Boolean)
-            ),
-          ].slice(0, 12),
-          loadDiag,
-          hint: "If Produce worked on this song, takes exist — refresh Console and Stack the track that shows a waveform. Or run SQL: select id, task_id, audio_path from recordings where project_id = '<project>'.",
+
+  // Prefer client-provided WAV (decoded in browser from webm/opus). Fall back to R2 + server decode.
+  let raw: Buffer | null = clientWav && clientWav.length > 44 ? clientWav : null;
+  let pathHint = clientWav ? "client-lead.wav" : vocalPath || "take.bin";
+
+  if (!raw) {
+    if (!vocalPath) {
+      return NextResponse.json(
+        {
+          error: "No vocal take on this track — record or upload first",
+          details: {
+            taskId,
+            recordingIdHint,
+            projectId,
+            recordings_found: projectRecs.length,
+            task_ids_with_audio: [
+              ...new Set(
+                projectRecs.filter((r) => pickPath(r)).map((r) => r.task_id).filter(Boolean)
+              ),
+            ].slice(0, 12),
+            loadDiag,
+            hint: "If Produce worked on this song, takes exist — refresh Console and Stack the track that shows a waveform.",
+          },
         },
-      },
-      { status: 400 }
-    );
-  }
+        { status: 400 }
+      );
+    }
 
-  let url: string;
-  try {
-    url = await createSignedDownloadUrl(vocalPath, 3600);
-  } catch (e) {
-    console.error("[choir] signed url", e);
-    return NextResponse.json(
-      {
-        error: "Could not load vocal take from storage",
-        details: { path: vocalPath, recording_id: rec?.id },
-      },
-      { status: 500 }
-    );
-  }
+    let url: string;
+    try {
+      url = await createSignedDownloadUrl(vocalPath, 3600);
+    } catch (e) {
+      console.error("[choir] signed url", e);
+      return NextResponse.json(
+        {
+          error: "Could not load vocal take from storage",
+          details: { path: vocalPath, recording_id: rec?.id },
+        },
+        { status: 500 }
+      );
+    }
 
-  const audioRes = await fetch(url);
-  if (!audioRes.ok) {
-    return NextResponse.json(
-      {
-        error: "Could not download vocal take",
-        details: { status: audioRes.status, path: vocalPath },
-      },
-      { status: 500 }
-    );
+    const audioRes = await fetch(url);
+    if (!audioRes.ok) {
+      return NextResponse.json(
+        {
+          error: "Could not download vocal take",
+          details: { status: audioRes.status, path: vocalPath },
+        },
+        { status: 500 }
+      );
+    }
+    raw = Buffer.from(await audioRes.arrayBuffer());
+    pathHint = vocalPath;
   }
-  const raw = Buffer.from(await audioRes.arrayBuffer());
 
   let lead;
   try {
-    lead = await normalizeToInternalPcm(raw, vocalPath);
+    lead = await normalizeToInternalPcm(raw, pathHint);
   } catch (e) {
-    console.error("[choir] decode", e);
-    return NextResponse.json({ error: "Could not decode vocal audio" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[choir] decode", msg);
+    return NextResponse.json(
+      {
+        error: "Could not decode vocal audio",
+        details: {
+          reason: msg,
+          pathHint,
+          bytes: raw?.length ?? 0,
+          usedClientWav: Boolean(clientWav),
+          hint:
+            /ffmpeg|WAV/i.test(msg)
+              ? "This take needs browser decode — hard-refresh Console and try Stack again (client sends WAV)."
+              : msg,
+        },
+      },
+      { status: 500 }
+    );
   }
 
   const leadPcm = lead.pcm;

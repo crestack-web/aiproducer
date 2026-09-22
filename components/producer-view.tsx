@@ -1296,14 +1296,35 @@ export function ProducerView({
     setEditMsg(null);
     try {
       const layer = layers.find((l) => l.id === id);
-      const res = await fetch(`/api/recording-tasks/${id}/choir`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode,
-          ...(layer?.recordingId ? { recording_id: layer.recordingId } : {}),
-        }),
-      });
+      // Browser can decode webm/opus; Vercel API often cannot (no ffmpeg).
+      // Send a WAV so Stack never depends on server-side conversion.
+      let res: Response;
+      if (layer?.audioUrl) {
+        const actx = new AudioContext();
+        try {
+          const audioBuf = await decodeAudioUrl(actx, layer.audioUrl);
+          const wavBlob = encodeWavBlob(audioBuf);
+          const fd = new FormData();
+          fd.append("mode", mode);
+          if (layer.recordingId) fd.append("recording_id", layer.recordingId);
+          fd.append("file", wavBlob, "lead.wav");
+          res = await fetch(`/api/recording-tasks/${id}/choir`, {
+            method: "POST",
+            body: fd,
+          });
+        } finally {
+          void actx.close().catch(() => undefined);
+        }
+      } else {
+        res = await fetch(`/api/recording-tasks/${id}/choir`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            ...(layer?.recordingId ? { recording_id: layer.recordingId } : {}),
+          }),
+        });
+      }
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         const hint =
@@ -1312,13 +1333,17 @@ export function ProducerView({
             : "Could not build choir";
         const det = j.details && typeof j.details === "object" ? j.details : null;
         const found =
-          det && typeof det.recordings_found === "number"
-            ? ` (${det.recordings_found} takes in project)`
+          det && typeof (det as { recordings_found?: number }).recordings_found === "number"
+            ? ` (${(det as { recordings_found: number }).recordings_found} takes in project)`
+            : "";
+        const reason =
+          det && typeof (det as { reason?: string }).reason === "string"
+            ? `: ${(det as { reason: string }).reason}`
             : "";
         setEditMsg(
           hint === "Task not found"
             ? "Track not found — refresh Console and use a recorded vocal layer."
-            : `${hint}${found}`
+            : `${hint}${found}${reason}`
         );
         return;
       }
