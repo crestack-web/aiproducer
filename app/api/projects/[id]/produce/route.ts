@@ -36,15 +36,39 @@ export async function POST(_req: Request, ctx: Ctx) {
   try {
     const result = await enqueueProduceSong(projectId, user.id);
 
+    if (!result?.job_id) {
+      console.error("[produce] enqueue returned no job_id", { projectId, result });
+      return NextResponse.json(
+        {
+          error: "Could not create a production job. Please try again.",
+          canProduce: true,
+        },
+        { status: 500 }
+      );
+    }
+
+    console.info(
+      "[produce] enqueued",
+      JSON.stringify({
+        projectId,
+        jobId: result.job_id,
+        status: result.status,
+        deduped: Boolean((result as { deduped?: boolean }).deduped),
+        mode: getPipelineMode(),
+      })
+    );
+
     return NextResponse.json(
       {
         jobId: result.job_id,
         job_id: result.job_id,
         status: result.status,
+        stage: (result as { stage?: string }).stage || result.status || "queued",
+        deduped: Boolean((result as { deduped?: boolean }).deduped),
         mode: getPipelineMode(),
         message:
           result.status === "queued" || result.status === "processing"
-            ? "Production started"
+            ? "Production started — waiting for the studio engine"
             : result.status === "complete"
               ? "Already produced"
               : "Produce enqueued",
@@ -54,8 +78,11 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   } catch (e) {
     const message = e instanceof Error ? e.message : "Produce failed";
+    console.error("[produce] enqueue failed", { projectId, message });
     const notReady =
-      /record at least one vocal|upload a beat|no vocal|no beat/i.test(message);
+      /record at least one vocal|upload a beat|no vocal|no beat|no recordings|active plan|selected part/i.test(
+        message
+      );
     const status = notReady ? 400 : 500;
     return NextResponse.json(
       {

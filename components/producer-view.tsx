@@ -119,25 +119,28 @@ function humanProduceStage(stage: string | null | undefined): string {
   if (!stage) return "AP is getting everything ready…";
   const s = stage.toLowerCase().trim();
   const map: Record<string, string> = {
-    queued: "AP is getting everything ready…",
-    prepare_vocals: "AP is getting everything ready…",
-    arrange: "AP is getting everything ready…",
-    render_stems: "AP is getting everything ready…",
-    "preparing takes": "AP is getting everything ready…",
-    analyzing: "AP is listening to your recording…",
-    restoring: "Cleaning up your vocal…",
+    queued: "Job queued — waiting for the studio engine…",
+    starting: "Starting production…",
+    prepare_vocals: "Preparing your vocal takes…",
+    arrange: "Arranging vocals on the beat…",
+    arranging: "Arranging vocals on the beat…",
+    render_stems: "Building audio stems…",
+    "preparing takes": "Preparing your vocal takes…",
+    analyzing: "Listening to your recording…",
+    restoring: "Cleaning up noise and room tone…",
+    polishing: "Polishing vocal tone…",
     producing: "Building your vocal sound…",
     mixing: "Blending your voice with the beat…",
     mix: "Blending your voice with the beat…",
-    mix_submit: "Blending your voice with the beat…",
-    mix_poll: "Blending your voice with the beat…",
-    mix_store: "Blending your voice with the beat…",
+    mix_submit: "Sending mix for processing…",
+    mix_poll: "Finishing the mix…",
+    mix_store: "Saving the mix…",
     mastering: "Adding the final polish…",
     master: "Adding the final polish…",
-    master_submit: "Adding the final polish…",
-    master_poll: "Adding the final polish…",
-    quality_check: "AP is checking your final mix…",
-    webhook_received: "Adding the final polish…",
+    master_submit: "Mastering your track…",
+    master_poll: "Finishing the master…",
+    quality_check: "Checking the final mix…",
+    webhook_received: "Finalizing export…",
     complete: "Your song is ready.",
     completed: "Your song is ready.",
     failed: "Production could not finish.",
@@ -776,6 +779,8 @@ export function ProducerView({
   type ProduceUi = "idle" | "starting" | "producing" | "complete" | "failed";
   const [produceUi, setProduceUi] = useState<ProduceUi>("idle");
   const [produceStage, setProduceStage] = useState<string | null>(null);
+  const [produceProgress, setProduceProgress] = useState(0);
+  const [produceJobStatus, setProduceJobStatus] = useState<string | null>(null);
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   /** Job id that owns the currently shown master — avoid stale “ready” after re-produce */
@@ -2746,6 +2751,10 @@ export function ProducerView({
           const jj = await jr.json().catch(() => ({}));
           if (jr.ok) {
             if (jj.stage) setProduceStage(String(jj.stage));
+            if (jj.status) setProduceJobStatus(String(jj.status));
+            if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
+              setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
+            }
             if (jj.status === "failed" || jj.status === "FAILED") {
               setProduceError(humanProduceError(jj.error, jj.stage));
               setProduceUi("failed");
@@ -2772,14 +2781,25 @@ export function ProducerView({
         type?: string;
         status?: string;
         stage?: string;
+        progress?: number;
         error?: string;
+        output_data?: Record<string, unknown>;
       }[];
       const produceJob =
-        jobs.find((j) => j.type === "PRODUCE_SONG") ||
-        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined);
+        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined) ||
+        jobs.find(
+          (j) =>
+            j.type === "PRODUCE_SONG" &&
+            ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+        ) ||
+        jobs.find((j) => j.type === "PRODUCE_SONG");
 
       if (produceJob?.id) setProduceJobId(String(produceJob.id));
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+      if (produceJob?.status) setProduceJobStatus(String(produceJob.status));
+      if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+        setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+      }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
       const projectStatus = String(st.project?.status || st.status || "").toLowerCase();
@@ -3023,18 +3043,17 @@ export function ProducerView({
         throw new Error(String(msg).replace(/\bRoEx\b/gi, "AP"));
       }
       const jid = j.jobId || j.job_id;
-      if (jid) {
-        setProduceJobId(String(jid));
-        // Kick first tick immediately so production doesn't sit idle without a worker
-        void fetch(`/api/jobs/${jid}`).catch(() => undefined);
+      if (!jid) {
+        throw new Error(
+          "Production job was not created. Check your connection and try Produce again."
+        );
       }
-
-      if (j.deduped && (j.status === "queued" || j.status === "processing")) {
-        setProduceStage(j.stage || "queued");
-        produceStartedAtRef.current = Date.now();
-        scheduleProducePoll();
-        return;
-      }
+      setProduceJobId(String(jid));
+      setProduceJobStatus(String(j.status || "queued"));
+      setProduceStage(String(j.stage || j.status || "queued"));
+      setProduceProgress(j.status === "processing" ? 10 : 5);
+      // Read status (worker owns heavy work; inline mode may tick on GET)
+      void fetch(`/api/jobs/${jid}`).catch(() => undefined);
 
       if (
         j.master_url &&
@@ -3042,13 +3061,13 @@ export function ProducerView({
         (j.status === "complete" || j.status === "completed")
       ) {
         setMasterUrl(String(j.master_url));
-        if (jid) setMasterJobId(String(jid));
+        setMasterJobId(String(jid));
         setProduceUi("complete");
         setProduceStage("complete");
+        setProduceProgress(100);
         return;
       }
 
-      setProduceStage(j.stage || "queued");
       produceStartedAtRef.current = Date.now();
       scheduleProducePoll();
     } catch (e) {
@@ -5172,34 +5191,88 @@ export function ProducerView({
               backdropFilter: "blur(12px)",
             }}
           >
-            {produceUi === "producing" ? (
+            {produceUi === "producing" || produceUi === "starting" ? (
               <>
                 <div style={{ fontSize: 13, fontWeight: 800, color: brass, marginBottom: 4 }}>
-                  AP is producing your song
+                  {produceUi === "starting" ? "Starting production…" : "AP is producing your song"}
                 </div>
-                <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+                <div style={{ fontSize: 12, color: mutedText, lineHeight: 1.45, marginBottom: 6 }}>
                   {humanProduceStage(produceStage)}
+                </div>
+                <div style={{ fontSize: 11, color: mutedText, marginBottom: 8 }}>
+                  {produceJobStatus
+                    ? produceJobStatus === "queued"
+                      ? "Status: queued — waiting for the studio worker"
+                      : produceJobStatus === "processing"
+                        ? "Status: processing on the studio engine"
+                        : `Status: ${produceJobStatus}`
+                    : "Connecting to production…"}
+                  {typeof produceProgress === "number" && produceProgress > 0
+                    ? ` · ${produceProgress}%`
+                    : ""}
                 </div>
                 <div
                   style={{
-                    marginTop: 10,
-                    height: 3,
+                    height: 4,
                     borderRadius: 999,
                     background: "rgba(255,255,255,0.08)",
                     overflow: "hidden",
+                    marginBottom: 10,
                   }}
                 >
                   <div
                     style={{
                       height: "100%",
-                      width: "45%",
+                      width: `${Math.max(8, produceProgress || 8)}%`,
                       borderRadius: 999,
-                      background: `linear-gradient(90deg, transparent, ${brass}, transparent)`,
-                      backgroundSize: "200% 100%",
-                      animation: "apShimmer 1.2s linear infinite",
+                      background: `linear-gradient(90deg, ${brass}, #F0BC80)`,
+                      transition: "width 0.4s ease",
                     }}
                   />
                 </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {(
+                    [
+                      ["queued", "Queue job"],
+                      ["analyzing", "Analyze vocals"],
+                      ["restoring", "Clean vocals"],
+                      ["mixing", "Mix with beat"],
+                      ["mastering", "Master"],
+                      ["complete", "Export"],
+                    ] as const
+                  ).map(([key, label]) => {
+                    const order = ["queued", "analyzing", "restoring", "producing", "mixing", "mastering", "complete"];
+                    const cur = String(produceStage || "queued").toLowerCase();
+                    let curIdx = order.findIndex((k) => cur.includes(k));
+                    if (curIdx < 0) curIdx = produceJobStatus === "processing" ? 2 : 0;
+                    const stepIdx = order.indexOf(key === "queued" ? "queued" : key);
+                    const done = stepIdx >= 0 && curIdx > stepIdx;
+                    const active = stepIdx >= 0 && (cur.includes(key) || (key === "queued" && curIdx === 0));
+                    return (
+                      <div
+                        key={key}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontSize: 11,
+                          color: active ? brass : done ? mutedText : "rgba(255,255,255,0.28)",
+                          fontWeight: active ? 700 : 500,
+                        }}
+                      >
+                        <span style={{ width: 12, textAlign: "center" }}>
+                          {done ? "✓" : active ? "●" : "○"}
+                        </span>
+                        {label}
+                      </div>
+                    );
+                  })}
+                </div>
+                {produceJobId ? (
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 8 }}>
+                    Job {String(produceJobId).slice(0, 8)}…
+                  </div>
+                ) : null}
               </>
             ) : null}
 

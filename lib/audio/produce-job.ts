@@ -183,7 +183,12 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
       status: existing.status,
       stage: existing.stage,
     });
-    return { job_id: existing.id, status: existing.status, deduped: true };
+    return {
+      job_id: existing.id,
+      status: existing.status,
+      stage: existing.stage || existing.status,
+      deduped: true,
+    };
   }
 
   // Allow re-produce after complete/failed — only dedupe in-flight jobs above.
@@ -359,5 +364,5 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     active_artist_plan: true,
     attempt,
   });
-  return { job_id: job.id, status: job.status, deduped: false, recording_count: rows.length };
+  return { job_id: job.id, status: job.status, stage: "queued", deduped: false, recording_count: rows.length };
 }
