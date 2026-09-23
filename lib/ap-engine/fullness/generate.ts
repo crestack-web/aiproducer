@@ -313,6 +313,10 @@ export function generateStack(opts: {
 }): ChoirVoice[] {
   const mode: StackMode = opts.mode || "choir_light";
   const lead = opts.lead;
+  if (!lead?.left?.length || !lead?.right?.length) {
+    console.warn("[fullness] generateStack: empty lead pcm");
+    return [];
+  }
   const startMs = opts.startMs ?? 0;
   const section = "chorus" as SongSectionKind;
   const voices: ChoirVoice[] = [];
@@ -405,19 +409,47 @@ export function generateStack(opts: {
     });
   }
 
-  // Gain budget: keep combined stack under the lead (stops correlated-layer grit)
+  if (!voices.length) {
+    // Absolute fallback — at least one double so choir never returns empty
+    try {
+      const d = generateDouble({
+        pcm: lead,
+        startMs,
+        section,
+        side: "left",
+      });
+      applyGainStereo(d.pcm, dbToGain(-8));
+      voices.push({
+        role: "double",
+        label: "Double L",
+        gainDb: -8,
+        pan: -0.25,
+        pcm: d.pcm,
+        mode,
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  // Gain budget: scale existing layers so the stack sits under the lead
   const gains = assignStackGainsDb(mode, voices.length);
-  const budgeted = voices.slice(0, gains.length).map((v, i) => {
-    const pcm = cloneStereo(v.pcm);
-    // Replace prior ad-hoc gains with budgeted gain relative to lead unity
-    const peak = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-9);
-    const leadPeak = Math.max(peakOf(lead.left), peakOf(lead.right), 1e-9);
-    // Normalize layer to lead peak, then apply budget dB
-    const match = leadPeak / peak;
-    applyGainStereo(pcm, match * dbToGain(gains[i]));
-    return { ...v, pcm, gainDb: gains[i] };
+  const budgeted = voices.slice(0, Math.max(gains.length, 1)).map((v, i) => {
+    try {
+      const pcm = cloneStereo(v.pcm);
+      const gDb = gains[i] ?? v.gainDb ?? -9;
+      // Relative trim from current peak toward lead peak * budget
+      const peak = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-9);
+      const leadPeak = Math.max(peakOf(lead.left), peakOf(lead.right), 1e-9);
+      const target = leadPeak * dbToGain(gDb);
+      const scale = Math.min(4, Math.max(0.02, target / peak));
+      if (Number.isFinite(scale) && scale > 0) applyGainStereo(pcm, scale);
+      return { ...v, pcm, gainDb: gDb };
+    } catch {
+      return v;
+    }
   });
-  return budgeted;
+  return budgeted.filter((v) => v?.pcm?.left?.length > 0);
 }
 
 /** @deprecated use generateStack — kept for callers */

@@ -465,21 +465,44 @@ export async function POST(req: Request, ctx: Ctx) {
         ? Math.round(task.end_ms as number)
         : sourcePlaceStart + sourceDurationMs;
 
-  const voices = generateStack({
-    lead: leadPcm,
-    mode,
-    startMs: sourcePlaceStart,
-  });
+  // Must match source vocal placement — never default to 0/intro when source is later.
+  const startMs = sourcePlaceStart;
+  const endMs =
+    sourcePlaceEnd > startMs
+      ? sourcePlaceEnd
+      : startMs + Math.max(sourceDurationMs, 1000);
+
+  let voices: ReturnType<typeof generateStack> = [];
+  try {
+    voices = generateStack({
+      lead: leadPcm,
+      mode,
+      startMs: sourcePlaceStart,
+    });
+  } catch (genErr) {
+    console.error("[choir] generateStack failed", genErr);
+    return NextResponse.json(
+      {
+        error: "Could not build choir",
+        detail: genErr instanceof Error ? genErr.message : String(genErr),
+      },
+      { status: 500 }
+    );
+  }
 
   if (!voices.length) {
-    return NextResponse.json({ error: "Choir generator produced no voices" }, { status: 500 });
+
+    return NextResponse.json(
+      {
+        error: "Could not generate choir voices",
+        details: { mode, reason: "Choir generator produced no voices" },
+      },
+      { status: 500 }
+    );
   }
 
   const created: { id: string; type: string; title: string }[] = [];
   const saveErrors: string[] = [];
-  // Must match source vocal placement — never default to 0/intro when source is later.
-  const startMs = sourcePlaceStart;
-  const endMs = sourcePlaceEnd > startMs ? sourcePlaceEnd : startMs + Math.max(sourceDurationMs, 1000);
 
   const mapTaskType = (role: string): string => {
     const r = (role || "").toLowerCase();
