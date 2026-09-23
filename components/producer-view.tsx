@@ -3075,7 +3075,7 @@ export function ProducerView({
 
   async function cancelProduce(reason: "user" | "timeout" = "user") {
     const jobId = produceJobId;
-    stopProducePolling();
+    clearProducePoll();
     setProduceUi("failed");
     setProduceError(
       reason === "timeout"
