@@ -5357,9 +5357,9 @@ export function ProducerView({
                           : 0;
                     }
                     const stepIdx = order.indexOf(key);
-                    const done =
-                      produceUi === "complete" || (stepIdx >= 0 && curIdx > stepIdx);
-                    const active = produceUi === "producing" && stepIdx === curIdx;
+                    // This block only renders while producing/starting — mark prior steps done
+                    const done = stepIdx >= 0 && curIdx > stepIdx;
+                    const active = stepIdx === curIdx;
                     return (
                       <div
                         key={key}
