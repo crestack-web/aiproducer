@@ -17,6 +17,16 @@ export async function tickProduceJob(jobId: string, opts?: { maxWorkMs?: number 
   const { data: job } = await supabase.from("jobs").select("*").eq("id", jobId).single();
   if (!job || job.type !== "PRODUCE_SONG") throw new Error("Invalid produce job");
   if (job.status === "complete" || job.status === "failed") return job;
+  const outEarly =
+    job.output_data && typeof job.output_data === "object"
+      ? (job.output_data as Record<string, unknown>)
+      : {};
+  if (outEarly.cancelled === true || outEarly.cancel_reason === "user_cancel") {
+    return job;
+  }
+  if (String((job as { error?: string }).error || "").toLowerCase().includes("cancelled")) {
+    return job;
+  }
 
   const projectId = job.project_id as string;
   const mode = getPipelineMode();

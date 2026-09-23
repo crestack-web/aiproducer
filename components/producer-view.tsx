@@ -791,6 +791,9 @@ export function ProducerView({
   const [downloadBusy, setDownloadBusy] = useState(false);
   const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const produceStartedAtRef = useRef(0);
+  const produceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Client-side hard stop so produce UI cannot hang forever */
+  const PRODUCE_CLIENT_TIMEOUT_MS = 25 * 60 * 1000;
   const produceActiveRef = useRef(false);
   const masterAudioRef = useRef<HTMLAudioElement | null>(null);
   const [masterPlaying, setMasterPlaying] = useState(false);
@@ -2831,6 +2834,10 @@ export function ProducerView({
       clearTimeout(producePollRef.current);
       producePollRef.current = null;
     }
+    if (produceTimeoutRef.current) {
+      clearTimeout(produceTimeoutRef.current);
+      produceTimeoutRef.current = null;
+    }
     produceActiveRef.current = false;
   }
 
@@ -2955,7 +2962,9 @@ export function ProducerView({
   const scheduleProducePoll = useCallback(() => {
     clearProducePoll();
     produceActiveRef.current = true;
-    const PRODUCE_POLL_MS = 4000;
+    const PRODUCE_CLIENT_TIMEOUT_MS = 25 * 60 * 1000; // 25 min hard client timeout
+  const PRODUCE_CLIENT_WARN_MS = 12 * 60 * 1000; // show stronger cancel hint
+  const PRODUCE_POLL_MS = 4000;
     // Full AP engine often exceeds 10m (restore + arrange + mix + master). Align with worker ceiling.
     const PRODUCE_MAX_MS = 30 * 60 * 1000;
     const tick = async () => {
@@ -3064,6 +3073,29 @@ export function ProducerView({
     return null;
   }
 
+  async function cancelProduce(reason: "user" | "timeout" = "user") {
+    const jobId = produceJobId;
+    stopProducePolling();
+    setProduceUi("failed");
+    setProduceError(
+      reason === "timeout"
+        ? "Production timed out after 25 minutes. Tap Produce again to start a new job — your recordings are safe."
+        : "Production cancelled. Your recordings are safe — tap Produce when you want to try again."
+    );
+    setProduceStage("failed");
+    if (projectId) {
+      try {
+        await fetch(`/api/projects/${projectId}/produce/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId }),
+        });
+      } catch {
+        /* UI already exited producing */
+      }
+    }
+  }
+
   async function startConsoleProduce() {
     if (!projectId) return;
     if (produceUi === "producing" || produceUi === "starting") return;
@@ -3163,6 +3195,10 @@ export function ProducerView({
       }
 
       produceStartedAtRef.current = Date.now();
+      if (produceTimeoutRef.current) clearTimeout(produceTimeoutRef.current);
+      produceTimeoutRef.current = setTimeout(() => {
+        if (produceActiveRef.current) void cancelProduce("timeout");
+      }, PRODUCE_CLIENT_TIMEOUT_MS);
       scheduleProducePoll();
     } catch (e) {
       setProduceUi("failed");
@@ -5385,6 +5421,27 @@ export function ProducerView({
                     Job {String(produceJobId).slice(0, 8)}…
                   </div>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => void cancelProduce("user")}
+                  style={{
+                    marginTop: 14,
+                    width: "100%",
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: "rgba(0,0,0,0.35)",
+                    color: "rgba(255,255,255,0.85)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel production
+                </button>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginTop: 8, lineHeight: 1.4 }}>
+                  Auto-cancels after 25 minutes if still running. Recordings stay safe either way.
+                </div>
               </>
             ) : null}
 
