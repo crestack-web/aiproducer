@@ -17,7 +17,7 @@ const PREVIEW_MAX_SEC = 30;
  * Single shared Audio element; one track plays at a time.
  */
 export function WelcomeMusicRail() {
-  const [tracks, setTracks] = useState<ShowcaseTrack[]>(FALLBACK_SHOWCASE_TRACKS);
+  const [tracks, setTracks] = useState<ShowcaseTrack[]>(() => FALLBACK_SHOWCASE_TRACKS.filter((x) => x.kind === "beat"));
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -31,7 +31,7 @@ export function WelcomeMusicRail() {
         if (!res.ok) return;
         const j = await res.json();
         if (!cancelled && Array.isArray(j.tracks) && j.tracks.length) {
-          setTracks(j.tracks as ShowcaseTrack[]);
+          setTracks(((j.tracks as ShowcaseTrack[]) || []).filter((x) => x.kind === "beat"));
         }
       } catch {
         /* keep fallbacks */
@@ -104,9 +104,7 @@ export function WelcomeMusicRail() {
     <section className="listen-section" id="listen" aria-label="Listen to Studio">
       <div className="listen-head">
         <h2 className="listen-title">Mind-blowing session quality</h2>
-        <p className="listen-sub">
-          30-second previews of AP beats and produced songs — sign up to use the full track.
-        </p>
+        <p className="listen-sub">Hear AP beats — tap play, swipe for more.</p>
       </div>
 
       <div className="listen-rail-wrap">
@@ -181,7 +179,7 @@ export function WelcomeMusicRail() {
         <Link href={START_HREF} className="primary listen-cta">
           Create your beat
         </Link>
-        <p className="listen-footnote">Free AP beats · Your voice on the final song</p>
+        <p className="listen-footnote">Free AP beats · Record your voice in Studio</p>
       </div>
     </section>
   );

@@ -1,5 +1,5 @@
 /**
- * Curated welcome-page listening rail.
+ * Curated welcome-page listening rail (beats / instrumentals only — no produced songs).
  * Prefer real AP assets via SHOWCASE_TRACKS_JSON env (see /api/public/showcase).
  * Fallbacks use publicly hostable demo instrumentals for layout/playback QA.
  */
