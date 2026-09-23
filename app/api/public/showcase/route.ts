@@ -111,7 +111,7 @@ export async function GET() {
         id: `beat-${b.id}`,
         kind: "beat",
         title,
-        subtitle: subline(proj?.genre ? String(proj.genre) : null, proj?.mood ? String(proj.mood) : null),
+        artist: subline(proj?.genre ? String(proj.genre) : null, proj?.mood ? String(proj.mood) : null),
         audioUrl,
         coverGradient: coverFor(`beat-${b.id}`),
         playsLabel: "Beat",
