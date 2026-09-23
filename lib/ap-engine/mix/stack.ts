@@ -85,10 +85,16 @@ export function processAndPlaceLayerDetailed(
   const isLeadRole = roleKey === "lead" || roleKey === "main" || roleKey === "";
   if (!isLeadRole && layer.decision?.vocal) {
     const vocal = { ...layer.decision.vocal };
-    if (typeof vocal.presenceDb === "number") vocal.presenceDb = Math.min(vocal.presenceDb, 0.5);
-    if (typeof vocal.presence === "number") vocal.presence = Math.min(vocal.presence, 0.15);
+    // Choir/double bus: body + width only — less presence/sat/compression than lead
     if (typeof vocal.saturation === "number") vocal.saturation = Math.min(vocal.saturation, 0.05);
-    if (typeof vocal.compressRatio === "number") vocal.compressRatio = Math.min(vocal.compressRatio, 1.8);
+    if (typeof vocal.deEsserAmount === "number") vocal.deEsserAmount = Math.min(vocal.deEsserAmount, 0.25);
+    if (typeof vocal.gainDb === "number" && vocal.gainDb > 0) vocal.gainDb = Math.min(vocal.gainDb, 1.5);
+    if (vocal.compressor && typeof vocal.compressor.ratio === "number") {
+      vocal.compressor = {
+        ...vocal.compressor,
+        ratio: Math.min(vocal.compressor.ratio, 1.8),
+      };
+    }
     layer = { ...layer, decision: { ...layer.decision, vocal } };
   }
 
