@@ -5330,18 +5330,36 @@ export function ProducerView({
                       ["queued", "Queue job"],
                       ["analyzing", "Analyze vocals"],
                       ["restoring", "Clean vocals"],
+                      ["arranging", "Arrange on beat"],
                       ["mixing", "Mix with beat"],
                       ["mastering", "Master"],
                       ["complete", "Export"],
                     ] as const
                   ).map(([key, label]) => {
-                    const order = ["queued", "analyzing", "restoring", "producing", "mixing", "mastering", "complete"];
-                    const cur = String(produceStage || "queued").toLowerCase();
-                    let curIdx = order.findIndex((k) => cur.includes(k));
-                    if (curIdx < 0) curIdx = produceJobStatus === "processing" ? 2 : 0;
-                    const stepIdx = order.indexOf(key === "queued" ? "queued" : key);
-                    const done = stepIdx >= 0 && curIdx > stepIdx;
-                    const active = stepIdx >= 0 && (cur.includes(key) || (key === "queued" && curIdx === 0));
+                    const order = ["queued", "analyzing", "restoring", "arranging", "mixing", "mastering", "completed"];
+                    const curRaw = String(produceStage || "queued").toLowerCase().trim();
+                    const normalizeStage = (x: string): string => {
+                      if (!x || x === "queued" || x === "pending") return "queued";
+                      if (x.includes("analy")) return "analyzing";
+                      if (x.includes("restor") || x.includes("polish")) return "restoring";
+                      if (x.includes("arrang") || x === "producing" || x === "produce") return "arranging";
+                      if (x.includes("mix")) return "mixing";
+                      if (x.includes("master") || x.includes("quality") || x === "qc") return "mastering";
+                      if (x.includes("complete") || x.includes("export") || x === "done") return "completed";
+                      return x;
+                    };
+                    const cur = normalizeStage(curRaw);
+                    let curIdx = order.indexOf(cur);
+                    if (curIdx < 0) {
+                      curIdx =
+                        produceJobStatus === "processing" || produceUi === "running"
+                          ? order.indexOf("arranging")
+                          : 0;
+                    }
+                    const stepIdx = order.indexOf(key);
+                    const done =
+                      produceUi === "complete" || (stepIdx >= 0 && curIdx > stepIdx);
+                    const active = produceUi === "running" && stepIdx === curIdx;
                     return (
                       <div
                         key={key}
