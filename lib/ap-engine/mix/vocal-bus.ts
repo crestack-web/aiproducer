@@ -44,3 +44,21 @@ export function processVocalBus(
 
   return out;
 }
+
+
+/**
+ * After multi-layer stack, trim vocal sum so peak sits near target dBFS
+ * (default -3). Prevents master limiter grit on hot choir stacks.
+ */
+export function trimVocalSumToTargetPeak(
+  pcm: PcmStereo,
+  maxPeakDbfs = -3
+): { pcm: PcmStereo; trimDb: number } {
+  const out = cloneStereo(pcm);
+  const peak = Math.max(peakOf(out.left), peakOf(out.right), 1e-12);
+  const peakDb = 20 * Math.log10(peak);
+  if (peakDb <= maxPeakDbfs) return { pcm: out, trimDb: 0 };
+  const trimDb = maxPeakDbfs - peakDb;
+  applyGainStereo(out, dbToGain(trimDb));
+  return { pcm: out, trimDb };
+}

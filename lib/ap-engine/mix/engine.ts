@@ -1,3 +1,4 @@
+import { trimVocalSumToTargetPeak } from "./vocal-bus";
 import { cloneStereo } from "../dsp";
 import type { MixDecision, PcmStereo } from "../types";
 import { applyMixGains, duckBeatFromVocal, sumStereo, autoBalanceGains } from "./balance";
@@ -41,6 +42,11 @@ export function mixVocalAndBeat(
   duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.88);
 
   // 4. Sum + bus glue
+  const trimmed = trimVocalSumToTargetPeak(vocal, -3);
+  vocal = trimmed.pcm;
+  if (trimmed.trimDb !== 0) {
+    console.info("[mix] vocal sum trim", { trimDb: trimmed.trimDb });
+  }
   let mix = sumStereo(vocal, beat);
   mix = applyMixGlue(mix, { parallel: 0.42, room: 0.1, center: 0.28 });
 

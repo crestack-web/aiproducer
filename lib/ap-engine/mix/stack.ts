@@ -80,6 +80,18 @@ export function processAndPlaceLayerDetailed(
     editQc = null;
   }
 
+  // Choir/double bus: do not run lead-style presence/saturation (distortion fix)
+  const roleKey = String(role || "").toLowerCase();
+  const isLeadRole = roleKey === "lead" || roleKey === "main" || roleKey === "";
+  if (!isLeadRole && layer.decision?.vocal) {
+    const vocal = { ...layer.decision.vocal };
+    if (typeof vocal.presenceDb === "number") vocal.presenceDb = Math.min(vocal.presenceDb, 0.5);
+    if (typeof vocal.presence === "number") vocal.presence = Math.min(vocal.presence, 0.15);
+    if (typeof vocal.saturation === "number") vocal.saturation = Math.min(vocal.saturation, 0.05);
+    if (typeof vocal.compressRatio === "number") vocal.compressRatio = Math.min(vocal.compressRatio, 1.8);
+    layer = { ...layer, decision: { ...layer.decision, vocal } };
+  }
+
   // 1. Basic restore (edge fade, HPF, gate)
   v = restoreVocal(v, layer.decision.vocal);
 

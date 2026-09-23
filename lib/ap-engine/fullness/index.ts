@@ -8,5 +8,7 @@ export {
   generateFromDecision,
   generateChoir,
   generateStack,
+  assignStackGainsDb,
+  fullnessModeForSection,
 } from "./generate";
 export type { StackMode, ChoirVoice } from "./generate";

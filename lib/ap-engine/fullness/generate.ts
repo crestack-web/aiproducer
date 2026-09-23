@@ -236,6 +236,60 @@ export function generateAdlibEcho(opts: {
 
 export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
+/** Gain budget — generated layers stay under the lead (distortion fix). */
+const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
+  double: [-9, -6],
+  choir_light: [-11, -8],
+  choir_full: [-12, -9],
+  chorus_lift: [-10, -7],
+};
+/** Power-sum of generated layers must stay this far under the lead (dB). */
+const MAX_STACK_SUM_DB_UNDER_LEAD = -6;
+const MAX_CONCURRENT_LAYERS = 3;
+
+function sumGainsDb(gs: number[]): number {
+  const linear = gs.reduce((acc, g) => acc + Math.pow(10, g / 10), 0);
+  return 10 * Math.log10(Math.max(linear, 1e-12));
+}
+
+/**
+ * Assign relative gains (dB under lead) so each layer is in-range and the
+ * combined stack cannot overpower the lead.
+ */
+export function assignStackGainsDb(mode: StackMode, count: number): number[] {
+  const n = Math.min(Math.max(0, count), MAX_CONCURRENT_LAYERS);
+  if (n === 0) return [];
+  const [minDb, maxDb] = LAYER_GAIN_RANGE_DB[mode] || [-11, -8];
+  let gains = Array.from({ length: n }, () => minDb);
+  const STEP = 0.5;
+  for (let guard = 0; guard < 40; guard++) {
+    if (sumGainsDb(gains) >= MAX_STACK_SUM_DB_UNDER_LEAD - 0.05) break;
+    const next = gains.map((g) => Math.min(g + STEP, maxDb));
+    if (sumGainsDb(next) > MAX_STACK_SUM_DB_UNDER_LEAD) break;
+    if (next.every((g, i) => g === gains[i])) break;
+    gains = next;
+  }
+  return gains;
+}
+
+/** Section-aware default — full choir only on peak moments. */
+export function fullnessModeForSection(
+  section: string | null | undefined,
+  artistAlreadyRecordedHarmony: boolean
+): StackMode | null {
+  if (artistAlreadyRecordedHarmony) return null;
+  const s = (section || "").toLowerCase();
+  if (/verse|intro|bridge|pre/.test(s) && !/chorus|hook/.test(s)) {
+    if (/pre.?chorus/.test(s)) return "double";
+    return null;
+  }
+  if (/final|outro|last/.test(s) && /chorus|hook/.test(s)) return "choir_full";
+  if (/chorus|hook|drop/.test(s)) return "choir_light";
+  return "double";
+}
+
+
+
 export type ChoirVoice = {
   role: "double" | "harmony_high" | "harmony_mid" | "harmony_low" | "background";
   label: string;
@@ -257,7 +311,7 @@ export function generateStack(opts: {
   mode?: StackMode;
   startMs?: number;
 }): ChoirVoice[] {
-  const mode: StackMode = opts.mode || "choir_full";
+  const mode: StackMode = opts.mode || "choir_light";
   const lead = opts.lead;
   const startMs = opts.startMs ?? 0;
   const section = "chorus" as SongSectionKind;
@@ -351,7 +405,19 @@ export function generateStack(opts: {
     });
   }
 
-  return voices;
+  // Gain budget: keep combined stack under the lead (stops correlated-layer grit)
+  const gains = assignStackGainsDb(mode, voices.length);
+  const budgeted = voices.slice(0, gains.length).map((v, i) => {
+    const pcm = cloneStereo(v.pcm);
+    // Replace prior ad-hoc gains with budgeted gain relative to lead unity
+    const peak = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-9);
+    const leadPeak = Math.max(peakOf(lead.left), peakOf(lead.right), 1e-9);
+    // Normalize layer to lead peak, then apply budget dB
+    const match = leadPeak / peak;
+    applyGainStereo(pcm, match * dbToGain(gains[i]));
+    return { ...v, pcm, gainDb: gains[i] };
+  });
+  return budgeted;
 }
 
 /** @deprecated use generateStack — kept for callers */
