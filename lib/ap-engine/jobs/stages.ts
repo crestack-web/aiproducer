@@ -35,6 +35,8 @@ export function humanApStage(stage: string | null | undefined): string {
     case "mix_poll":
     case "mix_store":
       return "Blending your voice with the beat…";
+    case "arranging":
+      return "Arranging vocals on the beat…";
     case "mastering":
     case "master_submit":
     case "master_poll":

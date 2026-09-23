@@ -49,7 +49,8 @@ export async function runFullProduceWithCheckpoints(opts: {
 }> {
   const { jobId, projectId, userId, beatPath, vocals, genre, productionDirection, placementLog, report, patch } = opts;
   const supabase = createServiceClient();
-  const mixPath = productionMixPath(userId, projectId, jobId, "wav");
+  await report("mastering");
+    const mixPath = productionMixPath(userId, projectId, jobId, "wav");
   const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
   let mp3Path: string | null = null;
 

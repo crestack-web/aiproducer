@@ -482,10 +482,9 @@ export async function runApArrangement(
 
     await stage("restoring");
     await stage("polishing");
-    await stage("producing");
-    await stage("mixing");
+    await stage("arranging");
 
-    const renderStack = () => {
+    const renderStack = async () => {
       const placed: PcmStereo[] = [];
       let leadProcessed: PcmStereo | null = null;
       let restoredLead: PcmStereo | null = null;
@@ -592,7 +591,11 @@ export async function runApArrangement(
 
       let vocalBus = sumVocalBus(placed);
       vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
+      await report?.("mixing");
+      await stage("mixing");
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
+      await report?.("mastering");
+      await stage("mastering");
       const master = masterMix(mix, arrMix.master, { genre: input.genre, mood: null, vocalSit: "forward", platform: "both" });
       return {
         mix,
@@ -604,8 +607,8 @@ export async function runApArrangement(
       };
     };
 
-    await stage("mastering");
-    let rendered = renderStack();
+    await stage("arranging");
+    let rendered = await renderStack();
     // Soft peak safety before QC so phone mixes rarely hard-fail on CLIPPING
     const { safetyLimitMaster } = await import("./qc/checks");
     rendered = {
@@ -660,7 +663,7 @@ export async function runApArrangement(
       }
       await stage("mixing", { retry: 1 });
       await stage("mastering", { retry: 1 });
-      rendered = renderStack();
+      rendered = await renderStack();
       rendered = {
         ...rendered,
         master: safetyLimitMaster(rendered.master, -1),
