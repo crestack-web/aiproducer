@@ -5352,14 +5352,14 @@ export function ProducerView({
                     let curIdx = order.indexOf(cur);
                     if (curIdx < 0) {
                       curIdx =
-                        produceJobStatus === "processing" || produceUi === "running"
+                        produceJobStatus === "processing" || produceUi === "producing"
                           ? order.indexOf("arranging")
                           : 0;
                     }
                     const stepIdx = order.indexOf(key);
                     const done =
                       produceUi === "complete" || (stepIdx >= 0 && curIdx > stepIdx);
-                    const active = produceUi === "running" && stepIdx === curIdx;
+                    const active = produceUi === "producing" && stepIdx === curIdx;
                     return (
                       <div
                         key={key}
