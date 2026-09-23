@@ -107,14 +107,12 @@ export async function GET() {
         (proj?.title && String(proj.title).trim()) ||
         "AP Beat";
 
-      const [coverFrom, coverTo] = coverFor(`beat-${b.id}`);
       tracks.push({
         id: `beat-${b.id}`,
         kind: "beat",
         title,
         artist: subline(proj?.genre ? String(proj.genre) : null, proj?.mood ? String(proj.mood) : null),
-        coverFrom,
-        coverTo,
+        cover: coverFor(`beat-${b.id}`),
         audioUrl,
         playsLabel: "Beat",
       });
