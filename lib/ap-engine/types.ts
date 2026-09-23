@@ -10,6 +10,7 @@ export type ApStage =
   | "restoring"
   | "polishing"
   | "producing"
+  | "arranging"
   | "mixing"
   | "mastering"
   | "quality_check"
