@@ -243,13 +243,14 @@ export async function runApArrangement(
     const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = [];
     for (let i = 0; i < normalizedLayers.length; i++) {
       const layer = normalizedLayers[i];
-      // Full-quality worker: never cut ASR short for time. Inline/Vercel may still budget.
-      if (
-        !isFullQualityProduce() &&
-        input.deadlineAt &&
-        Date.now() > input.deadlineAt - 25_000
-      ) {
-        logAp("transcription_budget", { jobId: input.jobId, at: i, total: normalizedLayers.length });
+      // Near hard deadline, skip remaining ASR so arrange/mix can finish.
+      if (input.deadlineAt && Date.now() > input.deadlineAt - 40_000) {
+        logAp("transcription_budget", {
+          jobId: input.jobId,
+          at: i,
+          total: normalizedLayers.length,
+          fullQuality: isFullQualityProduce(),
+        });
         for (let j = i; j < normalizedLayers.length; j++) layerLyrics.push(null);
         break;
       }

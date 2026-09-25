@@ -4,8 +4,20 @@
  */
 import { createServiceClient } from "@/lib/supabase/service";
 
-/** Must exceed longest WORKER_TICK_MS (default 20m). Heartbeat between ticks. */
-const STALE_MS = Number(process.env.PRODUCE_CLAIM_STALE_MS || 8 * 60 * 1000);
+/**
+ * Must exceed longest WORKER_TICK_MS (default 20m).
+ * Previous default of 8m caused mid-arrange reclaims while the worker was
+ * still running — jobs looked stuck at ~70% "arranging".
+ */
+function claimStaleMs(): number {
+  const fromEnv = Number(process.env.PRODUCE_CLAIM_STALE_MS || "");
+  if (Number.isFinite(fromEnv) && fromEnv >= 60_000) return Math.floor(fromEnv);
+  const tick = Number(process.env.WORKER_TICK_MS || process.env.PRODUCE_WORKER_TICK_MS || 1_200_000);
+  const tickMs = Number.isFinite(tick) ? Math.max(300_000, Math.min(45 * 60_000, tick)) : 1_200_000;
+  // Stale only after tick budget + 5m grace (heartbeats should refresh lock mid-tick)
+  return tickMs + 5 * 60_000;
+}
+const STALE_MS = claimStaleMs();
 
 export type ClaimedJob = {
   id: string;

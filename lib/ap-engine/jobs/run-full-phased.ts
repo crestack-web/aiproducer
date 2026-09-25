@@ -2,7 +2,7 @@
  * Full AP produce with multi-tick checkpoint/resume.
  * Phase restoring → arranging → done (persisted on jobs.output_data.ap_checkpoint).
  */
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
 import {
   productionMasterPath,
@@ -49,8 +49,7 @@ export async function runFullProduceWithCheckpoints(opts: {
 }> {
   const { jobId, projectId, userId, beatPath, vocals, genre, productionDirection, placementLog, report, patch } = opts;
   const supabase = createServiceClient();
-  await report("mastering");
-    const mixPath = productionMixPath(userId, projectId, jobId, "wav");
+  const mixPath = productionMixPath(userId, projectId, jobId, "wav");
   const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
   let mp3Path: string | null = null;
 
@@ -199,7 +198,13 @@ export async function runFullProduceWithCheckpoints(opts: {
   }
 
   if (cp.phase === "arranging") {
-    await report("producing");
+    await report("arranging");
+    await patch("arranging", 55, {
+      ap_checkpoint: cp,
+      path: "full",
+      checkpoint_phase: "arranging",
+      message: "Loading restored vocals onto the beat…",
+    });
     const tArr = Date.now();
     const arrangedVocals: ApVocalLayerInput[] = [];
     for (const layer of cp.layers) {
@@ -231,22 +236,109 @@ export async function runFullProduceWithCheckpoints(opts: {
       return { complete: false, error: msg };
     }
 
-    const beatBuffer = await downloadStorageOrUrl(beatPath);
-    const result = await runApArrangement(
-      {
-        jobId,
-        projectId,
-        userId,
-        beatBuffer,
-        beatPathHint: beatPath,
-        vocals: arrangedVocals,
-        genre,
-        productionDirection: productionDirection ?? null,
-        skipRestoration: true,
-        deadlineAt,
-      },
-      report
-    );
+    await patch("arranging", 62, {
+      ap_checkpoint: cp,
+      path: "full",
+      message: "Arranging vocals on the beat…",
+      layers: arrangedVocals.length,
+    });
+
+    // Keep claim lock alive for the whole arrange (can exceed old 8m stale window)
+    const { heartbeatProduceJob } = await import("@/lib/audio/claim-produce-job");
+    const workerId =
+      typeof (priorOut.worker_id) === "string" ? String(priorOut.worker_id) : "ap-arrange";
+    const hb = setInterval(() => {
+      void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
+    }, 45_000);
+
+    let beatBuffer: Buffer;
+    try {
+      beatBuffer = await downloadStorageOrUrl(beatPath);
+    } catch (be) {
+      clearInterval(hb);
+      const msg = `Could not download beat for arrangement: ${be instanceof Error ? be.message : String(be)}`;
+      await patch("failed", 100, { error: msg, ap_checkpoint: cp });
+      return { complete: false, error: msg };
+    }
+
+    // Soft wall: leave headroom before tick deadline so we can fail cleanly
+    const arrangeBudgetMs = Math.max(60_000, deadlineAt - Date.now() - 30_000);
+    const arrangeDeadline = Date.now() + arrangeBudgetMs;
+
+    const reportWithProgress: typeof report = async (stage) => {
+      await report(stage);
+      // Map sub-stages to climbing progress so UI is not frozen at 70
+      const prog: Record<string, number> = {
+        analyzing: 58,
+        restoring: 60,
+        polishing: 64,
+        producing: 66,
+        arranging: 70,
+        mixing: 78,
+        mastering: 88,
+        quality_check: 94,
+        completed: 99,
+      };
+      const p = prog[String(stage)] ?? 70;
+      await patch(String(stage === "completed" ? "arranging" : stage), p, {
+        ap_checkpoint: { ...cp, phase: "arranging" },
+        path: "full",
+        message: String(stage),
+      }).catch(() => undefined);
+      void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
+    };
+
+    let result: Awaited<ReturnType<typeof runApArrangement>>;
+    try {
+      result = await Promise.race([
+        runApArrangement(
+          {
+            jobId,
+            projectId,
+            userId,
+            beatBuffer,
+            beatPathHint: beatPath,
+            vocals: arrangedVocals,
+            genre,
+            productionDirection: productionDirection ?? null,
+            skipRestoration: true,
+            deadlineAt: Math.min(deadlineAt, arrangeDeadline),
+          },
+          reportWithProgress
+        ),
+        new Promise<Awaited<ReturnType<typeof runApArrangement>>>((_, rej) => {
+          setTimeout(
+            () => rej(new Error(`Arrangement timed out after ${Math.round(arrangeBudgetMs / 1000)}s`)),
+            arrangeBudgetMs
+          );
+        }),
+      ]);
+    } catch (ae) {
+      clearInterval(hb);
+      const msg = ae instanceof Error ? ae.message : String(ae);
+      console.error("[ap-tick] arrange failed/timeout", msg);
+      // Leave checkpoint at arranging so next tick can retry (not a permanent fail on soft timeout
+      // unless we're out of wall budget)
+      if (/timed out/i.test(msg) && budgetOk()) {
+        cp.lastCheckpointAt = new Date().toISOString();
+        cp.resumedFrom = "arranging";
+        await patch("arranging", 70, {
+          ap_checkpoint: cp,
+          path: "full",
+          message: "Arrangement still running — retrying next tick…",
+          arrange_timeout: true,
+        });
+        return { complete: false };
+      }
+      await patch("failed", 100, {
+        error: msg.slice(0, 400),
+        ap_checkpoint: cp,
+      });
+      return { complete: false, error: msg };
+    } finally {
+      clearInterval(hb);
+    }
+
     cp.stageTimingsMs.arrange = Date.now() - tArr;
 
     if (!result.ok) {

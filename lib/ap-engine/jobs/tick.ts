@@ -51,7 +51,7 @@ export async function runInternalApProduceJob(opts: {
       restoring: 35,
       polishing: 42,
       producing: 50,
-      mixing: 70,
+      mixing: 78,
       arranging: 70,
       mastering: 85,
       quality_check: 92,
