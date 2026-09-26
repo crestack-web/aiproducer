@@ -22,15 +22,16 @@ import type { PcmStereo } from "../types";
 export function parallelBusGlue(mix: PcmStereo, amount = 0.35): PcmStereo {
   const out = cloneStereo(mix);
   const wet = cloneStereo(mix);
+  // Slow attack + mild ratio so vocal peaks don't pump the beat on the bus
   compressStereo(wet, {
-    thresholdDb: -18,
-    ratio: 3.2,
-    attackMs: 8,
-    releaseMs: 120,
-    makeupDb: 3.5,
+    thresholdDb: -22,
+    ratio: 1.8,
+    attackMs: 35,
+    releaseMs: 220,
+    makeupDb: 1.2,
   });
-  const a = Math.max(0, Math.min(0.7, amount));
-  const dry = 1 - a * 0.55;
+  const a = Math.max(0, Math.min(0.4, amount * 0.65));
+  const dry = 1 - a * 0.35;
   for (let i = 0; i < out.left.length; i++) {
     out.left[i] = (out.left[i] || 0) * dry + (wet.left[i] || 0) * a;
     out.right[i] = (out.right[i] || 0) * dry + (wet.right[i] || 0) * a;

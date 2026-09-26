@@ -24,15 +24,16 @@ export function timingPolicyFor(
 
   if (role === "lead") {
     return {
-      maxShiftMs: chorusTight ? 55 : 48,
-      pull: chorusTight ? 0.85 : 0.7,
+      // Reaction-late home takes are often 80–180ms behind — must be correctable
+      maxShiftMs: chorusTight ? 160 : 150,
+      pull: chorusTight ? 0.95 : 0.9,
       preserveLateFeel: false,
     };
   }
   if (role === "double") {
     return {
-      maxShiftMs: chorusTight ? 45 : 38,
-      pull: 0.9,
+      maxShiftMs: chorusTight ? 130 : 120,
+      pull: 0.95,
       preserveLateFeel: false,
     };
   }
@@ -126,13 +127,11 @@ function shiftBySamples(pcm: PcmStereo, samples: number): PcmStereo {
 export function applyBusGrooveLock(
   vocalBus: PcmStereo,
   beat: PcmStereo,
-  maxMs = 60
+  maxMs = 150
 ): { pcm: PcmStereo; shiftMs: number } {
-  // Prefer advancing late vocals: allow more range forward than back
+  // Prefer advancing late vocals; never push the bus later into the pocket
   const locked = lockVocalToBeat(vocalBus, beat, maxMs);
-  // If result delayed the bus further (positive), reduce; if advanced (negative), keep
-  if (locked.shiftMs > 15) {
-    // Don't push vocals later into the beat
+  if (locked.shiftMs > 8) {
     return { pcm: vocalBus, shiftMs: 0 };
   }
   return locked;

@@ -25,46 +25,47 @@ export function resolveTimingProfile(
 ): TimingLimits {
   const g = (genre || "rnb").toLowerCase();
   let profile: TimingProfileId = "polished";
-  let maxLead = 45;
-  let maxDouble = 55;
-  let maxHarmony = 40;
-  let maxAdlib = 20;
+  let maxLead = 140;
+  let maxDouble = 120;
+  let maxHarmony = 90;
+  let maxAdlib = 60;
   let onTime = 18;
-  let lateMistake = 55;
+  let lateMistake = 40;
   let behindMin = 20;
   let behindMax = 55;
   let minConf = 0.45;
 
   if (isRnbFamily(g) || g.includes("soul") || g.includes("ballad")) {
     profile = "natural";
-    maxLead = 38;
-    lateMistake = 70;
+    maxLead = 130;
+    lateMistake = 45;
     behindMin = 18;
     behindMax = 60;
     minConf = 0.5;
   } else if (g.includes("hip") || g.includes("trap") || g.includes("rap")) {
     profile = "tight";
-    maxLead = 40;
-    maxDouble = 50;
-    lateMistake = 45;
+    maxLead = 120;
+    maxDouble = 110;
+    lateMistake = 35;
     behindMax = 40;
   } else if (g.includes("afrobeat") || g.includes("amapiano") || g.includes("afropop")) {
     profile = "polished";
-    maxLead = 42;
-    lateMistake = 60;
+    maxLead = 130;
+    lateMistake = 40;
     behindMax = 50;
   } else if (g.includes("pop")) {
     profile = "tight";
-    maxLead = 40;
-    maxDouble = 55;
-    lateMistake = 50;
+    maxLead = 125;
+    maxDouble = 115;
+    lateMistake = 38;
   }
 
   // Section: chorus tighter
   if (section === "chorus") {
-    maxLead *= 0.85;
-    maxDouble *= 0.9;
-    lateMistake *= 0.9;
+    // Stay tight but still allow fixing reaction-late takes (~100–150ms)
+    maxLead = Math.max(110, maxLead * 0.92);
+    maxDouble = Math.max(100, maxDouble * 0.92);
+    lateMistake = Math.min(lateMistake, 35);
     if (profile === "natural") profile = "polished";
   } else if (section === "verse" || section === "bridge") {
     maxLead *= 1.05;

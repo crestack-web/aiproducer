@@ -5,7 +5,6 @@ import { applyMixGains, sumStereo, autoBalanceGains } from "./balance";
 import { applyBeatPresenceCut } from "./masking-lite";
 import { applyMixGlue } from "./glue";
 import { applyBusGrooveLock } from "../production/timing-intelligence";
-import { applyBusArrangementLift } from "../production/vocal-automation";
 
 /**
  * Mix vocal into beat — groove lock, presence mask, static balance, glue (no sidechain duck).
@@ -19,11 +18,8 @@ export function mixVocalAndBeat(
   const beat = cloneStereo(beatIn);
 
   // 0. Bus groove lock — pull late vocal performances forward into the pocket
-  const locked = applyBusGrooveLock(vocal, beat, 60);
+  const locked = applyBusGrooveLock(vocal, beat, 150);
   vocal = locked.pcm;
-
-  // 0b. Arrangement energy lift on denser vocal regions (chorus contrast)
-  vocal = applyBusArrangementLift(vocal, 0.4);
 
   // 1. Spectral space for the voice
   applyBeatPresenceCut(beat, decision);
@@ -49,7 +45,7 @@ export function mixVocalAndBeat(
     console.info("[mix] vocal sum trim", { trimDb: trimmed.trimDb });
   }
   let mix = sumStereo(vocal, beat);
-  mix = applyMixGlue(mix, { parallel: 0.42, room: 0.1, center: 0.28 });
+  mix = applyMixGlue(mix, { parallel: 0.22, room: 0.08, center: 0.22 });
 
   return mix;
 }

@@ -311,7 +311,7 @@ export function decideArrangementMix(
     vocalGainDb,
     beatGainDb,
     vocalPan: 0,
-    duckDb: 1.8 + (1 - profile.beatRespect) * 1.2,
+    duckDb: 0, // dynamic duck disabled — steady beat under vocal
     beatPresenceCutDb,
     beatMaskBands,
     duckMidFocus: 0.8,

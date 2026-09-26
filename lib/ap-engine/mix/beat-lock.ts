@@ -44,8 +44,11 @@ function bestLag(vocOn: Float32Array, beatOn: Float32Array, maxLag: number): num
     }
     if (count < 8) continue;
     score /= count;
-    if (score > bestScore) {
-      bestScore = score;
+    // Prefer advancing late vocals when scores are close (lag < 0 = vocal moves earlier)
+    const advanceBias = lag < 0 ? score * 0.04 : 0;
+    const ranked = score + advanceBias;
+    if (ranked > bestScore) {
+      bestScore = ranked;
       best = lag;
     }
   }

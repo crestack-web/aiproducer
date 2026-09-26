@@ -101,20 +101,22 @@ function busGlue(
   const releaseMs = Math.max(80, Math.min(280, beatMs * 0.35));
 
   // Glue amount from style + existing dynamics
-  let ratio = 1.4 + style * 1.0;
-  if (fp.currentLra > 9) ratio += 0.35;
-  if (fp.currentLra < 5) ratio -= 0.25;
-  if (fp.density > 0.7) ratio += 0.2;
-  ratio = Math.max(1.3, Math.min(2.6, ratio));
+  // Mild master glue — avoid pumping the beat when vocals enter
+  let ratio = 1.25 + style * 0.45;
+  if (fp.currentLra > 9) ratio += 0.15;
+  if (fp.currentLra < 5) ratio -= 0.1;
+  ratio = Math.max(1.15, Math.min(1.8, ratio));
 
-  const threshold = -11 - style * 4 - (fp.density > 0.65 ? 1 : 0);
-  const makeup = 0.4 + style * 1.0;
+  const threshold = -14 - style * 2;
+  const makeup = 0.25 + style * 0.5;
+  const atk = Math.max(25, attackMs);
+  const rel = Math.max(160, releaseMs);
 
   compressStereo(out, {
     thresholdDb: threshold,
     ratio,
-    attackMs,
-    releaseMs,
+    attackMs: atk,
+    releaseMs: rel,
     makeupDb: makeup,
   });
   return `bus glue style=${styleLabel(style)} ratio=${ratio.toFixed(1)} atk=${attackMs.toFixed(0)}ms`;

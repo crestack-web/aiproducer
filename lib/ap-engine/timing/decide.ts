@@ -107,7 +107,7 @@ export function decidePhraseTiming(
   // Ad-libs: almost always preserve
   if (opts.role === "adlib") {
     if (analysis.status === "late" && analysis.offsetMs > 120 && conf > 0.7) {
-      const shift = -Math.min(maxShift, analysis.offsetMs * 0.35);
+      const shift = -Math.min(maxShift, analysis.offsetMs * 0.9);
       return {
         phraseId: analysis.phraseId,
         action: "move_earlier",
@@ -231,7 +231,7 @@ export function decidePhraseTiming(
 
   // Isolated late mistake vs mild early
   if (analysis.status === "late" && analysis.offsetMs >= limits.lateMistakeMs) {
-    const shift = -Math.min(maxShift, analysis.offsetMs * 0.65);
+    const shift = -Math.min(maxShift, analysis.offsetMs * 0.92);
     return {
       phraseId: analysis.phraseId,
       action: "move_earlier",
@@ -243,7 +243,7 @@ export function decidePhraseTiming(
   }
   if (analysis.status === "late" && analysis.offsetMs > limits.onTimeMs) {
     // mild late — small polish only
-    const shift = -Math.min(maxShift * 0.5, analysis.offsetMs * 0.4);
+    const shift = -Math.min(maxShift * 0.85, analysis.offsetMs * 0.75);
     if (Math.abs(shift) < 6) {
       return {
         phraseId: analysis.phraseId,
