@@ -20,7 +20,7 @@ import { mixVocalAndBeat } from "./mix/engine";
 import { processAndPlaceLayerDetailed, sumVocalBus } from "./mix/stack";
 import { matchVocalLevelsAcrossSong } from "./mix/level-match";
 import { processVocalBus } from "./mix/vocal-bus";
-import { masterMix } from "./master/engine";
+import { masterMix, masterMixWithReference } from "./master/engine";
 import { runQc } from "./qc/checks";
 import { runTranslationQc, applyTranslationFix } from "./qc/translation";
 import { shouldRetry } from "./qc/retry";
@@ -645,7 +645,12 @@ export async function runApArrangement(
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
       await report?.("mastering");
       await stage("mastering");
-      const master = masterMix(mix, arrMix.master, { genre: input.genre, mood: null, vocalSit: "forward", platform: "both" });
+      const master = await masterMixWithReference(mix, arrMix.master, {
+        genre: input.genre,
+        mood: null,
+        vocalSit: "forward",
+        platform: "both",
+      });
       return {
         mix,
         master,

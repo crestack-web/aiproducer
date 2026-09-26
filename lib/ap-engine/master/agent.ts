@@ -249,3 +249,54 @@ export function runMasteringAgent(
 
   return { pcm: out, before, after, context: ctx, fingerprint: fp, styleAxis: style, steps, summary };
 }
+
+
+/**
+ * Full master path with optional reference-matching stage (Matchering microservice).
+ * Rule-based corrective chain always runs first; on match failure falls back to
+ * the rule-based result (including streaming normalize + true-peak).
+ */
+export async function runMasteringAgentWithReference(
+  mix: PcmStereo,
+  decision: MasterDecision,
+  opts?: MasterAgentOptions
+): Promise<MasterAgentResult> {
+  const base = runMasteringAgent(mix, decision, opts);
+
+  try {
+    const { matchToGenreReference } = await import("./reference-match-client");
+    const { isReferenceMasterEnabled } = await import("./reference-library");
+    if (!isReferenceMasterEnabled()) {
+      return base;
+    }
+
+    // Feed post-corrective / post-limit master into matcher as target, then
+    // re-apply true-peak on success. Using base.pcm keeps "clean up" work intact.
+    const matched = await matchToGenreReference(base.pcm, opts?.genre, {
+      ceilingDb: Math.min(-1.0, decision.limiterCeilingDb ?? -1.0),
+    });
+
+    if (!matched.ok || !matched.pcm) {
+      if (matched.error) {
+        console.warn("[ap-master-agent] reference match skipped:", matched.note, matched.error);
+      }
+      base.steps.push(`reference_match: skipped (${matched.note})`);
+      return base;
+    }
+
+    const after = analyzeMasterInput(matched.pcm);
+    base.pcm = matched.pcm;
+    base.after = after;
+    base.steps.push(`reference_match: ${matched.note}`);
+    base.summary = `${base.summary} | ${matched.note}`;
+    console.log("[ap-master-agent]", matched.note);
+    return base;
+  } catch (e) {
+    console.warn(
+      "[ap-master-agent] reference match error — using rule-based master",
+      e instanceof Error ? e.message : e
+    );
+    base.steps.push("reference_match: error_fallback");
+    return base;
+  }
+}
