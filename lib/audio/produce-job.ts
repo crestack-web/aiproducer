@@ -6,7 +6,13 @@ import { resolveAudioUrl } from "@/lib/storage";
 import { getRoexEnv } from "@/lib/env";
 import { checkProjectProduceReady } from "@/lib/production/check-project-produce-ready";
 
-export type RecordingRow = { id: string; task_id: string; is_selected: boolean | null };
+export type RecordingRow = {
+  id: string;
+  task_id: string;
+  is_selected: boolean | null;
+  audio_path?: string | null;
+  project_id?: string | null;
+};
 export type TakeRow = {
   id: string;
   task_id: string;
