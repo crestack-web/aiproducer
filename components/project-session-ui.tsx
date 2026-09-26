@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams} from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   StudioPlayer,
   CompactAudioPlayer,
@@ -345,6 +345,7 @@ function screenForStatus(
 
 export default function ProjectDetailPage() {
   const id = useParams().id as string;
+  const router = useRouter();
   const { colors: C } = useTheme();
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [beatUrl, setBeatUrl] = useState<string | null>(null);
