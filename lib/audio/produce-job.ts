@@ -177,17 +177,17 @@ export async function enqueueProduceSong(
 
   const baseKey = `produce:${projectId}`;
 
-  const { data: existing } = await supabase
+  const { data: inflight } = await supabase
     .from("jobs")
     .select("id, status, provider_task_id, stage, output_data, attempts, started_at, updated_at, created_at")
     .eq("project_id", projectId)
     .eq("type", "PRODUCE_SONG")
     .in("status", ["queued", "processing"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: false });
 
-  if (existing) {
+  const existing = (inflight && inflight[0]) || null;
+
+  if (existing && !force) {
     const out =
       existing.output_data && typeof existing.output_data === "object"
         ? (existing.output_data as Record<string, unknown>)
@@ -197,20 +197,40 @@ export async function enqueueProduceSong(
     const createdAt = existing.created_at ? Date.parse(String(existing.created_at)) : 0;
     const anchor = Math.max(lockAt || 0, startedAt || 0, createdAt || 0);
     const ageMs = anchor ? Date.now() - anchor : Number.POSITIVE_INFINITY;
-    // Match worker claim stale window (~tick budget + 5m). Default 25 minutes.
     const staleMs = Number(process.env.PRODUCE_CLAIM_STALE_MS || 25 * 60_000);
     const isStale = !Number.isFinite(ageMs) || ageMs > Math.max(5 * 60_000, staleMs);
 
-    if (force || isStale) {
+    if (!isStale) {
       logProduce({
-        event: "enqueue_supersede_inflight",
+        event: "enqueue_deduped",
         jobId: existing.id,
         projectId,
         status: existing.status,
         stage: existing.stage,
+      });
+      return {
+        job_id: existing.id,
+        status: existing.status,
+        stage: existing.stage || existing.status,
+        deduped: true,
+      };
+    }
+  }
+
+  // force, or stale inflight: cancel ALL queued/processing produce jobs for this project
+  if (inflight && inflight.length > 0) {
+    for (const job of inflight) {
+      const out =
+        job.output_data && typeof job.output_data === "object"
+          ? (job.output_data as Record<string, unknown>)
+          : {};
+      logProduce({
+        event: "enqueue_supersede_inflight",
+        jobId: job.id,
+        projectId,
+        status: job.status,
+        stage: job.stage,
         force,
-        isStale,
-        ageMs: Number.isFinite(ageMs) ? Math.round(ageMs) : null,
       });
       await supabase
         .from("jobs")
@@ -229,23 +249,8 @@ export async function enqueueProduceSong(
             supersede_reason: force ? "force" : "stale",
           },
         })
-        .eq("id", existing.id)
+        .eq("id", job.id)
         .in("status", ["queued", "processing"]);
-      // fall through to insert a new job
-    } else {
-      logProduce({
-        event: "enqueue_deduped",
-        jobId: existing.id,
-        projectId,
-        status: existing.status,
-        stage: existing.stage,
-      });
-      return {
-        job_id: existing.id,
-        status: existing.status,
-        stage: existing.stage || existing.status,
-        deduped: true,
-      };
     }
   }
 

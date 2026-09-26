@@ -33,18 +33,15 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let force = false;
+  // Always create a brand-new produce job (never resume a previous run).
+  // Clients may still send force/reproduce; we treat every Produce as a new attempt.
+  let force = true;
   try {
     const body = await req.json().catch(() => ({}));
-    if (body && (body.force === true || body.force === "1" || body.reproduce === true)) {
-      force = true;
+    if (body && (body.force === false || body.force === "0") && body.allow_dedupe === true) {
+      force = false;
     }
   } catch {
-    force = false;
-  }
-  // Re-produce is the common path after a finished/failed mix — always allow a new job
-  // when the client asks for force. Also force when project already shows complete.
-  if (!force && (project.status === "complete" || project.status === "produced")) {
     force = true;
   }
 

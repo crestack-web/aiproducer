@@ -658,10 +658,10 @@ function AppInner() {
             {libraryTab === "beats" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
-                {!loading && projects.filter((p) => p.has_beat && !isFinishedSong(p)).length === 0 && (
+                {!loading && projects.filter((p) => p.has_beat).length === 0 && (
                   <EmptyState
                     scene="beats"
-                    title="No beats on the shelf"
+                    title="No beats yet"
                     description="Generate an AI instrumental or upload your own — every beat becomes a session."
                     action={
                       <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
@@ -674,7 +674,7 @@ function AppInner() {
                   <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
                 )}
                 {projects
-                  .filter((p) => p.has_beat && !isFinishedSong(p))
+                  .filter((p) => p.has_beat)
                   .map((p) => {
                     const isPlaying = playingId === p.id;
                     const busy = loadingPlayId === p.id || deletingId === p.id;
