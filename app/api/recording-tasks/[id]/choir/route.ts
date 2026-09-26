@@ -31,7 +31,7 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const { id: taskId } = await ctx.params;
-  let mode: StackMode = "choir_full";
+  let mode: StackMode = "choir_light";
   let recordingIdHint: string | null = null;
   /** Client-decoded WAV (browser can decode webm; Vercel often cannot) */
   let clientWav: Buffer | null = null;

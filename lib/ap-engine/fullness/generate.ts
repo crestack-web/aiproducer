@@ -44,13 +44,14 @@ function delayPcm(pcm: PcmStereo, delaySamples: number): PcmStereo {
  */
 function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
   if (Math.abs(ratio - 1) < 0.001) return cloneStereo(pcm);
-  // Cap extreme shifts — choir uses modest intervals only
-  const r = Math.max(0.75, Math.min(1.35, ratio));
+  // Keep shifts modest — large intervals are the main "robot" source
+  const r = Math.max(0.84, Math.min(1.22, ratio));
   const sr = pcm.sampleRate;
   const n = pcm.left.length;
-  const grainMs = 32;
-  const grain = Math.max(64, Math.floor((sr * grainMs) / 1000));
-  const hop = Math.max(16, Math.floor(grain / 4));
+  // Longer grains + more overlap → smoother, less metallic
+  const grainMs = 48;
+  const grain = Math.max(128, Math.floor((sr * grainMs) / 1000));
+  const hop = Math.max(24, Math.floor(grain / 6));
   const left = new Float32Array(n);
   const right = new Float32Array(n);
   const win = new Float32Array(grain);
@@ -61,7 +62,7 @@ function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
 
   for (let outPos = 0; outPos < n; outPos += hop) {
     const srcCenter = outPos / r;
-    const srcStart = Math.floor(srcCenter - grain / 2);
+    const srcStart = srcCenter - grain / 2;
     for (let i = 0; i < grain; i++) {
       const oi = outPos - Math.floor(grain / 2) + i;
       if (oi < 0 || oi >= n) continue;
@@ -88,25 +89,52 @@ function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
     left[i] *= g;
     right[i] *= g;
   }
-  // Formant hint: upward shift → tame highs; downward → slight presence
   const out: PcmStereo = { left, right, sampleRate: sr };
-  if (r > 1.02) {
+  // Always soften after any non-trivial shift (removes chipmunk edge)
+  if (r > 1.01) {
     softenHarmonic(out);
-    // extra gentle lowpass-ish: one-pole on both channels
     let lpL = 0;
     let lpR = 0;
-    const a = r > 1.15 ? 0.18 : 0.12;
+    const a = r > 1.12 ? 0.14 : 0.1;
     for (let i = 0; i < n; i++) {
       lpL = lpL + a * (left[i] - lpL);
       lpR = lpR + a * (right[i] - lpR);
-      left[i] = left[i] * 0.35 + lpL * 0.65;
-      right[i] = right[i] * 0.35 + lpR * 0.65;
+      left[i] = left[i] * 0.28 + lpL * 0.72;
+      right[i] = right[i] * 0.28 + lpR * 0.72;
     }
-  } else if (r < 0.98) {
-    // keep air on downward intervals
-    for (let i = 0; i < n; i++) {
-      left[i] *= 1.02;
-      right[i] *= 1.02;
+  } else if (r < 0.99) {
+    softenHarmonic(out);
+  }
+  return out;
+}
+
+/** Micro pitch drift + gain flutter so stacked voices don't phase-lock like a robot. */
+function humanizeVoice(pcm: PcmStereo, opts?: { centsPeak?: number; gainDepth?: number }): PcmStereo {
+  const out = cloneStereo(pcm);
+  const n = out.left.length;
+  const sr = out.sampleRate;
+  const centsPeak = opts?.centsPeak ?? 6;
+  const gainDepth = opts?.gainDepth ?? 0.04;
+  // Slow LFOs (~2–5 Hz) — different rates per channel feel more like two people
+  const rate1 = 2.1 + Math.random() * 1.4;
+  const rate2 = 2.6 + Math.random() * 1.8;
+  const phase = Math.random() * Math.PI * 2;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const cents = Math.sin(2 * Math.PI * rate1 * t + phase) * centsPeak;
+    // Approximate continuous detune via tiny sample offset (fractional read)
+    const ratio = Math.pow(2, cents / 1200);
+    const src = i / ratio;
+    const i0 = Math.floor(src);
+    const i1 = Math.min(n - 1, i0 + 1);
+    const f = src - i0;
+    const g =
+      1 +
+      Math.sin(2 * Math.PI * rate2 * t + phase * 0.7) * gainDepth +
+      (Math.random() * 2 - 1) * 0.008;
+    if (i0 >= 0 && i0 < n) {
+      out.left[i] = ((pcm.left[i0] || 0) * (1 - f) + (pcm.left[i1] || 0) * f) * g;
+      out.right[i] = ((pcm.right[i0] || 0) * (1 - f) + (pcm.right[i1] || 0) * f) * g;
     }
   }
   return out;
@@ -125,24 +153,24 @@ function intervalRatio(interval: HarmonyInterval, minorPrefer: boolean): number 
   }
 }
 
-/** Soft high-shelf tuck after pitch shift to reduce chipmunk */
+/** Soft high-shelf tuck after pitch shift to reduce chipmunk (mutates + returns). */
 function softenHarmonic(pcm: PcmStereo): PcmStereo {
-  const out = cloneStereo(pcm);
   let prevL = 0;
   let prevR = 0;
-  const a = 0.22;
-  for (let i = 0; i < out.left.length; i++) {
-    const l = out.left[i] || 0;
-    const r = out.right[i] || 0;
+  const a = 0.28;
+  for (let i = 0; i < pcm.left.length; i++) {
+    const l = pcm.left[i] || 0;
+    const r = pcm.right[i] || 0;
     const lpL = prevL + a * (l - prevL);
     const lpR = prevR + a * (r - prevR);
-    out.left[i] = l * 0.55 + lpL * 0.45;
-    out.right[i] = r * 0.55 + lpR * 0.45;
+    // More low-pass weight = less metallic / robot edge
+    pcm.left[i] = l * 0.4 + lpL * 0.6;
+    pcm.right[i] = r * 0.4 + lpR * 0.6;
     prevL = lpL;
     prevR = lpR;
   }
-  applyGainStereo(out, 0.72);
-  return out;
+  applyGainStereo(pcm, 0.78);
+  return pcm;
 }
 
 export function generateDouble(opts: {
@@ -152,22 +180,23 @@ export function generateDouble(opts: {
   side?: "left" | "right";
 }): GeneratedLayer {
   const sr = opts.pcm.sampleRate;
-  // 12–28ms delay + tiny pitch (±8 cents)
-  const delayMs = 14 + Math.random() * 12;
-  const cents = (Math.random() * 2 - 1) * 8;
+  // Wider human delay (18–42ms) + ±12 cents — two singers, not a clone
+  const delayMs = 18 + Math.random() * 24;
+  const cents = (Math.random() * 2 - 1) * 12;
   const ratio = Math.pow(2, cents / 1200);
   let d = delayPcm(opts.pcm, (delayMs / 1000) * sr);
   d = pitchShiftRatio(d, ratio);
-  applyGainStereo(d, 0.55);
-  const pan = opts.side === "right" ? 0.55 : -0.55;
-  applyWidth(d, 0.35, pan);
+  d = humanizeVoice(d, { centsPeak: 5 + Math.random() * 4, gainDepth: 0.05 });
+  applyGainStereo(d, 0.48);
+  const pan = opts.side === "right" ? 0.62 : -0.58;
+  applyWidth(d, 0.42, pan);
   return {
     kind: "double",
     pcm: d,
     startMs: opts.startMs,
     role: "double",
     section: opts.section,
-    gainDb: -6.5,
+    gainDb: -7.5,
     pan,
   };
 }
@@ -180,18 +209,25 @@ export function generateHarmony(opts: {
   minorMode: boolean;
 }): GeneratedLayer | null {
   if (opts.interval === "none") return null;
+  const sr = opts.pcm.sampleRate;
   const ratio = intervalRatio(opts.interval, opts.minorMode);
-  let h = pitchShiftRatio(opts.pcm, ratio);
+  // Small timing offset so harmony is not sample-locked to the lead
+  const delayMs = 22 + Math.random() * 28;
+  let h = delayPcm(opts.pcm, (delayMs / 1000) * sr);
+  h = pitchShiftRatio(h, ratio);
   h = softenHarmonic(h);
-  applyWidth(h, 0.5, opts.interval === "perfect5th" ? -0.35 : 0.4);
+  h = humanizeVoice(h, { centsPeak: 4 + Math.random() * 3, gainDepth: 0.035 });
+  // Harmony sits further back and softer — less "synth choir"
+  applyGainStereo(h, 0.38);
+  applyWidth(h, 0.55, opts.interval === "perfect5th" ? -0.45 : 0.5);
   return {
     kind: "harmony",
     pcm: h,
     startMs: opts.startMs,
     role: opts.interval === "perfect5th" ? "harmony_low" : "harmony_high",
     section: opts.section,
-    gainDb: -9,
-    pan: opts.interval === "perfect5th" ? -0.35 : 0.4,
+    gainDb: -11,
+    pan: opts.interval === "perfect5th" ? -0.4 : 0.45,
   };
 }
 
@@ -238,10 +274,10 @@ export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
 /** Gain budget — generated layers stay under the lead (distortion fix). */
 const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
-  double: [-9, -6],
-  choir_light: [-11, -8],
-  choir_full: [-12, -9],
-  chorus_lift: [-10, -7],
+  double: [-10, -7],
+  choir_light: [-13, -10],
+  choir_full: [-14, -11],
+  chorus_lift: [-12, -9],
 };
 /** Power-sum of generated layers must stay this far under the lead (dB). */
 const MAX_STACK_SUM_DB_UNDER_LEAD = -6;
@@ -333,44 +369,47 @@ export function generateStack(opts: {
 
   if (mode === "double") return voices;
 
-  // Light + chorus_lift + full: high third
-  const hi = generateHarmony({
-    pcm: lead,
-    startMs,
-    section,
-    interval: "major3rd",
-    minorMode: false,
-  });
-  if (hi) {
-    const g = mode === "choir_full" ? -7 : -8.5;
-    applyGainStereo(hi.pcm, dbToGain(g));
-    voices.push({
-      role: "harmony_high",
-      label: mode === "chorus_lift" ? "Chorus high" : "Choir high",
-      gainDb: g,
-      pan: 0.48,
-      pcm: hi.pcm,
-      mode,
+  // Prefer natural doubles over aggressive pitch intervals (main robot source).
+  // Light / lift: one soft high 3rd only.
+  if (mode === "choir_light" || mode === "chorus_lift" || mode === "choir_full") {
+    const hi = generateHarmony({
+      pcm: lead,
+      startMs,
+      section,
+      interval: "major3rd",
+      minorMode: false,
     });
+    if (hi) {
+      const g = mode === "choir_full" ? -10 : -11;
+      applyGainStereo(hi.pcm, dbToGain(g));
+      voices.push({
+        role: "harmony_high",
+        label: mode === "chorus_lift" ? "Chorus high" : "Choir high",
+        gainDb: g,
+        pan: 0.42,
+        pcm: hi.pcm,
+        mode,
+      });
+    }
   }
 
   if (mode === "choir_light" || mode === "chorus_lift") return voices;
 
-  // Full: extra tight center double so the stack reads as a real choir, not one harmony
+  // Full choir = more human doubles at different timings, not 3 pitch-shifted clones
   {
     const center = generateDouble({ pcm: lead, startMs, section, side: "left" });
-    applyGainStereo(center.pcm, dbToGain(-8));
+    applyGainStereo(center.pcm, dbToGain(-9));
     voices.push({
       role: "double",
       label: "Choir center",
-      gainDb: -8,
-      pan: 0.05,
+      gainDb: -9,
+      pan: 0.02,
       pcm: center.pcm,
       mode,
     });
   }
 
-  // Full only: fifth + low third
+  // One soft fifth only (quieter) — skip low m3 which often sounds most synthetic
   const mid = generateHarmony({
     pcm: lead,
     startMs,
@@ -379,32 +418,13 @@ export function generateStack(opts: {
     minorMode: false,
   });
   if (mid) {
-    applyGainStereo(mid.pcm, dbToGain(-9));
+    applyGainStereo(mid.pcm, dbToGain(-12));
     voices.push({
       role: "harmony_mid",
       label: "Choir mid",
-      gainDb: -9,
-      pan: -0.42,
+      gainDb: -12,
+      pan: -0.38,
       pcm: mid.pcm,
-      mode,
-    });
-  }
-
-  const low = generateHarmony({
-    pcm: lead,
-    startMs,
-    section,
-    interval: "minor3rd",
-    minorMode: true,
-  });
-  if (low) {
-    applyGainStereo(low.pcm, dbToGain(-10.5));
-    voices.push({
-      role: "harmony_low",
-      label: "Choir low",
-      gainDb: -10.5,
-      pan: 0.12,
-      pcm: low.pcm,
       mode,
     });
   }
