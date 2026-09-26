@@ -2779,7 +2779,11 @@ export default function ProjectDetailPage() {
     try {
       await repairTakesToWavForProduce();
       setProduceStage("queued");
-      const res = await fetch(`/api/projects/${id}/produce`, { method: "POST" });
+      const res = await fetch(`/api/projects/${id}/produce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Produce failed");
 

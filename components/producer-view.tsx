@@ -3157,7 +3157,11 @@ export function ProducerView({
     }
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/produce`, { method: "POST" });
+      const res = await fetch(`/api/projects/${projectId}/produce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg =

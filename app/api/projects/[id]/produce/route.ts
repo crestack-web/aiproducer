@@ -14,7 +14,7 @@ export const maxDuration = 300;
  * Authenticates, verifies ownership, enqueues PRODUCE_SONG, returns immediately.
  * Long-running work is owned by workers/production-worker.ts.
  */
-export async function POST(_req: Request, ctx: Ctx) {
+export async function POST(req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
   const { user, error } = await requireUser();
   if (error || !user) {
@@ -33,8 +33,23 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  let force = false;
   try {
-    const result = await enqueueProduceSong(projectId, user.id);
+    const body = await req.json().catch(() => ({}));
+    if (body && (body.force === true || body.force === "1" || body.reproduce === true)) {
+      force = true;
+    }
+  } catch {
+    force = false;
+  }
+  // Re-produce is the common path after a finished/failed mix — always allow a new job
+  // when the client asks for force. Also force when project already shows complete.
+  if (!force && (project.status === "complete" || project.status === "produced")) {
+    force = true;
+  }
+
+  try {
+    const result = await enqueueProduceSong(projectId, user.id, { force });
 
     if (!result?.job_id) {
       console.error("[produce] enqueue returned no job_id", { projectId, result });

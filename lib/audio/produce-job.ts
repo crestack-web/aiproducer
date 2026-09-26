@@ -148,10 +148,16 @@ export async function patchJob(
 
 /**
  * Enqueue PRODUCE_SONG. Caller must already have verified project ownership.
- * Re-produce is allowed after complete/failed — only in-flight jobs are deduped.
+ * Re-produce is allowed after complete/failed.
+ * In-flight jobs are deduped unless `force` is true (or the lock is stale).
  */
-export async function enqueueProduceSong(projectId: string, userId: string) {
+export async function enqueueProduceSong(
+  projectId: string,
+  userId: string,
+  opts?: { force?: boolean }
+) {
   const supabase = createServiceClient();
+  const force = Boolean(opts?.force);
 
   const { data: owned } = await supabase
     .from("projects")
@@ -167,7 +173,7 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
 
   const { data: existing } = await supabase
     .from("jobs")
-    .select("id, status, provider_task_id, stage, output_data, attempts")
+    .select("id, status, provider_task_id, stage, output_data, attempts, started_at, updated_at, created_at")
     .eq("project_id", projectId)
     .eq("type", "PRODUCE_SONG")
     .in("status", ["queued", "processing"])
@@ -176,23 +182,66 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     .maybeSingle();
 
   if (existing) {
-    logProduce({
-      event: "enqueue_deduped",
-      jobId: existing.id,
-      projectId,
-      status: existing.status,
-      stage: existing.stage,
-    });
-    return {
-      job_id: existing.id,
-      status: existing.status,
-      stage: existing.stage || existing.status,
-      deduped: true,
-    };
-  }
+    const out =
+      existing.output_data && typeof existing.output_data === "object"
+        ? (existing.output_data as Record<string, unknown>)
+        : {};
+    const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
+    const startedAt = existing.started_at ? Date.parse(String(existing.started_at)) : 0;
+    const createdAt = existing.created_at ? Date.parse(String(existing.created_at)) : 0;
+    const anchor = Math.max(lockAt || 0, startedAt || 0, createdAt || 0);
+    const ageMs = anchor ? Date.now() - anchor : Number.POSITIVE_INFINITY;
+    // Match worker claim stale window (~tick budget + 5m). Default 25 minutes.
+    const staleMs = Number(process.env.PRODUCE_CLAIM_STALE_MS || 25 * 60_000);
+    const isStale = !Number.isFinite(ageMs) || ageMs > Math.max(5 * 60_000, staleMs);
 
-  // Allow re-produce after complete/failed — only dedupe in-flight jobs above.
-  // Artists re-run when mix levels / processing did not sound right.
+    if (force || isStale) {
+      logProduce({
+        event: "enqueue_supersede_inflight",
+        jobId: existing.id,
+        projectId,
+        status: existing.status,
+        stage: existing.stage,
+        force,
+        isStale,
+        ageMs: Number.isFinite(ageMs) ? Math.round(ageMs) : null,
+      });
+      await supabase
+        .from("jobs")
+        .update({
+          status: "failed",
+          stage: "failed",
+          progress: 100,
+          error: force
+            ? "Superseded — artist started a new Produce"
+            : "Stale produce job superseded by a new run",
+          completed_at: new Date().toISOString(),
+          output_data: {
+            ...out,
+            superseded: true,
+            superseded_at: new Date().toISOString(),
+            supersede_reason: force ? "force" : "stale",
+          },
+        })
+        .eq("id", existing.id)
+        .in("status", ["queued", "processing"]);
+      // fall through to insert a new job
+    } else {
+      logProduce({
+        event: "enqueue_deduped",
+        jobId: existing.id,
+        projectId,
+        status: existing.status,
+        stage: existing.stage,
+      });
+      return {
+        job_id: existing.id,
+        status: existing.status,
+        stage: existing.stage || existing.status,
+        deduped: true,
+      };
+    }
+  }
 
   const ready = await checkProjectProduceReady(projectId);
   if (!ready.canProduce) {
@@ -206,7 +255,8 @@ export async function enqueueProduceSong(projectId: string, userId: string) {
     .eq("type", "PRODUCE_SONG");
 
   const attempt = (priorCount || 0) + 1;
-  const idempotencyKey = attempt === 1 ? baseKey : `${baseKey}:attempt-${attempt}`;
+  // Always unique per enqueue so re-produce never hits the unique index and returns an old job
+  const idempotencyKey = `${baseKey}:attempt-${attempt}:${Date.now()}`;
 
   const { data: activePlanTasks } = await supabase
     .from("recording_tasks")
