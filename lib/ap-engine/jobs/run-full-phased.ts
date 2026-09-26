@@ -76,7 +76,18 @@ export async function runFullProduceWithCheckpoints(opts: {
   );
 
   if (cp.phase === "restoring") {
+    await report("analyzing");
+    await patch("analyzing", 18, {
+      ap_checkpoint: cp,
+      path: "full",
+      message: "Checking vocal takes…",
+    }).catch(() => undefined);
     await report("restoring");
+    await patch("restoring", 28, {
+      ap_checkpoint: cp,
+      path: "full",
+      message: "Cleaning up vocals (noise / levels)…",
+    }).catch(() => undefined);
     const tRestore = Date.now();
     const restoreFails: string[] = Array.isArray((cp as { restoreFails?: string[] }).restoreFails)
       ? [...((cp as { restoreFails?: string[] }).restoreFails || [])]
@@ -185,12 +196,14 @@ export async function runFullProduceWithCheckpoints(opts: {
     }
     cp.phase = "arranging";
     cp.lastCheckpointAt = new Date().toISOString();
-    await patch("producing", 45, {
+    await report("polishing");
+    await patch("polishing", 48, {
       ap_checkpoint: cp,
       path: "full",
       checkpoint_phase: "arranging",
       tick_count: cp.tickCount,
       restored_layers: cp.layers.length,
+      message: "Vocals cleaned — preparing arrangement…",
     });
     if (!budgetOk()) {
       return { complete: false };
@@ -198,12 +211,14 @@ export async function runFullProduceWithCheckpoints(opts: {
   }
 
   if (cp.phase === "arranging") {
-    await report("arranging");
-    await patch("arranging", 55, {
+    // Do NOT jump UI to "arranging" yet — analyze/cleanup stages still run inside
+    // runApArrangement (skipRestoration only skips a second restore pass).
+    await report("analyzing");
+    await patch("analyzing", 50, {
       ap_checkpoint: cp,
       path: "full",
       checkpoint_phase: "arranging",
-      message: "Loading restored vocals onto the beat…",
+      message: "Analyzing cleaned vocals…",
     });
     const tArr = Date.now();
     const arrangedVocals: ApVocalLayerInput[] = [];
@@ -236,10 +251,11 @@ export async function runFullProduceWithCheckpoints(opts: {
       return { complete: false, error: msg };
     }
 
-    await patch("arranging", 62, {
+    await report("polishing");
+    await patch("polishing", 56, {
       ap_checkpoint: cp,
       path: "full",
-      message: "Arranging vocals on the beat…",
+      message: "Loading cleaned vocals…",
       layers: arrangedVocals.length,
     });
 
@@ -271,23 +287,37 @@ export async function runFullProduceWithCheckpoints(opts: {
     const reportWithProgress: typeof report = async (stage) => {
       await report(stage);
       // Map sub-stages to climbing progress so UI is not frozen at 70
-      // Climb gradually through arrange/pace work (30–70 band) then mix/master.
+      // Forward-only progress after restore checkpoint (never jump back to 28%).
       const prog: Record<string, number> = {
-        analyzing: 28,
-        restoring: 36,
-        polishing: 44,
-        producing: 54,
-        arranging: 62,
+        analyzing: 52,
+        restoring: 54,
+        polishing: 58,
+        producing: 60,
+        arranging: 68,
         mixing: 78,
         mastering: 88,
         quality_check: 94,
         completed: 99,
       };
-      const p = prog[String(stage)] ?? 58;
-      await patch(String(stage === "completed" ? "arranging" : stage), p, {
+      const stageName = String(stage === "completed" ? "arranging" : stage);
+      const p = prog[stageName] ?? 58;
+      await patch(stageName, p, {
         ap_checkpoint: { ...cp, phase: "arranging" },
         path: "full",
-        message: String(stage),
+        message:
+          stageName === "analyzing"
+            ? "Analyzing vocals…"
+            : stageName === "restoring"
+              ? "Vocal cleanup…"
+              : stageName === "polishing"
+                ? "Polishing takes…"
+                : stageName === "arranging"
+                  ? "Arranging vocals on the beat…"
+                  : stageName === "mixing"
+                    ? "Mixing…"
+                    : stageName === "mastering"
+                      ? "Mastering…"
+                      : String(stage),
       }).catch(() => undefined);
       void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
     };
