@@ -83,6 +83,11 @@ export function processAndPlaceLayerDetailed(
   // Choir/double bus: do not run lead-style presence/saturation (distortion fix)
   const roleKey = String(role || "").toLowerCase();
   const isLeadRole = roleKey === "lead" || roleKey === "main" || roleKey === "";
+  // Generated choir / double / harmony stacks: light path only.
+  // Full pitch+AP-time per stack layer was timing out jobs at ~68% "arranging".
+  const isStackSupport =
+    !isLeadRole &&
+    /double|harmony|background|choir|adlib|ad-lib|stack/.test(roleKey);
   if (!isLeadRole && layer.decision?.vocal) {
     const vocal = { ...layer.decision.vocal };
     // Choir/double bus: body + width only — less presence/sat/compression than lead
@@ -114,83 +119,89 @@ export function processAndPlaceLayerDetailed(
 
   const restored = cloneStereo(v);
 
-  // 2. Selective mouth-noise (plosives / clicks / excess breaths)
   let mouthQc: MouthNoiseQC | null = null;
-  try {
-    const mouth = treatMouthNoise({ pcm: v, role, intensity: 0.55 });
-    if (mouth.qc.applied) v = mouth.pcm;
-    mouthQc = mouth.qc;
-  } catch (e) {
-    console.warn(
-      "[ap-engine] mouth-noise failed — continuing without",
-      e instanceof Error ? e.message : e
-    );
-  }
-
-  // 3. Pitch polish + timing
   let polished: PolishResult | null = null;
-  try {
-    polished = polishVocalLayer({
-      pcm: v,
-      role,
-      genre: layer.genre,
-      leadReference: layer.leadReference || null,
-      correctionStrengthBias: layer.correctionStrengthBias,
-      timingTightnessBias: layer.timingTightnessBias,
-      forcePreserveVibrato: true,
-    });
-    if (polished.applied) v = polished.pcm;
-  } catch (e) {
-    console.warn(
-      "[ap-engine] pitch polish failed — continuing without",
-      e instanceof Error ? e.message : e
-    );
-    polished = null;
-  }
-
-  // 4. Phrase-level vocal ride (before compressor)
   let rideQc: VocalRideQC | null = null;
-  try {
-    const ride = rideVocalLevel({ pcm: v, role });
-    if (ride.qc.applied) v = ride.pcm;
-    rideQc = ride.qc;
-  } catch (e) {
-    console.warn(
-      "[ap-engine] vocal ride failed — continuing without",
-      e instanceof Error ? e.message : e
-    );
-  }
 
-  // 5. AP TIME — phrase-level musical timing (after pitch; uses AP EDIT phrases)
-  try {
-    const timed = runApTime({
-      vocal: v,
-      beat: beatLengthPcm,
-      role,
-      section: layer.decision.section,
-      genre: layer.genre ?? null,
-      bpm: layer.bpm ?? null,
-      leadOffsetMs: null,
-    });
-    v = timed.pcm as typeof v;
-    if (timed.notes.length) {
-      console.log("[ap-time]", timed.notes.join(" "));
-    }
-  } catch (e) {
-    console.warn("[ap-time] failed — fallback coarse lock", e instanceof Error ? e.message : e);
+  if (!isStackSupport) {
+    // 2. Selective mouth-noise (plosives / clicks / excess breaths)
     try {
-      const timed = applyTimingIntelligence({
+      const mouth = treatMouthNoise({ pcm: v, role, intensity: 0.55 });
+      if (mouth.qc.applied) v = mouth.pcm;
+      mouthQc = mouth.qc;
+    } catch (e) {
+      console.warn(
+        "[ap-engine] mouth-noise failed — continuing without",
+        e instanceof Error ? e.message : e
+      );
+    }
+
+    // 3. Pitch polish + timing
+    try {
+      polished = polishVocalLayer({
+        pcm: v,
+        role,
+        genre: layer.genre,
+        leadReference: layer.leadReference || null,
+        correctionStrengthBias: layer.correctionStrengthBias,
+        timingTightnessBias: layer.timingTightnessBias,
+        forcePreserveVibrato: true,
+      });
+      if (polished.applied) v = polished.pcm;
+    } catch (e) {
+      console.warn(
+        "[ap-engine] pitch polish failed — continuing without",
+        e instanceof Error ? e.message : e
+      );
+      polished = null;
+    }
+
+    // 4. Phrase-level vocal ride (before compressor)
+    try {
+      const ride = rideVocalLevel({ pcm: v, role });
+      if (ride.qc.applied) v = ride.pcm;
+      rideQc = ride.qc;
+    } catch (e) {
+      console.warn(
+        "[ap-engine] vocal ride failed — continuing without",
+        e instanceof Error ? e.message : e
+      );
+    }
+
+    // 5. AP TIME — phrase-level musical timing (after pitch; uses AP EDIT phrases)
+    try {
+      const timed = runApTime({
         vocal: v,
         beat: beatLengthPcm,
         role,
         section: layer.decision.section,
-        leadReference: layer.leadReference || null,
         genre: layer.genre ?? null,
+        bpm: layer.bpm ?? null,
+        leadOffsetMs: null,
       });
-      v = timed.pcm;
-    } catch {
-      /* keep untimed */
+      v = timed.pcm as typeof v;
+      if (timed.notes.length) {
+        console.log("[ap-time]", timed.notes.join(" "));
+      }
+    } catch (e) {
+      console.warn("[ap-time] failed — fallback coarse lock", e instanceof Error ? e.message : e);
+      try {
+        const timed = applyTimingIntelligence({
+          vocal: v,
+          beat: beatLengthPcm,
+          role,
+          section: layer.decision.section,
+          leadReference: layer.leadReference || null,
+          genre: layer.genre ?? null,
+        });
+        v = timed.pcm;
+      } catch {
+        /* keep untimed */
+      }
     }
+  } else {
+    // Stack layers already share the lead's timing window — place only
+    console.log(`[ap-engine] light stack path for role=${roleKey}`);
   }
 
   // 5b. Light global stabilize, then production chain

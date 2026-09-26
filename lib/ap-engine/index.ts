@@ -549,11 +549,26 @@ export async function runApArrangement(
 
       const placedByIndex: (PcmStereo | null)[] = normalizedLayers.map(() => null);
 
-      for (const i of order) {
+      for (let oi = 0; oi < order.length; oi++) {
+        const i = order[oi];
         const layer = normalizedLayers[i];
         const decision = layerDecisions[i];
         // Yield so worker heartbeats / arrange timeout can fire between sync DSP layers
         await yieldEventLoop();
+        // Climb 62→76% so UI is not frozen at 68% during long multi-layer arrange
+        if (report) {
+          const pct = 62 + Math.round(((oi + 1) / Math.max(1, order.length)) * 14);
+          try {
+            await stage("arranging", {
+              layer: oi + 1,
+              of: order.length,
+              role: layer.role,
+              progressHint: pct,
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
         const detailed = processAndPlaceLayerDetailed(beatNorm.pcm, {
           pcm: layer.pcm,
           startMs: layer.startMs,

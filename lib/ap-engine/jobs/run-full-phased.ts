@@ -265,7 +265,7 @@ export async function runFullProduceWithCheckpoints(opts: {
       typeof (priorOut.worker_id) === "string" ? String(priorOut.worker_id) : "ap-arrange";
     const hb = setInterval(() => {
       void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
-    }, 45_000);
+    }, 15_000);
 
     let beatBuffer: Buffer;
     try {
@@ -279,15 +279,17 @@ export async function runFullProduceWithCheckpoints(opts: {
 
     // Soft wall: cap arrange so we never sit at 70% for the full tick budget.
     // Sync DSP does not yield to Promise.race timers — prefer failing over to fast.
-    const remaining = deadlineAt - Date.now() - 30_000;
-    // Soft cap 8m — yields let timeout fire; parallel ASR shortens pre-arrange work
-    const arrangeBudgetMs = Math.max(60_000, Math.min(8 * 60_000, remaining));
+    const remaining = deadlineAt - Date.now() - 45_000;
+    // Use almost the full tick budget — the old 8m hard cap caused permanent
+    // "stuck at 68% arranging" loops when choir/many layers needed longer.
+    const arrangeBudgetMs = Math.max(90_000, Math.min(18 * 60_000, remaining));
     const arrangeDeadline = Date.now() + arrangeBudgetMs;
 
-    const reportWithProgress: typeof report = async (stage) => {
+    const reportWithProgress = async (
+      stage: Parameters<typeof report>[0],
+      meta?: Record<string, unknown>
+    ) => {
       await report(stage);
-      // Map sub-stages to climbing progress so UI is not frozen at 70
-      // Forward-only progress after restore checkpoint (never jump back to 28%).
       const prog: Record<string, number> = {
         analyzing: 52,
         restoring: 54,
@@ -300,12 +302,20 @@ export async function runFullProduceWithCheckpoints(opts: {
         completed: 99,
       };
       const stageName = String(stage === "completed" ? "arranging" : stage);
-      const p = prog[stageName] ?? 58;
+      let p = prog[stageName] ?? 58;
+      if (typeof meta?.progressHint === "number" && Number.isFinite(meta.progressHint)) {
+        p = Math.max(p, Math.min(90, Math.round(meta.progressHint as number)));
+      }
+      const layerMsg =
+        typeof meta?.layer === "number" && typeof meta?.of === "number"
+          ? `Arranging layer ${meta.layer}/${meta.of}${meta.role ? ` (${meta.role})` : ""}…`
+          : null;
       await patch(stageName, p, {
         ap_checkpoint: { ...cp, phase: "arranging" },
         path: "full",
         message:
-          stageName === "analyzing"
+          layerMsg ||
+          (stageName === "analyzing"
             ? "Analyzing vocals…"
             : stageName === "restoring"
               ? "Vocal cleanup…"
@@ -317,7 +327,7 @@ export async function runFullProduceWithCheckpoints(opts: {
                     ? "Mixing…"
                     : stageName === "mastering"
                       ? "Mastering…"
-                      : String(stage),
+                      : String(stage)),
       }).catch(() => undefined);
       void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
     };
@@ -354,13 +364,26 @@ export async function runFullProduceWithCheckpoints(opts: {
       // Leave checkpoint at arranging so next tick can retry (not a permanent fail on soft timeout
       // unless we're out of wall budget)
       if (/timed out/i.test(msg) && budgetOk()) {
+        const attempts = Number((cp as { arrangeAttempts?: number }).arrangeAttempts || 0) + 1;
+        (cp as { arrangeAttempts?: number }).arrangeAttempts = attempts;
         cp.lastCheckpointAt = new Date().toISOString();
         cp.resumedFrom = "arranging";
-        await patch("arranging", 62, {
+        if (attempts >= 3) {
+          await patch("failed", 100, {
+            error:
+              "Arrangement timed out after 3 attempts. Try Produce again with fewer choir/stack layers, or a shorter song.",
+            ap_checkpoint: cp,
+            arrange_timeout: true,
+            arrange_attempts: attempts,
+          });
+          return { complete: false, error: "Arrangement timed out after 3 attempts" };
+        }
+        await patch("arranging", 65, {
           ap_checkpoint: cp,
           path: "full",
-          message: "Arrangement still running — retrying next tick…",
+          message: `Arrangement still running — retry ${attempts}/3…`,
           arrange_timeout: true,
+          arrange_attempts: attempts,
         });
         return { complete: false };
       }
