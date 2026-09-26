@@ -264,7 +264,8 @@ export async function runFullProduceWithCheckpoints(opts: {
     // Soft wall: cap arrange so we never sit at 70% for the full tick budget.
     // Sync DSP does not yield to Promise.race timers — prefer failing over to fast.
     const remaining = deadlineAt - Date.now() - 30_000;
-    const arrangeBudgetMs = Math.max(45_000, Math.min(5 * 60_000, remaining));
+    // Soft cap 8m — yields let timeout fire; parallel ASR shortens pre-arrange work
+    const arrangeBudgetMs = Math.max(60_000, Math.min(8 * 60_000, remaining));
     const arrangeDeadline = Date.now() + arrangeBudgetMs;
 
     const reportWithProgress: typeof report = async (stage) => {

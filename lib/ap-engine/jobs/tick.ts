@@ -130,26 +130,25 @@ export async function runInternalApProduceJob(opts: {
 
     await report("analyzing");
     /**
-     * Path selection — reliability first.
-     * Worker historically set PRODUCE_FULL_QUALITY=1, which forced runApArrangement
-     * for every song. That engine is CPU-bound (pitch/ASR/stack) and can sit at
-     * stage "arranging" / 70% for tens of minutes without yielding — Promise
-     * timeouts never fire during tight DSP loops. Prefer the proven fast
-     * timeline mix so Produce completes; opt into full only with PRODUCE_FORCE_FULL=1
-     * or AP_FULL_ENGINE=1.
+     * Path selection — full engine is default (quality).
+     * Fast path only when PRODUCE_FAST=1 or PRODUCE_FULL_QUALITY=0.
+     * Full engine is sped up via parallel ASR/restore + event-loop yields;
+     * fast remains a last-resort fallback if full errors/timeouts.
      */
-    const forceFull =
-      process.env.PRODUCE_FORCE_FULL === "1" ||
-      process.env.PRODUCE_FORCE_FULL === "true" ||
-      process.env.AP_FULL_ENGINE === "1" ||
-      process.env.AP_FULL_ENGINE === "true";
     const forceFast =
       process.env.PRODUCE_FAST === "1" ||
       process.env.PRODUCE_FAST === "true" ||
       process.env.PRODUCE_FULL_QUALITY === "0" ||
       process.env.PRODUCE_FULL_QUALITY === "false";
-    // Default: fast. Full only when explicitly forced.
-    const useFast = forceFast || !forceFull;
+    const forceFull =
+      process.env.PRODUCE_FORCE_FULL === "1" ||
+      process.env.PRODUCE_FORCE_FULL === "true" ||
+      process.env.AP_FULL_ENGINE === "1" ||
+      process.env.AP_FULL_ENGINE === "true" ||
+      process.env.PRODUCE_FULL_QUALITY === "1" ||
+      process.env.PRODUCE_FULL_QUALITY === "true";
+    // Default full when not forced-fast. Worker should set PRODUCE_FULL_QUALITY=1.
+    const useFast = forceFast && !forceFull;
     console.info(
       "[ap-tick] path",
       JSON.stringify({
@@ -235,7 +234,7 @@ export async function runInternalApProduceJob(opts: {
       }
     }
 
-    // Full AP engine — only when PRODUCE_FORCE_FULL / AP_FULL_ENGINE is set.
+    // Full AP engine (default quality path).
 
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
@@ -277,25 +276,20 @@ export async function runInternalApProduceJob(opts: {
     });
     if (!phased.complete) {
       if (phased.error) {
-        console.error("[ap-tick] full engine error — falling back to fast path", phased.error);
-        try {
-          return await completeViaFast(`full_error:${phased.error.slice(0, 80)}`);
-        } catch (fe) {
-          await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-          return { complete: false, error: phased.error };
+        const isTimeout = /timeout|timed out|arrange/i.test(phased.error);
+        console.error("[ap-tick] full engine error", phased.error, "timeout?", isTimeout);
+        if (isTimeout) {
+          try {
+            return await completeViaFast(`full_timeout:${phased.error.slice(0, 80)}`);
+          } catch {
+            /* fall through */
+          }
         }
-      }
-      // Checkpoint / arrange timeout: do not leave the job parked at 70%.
-      // Complete via fast path so the artist gets a finished song.
-      console.warn("[ap-tick] full engine incomplete — completing via fast path");
-      try {
-        return await completeViaFast("full_incomplete_fallback");
-      } catch (fe) {
-        const msg = fe instanceof Error ? fe.message : String(fe);
-        await patch("failed", 100, { error: msg.slice(0, 400), path: "fast_fallback_failed" });
         await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-        return { complete: false, error: msg };
+        return { complete: false, error: phased.error };
       }
+      // Checkpoint saved — next worker poll resumes full engine (do not demote to fast).
+      return { complete: false };
     }
     engineVersion = phased.engineVersion || "ap-full";
     mp3Path = phased.mp3Path ?? null;

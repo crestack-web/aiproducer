@@ -89,6 +89,32 @@ function logAp(event: string, data: Record<string, unknown>) {
  * Multi-vocal arrangement produce.
  * Lead establishes reference; supporting roles add size/depth/expression.
  */
+
+/** Let the event loop run (heartbeats, timers) between heavy sync DSP layers. */
+function yieldEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Run async work with a concurrency limit (same results, lower wall-clock). */
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const n = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
+}
+
 export async function runApArrangement(
   input: ApArrangementInput,
   report?: StageReporter
@@ -135,9 +161,11 @@ export async function runApArrangement(
 
     await stage("restoring", { sub: "front_end" });
 
-    for (const v of input.vocals) {
+    // Parallel normalize+restore (I/O + independent CPU per take) — same DSP, less wall time.
+    const restoreJobs = input.vocals.map((v, idx) => ({ v, idx }));
+    const restoredParts = await mapPool(restoreJobs, 3, async ({ v }) => {
       const val = validateAudioBuffer(v.buffer, v.pathHint);
-      if (!val.ok) continue;
+      if (!val.ok) return null;
       const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
       const role = resolveVocalRole(v.taskType, v.sectionLabel);
       const section = resolveSectionKind(v.sectionLabel, v.taskType);
@@ -155,12 +183,10 @@ export async function runApArrangement(
           flags: ["checkpoint_skip_restore"],
           plainLanguage: ["restored in prior tick"],
         };
-        restoreNotes.push("restore: skipped (checkpoint)");
       } else {
         const restored = runRestorationFrontEnd(norm.pcm);
         restoredPcm = restored.pcm;
         restReport = restored.report;
-        restoreNotes.push(...restorationToLog(restored.report));
         logAp("restoration", {
           jobId: input.jobId,
           role,
@@ -172,13 +198,29 @@ export async function runApArrangement(
         });
       }
       const analysis = analyzeVocal(restoredPcm);
-      normalizedLayers.push({
+      await yieldEventLoop();
+      return {
         pcm: restoredPcm,
         role,
         section,
         startMs: v.startMs ?? 0,
         analysis,
         restoration: restReport,
+        restoreLog: input.skipRestoration
+          ? ["restore: skipped (checkpoint)"]
+          : restorationToLog(restReport),
+      };
+    });
+    for (const part of restoredParts) {
+      if (!part) continue;
+      restoreNotes.push(...part.restoreLog);
+      normalizedLayers.push({
+        pcm: part.pcm,
+        role: part.role,
+        section: part.section,
+        startMs: part.startMs,
+        analysis: part.analysis,
+        restoration: part.restoration,
       });
     }
 
@@ -239,53 +281,57 @@ export async function runApArrangement(
     }
 
     // ——— Transcription + alignment (optional ASR) → layer.lyrics ———
+    // Parallel ASR (network-bound): same providers/timeouts, much lower wall-clock.
     await stage("analyzing", { sub: "transcription" });
-    const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = [];
-    for (let i = 0; i < normalizedLayers.length; i++) {
-      const layer = normalizedLayers[i];
-      // Near hard deadline, skip remaining ASR so arrange/mix can finish.
-      if (input.deadlineAt && Date.now() > input.deadlineAt - 40_000) {
-        logAp("transcription_budget", {
-          jobId: input.jobId,
-          at: i,
-          total: normalizedLayers.length,
-          fullQuality: isFullQualityProduce(),
-        });
-        for (let j = i; j < normalizedLayers.length; j++) layerLyrics.push(null);
-        break;
+    const layerLyrics: Array<Array<{ text: string; startMs: number; endMs: number; confidence?: number }> | null> = new Array(
+      normalizedLayers.length
+    ).fill(null);
+    const asrDeadlineCut =
+      input.deadlineAt != null && Date.now() > input.deadlineAt - 40_000;
+    if (asrDeadlineCut) {
+      logAp("transcription_budget", {
+        jobId: input.jobId,
+        at: 0,
+        total: normalizedLayers.length,
+        fullQuality: isFullQualityProduce(),
+        skipped: "deadline",
+      });
+    } else {
+      const asrTargets: number[] = [];
+      for (let i = 0; i < normalizedLayers.length; i++) {
+        const layer = normalizedLayers[i];
+        const shouldAsr =
+          layer.role === "lead" ||
+          layer.role === "double" ||
+          (isFullQualityProduce() && String(layer.role).startsWith("harmony")) ||
+          (!isFullQualityProduce() && normalizedLayers.length <= 3);
+        if (shouldAsr) asrTargets.push(i);
       }
-      // ASR: lead + double always; full-quality also runs harmony. Ad-libs/background skip
-      // intentionally (not time-driven — phrase-level lyric mind is for primary stack).
-      const shouldAsr =
-        layer.role === "lead" ||
-        layer.role === "double" ||
-        (isFullQualityProduce() && String(layer.role).startsWith("harmony")) ||
-        (!isFullQualityProduce() && normalizedLayers.length <= 3);
-      if (!shouldAsr) {
-        layerLyrics.push(null);
-        continue;
-      }
-      try {
-        const tr = await transcribeVocalLayer(layer.pcm);
-        const lyrics = toLayerLyrics(tr);
-        layerLyrics.push(lyrics.length ? lyrics : null);
-        if (lyrics.length) {
-          logAp("transcription", {
+      await mapPool(asrTargets, 3, async (i) => {
+        const layer = normalizedLayers[i];
+        try {
+          const tr = await transcribeVocalLayer(layer.pcm);
+          const lyrics = toLayerLyrics(tr);
+          layerLyrics[i] = lyrics.length ? lyrics : null;
+          if (lyrics.length) {
+            logAp("transcription", {
+              jobId: input.jobId,
+              layer: i,
+              role: layer.role,
+              phrases: lyrics.length,
+              source: tr.source,
+            });
+          }
+        } catch (e) {
+          logAp("transcription_fail", {
             jobId: input.jobId,
             layer: i,
-            role: layer.role,
-            phrases: lyrics.length,
-            source: tr.source,
+            error: e instanceof Error ? e.message : String(e),
           });
+          layerLyrics[i] = null;
         }
-      } catch (e) {
-        logAp("transcription_fail", {
-          jobId: input.jobId,
-          layer: i,
-          error: e instanceof Error ? e.message : String(e),
-        });
-        layerLyrics.push(null);
-      }
+        return null;
+      });
     }
 
     // ——— Producer Mind: reason about intent, then DSP executes ———
@@ -506,6 +552,8 @@ export async function runApArrangement(
       for (const i of order) {
         const layer = normalizedLayers[i];
         const decision = layerDecisions[i];
+        // Yield so worker heartbeats / arrange timeout can fire between sync DSP layers
+        await yieldEventLoop();
         const detailed = processAndPlaceLayerDetailed(beatNorm.pcm, {
           pcm: layer.pcm,
           startMs: layer.startMs,
