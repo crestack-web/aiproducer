@@ -8,9 +8,22 @@ import {
   type ProduceReadiness,
 } from "@/lib/production/readiness";
 
+function hasRealAudio(path: unknown): boolean {
+  return (
+    typeof path === "string" &&
+    path.length > 0 &&
+    !path.startsWith("mock://") &&
+    !path.includes("pending")
+  );
+}
+
 /**
  * Aligns with enqueueProduceSong recording/plan resolution.
  * Does not create a job.
+ *
+ * Produce is allowed when the project has at least one real vocal file
+ * (record or upload), including Build-from-Scratch / custom tracks.
+ * AI plan membership must not block uploaded takes on artist-selected parts.
  */
 export async function checkProjectProduceReady(projectId: string): Promise<ProduceReadiness> {
   const supabase = createServiceClient();
@@ -21,6 +34,34 @@ export async function checkProjectProduceReady(projectId: string): Promise<Produ
     .eq("project_id", projectId);
 
   const tasks = (activePlanTasks || []) as PlanTaskRow[];
+
+  // Auto-heal: any task with a real recording is "completed" for produce readiness
+  const { data: allRecs } = await supabase
+    .from("recordings")
+    .select("id, task_id, is_selected, audio_path, project_id")
+    .eq("project_id", projectId);
+
+  const recs = allRecs || [];
+  const taskIdsWithAudio = new Set<string>();
+  for (const r of recs) {
+    if (!hasRealAudio((r as { audio_path?: string }).audio_path)) continue;
+    const tid = (r as { task_id?: string | null }).task_id;
+    if (tid) taskIdsWithAudio.add(String(tid));
+  }
+
+  if (taskIdsWithAudio.size > 0) {
+    const pendingWithAudio = tasks.filter(
+      (t) =>
+        taskIdsWithAudio.has(t.id) &&
+        String(t.status || "").toLowerCase() !== "completed" &&
+        String(t.status || "").toLowerCase() !== "skipped"
+    );
+    for (const t of pendingWithAudio) {
+      await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", t.id);
+      (t as { status?: string }).status = "completed";
+    }
+  }
+
   const fromTasks = produceReadinessFromTasks(
     tasks.map((t) => ({
       id: t.id,
@@ -34,109 +75,58 @@ export async function checkProjectProduceReady(projectId: string): Promise<Produ
     }))
   );
 
-  if (!fromTasks.canProduce) {
-    const active = tasks.filter((t) => {
-      const a = (t as { active?: boolean | null }).active;
-      const sel = (t as { selected_in_plan?: boolean | null }).selected_in_plan;
-      if (a === false || sel === false) return false;
-      if ((t.status || "") === "skipped") return false;
-      return true;
-    });
-    const hasLead = active.some((t) => /lead|main|melody/i.test(String(t.type || t.title || "")));
-    const leadDone = active.some(
-      (t) =>
-        /lead|main|melody/i.test(String(t.type || t.title || "")) &&
-        (t.status || "").toLowerCase() === "completed"
+  // Primary path: task status says completed
+  if (fromTasks.canProduce) {
+    // Still verify audio exists (aligned with enqueue)
+    const activeTaskIds = new Set(
+      tasks
+        .filter((t) => {
+          const a = (t as { active?: boolean | null }).active;
+          const sel = (t as { selected_in_plan?: boolean | null }).selected_in_plan;
+          if (a === false) return false;
+          if (sel === false) return false;
+          if ((t.status || "") === "skipped") return false;
+          return true;
+        })
+        .map((t) => t.id)
     );
-    if (hasLead && !leadDone && active.every((t) => (t.status || "").toLowerCase() !== "completed")) {
-      return {
-        canProduce: false,
-        code: "missing_recording",
-        reason: "Your song still needs a lead vocal before AP can produce it.",
-      };
+
+    const withAudioOnPlan = recs.filter((r) => {
+      if (!hasRealAudio((r as { audio_path?: string }).audio_path)) return false;
+      const tid = (r as { task_id?: string | null }).task_id;
+      if (!tid) return true; // orphan project-level take still usable
+      if (activeTaskIds.size === 0) return true;
+      return activeTaskIds.has(String(tid));
+    });
+
+    if (withAudioOnPlan.length > 0) {
+      return { canProduce: true, code: "ok", reason: "" };
     }
+  }
+
+  // Fallback: any real vocal on the project (scratch / upload / studio import)
+  const anyAudio = recs.filter((r) => hasRealAudio((r as { audio_path?: string }).audio_path));
+  if (anyAudio.length > 0) {
+    // Ensure parent tasks are selected so enqueue keeps them
+    for (const r of anyAudio) {
+      const tid = (r as { task_id?: string | null }).task_id;
+      if (!tid) continue;
+      await supabase
+        .from("recording_tasks")
+        .update({ status: "completed", active: true, selected_in_plan: true })
+        .eq("id", tid)
+        .eq("project_id", projectId);
+    }
+    return { canProduce: true, code: "ok", reason: "" };
+  }
+
+  if (!fromTasks.canProduce) {
     return fromTasks;
   }
 
-  const activeTaskIds = new Set(
-    tasks
-      .filter((t) => {
-        const a = (t as { active?: boolean | null }).active;
-        const sel = (t as { selected_in_plan?: boolean | null }).selected_in_plan;
-        if (a === false) return false;
-        if (sel === false) return false;
-        if ((t.status || "") === "skipped") return false;
-        return true;
-      })
-      .map((t) => t.id)
-  );
-
-  const hasPlanFields = tasks.some(
-    (t) =>
-      (t as { active?: boolean | null }).active != null ||
-      (t as { selected_in_plan?: boolean | null }).selected_in_plan != null
-  );
-
-  const { data: selected } = await supabase
-    .from("recordings")
-    .select("id, task_id, is_selected, audio_path")
-    .eq("project_id", projectId);
-
-  let rows = (selected || []).filter((r: { task_id?: string | null }) => {
-    if (!hasPlanFields) return true;
-    if (activeTaskIds.size === 0) return false;
-    return Boolean(r.task_id) && activeTaskIds.has(String(r.task_id));
-  });
-
-  if (rows.length === 0) {
-    const completedTasks = tasks.filter((t) => (t.status || "").toLowerCase() === "completed");
-    const taskIds = completedTasks
-      .filter((t) => {
-        const a = (t as { active?: boolean | null }).active;
-        const sel = (t as { selected_in_plan?: boolean | null }).selected_in_plan;
-        if (a === false || sel === false) return false;
-        return true;
-      })
-      .map((t) => t.id);
-    if (taskIds.length > 0) {
-      const { data: viaTasks } = await supabase
-        .from("recordings")
-        .select("id, task_id, is_selected, audio_path")
-        .in("task_id", taskIds);
-      rows = viaTasks || [];
-    }
-  }
-
-  if (rows.length === 0) {
-    const completedCount = tasks.filter((t) => (t.status || "").toLowerCase() === "completed").length;
-    if (completedCount > 0) {
-      return {
-        canProduce: false,
-        code: "takes_not_on_plan",
-        reason:
-          "You have recordings, but none are on your active plan. Restore a part in your plan, or record a selected part.",
-      };
-    }
-    return {
-      canProduce: false,
-      code: "missing_recording",
-      reason: "Record at least one selected part before producing.",
-    };
-  }
-
-  const withAudio = rows.filter(
-    (r: { audio_path?: string | null }) =>
-      typeof r.audio_path === "string" &&
-      r.audio_path.length > 0 &&
-      !r.audio_path.startsWith("mock://")
-  );
-  if (withAudio.length === 0) {
-    return {
-      canProduce: false,
-      code: "missing_recording",
-      reason: "Record at least one vocal part with audio before producing.",
-    };
-  }
-
-  return { canProduce: true, code: "ok", reason: "" };
+  return {
+    canProduce: false,
+    code: "missing_recording",
+    reason: "Record or upload at least one vocal before producing.",
+  };
 }

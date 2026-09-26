@@ -336,19 +336,43 @@ export async function enqueueProduceSong(
     }
   }
 
+  // Scratch / studio-import path: any real audio on the project is enough.
+  // Heal parent tasks so they stay on the plan for this produce run.
   if (rows.length === 0) {
-    const { count: completedCount } = await supabase
-      .from("recording_tasks")
-      .select("*", { count: "exact", head: true })
-      .eq("project_id", projectId)
-      .eq("status", "completed");
-
-    if ((completedCount || 0) > 0) {
-      throw new Error(
-        "You have completed takes, but none are on your active plan. Restore a part in Customize, or record a selected part."
-      );
+    const all = (selected || []) as RecordingRow[];
+    const withAudio = all.filter(
+      (r) =>
+        typeof r.audio_path === "string" &&
+        r.audio_path.length > 0 &&
+        !r.audio_path.startsWith("mock://")
+    );
+    if (withAudio.length > 0) {
+      rows = withAudio;
+      for (const r of withAudio) {
+        if (r.task_id) {
+          await supabase
+            .from("recording_tasks")
+            .update({ status: "completed", active: true, selected_in_plan: true })
+            .eq("id", r.task_id)
+            .eq("project_id", projectId);
+        }
+        const any = r as RecordingRow & { project_id?: string };
+        if (!any.project_id) {
+          await supabase.from("recordings").update({ project_id: projectId }).eq("id", r.id);
+        }
+      }
+      logProduce({
+        event: "enqueue_scratch_or_upload_fallback",
+        projectId,
+        recording_count: withAudio.length,
+      });
     }
-    throw new Error("No recordings found. Select at least one part on your plan and record it.");
+  }
+
+  if (rows.length === 0) {
+    throw new Error(
+      "No vocal audio found. Record in the booth or upload a take on a track, then Produce."
+    );
   }
 
   const hasSelected = rows.some((r) => Boolean(r.is_selected));

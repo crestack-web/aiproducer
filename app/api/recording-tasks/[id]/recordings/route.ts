@@ -550,6 +550,14 @@ export async function POST(req: Request, ctx: Ctx) {
     );
   }
 
+  // Same as direct upload: artist has a take on this track — plan is ready for Produce
+  await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+  try {
+    await service.from("recordings").update({ is_selected: true }).eq("id", recording.id as string);
+  } catch {
+    /* optional column */
+  }
+
   return NextResponse.json(
     {
       recording,
