@@ -342,42 +342,55 @@ export async function enqueueProduceSong(
     }
   }
 
-  // Scratch / studio-import path: any real audio on the project is enough.
-  // Heal parent tasks so they stay on the plan for this produce run.
-  if (rows.length === 0) {
-    const all = (selected || []) as RecordingRow[];
-    const withAudio = all.filter(
+  // Only recordings on the CURRENT active plan (removed AI tracks stay out).
+  // Never re-activate deselected tasks — that would revive deleted blueprint vocals.
+  if (rows.length === 0 && activeTaskIds.size > 0) {
+    const onPlan = ((selected || []) as RecordingRow[]).filter(
       (r) =>
+        Boolean(r.task_id) &&
+        activeTaskIds.has(r.task_id) &&
         typeof r.audio_path === "string" &&
         r.audio_path.length > 0 &&
         !r.audio_path.startsWith("mock://")
     );
-    if (withAudio.length > 0) {
-      rows = withAudio;
-      for (const r of withAudio) {
+    if (onPlan.length > 0) {
+      rows = onPlan;
+      // Heal status only for tasks already on the active plan (do not flip selected_in_plan)
+      for (const r of onPlan) {
         if (r.task_id) {
           await supabase
             .from("recording_tasks")
-            .update({ status: "completed", active: true, selected_in_plan: true })
+            .update({ status: "completed" })
             .eq("id", r.task_id)
             .eq("project_id", projectId);
         }
-        const any = r as RecordingRow & { project_id?: string };
-        if (!any.project_id) {
-          await supabase.from("recordings").update({ project_id: projectId }).eq("id", r.id);
-        }
       }
       logProduce({
-        event: "enqueue_scratch_or_upload_fallback",
+        event: "enqueue_active_plan_audio_heal",
         projectId,
-        recording_count: withAudio.length,
+        recording_count: onPlan.length,
+        activeTaskIds: [...activeTaskIds],
       });
     }
   }
 
   if (rows.length === 0) {
     throw new Error(
-      "No vocal audio found. Record in the booth or upload a take on a track, then Produce."
+      "No vocal on your current plan. Add or record a track that is still on the timeline, then Produce. Removed parts are not included."
+    );
+  }
+
+  // Final safety: drop any row whose task is no longer active (stale cache / race)
+  rows = rows.filter((r) => {
+    if (!r.task_id) return false;
+    if (hasPlanFields && activeTaskIds.size > 0 && !activeTaskIds.has(r.task_id)) {
+      return false;
+    }
+    return true;
+  });
+  if (rows.length === 0) {
+    throw new Error(
+      "No vocal on your current plan. Removed tracks are excluded from Produce."
     );
   }
 
@@ -415,10 +428,18 @@ export async function enqueueProduceSong(
         user_id: userId,
         mode,
         recording_count: rows.length,
+        recording_ids: rows.map((r) => r.id),
+        task_ids: [...new Set(rows.map((r) => r.task_id).filter(Boolean))],
         roex_env: getRoexEnv(),
         attempt,
       },
-      output_data: { user_id: userId, mode, attempt },
+      output_data: {
+        user_id: userId,
+        mode,
+        attempt,
+        recording_ids: rows.map((r) => r.id),
+        task_ids: [...new Set(rows.map((r) => r.task_id).filter(Boolean))],
+      },
       attempts: 0,
     })
     .select()

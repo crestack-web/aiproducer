@@ -72,9 +72,18 @@ function pickPath(rec: RecRow): string | null {
 
 export async function collectVocalsForProduce(
   service: SupabaseClient,
-  projectId: string
+  projectId: string,
+  opts?: { allowedRecordingIds?: string[]; allowedTaskIds?: string[] }
 ): Promise<{ vocals: ApVocalLayerInput[]; placementLog: PlacementLog[]; diagnostics: string[] }> {
   const diagnostics: string[] = [];
+  const allowedRec =
+    opts?.allowedRecordingIds && opts.allowedRecordingIds.length > 0
+      ? new Set(opts.allowedRecordingIds)
+      : null;
+  const allowedTask =
+    opts?.allowedTaskIds && opts.allowedTaskIds.length > 0
+      ? new Set(opts.allowedTaskIds)
+      : null;
 
   const taskSelects = [
     "id, type, title, start_ms, end_ms, status, active, selected_in_plan, section_id, metadata",
@@ -107,7 +116,11 @@ export async function collectVocalsForProduce(
     if (t.status === "skipped") continue;
     activeIds.add(t.id);
   }
-  const selectedTaskIds = [...activeIds];
+  let selectedTaskIds = [...activeIds];
+  if (allowedTask) {
+    selectedTaskIds = selectedTaskIds.filter((id) => allowedTask.has(id));
+    diagnostics.push(`task_allowlist applied size=${selectedTaskIds.length}`);
+  }
   const tasks = allTasks.filter((t) => selectedTaskIds.includes(t.id));
   diagnostics.push(`active_plan_tasks=${selectedTaskIds.length}`);
 
@@ -127,6 +140,16 @@ export async function collectVocalsForProduce(
       .order("created_at", { ascending: false });
     if (!error && data) {
       recordings = data as unknown as RecRow[];
+      if (allowedRec) {
+        const before = recordings.length;
+        recordings = recordings.filter((r) => allowedRec.has(r.id));
+        diagnostics.push(`recording_id_allowlist ${before}->${recordings.length}`);
+      }
+      if (allowedTask) {
+        const before = recordings.length;
+        recordings = recordings.filter((r) => r.task_id && allowedTask.has(r.task_id));
+        diagnostics.push(`task_id_allowlist ${before}->${recordings.length}`);
+      }
       diagnostics.push(`recordings=${recordings.length}`);
       break;
     }

@@ -271,18 +271,19 @@ export async function runFullProduceWithCheckpoints(opts: {
     const reportWithProgress: typeof report = async (stage) => {
       await report(stage);
       // Map sub-stages to climbing progress so UI is not frozen at 70
+      // Climb gradually through arrange/pace work (30–70 band) then mix/master.
       const prog: Record<string, number> = {
-        analyzing: 58,
-        restoring: 60,
-        polishing: 64,
-        producing: 66,
-        arranging: 70,
+        analyzing: 28,
+        restoring: 36,
+        polishing: 44,
+        producing: 54,
+        arranging: 62,
         mixing: 78,
         mastering: 88,
         quality_check: 94,
         completed: 99,
       };
-      const p = prog[String(stage)] ?? 70;
+      const p = prog[String(stage)] ?? 58;
       await patch(String(stage === "completed" ? "arranging" : stage), p, {
         ap_checkpoint: { ...cp, phase: "arranging" },
         path: "full",
@@ -325,7 +326,7 @@ export async function runFullProduceWithCheckpoints(opts: {
       if (/timed out/i.test(msg) && budgetOk()) {
         cp.lastCheckpointAt = new Date().toISOString();
         cp.resumedFrom = "arranging";
-        await patch("arranging", 70, {
+        await patch("arranging", 62, {
           ap_checkpoint: cp,
           path: "full",
           message: "Arrangement still running — retrying next tick…",

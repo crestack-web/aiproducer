@@ -46,17 +46,17 @@ export async function runInternalApProduceJob(opts: {
 
   const report = async (stage: ApStage) => {
     const progressMap: Record<string, number> = {
-      analyzing: 20,
-      restoring: 35,
+      queued: 5,
+      analyzing: 18,
+      restoring: 32,
       polishing: 42,
-      producing: 50,
+      producing: 52,
+      arranging: 62,
       mixing: 78,
-      arranging: 70,
-      mastering: 85,
-      quality_check: 92,
+      mastering: 88,
+      quality_check: 94,
       completed: 100,
       failed: 100,
-      queued: 10,
     };
     await patch(stage === "completed" ? "complete" : stage, progressMap[stage] ?? 40);
   };
@@ -88,9 +88,36 @@ export async function runInternalApProduceJob(opts: {
     }
     const beat = resolvedBeat;
 
+    const { data: jobRow } = await supabase
+      .from("jobs")
+      .select("input_data, output_data")
+      .eq("id", jobId)
+      .maybeSingle();
+    const jobIn =
+      jobRow?.input_data && typeof jobRow.input_data === "object"
+        ? (jobRow.input_data as Record<string, unknown>)
+        : {};
+    const jobOut =
+      jobRow?.output_data && typeof jobRow.output_data === "object"
+        ? (jobRow.output_data as Record<string, unknown>)
+        : {};
+    const allowedRecordingIds = (
+      (Array.isArray(jobIn.recording_ids) && jobIn.recording_ids) ||
+      (Array.isArray(jobOut.recording_ids) && jobOut.recording_ids) ||
+      []
+    ).map(String);
+    const allowedTaskIds = (
+      (Array.isArray(jobIn.task_ids) && jobIn.task_ids) ||
+      (Array.isArray(jobOut.task_ids) && jobOut.task_ids) ||
+      []
+    ).map(String);
     const { vocals, placementLog, diagnostics: vocalDiag } = await collectVocalsForProduce(
       supabase,
-      projectId
+      projectId,
+      {
+        allowedRecordingIds: allowedRecordingIds.length ? allowedRecordingIds : undefined,
+        allowedTaskIds: allowedTaskIds.length ? allowedTaskIds : undefined,
+      }
     );
     console.info(
       "[ap-tick] arrangement layers",
