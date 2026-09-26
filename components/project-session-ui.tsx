@@ -1,7 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams} from "next/navigation";
 import {
   StudioPlayer,
   CompactAudioPlayer,
@@ -394,6 +394,7 @@ export default function ProjectDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [savedRecordingId, setSavedRecordingId] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const searchParams = useSearchParams();
   const [planMode, setPlanMode] = useState<PlanMode>("ai");
   /** Full plan list for PlanEditor (includes deselected). Session uses `tasks` (active only). */
   const [planTasks, setPlanTasks] = useState<PlanEditorTask[]>([]);
@@ -1171,7 +1172,36 @@ export default function ProjectDetailPage() {
     }
   }
 
-  /** Beat Ready primary CTA: existing plan → Planner; otherwise open Planner for mode choice. */
+
+  // ?plan=ai | ?plan=scratch from Studio after uploaded beat
+  const planQueryHandled = useRef(false);
+  useEffect(() => {
+    if (planQueryHandled.current) return;
+    const planQ = (searchParams?.get("plan") || "").toLowerCase();
+    if (!planQ) return;
+    if (loading) return;
+    planQueryHandled.current = true;
+    if (planQ === "ai") {
+      void generateAiPlan("ai");
+    } else if (planQ === "scratch") {
+      setPlanMode("scratch");
+      void fetch(`/api/projects/${id}/plan`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear_to_scratch" }),
+      }).catch(() => undefined);
+      openPlanner();
+    }
+    // strip query so refresh does not re-fire
+    try {
+      router.replace(`/app/studio/${id}`);
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams, id]);
+
+    /** Beat Ready primary CTA: existing plan → Planner; otherwise open Planner for mode choice. */
   async function startProducerSession() {
     if (
       tasks.length > 0 ||

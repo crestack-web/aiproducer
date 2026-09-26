@@ -615,13 +615,23 @@ function StudioPageInner() {
         }
       }
 
-      // Plan build in background — do not block preview. Failure does not roll back the beat.
-      void fetch(`/api/projects/${project.id}/analyze`, { method: "POST" }).then(async (analyzeRes) => {
-        if (!analyzeRes.ok) {
-          const j = await analyzeRes.json().catch(() => ({}));
-          console.warn("analyze/plan", j);
-        }
-      });
+      // AI beats: build section plan in background. Uploaded beats never auto-plan —
+      // artist chooses "Let AP Plan" or "Build from scratch" (or open Console with no plan).
+      if (beatMode === "ai") {
+        void fetch(`/api/projects/${project.id}/analyze`, { method: "POST" }).then(async (analyzeRes) => {
+          if (!analyzeRes.ok) {
+            const j = await analyzeRes.json().catch(() => ({}));
+            console.warn("analyze/plan", j);
+          }
+        });
+      } else {
+        // Mark plan mode pending so Booth does not assume an AI blueprint exists
+        void fetch(`/api/projects/${project.id}/plan`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "set_mode", mode: "scratch" }),
+        }).catch(() => undefined);
+      }
 
       const title =
         beatMode === "upload" && beatFile
@@ -1251,6 +1261,70 @@ function StudioPageInner() {
               onSeek={seek}
               onSkip={skip}
             />
+
+            {readyBeat.source === "upload" ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "rgba(0,0,0,0.2)",
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 6 }}>
+                YOUR UPLOADED BEAT
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
+                This is your instrumental — not an AP-generated beat. Choose how you want to record on it,
+                or open Console and import vocals with no plan.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/app/studio/${readyBeat.projectId}?plan=ai`)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "none",
+                    background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                    color: "#1A1208",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                  }}
+                >
+                  Let AP Plan
+                  <span style={{ display: "block", fontWeight: 500, fontSize: 11, opacity: 0.85, marginTop: 2 }}>
+                    AP listens to your beat and builds a recording plan
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/app/studio/${readyBeat.projectId}?plan=scratch`)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: "transparent",
+                    color: C.text,
+                    fontWeight: 650,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                  }}
+                >
+                  Build from Scratch
+                  <span style={{ display: "block", fontWeight: 500, fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                    Choose your own sections and what to record
+                  </span>
+                </button>
+              </div>
+            </div>
+            ) : (
             <div
               style={{
                 marginTop: 14,
@@ -1339,6 +1413,8 @@ function StudioPageInner() {
               </button>
             </div>
 
+
+            )}
 
             {beatVersions.length > 1 && versionsProjectId === readyBeat.projectId && (
               <div style={{ marginTop: 12 }}>
