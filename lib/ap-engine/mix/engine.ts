@@ -1,14 +1,14 @@
 import { trimVocalSumToTargetPeak } from "./vocal-bus";
 import { cloneStereo } from "../dsp";
 import type { MixDecision, PcmStereo } from "../types";
-import { applyMixGains, duckBeatFromVocal, sumStereo, autoBalanceGains } from "./balance";
+import { applyMixGains, sumStereo, autoBalanceGains } from "./balance";
 import { applyBeatPresenceCut } from "./masking-lite";
 import { applyMixGlue } from "./glue";
 import { applyBusGrooveLock } from "../production/timing-intelligence";
 import { applyBusArrangementLift } from "../production/vocal-automation";
 
 /**
- * Mix vocal into beat as one production — groove lock, pocket, mask, duck, glue.
+ * Mix vocal into beat — groove lock, presence mask, static balance, glue (no sidechain duck).
  */
 export function mixVocalAndBeat(
   vocalIn: PcmStereo,
@@ -37,9 +37,10 @@ export function mixVocalAndBeat(
   };
   applyMixGains(vocal, beat, liveDecision);
 
-  // 3. Mid-focused duck — R&B needs a real pocket under the lead
-  const duck = Math.max(decision.duckDb, 2.2);
-  duckBeatFromVocal(vocal, beat, duck, decision.duckMidFocus ?? 0.88);
+  // 3. No dynamic sidechain duck — beat level stays steady under vocals
+  // (pumping beat down on vocal / up on silence was the reported defect).
+  // Pocket comes from static gains + presence cut only, not envelope ducking.
+  void decision.duckDb;
 
   // 4. Sum + bus glue
   const trimmed = trimVocalSumToTargetPeak(vocal, -3);

@@ -11,7 +11,6 @@ import {
 } from "@/lib/storage";
 import type { ApStage } from "../types";
 import { collectVocalsForProduce } from "./collect-vocals";
-import { runFastArrangement } from "@/lib/ap-engine/jobs/fast-produce";
 import { runFullProduceWithCheckpoints } from "./run-full-phased";
 
 export async function runInternalApProduceJob(opts: {
@@ -130,111 +129,13 @@ export async function runInternalApProduceJob(opts: {
 
     await report("analyzing");
     /**
-     * Path selection — full engine is default (quality).
-     * Fast path only when PRODUCE_FAST=1 or PRODUCE_FULL_QUALITY=0.
-     * Full engine is sped up via parallel ASR/restore + event-loop yields;
-     * fast remains a last-resort fallback if full errors/timeouts.
+     * Full engine only — fast path removed per product requirement.
+     * Quality mix uses static vocal/beat balance without dynamic sidechain pump.
      */
-    const forceFast =
-      process.env.PRODUCE_FAST === "1" ||
-      process.env.PRODUCE_FAST === "true" ||
-      process.env.PRODUCE_FULL_QUALITY === "0" ||
-      process.env.PRODUCE_FULL_QUALITY === "false";
-    const forceFull =
-      process.env.PRODUCE_FORCE_FULL === "1" ||
-      process.env.PRODUCE_FORCE_FULL === "true" ||
-      process.env.AP_FULL_ENGINE === "1" ||
-      process.env.AP_FULL_ENGINE === "true" ||
-      process.env.PRODUCE_FULL_QUALITY === "1" ||
-      process.env.PRODUCE_FULL_QUALITY === "true";
-    // Default full when not forced-fast. Worker should set PRODUCE_FULL_QUALITY=1.
-    const useFast = forceFast && !forceFull;
     console.info(
       "[ap-tick] path",
-      JSON.stringify({
-        jobId,
-        path: useFast ? "fast" : "full",
-        layers: vocals.length,
-        forceFull,
-        forceFast,
-      })
+      JSON.stringify({ jobId, path: "full", layers: vocals.length })
     );
-
-    const completeViaFast = async (reason: string) => {
-      await patch("mixing", 40, { message: "Assembling vocals on the beat…", path: "fast", reason });
-      const mixPathF = productionMixPath(userId, projectId, jobId, "wav");
-      const masterPathF = productionMasterPath(userId, projectId, jobId, "wav");
-      const fast = await runFastArrangement({
-        beatPath: String(beat.audio_path),
-        vocals: vocals as import("@/lib/ap-engine/jobs/fast-produce").FastVocalLayer[],
-        genre: (project as { genre?: string | null }).genre ?? null,
-        onStage: async (stage) => {
-          const prog =
-            stage === "analyzing"
-              ? 45
-              : stage === "processing_vocals"
-                ? 55
-                : stage === "mixing"
-                  ? 75
-                  : stage === "mastering"
-                    ? 90
-                    : 60;
-          await patch(String(stage), prog, { message: String(stage), path: "fast" });
-        },
-      });
-      const wavBuf: Buffer = Buffer.isBuffer(fast.wav)
-        ? fast.wav
-        : Buffer.from(fast.wav as Uint8Array);
-      await uploadBuffer(masterPathF, wavBuf, "audio/wav");
-      await uploadBuffer(mixPathF, wavBuf, "audio/wav");
-
-      try {
-        await supabase.from("songs").insert({
-          project_id: projectId,
-          audio_path: masterPathF,
-          status: "ready",
-          version: 1,
-          metadata: {
-            mode: "ap-fast",
-            provider: "ap-internal",
-            engineVersion: "ap-fast-stopgap-2",
-            path: "fast",
-            reason,
-            duration_ms: fast.durationMs,
-            layer_count: fast.layerCount,
-          },
-        });
-      } catch (songErr) {
-        console.warn("[ap-tick] songs insert", songErr);
-      }
-
-      await patch("complete", 100, {
-        path: "fast",
-        master_path: masterPathF,
-        mix_path: mixPathF,
-        mode: "ap-fast",
-        engineVersion: "ap-fast-stopgap-2",
-        duration_ms: fast.durationMs,
-        layer_count: fast.layerCount,
-        reason,
-      });
-      await supabase.from("projects").update({ status: "complete" }).eq("id", projectId);
-      return { complete: true as const };
-    };
-
-    if (useFast) {
-      try {
-        return await completeViaFast("default_fast");
-      } catch (fe) {
-        const msg = fe instanceof Error ? fe.message : String(fe);
-        console.error("[ap-tick] fast path failed", msg);
-        await patch("failed", 100, { error: `Produce failed: ${msg}`.slice(0, 400), path: "fast" });
-        await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
-        return { complete: false, error: msg };
-      }
-    }
-
-    // Full AP engine (default quality path).
 
     const mixPath = productionMixPath(userId, projectId, jobId, "wav");
     const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
@@ -276,19 +177,11 @@ export async function runInternalApProduceJob(opts: {
     });
     if (!phased.complete) {
       if (phased.error) {
-        const isTimeout = /timeout|timed out|arrange/i.test(phased.error);
-        console.error("[ap-tick] full engine error", phased.error, "timeout?", isTimeout);
-        if (isTimeout) {
-          try {
-            return await completeViaFast(`full_timeout:${phased.error.slice(0, 80)}`);
-          } catch {
-            /* fall through */
-          }
-        }
+        console.error("[ap-tick] full engine error", phased.error);
         await supabase.from("projects").update({ status: "recording" }).eq("id", projectId);
         return { complete: false, error: phased.error };
       }
-      // Checkpoint saved — next worker poll resumes full engine (do not demote to fast).
+      // Checkpoint saved — next worker poll resumes full engine.
       return { complete: false };
     }
     engineVersion = phased.engineVersion || "ap-full";

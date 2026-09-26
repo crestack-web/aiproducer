@@ -16,9 +16,9 @@
 process.env.PRODUCE_WORKER = "1";
 // Full-quality engine is the default. Speed comes from parallel ASR/restore +
 // event-loop yields inside runApArrangement — not from demoting to fast mix.
-if (process.env.PRODUCE_FULL_QUALITY === undefined) {
-  process.env.PRODUCE_FULL_QUALITY = "1";
-}
+// Fast path is disabled in code — always full-quality engine.
+process.env.PRODUCE_FULL_QUALITY = "1";
+process.env.PRODUCE_FAST = "0";
 process.env.PRODUCE_EXECUTION = process.env.PRODUCE_EXECUTION || "worker";
 
 import { claimNextProduceJobDetailed, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
