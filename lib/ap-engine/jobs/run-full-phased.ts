@@ -261,8 +261,10 @@ export async function runFullProduceWithCheckpoints(opts: {
       return { complete: false, error: msg };
     }
 
-    // Soft wall: leave headroom before tick deadline so we can fail cleanly
-    const arrangeBudgetMs = Math.max(60_000, deadlineAt - Date.now() - 30_000);
+    // Soft wall: cap arrange so we never sit at 70% for the full tick budget.
+    // Sync DSP does not yield to Promise.race timers — prefer failing over to fast.
+    const remaining = deadlineAt - Date.now() - 30_000;
+    const arrangeBudgetMs = Math.max(45_000, Math.min(5 * 60_000, remaining));
     const arrangeDeadline = Date.now() + arrangeBudgetMs;
 
     const reportWithProgress: typeof report = async (stage) => {

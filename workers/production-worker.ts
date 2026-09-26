@@ -14,7 +14,12 @@
  *   WORKER_POLL_MS            idle poll interval
  */
 process.env.PRODUCE_WORKER = "1";
-process.env.PRODUCE_FULL_QUALITY = process.env.PRODUCE_FULL_QUALITY || "1";
+// Do NOT default PRODUCE_FULL_QUALITY=1 — that forced runApArrangement for every
+// song and left jobs stuck at arranging/70%. Full engine is opt-in via
+// PRODUCE_FORCE_FULL=1 or AP_FULL_ENGINE=1. Fast path is the production default.
+if (process.env.PRODUCE_FULL_QUALITY === undefined) {
+  process.env.PRODUCE_FULL_QUALITY = "0";
+}
 process.env.PRODUCE_EXECUTION = process.env.PRODUCE_EXECUTION || "worker";
 
 import { claimNextProduceJobDetailed, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
