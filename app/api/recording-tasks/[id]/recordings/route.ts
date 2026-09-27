@@ -455,7 +455,15 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
-    await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+    {
+      const full = await service
+        .from("recording_tasks")
+        .update({ status: "completed", active: true, selected_in_plan: true })
+        .eq("id", taskId);
+      if (full.error) {
+        await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+      }
+    }
 
     let audio_url: string | null = null;
     try {
@@ -551,7 +559,15 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   // Same as direct upload: artist has a take on this track — plan is ready for Produce
-  await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+  {
+      const full = await service
+        .from("recording_tasks")
+        .update({ status: "completed", active: true, selected_in_plan: true })
+        .eq("id", taskId);
+      if (full.error) {
+        await service.from("recording_tasks").update({ status: "completed" }).eq("id", taskId);
+      }
+    }
   try {
     await service.from("recordings").update({ is_selected: true }).eq("id", recording.id as string);
   } catch {

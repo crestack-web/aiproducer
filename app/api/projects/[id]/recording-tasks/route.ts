@@ -142,7 +142,7 @@ export async function POST(req: Request, ctx: Ctx) {
       required: false,
       recommendation: "optional",
       selected_in_plan: true,
-      active: false,
+      active: true,
       start_ms: src.start_ms ?? 0,
       end_ms: src.end_ms ?? (src.start_ms ?? 0) + 8000,
       priority: 0,
@@ -232,7 +232,9 @@ export async function POST(req: Request, ctx: Ctx) {
     required: false,
     recommendation: "optional",
     selected_in_plan: true,
-    active: false,
+    // Must be active so session-preview / Produce keep the track after refresh.
+    // active:false caused uploaded vocals to vanish on reload (beat-only playback).
+    active: true,
     start_ms: start,
     end_ms: end,
     priority: 0,

@@ -107,11 +107,10 @@ export async function collectVocalsForProduce(
     if (error) diagnostics.push(`tasks_err: ${error.message}`);
   }
 
-  // Active plan + every completed task that is not explicitly deselected
+  // Active plan + every completed task still on the plan (incl. legacy active:false uploads)
   const activeIds = activePlanTaskIds(allTasks);
   for (const t of allTasks) {
     if (!isCompletedTaskStatus(t.status)) continue;
-    if (t.active === false) continue;
     if (t.selected_in_plan === false) continue;
     if (t.status === "skipped") continue;
     activeIds.add(t.id);

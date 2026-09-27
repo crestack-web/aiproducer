@@ -149,7 +149,8 @@ export async function GET(_req: Request, ctx: Ctx) {
   for (const t of allTasks) {
     const status = (t.status || "").toLowerCase();
     if (!isCompletedTaskStatus(status)) continue;
-    if (t.active === false) continue;
+    // Soft-removed from plan only — still keep selected uploads that were
+    // created with active:false (legacy console add-track) so refresh keeps vocals.
     if (t.selected_in_plan === false) continue;
     activeIds.add(t.id);
   }
@@ -299,7 +300,10 @@ export async function GET(_req: Request, ctx: Ctx) {
       ? tasks
       : allTasks.filter((t) => {
           const st = (t.status || "").toLowerCase();
-          return st === "completed" && t.selected_in_plan !== false && t.active !== false;
+          return (
+            isCompletedTaskStatus(st) &&
+            t.selected_in_plan !== false
+          );
         });
 
   for (const task of tasksToRender) {

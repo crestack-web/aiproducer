@@ -277,9 +277,17 @@ export async function enqueueProduceSong(
   const activeTaskIds = new Set(
     (activePlanTasks || [])
       .filter((t: { active?: boolean | null; selected_in_plan?: boolean | null; status?: string }) => {
-        if (t.active === false) return false;
+        // selected_in_plan=false = artist removed from plan
+        // active=false alone is NOT enough to drop (legacy console uploads)
         if (t.selected_in_plan === false) return false;
         if (t.status === "skipped") return false;
+        if (t.active === false) {
+          const st = (t.status || "").toLowerCase();
+          // Keep completed/uploaded tracks so Produce matches session-preview
+          if (!["completed", "complete", "done", "recorded", "produced"].includes(st)) {
+            return false;
+          }
+        }
         return true;
       })
       .map((t: { id: string }) => t.id)
@@ -327,7 +335,6 @@ export async function enqueueProduceSong(
 
     const taskIds = (completedTasks || [])
       .filter((t: { id: string; active?: boolean | null; selected_in_plan?: boolean | null }) => {
-        if (t.active === false) return false;
         if (t.selected_in_plan === false) return false;
         return true;
       })
