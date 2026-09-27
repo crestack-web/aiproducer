@@ -997,17 +997,42 @@ export default function ProjectDetailPage() {
         if (statusMasterUrl) setMasterUrl(statusMasterUrl);
         if (typeof st.recording_count === "number") recordingCount = st.recording_count;
 
-        const jobs = (st.jobs || []) as { type?: string; status?: string; stage?: string }[];
+        const jobs = (st.jobs || []) as {
+          type?: string;
+          status?: string;
+          stage?: string;
+          created_at?: string;
+          started_at?: string;
+        }[];
         const produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
         const js = (produceJob?.status || "").toLowerCase();
         if (js === "queued" || js === "processing") {
-          setProducing(true);
-          setScreen("assemble");
-          setProduceStage(produceJob?.stage || "processing");
-          produceStartedAtRef.current = Date.now();
-          produceActiveRef.current = true;
-          resumedRef.current = true;
-          scheduleProducePoll();
+          // If this job has been running for hours (worker lost it), clear and let user re-produce
+          const origin = Date.parse(
+            String(produceJob?.started_at || produceJob?.created_at || "")
+          );
+          const ageMs = origin && Number.isFinite(origin) ? Date.now() - origin : 0;
+          if (ageMs > 2 * 60 * 60 * 1000) {
+            setError(
+              "A previous produce job was stuck. Tap Produce again to start a fresh job — your recordings are safe."
+            );
+            setProducing(false);
+            setProduceStage("failed");
+            // Best-effort cancel so the worker reaper / force produce can supersede
+            void fetch(`/api/projects/${id}/produce/cancel`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reason: "stale_client_resume" }),
+            }).catch(() => undefined);
+          } else {
+            setProducing(true);
+            setScreen("assemble");
+            setProduceStage(produceJob?.stage || "processing");
+            produceStartedAtRef.current = origin && ageMs > 0 ? origin : Date.now();
+            produceActiveRef.current = true;
+            resumedRef.current = true;
+            scheduleProducePoll();
+          }
         } else if (statusMasterUrl) {
           // Produced song — always resume on done (not the recording booth)
           setScreen("done");

@@ -21,7 +21,11 @@ process.env.PRODUCE_FULL_QUALITY = "1";
 process.env.PRODUCE_FAST = "0";
 process.env.PRODUCE_EXECUTION = process.env.PRODUCE_EXECUTION || "worker";
 
-import { claimNextProduceJobDetailed, heartbeatProduceJob } from "../lib/audio/claim-produce-job";
+import {
+  claimNextProduceJobDetailed,
+  reapAbandonedProduceJobs,
+  heartbeatProduceJob,
+} from "../lib/audio/claim-produce-job";
 import { getServiceRoleKeyDiagnostics, getSupabaseEnvDiagnostics } from "../lib/supabase/env";
 import { tickProduceJob } from "../lib/audio/pipeline";
 import { createServiceClient } from "../lib/supabase/service";
@@ -55,16 +59,43 @@ async function processJob(jobId: string): Promise<void> {
   const maxRounds = Number(process.env.WORKER_MAX_ROUNDS || 60);
   const jobStarted = Date.now();
 
+  // Wall clock from first attempt (survives worker restarts / reclaims)
+  const { data: jobMeta } = await supabase
+    .from("jobs")
+    .select("created_at, started_at, output_data")
+    .eq("id", jobId)
+    .maybeSingle();
+  const outMeta =
+    jobMeta?.output_data && typeof jobMeta.output_data === "object"
+      ? (jobMeta.output_data as Record<string, unknown>)
+      : {};
+  const cpMeta =
+    outMeta.ap_checkpoint && typeof outMeta.ap_checkpoint === "object"
+      ? (outMeta.ap_checkpoint as Record<string, unknown>)
+      : {};
+  const wallOriginCandidates = [
+    typeof cpMeta.wallStartedAt === "string" ? Date.parse(cpMeta.wallStartedAt) : 0,
+    jobMeta?.started_at ? Date.parse(String(jobMeta.started_at)) : 0,
+    jobMeta?.created_at ? Date.parse(String(jobMeta.created_at)) : 0,
+  ].filter((n) => n > 0);
+  const wallOrigin = wallOriginCandidates.length ? Math.min(...wallOriginCandidates) : jobStarted;
+
   for (let round = 0; round < maxRounds; round++) {
-    if (Date.now() - jobStarted > JOB_CEILING_MS) {
-      log("JOB_HARD_CEILING", { jobId, elapsedMs: Date.now() - jobStarted, ceilingMs: JOB_CEILING_MS });
+    const wallAge = Date.now() - wallOrigin;
+    if (wallAge > JOB_CEILING_MS || Date.now() - jobStarted > JOB_CEILING_MS) {
+      log("JOB_HARD_CEILING", {
+        jobId,
+        elapsedMs: Date.now() - jobStarted,
+        wallAgeMs: Date.now() - wallOrigin,
+        ceilingMs: JOB_CEILING_MS,
+      });
       await supabase
         .from("jobs")
         .update({
           status: "failed",
           stage: "failed",
           progress: 100,
-          error: `Produce exceeded safety ceiling (${Math.round(JOB_CEILING_MS / 60000)} min). Contact support if this song is unusually long.`,
+          error: `Produce exceeded safety ceiling (${Math.round(JOB_CEILING_MS / 60000)} min). Tap Produce again — your recordings are safe.`,
           completed_at: new Date().toISOString(),
         })
         .eq("id", jobId)
@@ -113,6 +144,17 @@ async function processJob(jobId: string): Promise<void> {
   }
 
   log("JOB_MAX_ROUNDS", { jobId, maxRounds });
+  await supabase
+    .from("jobs")
+    .update({
+      status: "failed",
+      stage: "failed",
+      progress: 100,
+      error: `Produce stopped after ${maxRounds} worker rounds without finishing. Tap Produce again — your recordings are safe.`,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .in("status", ["queued", "processing"]);
 }
 
 function sleep(ms: number) {
@@ -132,7 +174,8 @@ async function loop() {
 
   for (;;) {
     try {
-      const claim = await claimNextProduceJobDetailed(WORKER_ID);
+      const claim = await claimNextProduceJobDetailed,
+  reapAbandonedProduceJobs(WORKER_ID);
       log("CLAIM_QUERY_RESULT", {
         matchCount: claim.queuedMatchCount,
         staleProcessingCount: claim.staleProcessingCount,

@@ -34,7 +34,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { data: jobs } = await service
     .from("jobs")
     .select(
-      "id, type, status, progress, stage, error, provider_task_id, output_data, created_at, completed_at, attempts"
+      "id, type, status, progress, stage, error, provider_task_id, output_data, created_at, started_at, completed_at, attempts"
     )
     .eq("project_id", id)
     .order("created_at", { ascending: false })

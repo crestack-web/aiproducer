@@ -199,3 +199,76 @@ export async function heartbeatProduceJob(jobId: string, workerId: string): Prom
   };
   await supabase.from("jobs").update({ output_data: out }).eq("id", jobId).eq("status", "processing");
 }
+
+
+/**
+ * Fail PRODUCE_SONG jobs that have been processing longer than the wall ceiling
+ * (default 60m, or PRODUCE_JOB_MAX_MS). Prevents "stuck since yesterday" zombies
+ * when workers restart and reclaim without accumulating wall time.
+ */
+export async function reapAbandonedProduceJobs(workerId: string): Promise<number> {
+  const supabase = createServiceClient();
+  const fromEnv = Number(process.env.PRODUCE_JOB_MAX_MS || "");
+  const ceilingMs = Number.isFinite(fromEnv) && fromEnv >= 600_000
+    ? Math.floor(fromEnv)
+    : 60 * 60_000; // 60 minutes default wall clock for a single produce
+
+  const { data: rows, error } = await supabase
+    .from("jobs")
+    .select("id, project_id, status, stage, output_data, started_at, created_at")
+    .eq("type", "PRODUCE_SONG")
+    .eq("status", "processing")
+    .order("started_at", { ascending: true, nullsFirst: true })
+    .limit(25);
+
+  if (error || !rows?.length) return 0;
+
+  const now = Date.now();
+  let reaped = 0;
+  for (const row of rows) {
+    const out =
+      row.output_data && typeof row.output_data === "object"
+        ? (row.output_data as Record<string, unknown>)
+        : {};
+    const cp =
+      out.ap_checkpoint && typeof out.ap_checkpoint === "object"
+        ? (out.ap_checkpoint as Record<string, unknown>)
+        : {};
+    const wallStart = typeof cp.wallStartedAt === "string" ? Date.parse(cp.wallStartedAt) : 0;
+    const lockAt = typeof out.tick_lock_at === "string" ? Date.parse(out.tick_lock_at) : 0;
+    const startedAt = row.started_at ? Date.parse(String(row.started_at)) : 0;
+    const createdAt = row.created_at ? Date.parse(String(row.created_at)) : 0;
+    // True wall clock from first produce attempt on this job
+    const origin = Math.min(
+      ...[wallStart, startedAt, createdAt].filter((n) => n > 0)
+    );
+    if (!origin || !Number.isFinite(origin)) continue;
+    const ageMs = now - origin;
+    if (ageMs < ceilingMs) continue;
+
+    // Also require lock to be stale OR age > 2x ceiling (zombie heartbeats)
+    const lockAge = lockAt ? now - lockAt : ageMs;
+    if (lockAge < STALE_MS && ageMs < ceilingMs * 2) continue;
+
+    const { error: upErr } = await supabase
+      .from("jobs")
+      .update({
+        status: "failed",
+        stage: "failed",
+        progress: 100,
+        error: `Produce stalled after ${Math.round(ageMs / 60000)} min (safety limit). Tap Produce again — your recordings are safe.`,
+        completed_at: new Date().toISOString(),
+        output_data: {
+          ...out,
+          abandoned: true,
+          abandoned_at: new Date().toISOString(),
+          abandoned_by: workerId,
+          abandoned_age_ms: ageMs,
+        },
+      })
+      .eq("id", row.id)
+      .eq("status", "processing");
+    if (!upErr) reaped += 1;
+  }
+  return reaped;
+}
