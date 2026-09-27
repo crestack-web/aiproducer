@@ -185,5 +185,79 @@ export async function PATCH(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Could not update task" }, { status: 500 });
   }
 
+  // Console free-move: keep recording placement in sync with the clip position.
+  // session-preview / Produce resolve placement from the recording row first; if we
+  // only update task.start_ms the clip snaps back to 0 (or the original section).
+  if (parsed.data.start_ms !== undefined || parsed.data.end_ms !== undefined) {
+    try {
+      await syncRecordingPlacementForTask(service, id, nextStart, nextEnd);
+    } catch (e) {
+      console.error("[recording-tasks PATCH] placement sync", e);
+    }
+  }
+
   return NextResponse.json({ task: updated });
+}
+
+/**
+ * Artist dragged a clip on the Console timeline → vocal file sample 0 maps to startMs.
+ * Zero the capture offset so resolvePlacementStartMs returns the new song position.
+ */
+async function syncRecordingPlacementForTask(
+  service: ReturnType<typeof createServiceClient>,
+  taskId: string,
+  startMs: number,
+  endMs: number
+) {
+  const selects = [
+    "id, metadata, is_selected",
+    "id, metadata",
+    "id",
+  ];
+  let recs: Array<{ id: string; metadata?: unknown; is_selected?: boolean | null }> = [];
+  for (const cols of selects) {
+    const { data, error } = await service
+      .from("recordings")
+      .select(cols)
+      .eq("task_id", taskId)
+      .order("take_number", { ascending: false });
+    if (!error && data) {
+      recs = data as typeof recs;
+      break;
+    }
+  }
+  if (!recs.length) return;
+
+  const target =
+    recs.find((r) => r.is_selected === true) ||
+    recs[0];
+  if (!target?.id) return;
+
+  const prevMeta =
+    target.metadata && typeof target.metadata === "object" && !Array.isArray(target.metadata)
+      ? { ...(target.metadata as Record<string, unknown>) }
+      : {};
+  prevMeta.placement_start_ms = startMs;
+  prevMeta.recording_offset_ms = 0;
+  prevMeta.console_placed = true;
+  prevMeta.console_placed_at = new Date().toISOString();
+
+  const attempts: Record<string, unknown>[] = [
+    {
+      timeline_start_ms: startMs,
+      timeline_end_ms: endMs,
+      recording_offset_ms: 0,
+      metadata: prevMeta,
+    },
+    {
+      timeline_start_ms: startMs,
+      timeline_end_ms: endMs,
+      metadata: prevMeta,
+    },
+    { metadata: prevMeta },
+  ];
+  for (const patch of attempts) {
+    const { error } = await service.from("recordings").update(patch).eq("id", target.id);
+    if (!error) return;
+  }
 }

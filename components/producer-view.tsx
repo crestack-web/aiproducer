@@ -1283,13 +1283,11 @@ export function ProducerView({
     let end = d.originEnd;
     const minLen = 400;
     if (d.mode === "move") {
-      const dur = d.originEnd - d.originStart;
+      const dur = Math.max(400, d.originEnd - d.originStart);
+      // Free placement along the song — do not clamp to known totalMs
+      // (beat duration may still be loading; uploads must be movable past 0).
       start = Math.max(0, d.originStart + dxMs);
       end = start + dur;
-      if (end > totalMs) {
-        end = totalMs;
-        start = Math.max(0, end - dur);
-      }
     } else if (d.mode === "trim-start") {
       start = Math.max(0, Math.min(d.originEnd - minLen, d.originStart + dxMs));
     } else {
@@ -5017,7 +5015,7 @@ export function ProducerView({
                             ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
                             : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
-                      cursor: tr.kind === "vocal" ? (isTakeEditing ? "col-resize" : isMock ? "pointer" : "grab") : "default",
+                      cursor: tr.kind === "vocal" ? (isTakeEditing ? "col-resize" : "grab") : "default",
                       touchAction: "none",
                       opacity: dimmed ? 0.4 : 1,
                       outline: isTakeEditing
@@ -5051,7 +5049,8 @@ export function ProducerView({
                               }
                               return;
                             }
-                            if (!isMock && !isLiveRec) {
+                            // Allow drag even before waveform URL resolves (uploaded takes).
+                            if (!isLiveRec) {
                               onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
                             }
                           }
