@@ -2857,8 +2857,10 @@ export function ProducerView({
               setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
             }
             if (jj.status === "failed" || jj.status === "FAILED") {
+              setProduceJobId(null);
               setProduceError(humanProduceError(jj.error, jj.stage));
               setProduceUi("failed");
+              setProduceProgress(100);
               return "failed";
             }
             if (
@@ -2886,16 +2888,32 @@ export function ProducerView({
         error?: string;
         output_data?: Record<string, unknown>;
       }[];
-      const produceJob =
-        (produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined) ||
-        jobs.find(
-          (j) =>
-            j.type === "PRODUCE_SONG" &&
-            ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
-        ) ||
-        jobs.find((j) => j.type === "PRODUCE_SONG");
+      const activeJob = jobs.find(
+        (j) =>
+          j.type === "PRODUCE_SONG" &&
+          ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+      );
+      const tracked =
+        produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined;
+      const trackedStatus = String(tracked?.status || "").toLowerCase();
+      let produceJob = activeJob;
+      if (!produceJob && tracked) {
+        if (trackedStatus === "failed") {
+          setProduceJobId(null);
+          setProduceError(humanProduceError(tracked.error, tracked.stage));
+          setProduceUi("failed");
+          setProduceProgress(100);
+          return "failed";
+        }
+        produceJob = tracked;
+      }
+      if (!produceJob) {
+        produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+      }
 
-      if (produceJob?.id) setProduceJobId(String(produceJob.id));
+      if (produceJob?.id && String(produceJob.status || "").toLowerCase() !== "failed") {
+        setProduceJobId(String(produceJob.id));
+      }
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
       if (produceJob?.status) setProduceJobStatus(String(produceJob.status));
       if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
@@ -2988,7 +3006,7 @@ export function ProducerView({
         }
         setProduceUi("failed");
         setProduceError(
-          "This is taking longer than expected. Tap Try again — if AP is still working, production will resume."
+          "This is taking longer than expected. Tap Produce again to start a fresh job — your recordings are safe."
         );
         produceActiveRef.current = false;
         return;
@@ -3141,6 +3159,13 @@ export function ProducerView({
       }
     }
 
+    // Fresh produce: stop polling the previous job and clear its id
+    clearProducePoll();
+    produceActiveRef.current = false;
+    setProduceJobId(null);
+    setProduceJobStatus("queued");
+    setProduceProgress(0);
+    setProduceError(null);
     setProduceStage("preparing takes");
     setProduceUi("producing");
 

@@ -442,8 +442,10 @@ export async function enqueueProduceSong(
         user_id: userId,
         mode,
         attempt,
+        fresh_enqueue: true,
         recording_ids: rows.map((r) => r.id),
         task_ids: [...new Set(rows.map((r) => r.task_id).filter(Boolean))],
+        // Never carry ap_checkpoint from a prior failed job
       },
       attempts: 0,
     })
