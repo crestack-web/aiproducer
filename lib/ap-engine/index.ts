@@ -297,14 +297,21 @@ export async function runApArrangement(
         skipped: "deadline",
       });
     } else {
+      // ASR is expensive. Only lead needs lyrics for Producer Mind.
+      // Stack/choir layers share the same words — transcribing all 10 was a main
+      // reason jobs hit the 30m safety ceiling.
       const asrTargets: number[] = [];
+      const hasLead = normalizedLayers.some(
+        (l) => l.role === "lead" || l.role === "main"
+      );
       for (let i = 0; i < normalizedLayers.length; i++) {
         const layer = normalizedLayers[i];
-        const shouldAsr =
-          layer.role === "lead" ||
-          layer.role === "double" ||
-          (isFullQualityProduce() && String(layer.role).startsWith("harmony")) ||
-          (!isFullQualityProduce() && normalizedLayers.length <= 3);
+        const role = String(layer.role || "");
+        let shouldAsr = role === "lead" || role === "main";
+        if (!hasLead && asrTargets.length === 0 && (role === "double" || role.startsWith("harmony"))) {
+          // Choir-only project: one ASR pass is enough for mind notes
+          shouldAsr = true;
+        }
         if (shouldAsr) asrTargets.push(i);
       }
       await mapPool(asrTargets, 3, async (i) => {

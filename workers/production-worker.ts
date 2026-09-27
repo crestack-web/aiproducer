@@ -10,7 +10,7 @@
  *   PRODUCE_WORKER=1          (set automatically below)
  *   PRODUCE_FULL_QUALITY=1    full ASR + QC retries
  *   WORKER_TICK_MS            per-tick budget (default 20m)
- *   PRODUCE_JOB_MAX_MS        runaway ceiling (default 30m)
+ *   PRODUCE_JOB_MAX_MS        runaway ceiling (default 90m)
  *   WORKER_POLL_MS            idle poll interval
  */
 process.env.PRODUCE_WORKER = "1";

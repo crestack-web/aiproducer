@@ -42,14 +42,18 @@ export function isFullQualityProduce(): boolean {
 /** Soft wall-clock for a single worker tick (ms). Safety net, not quality-shaping. */
 export function produceWorkerTickBudgetMs(): number {
   const n = Number(process.env.WORKER_TICK_MS || process.env.PRODUCE_WORKER_TICK_MS || 1_200_000);
-  // default 20 minutes; clamp 5m–45m
+  // default 20 minutes; clamp 5m–60m (choir stacks need longer single ticks)
   if (!Number.isFinite(n)) return 1_200_000;
-  return Math.max(300_000, Math.min(45 * 60_000, Math.floor(n)));
+  return Math.max(300_000, Math.min(60 * 60_000, Math.floor(n)));
 }
 
-/** Absolute job runaway protection (ms wall from first claim). Default 30 minutes. */
+/**
+ * Absolute job runaway protection (ms wall from first claim).
+ * Default 90 minutes — multi-layer choir produces often exceed the old 30m ceiling
+ * even when the engine is healthy (not stuck).
+ */
 export function produceJobHardCeilingMs(): number {
-  const n = Number(process.env.PRODUCE_JOB_MAX_MS || 30 * 60_000);
-  if (!Number.isFinite(n)) return 30 * 60_000;
-  return Math.max(600_000, Math.min(120 * 60_000, Math.floor(n)));
+  const n = Number(process.env.PRODUCE_JOB_MAX_MS || 90 * 60_000);
+  if (!Number.isFinite(n)) return 90 * 60_000;
+  return Math.max(20 * 60_000, Math.min(3 * 60 * 60_000, Math.floor(n)));
 }

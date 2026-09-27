@@ -211,7 +211,7 @@ export async function reapAbandonedProduceJobs(workerId: string): Promise<number
   const fromEnv = Number(process.env.PRODUCE_JOB_MAX_MS || "");
   const ceilingMs = Number.isFinite(fromEnv) && fromEnv >= 600_000
     ? Math.floor(fromEnv)
-    : 60 * 60_000; // 60 minutes default wall clock for a single produce
+    : 90 * 60_000; // align with produceJobHardCeilingMs default
 
   const { data: rows, error } = await supabase
     .from("jobs")
