@@ -301,13 +301,11 @@ export async function runApArrangement(
       // Stack/choir layers share the same words — transcribing all 10 was a main
       // reason jobs hit the 30m safety ceiling.
       const asrTargets: number[] = [];
-      const hasLead = normalizedLayers.some(
-        (l) => l.role === "lead" || l.role === "main"
-      );
+      const hasLead = normalizedLayers.some((l) => l.role === "lead");
       for (let i = 0; i < normalizedLayers.length; i++) {
         const layer = normalizedLayers[i];
         const role = String(layer.role || "");
-        let shouldAsr = role === "lead" || role === "main";
+        let shouldAsr = role === "lead";
         if (!hasLead && asrTargets.length === 0 && (role === "double" || role.startsWith("harmony"))) {
           // Choir-only project: one ASR pass is enough for mind notes
           shouldAsr = true;
