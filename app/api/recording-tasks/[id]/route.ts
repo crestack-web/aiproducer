@@ -209,21 +209,34 @@ async function syncRecordingPlacementForTask(
   startMs: number,
   endMs: number
 ) {
+  type RecRow = { id: string; metadata?: unknown; is_selected?: boolean | null };
   const selects = [
     "id, metadata, is_selected",
     "id, metadata",
     "id",
   ];
-  let recs: Array<{ id: string; metadata?: unknown; is_selected?: boolean | null }> = [];
+  let recs: RecRow[] = [];
   for (const cols of selects) {
     const { data, error } = await service
       .from("recordings")
       .select(cols)
       .eq("task_id", taskId)
       .order("take_number", { ascending: false });
-    if (!error && data) {
-      recs = data as typeof recs;
-      break;
+    if (!error && Array.isArray(data) && data.length) {
+      recs = (data as unknown[])
+        .map((row) => {
+          if (!row || typeof row !== "object") return null;
+          const r = row as Record<string, unknown>;
+          const id = typeof r.id === "string" ? r.id : null;
+          if (!id) return null;
+          return {
+            id,
+            metadata: r.metadata,
+            is_selected: typeof r.is_selected === "boolean" ? r.is_selected : null,
+          } satisfies RecRow;
+        })
+        .filter((r): r is RecRow => r != null);
+      if (recs.length) break;
     }
   }
   if (!recs.length) return;
