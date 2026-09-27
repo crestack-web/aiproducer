@@ -174,8 +174,10 @@ async function loop() {
 
   for (;;) {
     try {
-      const claim = await claimNextProduceJobDetailed,
-  reapAbandonedProduceJobs(WORKER_ID);
+      const reaped = await reapAbandonedProduceJobs(WORKER_ID).catch(() => 0);
+      if (reaped > 0) log("REAPED_ABANDONED", { count: reaped });
+
+      const claim = await claimNextProduceJobDetailed(WORKER_ID);
       log("CLAIM_QUERY_RESULT", {
         matchCount: claim.queuedMatchCount,
         staleProcessingCount: claim.staleProcessingCount,
