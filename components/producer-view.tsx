@@ -2283,13 +2283,17 @@ export function ProducerView({
         }
       }
 
+      const named =
+        (typeof task.title === "string" && task.title.trim()) ||
+        (addTitle && addTitle.trim()) ||
+        (task.type || addType).replace(/_/g, " ");
       setLayers((prev) => [
         ...prev,
         {
           id: task.id,
-          label: (task.type || addType).replace(/_/g, " "),
+          label: named,
           role: task.type || addType,
-          sectionLabel: task.title || addTitle || "Custom",
+          sectionLabel: named,
           startMs: Number(task.start_ms) || startMs,
           endMs: Number(task.end_ms) || startMs + 8000,
           audioUrl,
@@ -2427,7 +2431,7 @@ export function ProducerView({
           }
           return Math.max(l.endMs, l.startMs + 500);
         })(),
-        sub: l.sectionLabel,
+        sub: l.sectionLabel || l.label,
         url: l.audioUrl,
       });
     }

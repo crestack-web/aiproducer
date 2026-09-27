@@ -388,7 +388,10 @@ export async function GET(_req: Request, ctx: Ctx) {
       section_id:
         (task as { section_id?: string | null }).section_id ??
         ((task.metadata as { section_id?: string } | null | undefined)?.section_id ?? null),
-      section_label: taskMeta.section_label ?? task.metadata?.section_label ?? null,
+      section_label:
+        taskMeta.section_label ??
+        task.metadata?.section_label ??
+        (typeof task.title === "string" && task.title.trim() ? task.title.trim() : null),
       start_ms,
       end_ms,
       start_bar: taskMeta.start_bar ?? null,

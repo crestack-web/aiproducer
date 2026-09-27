@@ -238,6 +238,8 @@ export async function POST(req: Request, ctx: Ctx) {
     start_ms: start,
     end_ms: end,
     priority: 0,
+    // Drive yellow section banners from the name the artist typed
+    metadata: { section_label: title },
   };
 
   // Schema-resilient insert

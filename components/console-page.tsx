@@ -142,10 +142,18 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
                 : typeof meta.track_color === "string"
                   ? meta.track_color
                   : undefined;
+            // AI plan stores section_label (Verse / Chorus). Uploaded tracks use task.title.
+            const titleLabel =
+              typeof tk.title === "string" && tk.title.trim()
+                ? tk.title.trim()
+                : undefined;
             const sectionLabel =
-              meta.section_label ||
+              (typeof meta.section_label === "string" && meta.section_label.trim()
+                ? meta.section_label.trim()
+                : undefined) ||
               tk.song_sections?.label ||
-              undefined;
+              titleLabel ||
+              (typeof tk.type === "string" ? tk.type.replace(/_/g, " ") : undefined);
             const place = placementByTask.get(tk.id);
             // Prefer session-preview placement (placementStartMs) over bare plan section times
             const resolvedStart = place?.startMs ?? startMs;
@@ -181,11 +189,15 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         setLayers(nextLayers);
         const byKey = new Map<string, ProducerSection>();
         for (const l of nextLayers) {
-          const key = `${l.sectionLabel || "Section"}:${l.startMs}`;
+          const banner =
+            (l.sectionLabel && String(l.sectionLabel).trim()) ||
+            (l.label && String(l.label).trim()) ||
+            "Section";
+          const key = `${banner}:${l.startMs}`;
           if (!byKey.has(key)) {
             byKey.set(key, {
               id: key,
-              label: l.sectionLabel || "Section",
+              label: banner,
               startMs: l.startMs,
               endMs: l.endMs,
             });
