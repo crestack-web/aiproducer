@@ -78,6 +78,15 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   pan: 0,
 };
 
+/** One audio region on a track (split clips share the same track). */
+export type ProducerClip = {
+  id: string;
+  startMs: number;
+  endMs: number;
+  audioUrl?: string | null;
+  recordingId?: string | null;
+};
+
 export type ProducerLayer = {
   id: string;
   label: string;
@@ -90,7 +99,22 @@ export type ProducerLayer = {
   recordingId?: string | null;
   color?: string;
   trackFx?: TrackFx | null;
+  /** When set, track shows multiple clips (DAW-style split) on the same lane */
+  clips?: ProducerClip[];
 };
+
+function clipsForLayer(l: ProducerLayer): ProducerClip[] {
+  if (l.clips && l.clips.length > 0) return l.clips;
+  return [
+    {
+      id: l.recordingId || l.id,
+      startMs: l.startMs,
+      endMs: l.endMs,
+      audioUrl: l.audioUrl,
+      recordingId: l.recordingId,
+    },
+  ];
+}
 
 export type ProducerSection = {
   id: string;
@@ -195,6 +219,21 @@ function formatPlayhead(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec - m * 60;
   return `${String(m).padStart(2, "0")}:${s.toFixed(3).padStart(6, "0")}`;
+}
+
+function ScissorsIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.75" />
+      <circle cx="6" cy="18" r="2.5" stroke="currentColor" strokeWidth="1.75" />
+      <path
+        d="M8.2 7.5 L20 18.5 M8.2 16.5 L20 5.5"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
 function ZoomIcon({ zoomIn }: { zoomIn: boolean }) {
@@ -774,6 +813,7 @@ export function ProducerView({
   const [colorById, setColorById] = useState<Record<string, string>>({});
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [trackPrompt, setTrackPrompt] = useState("");
   const [productionDirection, setProductionDirection] = useState<ProductionDirection | null>(null);
   const [directionNote, setDirectionNote] = useState<string | null>(null);
@@ -1252,7 +1292,26 @@ export function ProducerView({
   }
 
   function updateLocalLayer(id: string, startMs: number, endMs: number) {
-    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, startMs, endMs } : l)));
+    const sep = id.indexOf("::");
+    const layerId = sep >= 0 ? id.slice(0, sep) : id;
+    const clipId = sep >= 0 ? id.slice(sep + 2) : null;
+    setLayers((prev) =>
+      prev.map((l) => {
+        if (l.id !== layerId) return l;
+        if (!clipId || !l.clips || l.clips.length === 0) {
+          return { ...l, startMs, endMs };
+        }
+        const clips = l.clips.map((c) =>
+          c.id === clipId ? { ...c, startMs, endMs } : c
+        );
+        return {
+          ...l,
+          clips,
+          startMs: Math.min(...clips.map((c) => c.startMs)),
+          endMs: Math.max(...clips.map((c) => c.endMs)),
+        };
+      })
+    );
   }
 
   function onClipPointerDown(
@@ -1323,7 +1382,31 @@ export function ProducerView({
         after: { startMs: lastStart, endMs: lastEnd },
       });
     }
-    void persistLayer(id, { start_ms: lastStart, end_ms: lastEnd });
+    const sep = id.indexOf("::");
+    const layerId = sep >= 0 ? id.slice(0, sep) : id;
+    const clipId = sep >= 0 ? id.slice(sep + 2) : null;
+    const layer = layers.find((l) => l.id === layerId);
+    if (clipId && layer?.clips && layer.clips.length > 0) {
+      const clips = layer.clips.map((c) =>
+        c.id === clipId ? { ...c, startMs: lastStart, endMs: lastEnd } : c
+      );
+      void fetch(`/api/recording-tasks/${layerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_ms: Math.min(...clips.map((c) => c.startMs)),
+          end_ms: Math.max(...clips.map((c) => c.endMs)),
+          console_clips: clips.map((c) => ({
+            id: c.id,
+            start_ms: c.startMs,
+            end_ms: c.endMs,
+            recording_id: c.recordingId || null,
+          })),
+        }),
+      }).then(() => onLayersChanged?.());
+    } else {
+      void persistLayer(layerId, { start_ms: lastStart, end_ms: lastEnd });
+    }
   }
 
   async function makeChoir(
@@ -2100,21 +2183,33 @@ export function ProducerView({
   }
 
   /**
-   * DAW split: cut selected vocal at the playhead into two independent clips.
-   * Left stays on the current track; right becomes a new track at the cut point.
+   * DAW split: cut the clip under the playhead into two regions on the SAME track.
+   * Does not create a new track or rename anything.
    */
   async function splitSelectedAtPlayhead() {
     const id = selectedTrackId;
     if (!id || id === "beat" || !projectId) return;
     const layer = layers.find((l) => l.id === id);
-    if (!layer?.audioUrl) {
-      setEditMsg("Select a vocal with audio, then place the playhead on the clip to split");
+    if (!layer) {
+      setEditMsg("Select a vocal track to split");
       return;
     }
-    const clipDur = Math.max(0, layer.endMs - layer.startMs);
-    const localMs = playheadMs - layer.startMs;
+    const existing = clipsForLayer(layer);
+    const target =
+      existing.find(
+        (c) => playheadMs > c.startMs + 200 && playheadMs < c.endMs - 200
+      ) ||
+      existing.find(
+        (c) => playheadMs >= c.startMs && playheadMs <= c.endMs
+      );
+    if (!target?.audioUrl) {
+      setEditMsg("Place the playhead inside a clip on this track to split");
+      return;
+    }
+    const localMs = playheadMs - target.startMs;
+    const clipDur = Math.max(0, target.endMs - target.startMs);
     if (localMs < 250 || localMs > clipDur - 250) {
-      setEditMsg("Move the playhead inside the clip (not too close to the edges) to split");
+      setEditMsg("Move the playhead inside the clip (not too close to the edges)");
       return;
     }
     const ctx = getEditAudioCtx() || getCtx();
@@ -2126,68 +2221,97 @@ export function ProducerView({
     setEditMsg("Splitting clip…");
     try {
       if (ctx.state === "suspended") await ctx.resume();
-      const full = await decodeAudioUrl(ctx, layer.audioUrl);
-      // Map timeline cut into file time (clip starts at file 0 for console-placed takes)
+      const full = await decodeAudioUrl(ctx, target.audioUrl);
       const { left, right } = splitBufferAtMs(ctx, full, localMs);
       const leftDur = bufferDurationMs(left);
       const rightDur = bufferDurationMs(right);
 
-      // Left half replaces take on the original track
+      // Both halves stay on this task — same track name/color
       const leftUp = await uploadBufferAsTake(id, left, "split_left");
-      const leftEnd = layer.startMs + leftDur;
-      await persistLayer(id, { start_ms: layer.startMs, end_ms: leftEnd });
+      const rightUp = await uploadBufferAsTake(id, right, "split_right");
 
-      // Right half → new track at the cut
-      const rightTitle = `${layer.label || layer.role || "Vocal"} (B)`;
-      const cr = await fetch(`/api/projects/${projectId}/recording-tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: layer.role || "custom",
-          title: rightTitle,
-          start_ms: playheadMs,
-          end_ms: playheadMs + rightDur,
-        }),
+      const leftClip: ProducerClip = {
+        id: leftUp.recordingId || `${id}-L-${Date.now()}`,
+        startMs: target.startMs,
+        endMs: target.startMs + leftDur,
+        audioUrl: leftUp.audioUrl || target.audioUrl,
+        recordingId: leftUp.recordingId,
+      };
+      const rightClip: ProducerClip = {
+        id: rightUp.recordingId || `${id}-R-${Date.now()}`,
+        startMs: playheadMs,
+        endMs: playheadMs + rightDur,
+        audioUrl: rightUp.audioUrl,
+        recordingId: rightUp.recordingId,
+      };
+
+      // Persist placement for both recordings + clip list on the task
+      await persistLayer(id, {
+        start_ms: Math.min(leftClip.startMs, rightClip.startMs),
+        end_ms: Math.max(leftClip.endMs, rightClip.endMs),
       });
-      const cj = await cr.json().catch(() => ({}));
-      if (!cr.ok || !cj.task?.id) {
-        throw new Error(typeof cj.error === "string" ? cj.error : "Could not create right clip");
+      // Placement for produce/session-preview
+      for (const clip of [leftClip, rightClip]) {
+        if (!clip.recordingId) continue;
+        try {
+          await fetch(`/api/recording-tasks/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              start_ms: clip.startMs,
+              end_ms: clip.endMs,
+            }),
+          });
+        } catch {
+          /* best-effort; clip list is source of truth in UI */
+        }
       }
-      const rightId = String(cj.task.id);
-      const rightUp = await uploadBufferAsTake(rightId, right, "split_right");
-      await persistLayer(rightId, {
-        start_ms: playheadMs,
-        end_ms: playheadMs + rightDur,
-      });
-
-      setLayers((prev) => {
-        const next = prev.map((l) =>
-          l.id === id
-            ? {
-                ...l,
-                audioUrl: leftUp.audioUrl || l.audioUrl,
-                endMs: leftEnd,
-                recordingId: leftUp.recordingId || l.recordingId,
-              }
-            : l
-        );
-        next.push({
-          id: rightId,
-          label: rightTitle,
-          role: layer.role || "custom",
-          sectionLabel: rightTitle,
-          startMs: playheadMs,
-          endMs: playheadMs + rightDur,
-          audioUrl: rightUp.audioUrl,
-          recordingId: rightUp.recordingId,
-          color: layer.color,
+      // Store multi-clip map on task metadata
+      try {
+        const nextClips = [
+          ...existing.filter((c) => c.id !== target.id),
+          leftClip,
+          rightClip,
+        ].sort((a, b) => a.startMs - b.startMs);
+        await fetch(`/api/recording-tasks/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            start_ms: nextClips[0].startMs,
+            end_ms: nextClips[nextClips.length - 1].endMs,
+            console_clips: nextClips.map((c) => ({
+              id: c.id,
+              start_ms: c.startMs,
+              end_ms: c.endMs,
+              recording_id: c.recordingId || null,
+            })),
+          }),
         });
-        return next;
-      });
-      setSelectedTrackId(rightId);
-      setArmedTrackId(rightId);
+      } catch {
+        /* */
+      }
+
+      setLayers((prev) =>
+        prev.map((l) => {
+          if (l.id !== id) return l;
+          const nextClips = [
+            ...existing.filter((c) => c.id !== target.id),
+            leftClip,
+            rightClip,
+          ].sort((a, b) => a.startMs - b.startMs);
+          return {
+            ...l,
+            clips: nextClips,
+            startMs: nextClips[0]?.startMs ?? l.startMs,
+            endMs: nextClips[nextClips.length - 1]?.endMs ?? l.endMs,
+            audioUrl: leftClip.audioUrl || l.audioUrl,
+            recordingId: leftClip.recordingId || l.recordingId,
+          };
+        })
+      );
+      setSelectedClipId(rightClip.id);
       bufferCache.clear();
-      setEditMsg("Split — drag either clip to place it on the beat");
+      setEditMsg("Split on this track — drag either clip to place it");
       onLayersChanged?.();
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Split failed");
@@ -2196,7 +2320,7 @@ export function ProducerView({
     }
   }
 
-  /** Snap clip start to the nearest beat (or 1/2 beat). */
+  /** Snap clip start  /** Snap clip start to the nearest beat (or 1/2 beat). */
   async function quantizeSelectedToBeat(subdivision = 1) {
     const id = selectedTrackId;
     if (!id || id === "beat") return;
@@ -2528,9 +2652,11 @@ export function ProducerView({
     // Soft parent refresh: keep audioUrls already resolved from session-preview
     setLayers((prev) => {
       const urlById = new Map(prev.map((l) => [l.id, l.audioUrl]));
+      const clipsById = new Map(prev.map((l) => [l.id, l.clips]));
       return layersProp.map((l) => ({
         ...l,
         audioUrl: l.audioUrl || urlById.get(l.id) || null,
+        clips: l.clips || clipsById.get(l.id),
       }));
     });
     setFxById((prev) => {
@@ -2617,6 +2743,7 @@ export function ProducerView({
       endMs: number;
       sub?: string;
       url?: string | null;
+      clips?: ProducerClip[];
     }[] = [];
     list.push({
       id: "beat",
@@ -2628,22 +2755,26 @@ export function ProducerView({
       url: beatUrl,
     });
     for (const l of layers) {
+      const clips = clipsForLayer(l).map((c) => {
+        const decoded = durationById[c.id] ?? durationById[l.id];
+        const end =
+          typeof decoded === "number" && decoded > 0
+            ? c.startMs + decoded
+            : Math.max(c.endMs, c.startMs + 500);
+        return { ...c, endMs: end };
+      });
+      const spanStart = Math.min(...clips.map((c) => c.startMs));
+      const spanEnd = Math.max(...clips.map((c) => c.endMs));
       list.push({
         id: l.id,
         label: l.label,
         kind: "vocal",
         color: colorById[l.id] || l.color || roleColor(l.role),
-        startMs: l.startMs,
-        // Clip length must match decoded audio, not plan section length alone.
-        endMs: (() => {
-          const decoded = durationById[l.id];
-          if (typeof decoded === "number" && decoded > 0) {
-            return l.startMs + decoded;
-          }
-          return Math.max(l.endMs, l.startMs + 500);
-        })(),
+        startMs: spanStart,
+        endMs: spanEnd,
         sub: l.sectionLabel || l.label,
-        url: l.audioUrl,
+        url: clips[0]?.audioUrl || l.audioUrl,
+        clips,
       });
     }
     return list;
@@ -2672,27 +2803,35 @@ export function ProducerView({
       const next: Record<string, Float32Array | null> = {};
       const durs: Record<string, number> = {};
       for (const tr of tracks) {
-        if (!tr.url) {
-          next[tr.id] = null;
-          continue;
-        }
-        const buf = await fetchDecode(
-          ctx,
-          tr.url,
-          tr.kind === "beat" && projectId ? `/api/projects/${projectId}/beat/download` : null
-        );
-        if (cancelled) return;
-        if (buf) {
-          const durMs = Math.round(buf.duration * 1000);
-          if (tr.id === "beat") {
-            setDurationMs((d) => Math.max(d, durMs));
+        const parts =
+          tr.kind === "vocal" && tr.clips && tr.clips.length > 0
+            ? tr.clips.map((c) => ({
+                id: c.id,
+                url: c.audioUrl || null,
+              }))
+            : [{ id: tr.id, url: tr.url || null }];
+        for (const part of parts) {
+          if (!part.url) {
+            next[part.id] = null;
+            continue;
           }
-          durs[tr.id] = durMs;
-          // store high-res peaks once
-          peaksForUrl(tr.url, buf, 2048);
-          next[tr.id] = peaksForUrl(tr.url, buf, peakBuckets);
-        } else {
-          next[tr.id] = null;
+          const buf = await fetchDecode(
+            ctx,
+            part.url,
+            tr.kind === "beat" && projectId ? `/api/projects/${projectId}/beat/download` : null
+          );
+          if (cancelled) return;
+          if (buf) {
+            const durMs = Math.round(buf.duration * 1000);
+            if (tr.id === "beat") {
+              setDurationMs((d) => Math.max(d, durMs));
+            }
+            durs[part.id] = durMs;
+            peaksForUrl(part.url, buf, 2048);
+            next[part.id] = peaksForUrl(part.url, buf, peakBuckets);
+          } else {
+            next[part.id] = null;
+          }
         }
       }
       if (!cancelled) {
@@ -4900,14 +5039,17 @@ export function ProducerView({
                         }}
                         style={{
                           ...miniChip(border, brass, false, text),
-                          padding: "0 8px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          width: "auto",
+                          padding: 0,
+                          width: 28,
+                          height: 28,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
                         }}
-                        title="Split at playhead — two movable clips"
+                        title="Split clip at playhead (same track)"
+                        aria-label="Split clip at playhead"
                       >
-                        Split
+                        <ScissorsIcon size={14} />
                       </button>
                       <button
                         type="button"
@@ -5317,7 +5459,18 @@ export function ProducerView({
               const isTakeEditing = takeEditId === tr.id;
               const stackOpen = stackMenuId === tr.id;
               const colorOpen = colorPickerId === tr.id;
-              const clipW = Math.max(10, msToX(displayEndMs) - msToX(tr.startMs));
+              const multiClips =
+                tr.kind === "vocal" && tr.clips && tr.clips.length > 1 ? tr.clips : null;
+              const primaryClip = multiClips ? multiClips[0] : null;
+              const clipStartMs = primaryClip ? primaryClip.startMs : tr.startMs;
+              const clipEndMs = primaryClip
+                ? primaryClip.endMs
+                : displayEndMs;
+              const dragKey =
+                multiClips && primaryClip
+                  ? `${tr.id}::${primaryClip.id}`
+                  : tr.id;
+              const clipW = Math.max(10, msToX(clipEndMs) - msToX(clipStartMs));
               const rowH = isTakeEditing
                 ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
                 : stackOpen
@@ -5360,7 +5513,7 @@ export function ProducerView({
                     data-layer-id={tr.id}
                     style={{
                       position: "absolute",
-                      left: msToX(tr.startMs),
+                      left: msToX(clipStartMs),
                       width: clipW,
                       top: expanded ? 12 : 8,
                       height: clipH,
@@ -5412,7 +5565,14 @@ export function ProducerView({
                             }
                             // Allow drag even before waveform URL resolves (uploaded takes).
                             if (!isLiveRec) {
-                              onClipPointerDown(e, tr.id, "move", tr.startMs, tr.endMs);
+                              onClipPointerDown(
+                                e,
+                                dragKey,
+                                "move",
+                                clipStartMs,
+                                clipEndMs
+                              );
+                              if (primaryClip) setSelectedClipId(primaryClip.id);
                             }
                           }
                         : () => setSelectedTrackId(tr.id)
@@ -5459,7 +5619,11 @@ export function ProducerView({
                       />
                     ) : (
                       <WaveformCanvas
-                        peaks={peaksById[tr.id] || null}
+                        peaks={
+                          peaksById[primaryClip?.id || tr.id] ||
+                          peaksById[tr.id] ||
+                          null
+                        }
                         color={tr.color}
                         width={clipW}
                         height={clipH}
@@ -5507,7 +5671,7 @@ export function ProducerView({
                       <>
                         <div
                           onPointerDown={(e) =>
-                            onClipPointerDown(e, tr.id, "trim-start", tr.startMs, tr.endMs)
+                            onClipPointerDown(e, dragKey, "trim-start", clipStartMs, clipEndMs)
                           }
                           style={{
                             position: "absolute",
@@ -5522,7 +5686,7 @@ export function ProducerView({
                         />
                         <div
                           onPointerDown={(e) =>
-                            onClipPointerDown(e, tr.id, "trim-end", tr.startMs, tr.endMs)
+                            onClipPointerDown(e, dragKey, "trim-end", clipStartMs, clipEndMs)
                           }
                           style={{
                             position: "absolute",
@@ -5538,6 +5702,108 @@ export function ProducerView({
                       </>
                     )}
                   </div>
+                  {/* Additional split clips on the same track lane */}
+                  {multiClips
+                    ? multiClips.slice(1).map((clip) => {
+                        const cW = Math.max(
+                          10,
+                          msToX(clip.endMs) - msToX(clip.startMs)
+                        );
+                        const cKey = `${tr.id}::${clip.id}`;
+                        return (
+                          <div
+                            key={cKey}
+                            data-layer-id={tr.id}
+                            data-clip-id={clip.id}
+                            style={{
+                              position: "absolute",
+                              left: msToX(clip.startMs),
+                              width: cW,
+                              top: expanded ? 12 : 8,
+                              height: clipH,
+                              borderRadius: 6,
+                              background: tr.color,
+                              boxShadow:
+                                selectedClipId === clip.id
+                                  ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
+                                  : `0 1px 0 rgba(0,0,0,0.35)`,
+                              overflow: "hidden",
+                              cursor: "grab",
+                              touchAction: "none",
+                              opacity: dimmed ? 0.4 : 1,
+                            }}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              setSelectedTrackId(tr.id);
+                              setSelectedClipId(clip.id);
+                              setArmedTrackId(tr.id);
+                              onClipPointerDown(
+                                e,
+                                cKey,
+                                "move",
+                                clip.startMs,
+                                clip.endMs
+                              );
+                            }}
+                            onPointerMove={onClipPointerMove}
+                            onPointerUp={onClipPointerUp}
+                            onPointerCancel={onClipPointerUp}
+                          >
+                            <WaveformCanvas
+                              peaks={peaksById[clip.id] || null}
+                              color={tr.color}
+                              width={cW}
+                              height={clipH}
+                              dimmed={dimmed}
+                            />
+                            <div
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                                onClipPointerDown(
+                                  e,
+                                  cKey,
+                                  "trim-start",
+                                  clip.startMs,
+                                  clip.endMs
+                                );
+                              }}
+                              style={{
+                                position: "absolute",
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: 14,
+                                background: "rgba(255,255,255,0.35)",
+                                cursor: "ew-resize",
+                                touchAction: "none",
+                              }}
+                            />
+                            <div
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                                onClipPointerDown(
+                                  e,
+                                  cKey,
+                                  "trim-end",
+                                  clip.startMs,
+                                  clip.endMs
+                                );
+                              }}
+                              style={{
+                                position: "absolute",
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: 14,
+                                background: "rgba(255,255,255,0.35)",
+                                cursor: "ew-resize",
+                                touchAction: "none",
+                              }}
+                            />
+                          </div>
+                        );
+                      })
+                    : null}
                   {isTakeEditing ? (
                     <div
                       style={{

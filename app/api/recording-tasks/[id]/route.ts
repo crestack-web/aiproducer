@@ -18,6 +18,13 @@ const TrackFxSchema = z.object({
   pan: z.number().min(-1).max(1).optional(),
 });
 
+const ConsoleClipSchema = z.object({
+  id: z.string().min(1),
+  start_ms: z.number().min(0),
+  end_ms: z.number().min(0),
+  recording_id: z.string().nullable().optional(),
+});
+
 const PatchSchema = z.object({
   start_ms: z.number().min(0).optional(),
   end_ms: z.number().min(0).optional(),
@@ -26,6 +33,9 @@ const PatchSchema = z.object({
   title: z.string().trim().min(1).max(80).optional(),
   track_fx: TrackFxSchema.optional(),
   track_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  /** DAW split regions on this track (same lane, multiple clips) */
+  console_clips: z.array(ConsoleClipSchema).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 function asFxObject(v: unknown): Record<string, unknown> {
@@ -133,6 +143,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
     patch.metadata = prevMeta;
   }
 
+  if (parsed.data.console_clips) {
+    prevMeta.console_clips = parsed.data.console_clips;
+    patch.metadata = prevMeta;
+  }
+  if (parsed.data.metadata && typeof parsed.data.metadata === "object") {
+    Object.assign(prevMeta, parsed.data.metadata);
+    patch.metadata = prevMeta;
+  }
+
   if (patch.start_ms != null && patch.end_ms != null && (patch.end_ms as number) <= (patch.start_ms as number)) {
     return NextResponse.json({ error: "end_ms must be after start_ms" }, { status: 400 });
   }
@@ -193,6 +212,19 @@ export async function PATCH(req: Request, ctx: Ctx) {
       await syncRecordingPlacementForTask(service, id, nextStart, nextEnd);
     } catch (e) {
       console.error("[recording-tasks PATCH] placement sync", e);
+    }
+  }
+
+  // Per-clip placements after a DAW split (same track, multiple recordings)
+  if (parsed.data.console_clips && parsed.data.console_clips.length > 0) {
+    for (const clip of parsed.data.console_clips) {
+      const rid = clip.recording_id;
+      if (!rid) continue;
+      try {
+        await syncRecordingPlacementById(service, rid, clip.start_ms, clip.end_ms);
+      } catch (e) {
+        console.error("[recording-tasks PATCH] clip placement", rid, e);
+      }
     }
   }
 

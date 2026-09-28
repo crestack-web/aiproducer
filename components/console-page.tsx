@@ -161,15 +161,32 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             if (place?.endMs != null) resolvedEnd = place.endMs;
             else if (place?.durationMs != null)
               resolvedEnd = resolvedStart + place.durationMs;
+            const rawClips = Array.isArray(meta.console_clips)
+              ? (meta.console_clips as Array<Record<string, unknown>>)
+              : null;
+            const clips =
+              rawClips && rawClips.length > 0
+                ? rawClips
+                    .map((c) => ({
+                      id: String(c.id || c.recording_id || ""),
+                      startMs: Number(c.start_ms) || resolvedStart,
+                      endMs: Number(c.end_ms) || resolvedEnd,
+                      recordingId:
+                        typeof c.recording_id === "string" ? c.recording_id : null,
+                      audioUrl: null as string | null,
+                    }))
+                    .filter((c) => c.id)
+                : undefined;
             return {
               id: tk.id,
               label: ((typeof tk.title === "string" && tk.title.trim()) || tk.type || "lead").replace(/_/g, " "),
               role: tk.type || "lead",
               sectionLabel,
-              startMs: resolvedStart,
-              endMs: resolvedEnd,
+              startMs: clips ? Math.min(...clips.map((c) => c.startMs)) : resolvedStart,
+              endMs: clips ? Math.max(...clips.map((c) => c.endMs)) : resolvedEnd,
               audioUrl: audioByTask.get(tk.id) || null,
               recordingId: recordingIdByTask.get(tk.id) || null,
+              clips,
               color: colorRaw,
               trackFx: tfRaw
                 ? {
