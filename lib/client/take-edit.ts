@@ -243,3 +243,84 @@ export function peaksFromBuffer(buffer: AudioBuffer, buckets = 128): number[] {
   }
   return peaks;
 }
+
+
+/** Slice [startMs, endMs) from a buffer (with edge fades). */
+export function sliceBufferRegion(
+  ctx: AudioContext,
+  source: AudioBuffer,
+  startMs: number,
+  endMs: number
+): AudioBuffer {
+  const sr = source.sampleRate;
+  const len = source.length;
+  const a = sampleIndex(startMs, sr, len);
+  const b = sampleIndex(endMs, sr, len);
+  if (b <= a) {
+    return bufferFromChannels(ctx, copyChannels(source).map((c) => c.slice(0, 1)), sr);
+  }
+  const fade = Math.max(2, Math.floor((FADE_MS / 1000) * sr));
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < source.numberOfChannels; c++) {
+    const slice = new Float32Array(source.getChannelData(c).subarray(a, b));
+    applyEdgeFades(slice, fade);
+    channels.push(slice);
+  }
+  return bufferFromChannels(ctx, channels, sr);
+}
+
+/** Split a buffer into left [0, atMs) and right [atMs, end). */
+export function splitBufferAtMs(
+  ctx: AudioContext,
+  source: AudioBuffer,
+  atMs: number
+): { left: AudioBuffer; right: AudioBuffer } {
+  const dur = bufferDurationMs(source);
+  const cut = Math.max(MIN_REGION_MS, Math.min(dur - MIN_REGION_MS, atMs));
+  return {
+    left: sliceBufferRegion(ctx, source, 0, cut),
+    right: sliceBufferRegion(ctx, source, cut, dur),
+  };
+}
+
+/**
+ * First significant energy onset (ms). Used to pull late/early vocals onto the grid.
+ * Conservative threshold so quiet intros are not treated as silence-only.
+ */
+export function detectOnsetMs(source: AudioBuffer, threshold = 0.025): number {
+  const sr = source.sampleRate;
+  const ch0 = source.getChannelData(0);
+  const win = Math.max(64, Math.floor(sr * 0.01));
+  let peak = 0;
+  for (let i = 0; i < ch0.length; i += win) {
+    let sum = 0;
+    const end = Math.min(ch0.length, i + win);
+    for (let j = i; j < end; j++) sum += Math.abs(ch0[j] || 0);
+    const rms = sum / (end - i);
+    if (rms > peak) peak = rms;
+  }
+  const gate = Math.max(threshold, peak * 0.12);
+  for (let i = 0; i < ch0.length; i += win) {
+    let sum = 0;
+    const end = Math.min(ch0.length, i + win);
+    for (let j = i; j < end; j++) sum += Math.abs(ch0[j] || 0);
+    if (sum / (end - i) >= gate) {
+      return Math.round((i / sr) * 1000);
+    }
+  }
+  return 0;
+}
+
+/** Snap a song-timeline position to the nearest beat (or 1/subdivision of a beat). */
+export function snapToBeatMs(
+  ms: number,
+  bpm: number,
+  subdivision = 1
+): number {
+  const b = Number(bpm);
+  if (!Number.isFinite(b) || b <= 0) return Math.max(0, Math.round(ms));
+  const sub = Math.max(1, Math.min(4, Math.round(subdivision)));
+  const beatMs = (60_000 / b) / sub;
+  const snapped = Math.round(ms / beatMs) * beatMs;
+  return Math.max(0, Math.round(snapped));
+}

@@ -47,6 +47,9 @@ import {
   bufferDurationMs,
   isValidRegion,
   normalizeRegion,
+  splitBufferAtMs,
+  detectOnsetMs,
+  snapToBeatMs,
   type TakeRegion,
 } from "@/lib/client/take-edit";
 
@@ -2057,6 +2060,213 @@ export function ProducerView({
       setTakeEditBusy(false);
     }
   }
+
+  /** Upload a WAV buffer as a new selected take on a task; returns audio_url. */
+  async function uploadBufferAsTake(
+    taskId: string,
+    buf: AudioBuffer,
+    source: string
+  ): Promise<{ audioUrl: string | null; recordingId: string | null }> {
+    const blob = encodeWavBlob(buf);
+    const fd = new FormData();
+    fd.append("file", blob, `${source}.wav`);
+    fd.append("source", source);
+    fd.append("duration_ms", String(bufferDurationMs(buf)));
+    const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+      method: "POST",
+      body: fd,
+    });
+    const uj = await up.json().catch(() => ({}));
+    if (!up.ok) {
+      throw new Error(typeof uj.error === "string" ? uj.error : "Upload failed");
+    }
+    const newId = (uj?.recording?.id as string | undefined) || null;
+    if (newId) {
+      await fetch(`/api/recording-tasks/${taskId}/recordings/${newId}/select`, {
+        method: "POST",
+      }).catch(() => undefined);
+    }
+    await fetch(`/api/recording-tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    }).catch(() => null);
+    const audioUrl =
+      uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+    return { audioUrl: audioUrl ? String(audioUrl) : null, recordingId: newId };
+  }
+
+  /**
+   * DAW split: cut selected vocal at the playhead into two independent clips.
+   * Left stays on the current track; right becomes a new track at the cut point.
+   */
+  async function splitSelectedAtPlayhead() {
+    const id = selectedTrackId;
+    if (!id || id === "beat" || !projectId) return;
+    const layer = layers.find((l) => l.id === id);
+    if (!layer?.audioUrl) {
+      setEditMsg("Select a vocal with audio, then place the playhead on the clip to split");
+      return;
+    }
+    const clipDur = Math.max(0, layer.endMs - layer.startMs);
+    const localMs = playheadMs - layer.startMs;
+    if (localMs < 250 || localMs > clipDur - 250) {
+      setEditMsg("Move the playhead inside the clip (not too close to the edges) to split");
+      return;
+    }
+    const ctx = getEditAudioCtx() || getCtx();
+    if (!ctx) {
+      setEditMsg("Audio not available in this browser");
+      return;
+    }
+    setTakeEditBusy(true);
+    setEditMsg("Splitting clip…");
+    try {
+      if (ctx.state === "suspended") await ctx.resume();
+      const full = await decodeAudioUrl(ctx, layer.audioUrl);
+      // Map timeline cut into file time (clip starts at file 0 for console-placed takes)
+      const { left, right } = splitBufferAtMs(ctx, full, localMs);
+      const leftDur = bufferDurationMs(left);
+      const rightDur = bufferDurationMs(right);
+
+      // Left half replaces take on the original track
+      const leftUp = await uploadBufferAsTake(id, left, "split_left");
+      const leftEnd = layer.startMs + leftDur;
+      await persistLayer(id, { start_ms: layer.startMs, end_ms: leftEnd });
+
+      // Right half → new track at the cut
+      const rightTitle = `${layer.label || layer.role || "Vocal"} (B)`;
+      const cr = await fetch(`/api/projects/${projectId}/recording-tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: layer.role || "custom",
+          title: rightTitle,
+          start_ms: playheadMs,
+          end_ms: playheadMs + rightDur,
+        }),
+      });
+      const cj = await cr.json().catch(() => ({}));
+      if (!cr.ok || !cj.task?.id) {
+        throw new Error(typeof cj.error === "string" ? cj.error : "Could not create right clip");
+      }
+      const rightId = String(cj.task.id);
+      const rightUp = await uploadBufferAsTake(rightId, right, "split_right");
+      await persistLayer(rightId, {
+        start_ms: playheadMs,
+        end_ms: playheadMs + rightDur,
+      });
+
+      setLayers((prev) => {
+        const next = prev.map((l) =>
+          l.id === id
+            ? {
+                ...l,
+                audioUrl: leftUp.audioUrl || l.audioUrl,
+                endMs: leftEnd,
+                recordingId: leftUp.recordingId || l.recordingId,
+              }
+            : l
+        );
+        next.push({
+          id: rightId,
+          label: rightTitle,
+          role: layer.role || "custom",
+          sectionLabel: rightTitle,
+          startMs: playheadMs,
+          endMs: playheadMs + rightDur,
+          audioUrl: rightUp.audioUrl,
+          recordingId: rightUp.recordingId,
+          color: layer.color,
+        });
+        return next;
+      });
+      setSelectedTrackId(rightId);
+      setArmedTrackId(rightId);
+      bufferCache.clear();
+      setEditMsg("Split — drag either clip to place it on the beat");
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Split failed");
+    } finally {
+      setTakeEditBusy(false);
+    }
+  }
+
+  /** Snap clip start to the nearest beat (or 1/2 beat). */
+  async function quantizeSelectedToBeat(subdivision = 1) {
+    const id = selectedTrackId;
+    if (!id || id === "beat") return;
+    const layer = layers.find((l) => l.id === id);
+    if (!layer) return;
+    const bpm = tempoBpm != null && Number.isFinite(tempoBpm) ? Number(tempoBpm) : null;
+    if (bpm == null || bpm <= 0) {
+      setEditMsg("BPM is required to snap to the grid — analyze the beat or set project tempo first");
+      return;
+    }
+    const dur = Math.max(400, layer.endMs - layer.startMs);
+    const newStart = snapToBeatMs(layer.startMs, bpm, subdivision);
+    const newEnd = newStart + dur;
+    updateLocalLayer(id, newStart, newEnd);
+    const ok = await persistLayer(id, { start_ms: newStart, end_ms: newEnd });
+    setEditMsg(
+      ok
+        ? `Snapped to ${subdivision === 2 ? "1/2 " : ""}beat grid (${Math.round(newStart)} ms)`
+        : "Could not save snap position"
+    );
+  }
+
+  /**
+   * Detect vocal onset and shift the clip so the first word/hit lands on the nearest beat.
+   * Fixes late/early takes without changing the audio content.
+   */
+  async function correctSelectedToBeat() {
+    const id = selectedTrackId;
+    if (!id || id === "beat") return;
+    const layer = layers.find((l) => l.id === id);
+    if (!layer?.audioUrl) {
+      setEditMsg("Select a vocal with audio to correct timing");
+      return;
+    }
+    const bpm = tempoBpm != null && Number.isFinite(tempoBpm) ? Number(tempoBpm) : null;
+    if (bpm == null || bpm <= 0) {
+      setEditMsg("BPM is required to correct timing");
+      return;
+    }
+    const ctx = getEditAudioCtx() || getCtx();
+    if (!ctx) {
+      setEditMsg("Audio not available in this browser");
+      return;
+    }
+    setTakeEditBusy(true);
+    setEditMsg("Aligning vocal to the beat…");
+    try {
+      if (ctx.state === "suspended") await ctx.resume();
+      const buf = await decodeAudioUrl(ctx, layer.audioUrl);
+      const onset = detectOnsetMs(buf);
+      const songOnset = layer.startMs + onset;
+      const snappedOnset = snapToBeatMs(songOnset, bpm, 1);
+      let newStart = snappedOnset - onset;
+      if (newStart < 0) newStart = 0;
+      const dur = Math.max(400, layer.endMs - layer.startMs);
+      const newEnd = newStart + dur;
+      const shift = Math.round(newStart - layer.startMs);
+      updateLocalLayer(id, newStart, newEnd);
+      const ok = await persistLayer(id, { start_ms: newStart, end_ms: newEnd });
+      setEditMsg(
+        ok
+          ? shift === 0
+            ? "Already on the grid"
+            : `Timing corrected — shifted ${shift > 0 ? "+" : ""}${shift} ms so the vocal hits the beat`
+          : "Could not save timing correction"
+      );
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Timing correction failed");
+    } finally {
+      setTakeEditBusy(false);
+    }
+  }
+
 
   async function finishRetakeWithBlob(taskId: string, blob: Blob) {
     const ctx = getEditAudioCtx();
@@ -4583,23 +4793,84 @@ export function ProducerView({
                     S
                   </button>
                   {isExpanded && tr.url && tr.id !== "beat" && takeEditId !== tr.id ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void beginTakeEdit(tr.id, tr.url);
-                      }}
-                      style={{
-                        ...miniChip(border, brass, false, text),
-                        padding: "0 8px",
-                        fontSize: 10,
-                        fontWeight: 700,
-                        width: "auto",
-                      }}
-                      title="Edit take — delete, keep, or retake a region"
-                    >
-                      Edit
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void beginTakeEdit(tr.id, tr.url);
+                        }}
+                        style={{
+                          ...miniChip(border, brass, false, text),
+                          padding: "0 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          width: "auto",
+                        }}
+                        title="Edit take — delete, keep, or retake a region"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={takeEditBusy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTrackId(tr.id);
+                          void splitSelectedAtPlayhead();
+                        }}
+                        style={{
+                          ...miniChip(border, brass, false, text),
+                          padding: "0 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          width: "auto",
+                        }}
+                        title="Split at playhead — two movable clips"
+                      >
+                        Split
+                      </button>
+                      <button
+                        type="button"
+                        disabled={takeEditBusy || tempoBpm == null}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTrackId(tr.id);
+                          void quantizeSelectedToBeat(1);
+                        }}
+                        style={{
+                          ...miniChip(border, brass, false, text),
+                          padding: "0 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          width: "auto",
+                          opacity: tempoBpm == null ? 0.45 : 1,
+                        }}
+                        title={tempoBpm == null ? "Needs project BPM" : "Snap clip start to nearest beat"}
+                      >
+                        Snap
+                      </button>
+                      <button
+                        type="button"
+                        disabled={takeEditBusy || tempoBpm == null}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTrackId(tr.id);
+                          void correctSelectedToBeat();
+                        }}
+                        style={{
+                          ...miniChip(border, brass, false, text),
+                          padding: "0 8px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          width: "auto",
+                          opacity: tempoBpm == null ? 0.45 : 1,
+                        }}
+                        title={tempoBpm == null ? "Needs project BPM" : "Pull vocal onto the beat (onset → nearest beat)"}
+                      >
+                        On beat
+                      </button>
+                    </>
                   ) : null}
                   {!isExpanded && tr.kind === "vocal" && (
                     <button
