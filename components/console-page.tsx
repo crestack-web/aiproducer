@@ -28,6 +28,13 @@ type TaskRow = {
     track_fx?: Record<string, number>;
     track_color?: string;
     section_label?: string;
+    /** DAW split regions on this track (same lane, multiple clips) */
+    console_clips?: Array<{
+      id?: string;
+      start_ms?: number;
+      end_ms?: number;
+      recording_id?: string | null;
+    }>;
   } | null;
   song_sections?: { label?: string | null; type?: string | null } | null;
 };
