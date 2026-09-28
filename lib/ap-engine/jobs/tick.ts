@@ -218,18 +218,23 @@ export async function runInternalApProduceJob(opts: {
       ...(phased.metaExtra || {}),
     };
 
-    await supabase.from("songs").insert({
-      project_id: projectId,
-      audio_path: masterPath,
-      status: "ready",
-      version: 1,
-      metadata: {
-        mode: "ap",
-        provider: "ap-internal",
-        engineVersion,
-        ...metaExtra,
-      },
-    });
+    // Catalog writes are best-effort — never fail a successful export over a songs row.
+    try {
+      await supabase.from("songs").insert({
+        project_id: projectId,
+        audio_path: masterPath,
+        status: "ready",
+        version: 1,
+        metadata: {
+          mode: "ap",
+          provider: "ap-internal",
+          engineVersion,
+          ...metaExtra,
+        },
+      });
+    } catch (songErr) {
+      console.warn("[ap-tick] songs insert skipped", songErr);
+    }
 
     try {
       const { count } = await supabase
@@ -257,7 +262,8 @@ export async function runInternalApProduceJob(opts: {
       console.warn("[ap-tick] audio_versions insert skipped", avErr);
     }
 
-    await supabase
+    // Always mark complete after successful phased export (master is on R2)
+    const { error: completeErr } = await supabase
       .from("jobs")
       .update({
         status: "complete",
@@ -278,8 +284,21 @@ export async function runInternalApProduceJob(opts: {
         completed_at: new Date().toISOString(),
       })
       .eq("id", jobId);
+    if (completeErr) {
+      console.error("[ap-tick] failed to mark job complete", completeErr);
+      await patch("failed", 100, {
+        error: `Master exported but job status update failed: ${completeErr.message}`,
+        master_storage_path: masterPath,
+        mix_storage_path: mixPath,
+      });
+      return { complete: false, error: completeErr.message };
+    }
 
     await supabase.from("projects").update({ status: "complete" }).eq("id", projectId);
+    console.info(
+      "[ap-tick] PRODUCE COMPLETE",
+      JSON.stringify({ jobId, projectId, masterPath, mp3Path, layers: vocals.length })
+    );
     return { complete: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

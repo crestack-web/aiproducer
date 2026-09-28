@@ -289,6 +289,20 @@ export async function runFullProduceWithCheckpoints(opts: {
       stage: Parameters<typeof report>[0],
       meta?: Record<string, unknown>
     ) => {
+      // CRITICAL: never map "completed" → "arranging" (that was reverting jobs to processing
+      // after the engine finished and blocked the UI at the wrong stage).
+      if (stage === "completed" || stage === "complete") {
+        // Export/upload still runs after arrangement returns — do not mark job complete here.
+        // Advance UI to 98% so it is clear we are finishing, not stuck mid-arrange.
+        await patch("quality_check", 98, {
+          ap_checkpoint: { ...cp, phase: "arranging" },
+          path: "full",
+          message: "Exporting your master…",
+        }).catch(() => undefined);
+        void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
+        return;
+      }
+
       await report(stage);
       const prog: Record<string, number> = {
         analyzing: 52,
@@ -299,9 +313,9 @@ export async function runFullProduceWithCheckpoints(opts: {
         mixing: 80,
         mastering: 88,
         quality_check: 94,
-        completed: 99,
+        completed: 100,
       };
-      const stageName = String(stage === "completed" ? "arranging" : stage);
+      const stageName = String(stage);
       let p = prog[stageName] ?? 58;
       if (typeof meta?.progressHint === "number" && Number.isFinite(meta.progressHint)) {
         // Never regress (stuck-at-76% was progressHint then a later report clamping lower)
@@ -334,7 +348,9 @@ export async function runFullProduceWithCheckpoints(opts: {
                     ? "Mixing…"
                     : stageName === "mastering"
                       ? "Mastering…"
-                      : String(stage)),
+                      : stageName === "quality_check"
+                        ? "Final quality check…"
+                        : String(stage)),
       }).catch(() => undefined);
       void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
     };
@@ -424,14 +440,53 @@ export async function runFullProduceWithCheckpoints(opts: {
     const engineVersion = result.engineVersion || "ap-full";
     const processedVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-processed.wav`;
     const restoredVocalPath = `users/${userId}/projects/${projectId}/production/${jobId}/vocal-restored.wav`;
-    await uploadBuffer(mixPath, result.mixWav, "audio/wav");
-    await uploadBuffer(masterPath, result.masterWav, "audio/wav");
-    await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
-    await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
-    if (result.masterMp3) {
-      mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
-      await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
+
+    // Explicit export stage so UI is not frozen on mastering while R2 uploads run
+    await patch("quality_check", 96, {
+      path: "full",
+      message: "Exporting master WAV…",
+      ap_checkpoint: { ...cp, phase: "arranging" },
+    }).catch(() => undefined);
+    void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
+
+    try {
+      if (!result.mixWav?.length || !result.masterWav?.length) {
+        throw new Error("Engine returned empty mix/master buffers — cannot export");
+      }
+      await uploadBuffer(mixPath, result.mixWav, "audio/wav");
+      await uploadBuffer(masterPath, result.masterWav, "audio/wav");
+      await patch("quality_check", 97, {
+        path: "full",
+        message: "Uploading vocal stems…",
+      }).catch(() => undefined);
+      await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
+      await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
+      if (result.masterMp3) {
+        mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
+        await patch("quality_check", 98, {
+          path: "full",
+          message: "Uploading MP3…",
+        }).catch(() => undefined);
+        await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
+      }
+    } catch (upErr) {
+      const msg = upErr instanceof Error ? upErr.message : String(upErr);
+      console.error("[ap-tick] export upload failed", msg);
+      await patch("failed", 100, {
+        error: `Export failed: ${msg.slice(0, 300)}. Check R2 env on the worker.`,
+        path: "full",
+        engineVersion,
+        ap_checkpoint: cp,
+      });
+      return { complete: false, error: `Export failed: ${msg}` };
     }
+
+    await patch("quality_check", 99, {
+      path: "full",
+      message: "Saving your song…",
+      master_storage_path: masterPath,
+      mix_storage_path: mixPath,
+    }).catch(() => undefined);
     const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
     cp.phase = "done";
     const wallMs = Date.now() - new Date(cp.wallStartedAt).getTime();
