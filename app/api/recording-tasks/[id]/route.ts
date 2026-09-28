@@ -308,3 +308,45 @@ async function syncRecordingPlacementForTask(
     if (!error) return;
   }
 }
+
+/** Place a specific recording (split clip) on the song timeline. */
+async function syncRecordingPlacementById(
+  service: ReturnType<typeof createServiceClient>,
+  recordingId: string,
+  startMs: number,
+  endMs: number
+) {
+  const { data: row } = await service
+    .from("recordings")
+    .select("id, metadata")
+    .eq("id", recordingId)
+    .maybeSingle();
+  if (!row?.id) return;
+  const prevMeta =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? { ...(row.metadata as Record<string, unknown>) }
+      : {};
+  prevMeta.placement_start_ms = startMs;
+  prevMeta.recording_offset_ms = 0;
+  prevMeta.console_placed = true;
+  prevMeta.console_placed_at = new Date().toISOString();
+  const attempts: Record<string, unknown>[] = [
+    {
+      timeline_start_ms: startMs,
+      timeline_end_ms: endMs,
+      recording_offset_ms: 0,
+      metadata: prevMeta,
+    },
+    {
+      timeline_start_ms: startMs,
+      timeline_end_ms: endMs,
+      metadata: prevMeta,
+    },
+    { metadata: prevMeta },
+  ];
+  for (const patch of attempts) {
+    const { error } = await service.from("recordings").update(patch).eq("id", recordingId);
+    if (!error) return;
+  }
+}
+
