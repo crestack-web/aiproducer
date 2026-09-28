@@ -610,6 +610,9 @@ export function ProducerView({
   const [layers, setLayers] = useState(layersProp);
   const [durationMs, setDurationMs] = useState(durationProp || 0);
   const [playheadMs, setPlayheadMs] = useState(0);
+  const playheadMsRef = useRef(0);
+  const playheadElRef = useRef<HTMLDivElement | null>(null);
+  const playheadStateThrottleRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
   const [pxPerSec, setPxPerSec] = useState(56);
@@ -2802,8 +2805,14 @@ export function ProducerView({
     } else {
       elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
     }
-    elapsed = Math.min(totalMs, Math.max(0, elapsed));
-    setPlayheadMs(elapsed);
+    elapsed = Math.min(seekCeilingMs(), Math.max(0, elapsed));
+    // Move the needle on the GPU every frame — avoid full React re-render each tick
+    applyPlayheadMs(elapsed, false);
+    const last = playheadStateThrottleRef.current;
+    if (Math.abs(elapsed - last) >= 80) {
+      playheadStateThrottleRef.current = elapsed;
+      setPlayheadMs(elapsed);
+    }
 
     // DAW-style follow: keep playhead in view while playing (critical on mobile)
     try {
@@ -3005,7 +3014,7 @@ export function ProducerView({
     }
     playingRef.current = true;
     setPlaying(true);
-    setPlayheadMs(fromMs);
+    applyPlayheadMs(fromMs, true);
     rafRef.current = requestAnimationFrame(tickPlayhead);
   }
 
@@ -3495,13 +3504,50 @@ export function ProducerView({
     }
   }
 
-  function seekTo(ms: number) {
-    const clamped = Math.max(0, Math.min(totalMs, ms));
-    setPlayheadMs(clamped);
+  /** Max seekable time — prefer real content length, never a short sticky default. */
+  function seekCeilingMs(): number {
+    return Math.max(totalMs || 0, durationMs || 0, 3 * 60_000);
+  }
+
+  /** Apply playhead position to the DOM immediately (smooth); sync React when needed. */
+  function applyPlayheadMs(ms: number, syncReact: boolean) {
+    const clamped = Math.max(0, Math.min(seekCeilingMs(), ms));
+    playheadMsRef.current = clamped;
     offsetRef.current = clamped;
+    const el = playheadElRef.current;
+    if (el) {
+      el.style.transform = `translate3d(${(clamped / 1000) * pxPerSecRef.current}px, 0, 0)`;
+    }
+    if (syncReact) {
+      setPlayheadMs(clamped);
+      playheadStateThrottleRef.current = clamped;
+    }
+  }
+
+  /**
+   * Map a pointer's clientX to song time using the scroll container
+   * (correct when scrolled — sticky ruler getBoundingClientRect alone is wrong).
+   */
+  function clientXToTimelineMs(clientX: number): number {
+    const scroll = timelineScrollRef.current;
+    if (scroll) {
+      const rect = scroll.getBoundingClientRect();
+      const x = clientX - rect.left + scroll.scrollLeft;
+      return (x / pxPerSecRef.current) * 1000;
+    }
+    return 0;
+  }
+
+  function seekTo(ms: number) {
+    const clamped = Math.max(0, Math.min(seekCeilingMs(), ms));
+    applyPlayheadMs(clamped, true);
     if (playingRef.current || playing) {
       void startPlayback(clamped);
     }
+  }
+
+  function seekFromClientX(clientX: number) {
+    seekTo(clientXToTimelineMs(clientX));
   }
 
   function nudgePan(trackId: string, delta: number) {
@@ -5173,11 +5219,24 @@ export function ProducerView({
                 minWidth: timelineW,
                 borderBottom: `1px solid ${border}`,
                 background: surface,
+                cursor: "ew-resize",
+                touchAction: "none",
+              }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                try {
+                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                } catch {
+                  /* */
+                }
+                seekFromClientX(e.clientX);
+              }}
+              onPointerMove={(e) => {
+                if (e.pointerType === "mouse" && (e.buttons & 1) === 0) return;
+                seekFromClientX(e.clientX);
               }}
               onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = e.clientX - rect.left + (timelineScrollRef.current?.scrollLeft || 0);
-                seekTo((x / pxPerSec) * 1000);
+                seekFromClientX(e.clientX);
               }}
             >
               {sections.map((s) => (
@@ -5258,10 +5317,8 @@ export function ProducerView({
                         : "transparent",
                   }}
                   onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x =
-                      e.clientX - rect.left + (timelineScrollRef.current?.scrollLeft || 0);
-                    seekTo((x / pxPerSec) * 1000);
+                    // Empty lane / background — place playhead like a DAW
+                    seekFromClientX(e.clientX);
                     setSelectedTrackId(tr.id);
                     if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
@@ -5517,6 +5574,7 @@ export function ProducerView({
             })}
             {/* Single full-height playhead — one line through ruler + every track */}
             <div
+              ref={playheadElRef}
               aria-hidden
               style={{
                 position: "absolute",
@@ -5527,7 +5585,7 @@ export function ProducerView({
                 zIndex: 25,
                 pointerEvents: "none",
                 transform: `translate3d(${msToX(playheadMs)}px, 0, 0)`,
-                willChange: playing ? "transform" : "auto",
+                willChange: "transform",
               }}
             >
               {/* Triangle head on the ruler */}
