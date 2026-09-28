@@ -50,6 +50,7 @@ import { decidePitchTimingForPhrase, aggregatePitchTiming } from "./producer-min
 import { applyCreativeFxToPlacedVocal } from "./creative-fx/apply";
 import type { DecisionMap } from "./producer-mind";
 import { isFullQualityProduce } from "@/lib/produce/execution-mode";
+import { cpus } from "os";
 
 export * from "./types";
 export { resolveGenreProfile, listGenreProfiles } from "./profiles/genre-profiles";
@@ -146,9 +147,6 @@ export async function runApArrangement(
       };
     }
 
-    const beatNorm = await normalizeToInternalPcm(input.beatBuffer, input.beatPathHint);
-    const beatA = analyzeBeat(beatNorm.pcm);
-
     const normalizedLayers: {
       pcm: PcmStereo;
       role: VocalRole;
@@ -161,9 +159,21 @@ export async function runApArrangement(
 
     await stage("restoring", { sub: "front_end" });
 
+    // Overlap beat decode/analysis with vocal restore — independent work, same quality
+    const beatWork = (async () => {
+      const beatNorm = await normalizeToInternalPcm(input.beatBuffer, input.beatPathHint);
+      const beatA = analyzeBeat(beatNorm.pcm);
+      return { beatNorm, beatA };
+    })();
+
     // Parallel normalize+restore (I/O + independent CPU per take) — same DSP, less wall time.
+    // Concurrency scales with cores but stays bounded (quality-identical work).
+    const restoreConcurrency = Math.max(
+      2,
+      Math.min(6, typeof cpus === "function" ? cpus().length : 3)
+    );
     const restoreJobs = input.vocals.map((v, idx) => ({ v, idx }));
-    const restoredParts = await mapPool(restoreJobs, 3, async ({ v }) => {
+    const restoredParts = await mapPool(restoreJobs, restoreConcurrency, async ({ v }) => {
       const val = validateAudioBuffer(v.buffer, v.pathHint);
       if (!val.ok) return null;
       const norm = await normalizeToInternalPcm(v.buffer, v.pathHint);
@@ -223,6 +233,8 @@ export async function runApArrangement(
         restoration: part.restoration,
       });
     }
+
+    const { beatNorm, beatA } = await beatWork;
 
     if (!normalizedLayers.length) {
       return {
@@ -312,7 +324,8 @@ export async function runApArrangement(
         }
         if (shouldAsr) asrTargets.push(i);
       }
-      await mapPool(asrTargets, 3, async (i) => {
+      const asrConcurrency = Math.max(2, Math.min(4, typeof cpus === "function" ? cpus().length : 3));
+      await mapPool(asrTargets, asrConcurrency, async (i) => {
         const layer = normalizedLayers[i];
         try {
           const tr = await transcribeVocalLayer(layer.pcm);
@@ -826,11 +839,21 @@ export async function runApArrangement(
       });
     }
 
+    // WAV is the quality master. Encode all WAVs first; MP3 is optional preview
+    // and must not block the full-quality path if ffmpeg is slow/missing.
     const masterWav = exportWav(rendered.master);
     const mixWav = exportWav(rendered.mix);
     const processedVocalWav = exportWav(rendered.processedVocal);
     const restoredVocalWav = exportWav(rendered.restoredVocal);
-    const masterMp3 = await exportMp3(rendered.master);
+    let masterMp3: Buffer | null = null;
+    try {
+      masterMp3 = await Promise.race([
+        exportMp3(rendered.master),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
+      ]);
+    } catch {
+      masterMp3 = null;
+    }
 
     const durationMs = Date.now() - t0;
     const analysis = combineAnalysis(leadAnalysis, beatA);

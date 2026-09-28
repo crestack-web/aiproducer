@@ -453,22 +453,22 @@ export async function runFullProduceWithCheckpoints(opts: {
       if (!result.mixWav?.length || !result.masterWav?.length) {
         throw new Error("Engine returned empty mix/master buffers — cannot export");
       }
-      await uploadBuffer(mixPath, result.mixWav, "audio/wav");
-      await uploadBuffer(masterPath, result.masterWav, "audio/wav");
+      // Parallel R2 puts — same files, lower wall-clock (network-bound)
       await patch("quality_check", 97, {
         path: "full",
-        message: "Uploading vocal stems…",
+        message: "Uploading master and stems…",
       }).catch(() => undefined);
-      await uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav");
-      await uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav");
+      const uploads: Promise<unknown>[] = [
+        uploadBuffer(mixPath, result.mixWav, "audio/wav"),
+        uploadBuffer(masterPath, result.masterWav, "audio/wav"),
+        uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav"),
+        uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav"),
+      ];
       if (result.masterMp3) {
         mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
-        await patch("quality_check", 98, {
-          path: "full",
-          message: "Uploading MP3…",
-        }).catch(() => undefined);
-        await uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg");
+        uploads.push(uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg"));
       }
+      await Promise.all(uploads);
     } catch (upErr) {
       const msg = upErr instanceof Error ? upErr.message : String(upErr);
       console.error("[ap-tick] export upload failed", msg);
