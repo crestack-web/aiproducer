@@ -291,7 +291,7 @@ export async function runFullProduceWithCheckpoints(opts: {
     ) => {
       // CRITICAL: never map "completed" → "arranging" (that was reverting jobs to processing
       // after the engine finished and blocked the UI at the wrong stage).
-      if (stage === "completed" || stage === "complete") {
+      if (stage === "completed") {
         // Export/upload still runs after arrangement returns — do not mark job complete here.
         // Advance UI to 98% so it is clear we are finishing, not stuck mid-arrange.
         await patch("quality_check", 98, {
