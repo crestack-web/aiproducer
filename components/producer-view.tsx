@@ -2785,6 +2785,26 @@ export function ProducerView({
     loopOnRef.current = loopOn;
   }, [loopOn]);
 
+  // Keep needle aligned when zoom changes (transform is in px)
+  useEffect(() => {
+    pxPerSecRef.current = pxPerSec;
+    const el = playheadElRef.current;
+    if (el) {
+      const ms = playheadMsRef.current;
+      el.style.transform = `translate3d(${(ms / 1000) * pxPerSec}px, 0, 0)`;
+    }
+  }, [pxPerSec]);
+
+  useEffect(() => {
+    if (playingRef.current) return; // rAF owns the needle while playing
+    playheadMsRef.current = playheadMs;
+    const el = playheadElRef.current;
+    if (el) {
+      el.style.transform = `translate3d(${(playheadMs / 1000) * pxPerSecRef.current}px, 0, 0)`;
+    }
+  }, [playheadMs]);
+
+
   function tickPlayhead() {
     // Must use ref — React state in this closure stays true after pause
     if (!playingRef.current) {
@@ -2805,11 +2825,12 @@ export function ProducerView({
     } else {
       elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
     }
-    elapsed = Math.min(seekCeilingMs(), Math.max(0, elapsed));
-    // Move the needle on the GPU every frame — avoid full React re-render each tick
-    applyPlayheadMs(elapsed, false);
+    const songEnd = Math.max(totalMs || 0, 1);
+    elapsed = Math.min(songEnd, Math.max(0, elapsed));
+    // Visual only — offsetRef stays as the playback start anchor
+    applyPlayheadVisual(elapsed, false);
     const last = playheadStateThrottleRef.current;
-    if (Math.abs(elapsed - last) >= 80) {
+    if (Math.abs(elapsed - last) >= 100) {
       playheadStateThrottleRef.current = elapsed;
       setPlayheadMs(elapsed);
     }
@@ -2854,8 +2875,9 @@ export function ProducerView({
     stopSources();
     // stopSources clears playingRef — re-arm for this session
     playingRef.current = true;
-    offsetRef.current = fromMs;
-    startedAtRef.current = ctx.currentTime;
+    // Anchor song time only; AudioContext clock is set AFTER buffers are ready
+    // so decode latency is not counted as playhead progress.
+    offsetRef.current = Math.max(0, fromMs);
     const startSec = fromMs / 1000;
 
     const beatProxy =
@@ -3012,9 +3034,12 @@ export function ProducerView({
       stopSources();
       return;
     }
+    // Clock starts when audio actually starts — not when we began loading
+    startedAtRef.current = ctx.currentTime;
+    offsetRef.current = Math.max(0, fromMs);
     playingRef.current = true;
     setPlaying(true);
-    applyPlayheadMs(fromMs, true);
+    applyPlayheadVisual(fromMs, true);
     rafRef.current = requestAnimationFrame(tickPlayhead);
   }
 
@@ -3037,8 +3062,9 @@ export function ProducerView({
         // Freeze displayed time at the true audio position
         const frozen =
           (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
-        offsetRef.current = Math.min(totalMs, Math.max(0, frozen));
-        setPlayheadMs(offsetRef.current);
+        const clamped = Math.min(Math.max(totalMs || 0, 1), Math.max(0, frozen));
+        offsetRef.current = clamped;
+        applyPlayheadVisual(clamped, true);
       }
       playbackGenRef.current += 1; // cancel in-flight startPlayback
       playingRef.current = false;
@@ -3509,11 +3535,16 @@ export function ProducerView({
     return Math.max(totalMs || 0, durationMs || 0, 3 * 60_000);
   }
 
-  /** Apply playhead position to the DOM immediately (smooth); sync React when needed. */
-  function applyPlayheadMs(ms: number, syncReact: boolean) {
-    const clamped = Math.max(0, Math.min(seekCeilingMs(), ms));
+  /**
+   * Move the playhead needle in the DOM.
+   * CRITICAL: do NOT write offsetRef here during playback ticks.
+   * offsetRef is the *start* anchor for: elapsed = (now - startedAt)*1000 + offsetRef
+   * Writing current time into offsetRef every frame compounds and races the needle.
+   */
+  function applyPlayheadVisual(ms: number, syncReact: boolean) {
+    const ceiling = Math.max(totalMs || 0, durationMs || 0, 1);
+    const clamped = Math.max(0, Math.min(ceiling, ms));
     playheadMsRef.current = clamped;
-    offsetRef.current = clamped;
     const el = playheadElRef.current;
     if (el) {
       el.style.transform = `translate3d(${(clamped / 1000) * pxPerSecRef.current}px, 0, 0)`;
@@ -3539,8 +3570,10 @@ export function ProducerView({
   }
 
   function seekTo(ms: number) {
-    const clamped = Math.max(0, Math.min(seekCeilingMs(), ms));
-    applyPlayheadMs(clamped, true);
+    const ceiling = Math.max(totalMs || 0, durationMs || 0, seekCeilingMs());
+    const clamped = Math.max(0, Math.min(ceiling, ms));
+    offsetRef.current = clamped;
+    applyPlayheadVisual(clamped, true);
     if (playingRef.current || playing) {
       void startPlayback(clamped);
     }
@@ -5584,7 +5617,6 @@ export function ProducerView({
                 width: 0,
                 zIndex: 25,
                 pointerEvents: "none",
-                transform: `translate3d(${msToX(playheadMs)}px, 0, 0)`,
                 willChange: "transform",
               }}
             >
