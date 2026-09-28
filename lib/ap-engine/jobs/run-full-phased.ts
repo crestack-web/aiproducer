@@ -296,7 +296,7 @@ export async function runFullProduceWithCheckpoints(opts: {
         polishing: 58,
         producing: 60,
         arranging: 68,
-        mixing: 78,
+        mixing: 80,
         mastering: 88,
         quality_check: 94,
         completed: 99,
@@ -304,12 +304,19 @@ export async function runFullProduceWithCheckpoints(opts: {
       const stageName = String(stage === "completed" ? "arranging" : stage);
       let p = prog[stageName] ?? 58;
       if (typeof meta?.progressHint === "number" && Number.isFinite(meta.progressHint)) {
-        p = Math.max(p, Math.min(90, Math.round(meta.progressHint as number)));
+        // Never regress (stuck-at-76% was progressHint then a later report clamping lower)
+        p = Math.max(p, Math.min(96, Math.round(meta.progressHint as number)));
       }
       const layerMsg =
         typeof meta?.layer === "number" && typeof meta?.of === "number"
           ? `Arranging layer ${meta.layer}/${meta.of}${meta.role ? ` (${meta.role})` : ""}…`
-          : null;
+          : meta?.sub === "level_match"
+            ? "Balancing vocal levels…"
+            : meta?.sub === "vocal_bus"
+              ? "Building the vocal bus…"
+              : meta?.sub === "blend"
+                ? "Blending vocals with the beat…"
+                : null;
       await patch(stageName, p, {
         ap_checkpoint: { ...cp, phase: "arranging" },
         path: "full",

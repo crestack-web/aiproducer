@@ -554,13 +554,24 @@ export async function runApArrangement(
 
       const placedByIndex: (PcmStereo | null)[] = normalizedLayers.map(() => null);
 
+      // Soft deadline so we stop BETWEEN layers (Promise.race cannot abort sync DSP mid-layer)
+      const arrangeSoftDeadline =
+        input.deadlineAt != null && Number.isFinite(input.deadlineAt)
+          ? Number(input.deadlineAt)
+          : Date.now() + 18 * 60_000;
+
       for (let oi = 0; oi < order.length; oi++) {
         const i = order[oi];
         const layer = normalizedLayers[i];
         const decision = layerDecisions[i];
         // Yield so worker heartbeats / arrange timeout can fire between sync DSP layers
         await yieldEventLoop();
-        // Climb 62→76% so UI is not frozen at 68% during long multi-layer arrange
+        if (Date.now() > arrangeSoftDeadline) {
+          throw new Error(
+            `Arrangement timed out between layers (${oi}/${order.length}). Tap Produce again — progress is checkpointed.`
+          );
+        }
+        // Climb 62→76% so UI is not frozen during long multi-layer arrange
         if (report) {
           const pct = 62 + Math.round(((oi + 1) / Math.max(1, order.length)) * 14);
           try {
@@ -652,19 +663,35 @@ export async function runApArrangement(
       }
 
       // Cross-section vocal consistency — match lead active RMS across the song
+      try {
+        await stage("arranging", {
+          progressHint: 77,
+          sub: "level_match",
+          layer: order.length,
+          of: order.length,
+        });
+      } catch {
+        /* */
+      }
+      await yieldEventLoop();
       const rolesForMatch = normalizedLayers.map((l) => l.role);
       const matched = matchVocalLevelsAcrossSong(placed, rolesForMatch);
       placed.length = 0;
       placed.push(...matched.layers);
       if (matched.notes.length) performanceNotes.push(...matched.notes);
 
-      let vocalBus = sumVocalBus(placed);
-      vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
+      // Leave the 76% plateau — report mixing BEFORE heavy bus/glue (was silent → UI stuck)
       await report?.("mixing");
-      await stage("mixing");
+      await stage("mixing", { progressHint: 80, sub: "vocal_bus" });
+      await yieldEventLoop();
+      let vocalBus = sumVocalBus(placed);
+      await yieldEventLoop();
+      vocalBus = processVocalBus(vocalBus, { glue: 0.5, density: 0.32 });
+      await stage("mixing", { progressHint: 84, sub: "blend" });
+      await yieldEventLoop();
       const mix = mixVocalAndBeat(vocalBus, beatNorm.pcm, arrMix.mix);
       await report?.("mastering");
-      await stage("mastering");
+      await stage("mastering", { progressHint: 88 });
       const master = await masterMixWithReference(mix, arrMix.master, {
         genre: input.genre,
         mood: null,
