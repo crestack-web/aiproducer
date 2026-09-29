@@ -230,25 +230,34 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             s.endMs = Math.max(s.endMs, l.endMs);
           }
         }
-        let derived = Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs);
-        try {
-          const secRes = await fetch(`/api/projects/${projectId}/blueprint`);
-          if (secRes.ok) {
+        const derived = Array.from(byKey.values()).sort((a, b) => a.startMs - b.startMs);
+        setSections(derived);
+        // Don't block Console chrome on blueprint — sections already derived from tracks
+        void (async () => {
+          try {
+            const secRes = await fetch(`/api/projects/${projectId}/blueprint`);
+            if (!secRes.ok) return;
             const sj = await secRes.json();
             const raw = sj.sections || sj.song_sections || sj.blueprint?.sections || [];
             if (Array.isArray(raw) && raw.length) {
-              derived = raw.map((s: { id?: string; label?: string; name?: string; start_ms?: number; end_ms?: number }, i: number) => ({
-                id: String(s.id || `sec-${i}`),
-                label: s.label || s.name || `Section ${i + 1}`,
-                startMs: Number(s.start_ms) || 0,
-                endMs: Number(s.end_ms) || (Number(s.start_ms) || 0) + 8000,
-              }));
+              setSections(
+                raw.map(
+                  (
+                    s: { id?: string; label?: string; name?: string; start_ms?: number; end_ms?: number },
+                    i: number
+                  ) => ({
+                    id: String(s.id || `sec-${i}`),
+                    label: s.label || s.name || `Section ${i + 1}`,
+                    startMs: Number(s.start_ms) || 0,
+                    endMs: Number(s.end_ms) || (Number(s.start_ms) || 0) + 8000,
+                  })
+                )
+              );
             }
+          } catch {
+            /* keep derived from tasks */
           }
-        } catch {
-          /* keep derived from tasks */
-        }
-        setSections(derived);
+        })();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load Console");
