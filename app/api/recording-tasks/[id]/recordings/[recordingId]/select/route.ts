@@ -3,10 +3,18 @@ import { requireUser } from "@/lib/auth";
 
 type Ctx = { params: Promise<{ id: string; recordingId: string }> };
 
-export async function POST(_req: Request, ctx: Ctx) {
+export async function POST(req: Request, ctx: Ctx) {
   const { id: taskId, recordingId } = await ctx.params;
   const { user, supabase, error } = await requireUser();
   if (error || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let exclusive = true;
+  try {
+    const body = await req.json().catch(() => ({}));
+    if (body && body.exclusive === false) exclusive = false;
+  } catch {
+    /* no body */
+  }
 
   const { data: task } = await supabase
     .from("recording_tasks")
@@ -31,7 +39,9 @@ export async function POST(_req: Request, ctx: Ctx) {
     .maybeSingle();
   if (!rec) return NextResponse.json({ error: "Recording not found" }, { status: 404 });
 
-  await supabase.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+  if (exclusive) {
+    await supabase.from("recordings").update({ is_selected: false }).eq("task_id", taskId);
+  }
   const { data: updated, error: uErr } = await supabase
     .from("recordings")
     .update({ is_selected: true })

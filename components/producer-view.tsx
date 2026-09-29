@@ -2147,17 +2147,28 @@ export function ProducerView({
     }
   }
 
-  /** Upload a WAV buffer as a new selected take on a task; returns audio_url. */
+  /** Upload a WAV buffer as a take on a task; returns audio_url. */
   async function uploadBufferAsTake(
     taskId: string,
     buf: AudioBuffer,
-    source: string
+    source: string,
+    opts?: { select?: boolean; placementStartMs?: number; placementEndMs?: number }
   ): Promise<{ audioUrl: string | null; recordingId: string | null }> {
     const blob = encodeWavBlob(buf);
     const fd = new FormData();
     fd.append("file", blob, `${source}.wav`);
     fd.append("source", source);
     fd.append("duration_ms", String(bufferDurationMs(buf)));
+    if (opts?.placementStartMs != null) {
+      fd.append("placement_start_ms", String(Math.round(opts.placementStartMs)));
+    }
+    if (opts?.placementEndMs != null) {
+      fd.append("timeline_end_ms", String(Math.round(opts.placementEndMs)));
+    }
+    // Split clips must both stay active — never run exclusive /select
+    if (opts?.select === false) {
+      fd.append("keep_unselected", "1");
+    }
     const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
       method: "POST",
       body: fd,
@@ -2167,16 +2178,23 @@ export function ProducerView({
       throw new Error(typeof uj.error === "string" ? uj.error : "Upload failed");
     }
     const newId = (uj?.recording?.id as string | undefined) || null;
-    if (newId) {
+    if (newId && opts?.select !== false) {
       await fetch(`/api/recording-tasks/${taskId}/recordings/${newId}/select`, {
         method: "POST",
       }).catch(() => undefined);
     }
-    await fetch(`/api/recording-tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "completed" }),
-    }).catch(() => null);
+    // Mark both split recordings selected without exclusive deselect
+    if (newId && opts?.select === false) {
+      try {
+        await fetch(`/api/recording-tasks/${taskId}/recordings/${newId}/select`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exclusive: false }),
+        }).catch(() => undefined);
+      } catch {
+        /* */
+      }
+    }
     const audioUrl =
       uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
     return { audioUrl: audioUrl ? String(audioUrl) : null, recordingId: newId };
@@ -2199,9 +2217,7 @@ export function ProducerView({
       existing.find(
         (c) => playheadMs > c.startMs + 200 && playheadMs < c.endMs - 200
       ) ||
-      existing.find(
-        (c) => playheadMs >= c.startMs && playheadMs <= c.endMs
-      );
+      existing.find((c) => playheadMs >= c.startMs && playheadMs <= c.endMs);
     if (!target?.audioUrl) {
       setEditMsg("Place the playhead inside a clip on this track to split");
       return;
@@ -2218,109 +2234,154 @@ export function ProducerView({
       return;
     }
     setTakeEditBusy(true);
-    setEditMsg("Splitting clip…");
+    setEditMsg("Splitting…");
     try {
       if (ctx.state === "suspended") await ctx.resume();
-      const full = await decodeAudioUrl(ctx, target.audioUrl);
+      // Prefer already-decoded buffer (instant) over re-fetching the take
+      let full = target.audioUrl ? bufferCache.get(target.audioUrl) : undefined;
+      if (!full) {
+        full = await decodeAudioUrl(ctx, target.audioUrl!);
+        bufferCache.set(target.audioUrl!, full);
+      }
       const { left, right } = splitBufferAtMs(ctx, full, localMs);
       const leftDur = bufferDurationMs(left);
       const rightDur = bufferDurationMs(right);
 
-      // Both halves stay on this task — same track name/color
-      const leftUp = await uploadBufferAsTake(id, left, "split_left");
-      const rightUp = await uploadBufferAsTake(id, right, "split_right");
+      // Instant local clips via blob URLs — both halves visible immediately
+      const leftBlob = encodeWavBlob(left);
+      const rightBlob = encodeWavBlob(right);
+      const leftLocalUrl = URL.createObjectURL(leftBlob);
+      const rightLocalUrl = URL.createObjectURL(rightBlob);
+      bufferCache.set(leftLocalUrl, left);
+      bufferCache.set(rightLocalUrl, right);
 
       const leftClip: ProducerClip = {
-        id: leftUp.recordingId || `${id}-L-${Date.now()}`,
+        id: `local-L-${Date.now()}`,
         startMs: target.startMs,
         endMs: target.startMs + leftDur,
-        audioUrl: leftUp.audioUrl || target.audioUrl,
-        recordingId: leftUp.recordingId,
+        audioUrl: leftLocalUrl,
+        recordingId: null,
       };
       const rightClip: ProducerClip = {
-        id: rightUp.recordingId || `${id}-R-${Date.now()}`,
+        id: `local-R-${Date.now()}`,
         startMs: playheadMs,
         endMs: playheadMs + rightDur,
-        audioUrl: rightUp.audioUrl,
-        recordingId: rightUp.recordingId,
+        audioUrl: rightLocalUrl,
+        recordingId: null,
       };
 
-      // Persist placement for both recordings + clip list on the task
-      await persistLayer(id, {
-        start_ms: Math.min(leftClip.startMs, rightClip.startMs),
-        end_ms: Math.max(leftClip.endMs, rightClip.endMs),
-      });
-      // Placement for produce/session-preview
-      for (const clip of [leftClip, rightClip]) {
-        if (!clip.recordingId) continue;
-        try {
-          await fetch(`/api/recording-tasks/${id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              start_ms: clip.startMs,
-              end_ms: clip.endMs,
-            }),
-          });
-        } catch {
-          /* best-effort; clip list is source of truth in UI */
-        }
-      }
-      // Store multi-clip map on task metadata
-      try {
-        const nextClips = [
-          ...existing.filter((c) => c.id !== target.id),
-          leftClip,
-          rightClip,
-        ].sort((a, b) => a.startMs - b.startMs);
-        await fetch(`/api/recording-tasks/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            start_ms: nextClips[0].startMs,
-            end_ms: nextClips[nextClips.length - 1].endMs,
-            console_clips: nextClips.map((c) => ({
-              id: c.id,
-              start_ms: c.startMs,
-              end_ms: c.endMs,
-              recording_id: c.recordingId || null,
-            })),
-          }),
-        });
-      } catch {
-        /* */
-      }
+      const nextClipsLocal = [
+        ...existing.filter((c) => c.id !== target.id),
+        leftClip,
+        rightClip,
+      ].sort((a, b) => a.startMs - b.startMs);
 
       setLayers((prev) =>
         prev.map((l) => {
           if (l.id !== id) return l;
-          const nextClips = [
-            ...existing.filter((c) => c.id !== target.id),
-            leftClip,
-            rightClip,
-          ].sort((a, b) => a.startMs - b.startMs);
           return {
             ...l,
-            clips: nextClips,
-            startMs: nextClips[0]?.startMs ?? l.startMs,
-            endMs: nextClips[nextClips.length - 1]?.endMs ?? l.endMs,
-            audioUrl: leftClip.audioUrl || l.audioUrl,
-            recordingId: leftClip.recordingId || l.recordingId,
+            clips: nextClipsLocal,
+            startMs: nextClipsLocal[0]?.startMs ?? l.startMs,
+            endMs: nextClipsLocal[nextClipsLocal.length - 1]?.endMs ?? l.endMs,
+            // Keep layer.audioUrl as left for single-url fallbacks; both clips have their own URLs
+            audioUrl: leftLocalUrl,
+            recordingId: l.recordingId,
           };
         })
       );
       setSelectedClipId(rightClip.id);
-      bufferCache.clear();
-      setEditMsg("Split on this track — drag either clip to place it");
-      onLayersChanged?.();
+      setDurationById((d) => ({
+        ...d,
+        [leftClip.id]: leftDur,
+        [rightClip.id]: rightDur,
+      }));
+      setEditMsg("Split — both clips on this track. Saving…");
+      setTakeEditBusy(false);
+
+      // Background: upload both halves in parallel (do NOT exclusive-select — keeps both)
+      void (async () => {
+        try {
+          const [leftUp, rightUp] = await Promise.all([
+            uploadBufferAsTake(id, left, "split_left", {
+              select: false,
+              placementStartMs: leftClip.startMs,
+              placementEndMs: leftClip.endMs,
+            }),
+            uploadBufferAsTake(id, right, "split_right", {
+              select: false,
+              placementStartMs: rightClip.startMs,
+              placementEndMs: rightClip.endMs,
+            }),
+          ]);
+
+          const leftSaved: ProducerClip = {
+            ...leftClip,
+            id: leftUp.recordingId || leftClip.id,
+            audioUrl: leftUp.audioUrl || leftLocalUrl,
+            recordingId: leftUp.recordingId,
+          };
+          const rightSaved: ProducerClip = {
+            ...rightClip,
+            id: rightUp.recordingId || rightClip.id,
+            audioUrl: rightUp.audioUrl || rightLocalUrl,
+            recordingId: rightUp.recordingId,
+          };
+          if (leftUp.audioUrl) bufferCache.set(leftUp.audioUrl, left);
+          if (rightUp.audioUrl) bufferCache.set(rightUp.audioUrl, right);
+
+          const nextClips = [
+            ...existing.filter((c) => c.id !== target.id),
+            leftSaved,
+            rightSaved,
+          ].sort((a, b) => a.startMs - b.startMs);
+
+          await fetch(`/api/recording-tasks/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              start_ms: nextClips[0].startMs,
+              end_ms: nextClips[nextClips.length - 1].endMs,
+              status: "completed",
+              console_clips: nextClips.map((c) => ({
+                id: c.id,
+                start_ms: c.startMs,
+                end_ms: c.endMs,
+                recording_id: c.recordingId || null,
+              })),
+            }),
+          }).catch(() => null);
+
+          setLayers((prev) =>
+            prev.map((l) => {
+              if (l.id !== id) return l;
+              return {
+                ...l,
+                clips: nextClips,
+                startMs: nextClips[0]?.startMs ?? l.startMs,
+                endMs: nextClips[nextClips.length - 1]?.endMs ?? l.endMs,
+                audioUrl: leftSaved.audioUrl || l.audioUrl,
+                recordingId: leftSaved.recordingId || l.recordingId,
+              };
+            })
+          );
+          setSelectedClipId(rightSaved.id);
+          setEditMsg("Split saved — both clips kept on this track");
+        } catch (e) {
+          setEditMsg(
+            e instanceof Error
+              ? `Split shown locally; save failed: ${e.message}`
+              : "Split shown locally; save failed"
+          );
+        }
+      })();
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Split failed");
-    } finally {
       setTakeEditBusy(false);
     }
   }
 
-  /** Snap clip start  /** Snap clip start to the nearest beat (or 1/2 beat). */
+    /** Snap clip start  /** Snap clip start to the nearest beat (or 1/2 beat). */
   async function quantizeSelectedToBeat(subdivision = 1) {
     const id = selectedTrackId;
     if (!id || id === "beat") return;
