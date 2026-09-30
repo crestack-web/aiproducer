@@ -1,8 +1,8 @@
 /**
  * Beat generation usage gating (duration-aware).
  *
- * Free: 3 successful COMPLETED generations with real audio, each ≤ FREE_MAX_DURATION_SEC (default 180 = 3 min).
- * Longer selections are blocked for free users (no pay-per-overage).
+ * Free: 3 successful COMPLETED generations with real audio, each ≤ FREE_MAX_DURATION_SEC (default 90s; options 60s and 90s only).
+ * Longer selections unlock when the user subscribes or finishes a song.
  * After free quota, unlock via Creator/Pro OR finish+download (beat_unlock_granted).
  *
  * Paid: monthly budget in total seconds (default 450).
@@ -28,7 +28,13 @@ function envInt(name: string, fallback: number, min?: number): number {
 export const FREE_BEAT_GEN_COUNT = envInt("BEAT_GEN_FREE_COUNT", 3, 1);
 
 /** Max seconds covered per free generation. */
-export const FREE_MAX_DURATION_SEC = envInt("BEAT_GEN_FREE_MAX_SEC", 180, 5);
+export const FREE_MAX_DURATION_SEC = envInt("BEAT_GEN_FREE_MAX_SEC", 90, 30);
+
+/** Free-tier length presets (seconds). Must all be <= FREE_MAX_DURATION_SEC. */
+export const FREE_DURATION_OPTIONS_SEC = [60, 90].filter((s) => s <= FREE_MAX_DURATION_SEC);
+
+/** Successful COMPLETED beat gens per project/song. Env: MAX_BEAT_GENS_PER_SONG (default 3). */
+export const MAX_BEAT_GENS_PER_SONG = envInt("MAX_BEAT_GENS_PER_SONG", 3, 1);
 
 /** Default full beat length when user does not pick (seconds). */
 export const DEFAULT_FULL_BEAT_SEC = envInt("MUSIC_FULL_DURATION_SEC", 60, 5);
@@ -37,21 +43,28 @@ export const DEFAULT_FULL_BEAT_SEC = envInt("MUSIC_FULL_DURATION_SEC", 60, 5);
  * Product pricing: $1.00 for a 2-minute (120s) beat.
  * Longer/shorter scale linearly. Override with BEAT_PAID_USD_PER_120S or per-sec env.
  */
-export function estimatedMusicCostUsdPerSec(): number {
-  const per120 = Number(process.env.BEAT_PAID_USD_PER_120S || 1);
-  const fromAnchor =
-    Number.isFinite(per120) && per120 > 0 ? per120 / 120 : 1 / 120;
-  const n = Number(process.env.ELEVENLABS_MUSIC_COST_PER_SEC_USD || process.env.BEAT_COST_PER_SEC_USD || "");
+/**
+ * ElevenLabs Music COGS estimate (USD/min). Default 0.15 = public ElevenAPI Music list rate.
+ * Override with ELEVENLABS_MUSIC_USD_PER_MIN. Not a user line-item price.
+ */
+export function elevenLabsMusicUsdPerMin(): number {
+  const n = Number(process.env.ELEVENLABS_MUSIC_USD_PER_MIN);
   if (Number.isFinite(n) && n > 0) return n;
-  return fromAnchor;
+  return 0.15;
 }
 
+/**
+ * Estimate provider COGS for a beat of the given length.
+ * Music is documented per minute — duration is rounded UP to whole minutes (conservative).
+ */
 export function estimateBeatCostUsd(durationSec: number): number {
-  const sec = Math.max(5, Math.min(240, Math.round(durationSec || 60)));
-  // Round to cents; minimum $0.25 so short previews still show a clear price
-  const raw = sec * estimatedMusicCostUsdPerSec();
-  return Math.max(0.25, Math.round(raw * 100) / 100);
+  const sec = Math.max(0, Number(durationSec) || 0);
+  if (sec <= 0) return 0;
+  const minutes = Math.max(1, Math.ceil(sec / 60));
+  const raw = minutes * elevenLabsMusicUsdPerMin();
+  return Math.round(raw * 1000) / 1000;
 }
+
 
 /**
  * Monthly beat-generation seconds by subscription plan.
@@ -473,10 +486,32 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
   };
 }
 
+/** Count successful COMPLETED beat gens with real audio for one project (song). */
+export async function countSuccessfulBeatGensForProject(projectId: string): Promise<number> {
+  if (!projectId) return 0;
+  const supabase = createServiceClient();
+  try {
+    const { count, error } = await supabase
+      .from("music_generation_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .eq("status", "COMPLETED")
+      .not("audio_path", "is", null);
+    if (error) {
+      console.warn("[beat-quota] per-song gen count failed", error.message);
+      return 0;
+    }
+    return count || 0;
+  } catch (e) {
+    console.warn("[beat-quota] per-song gen count error", e instanceof Error ? e.message : e);
+    return 0;
+  }
+}
+
 export async function assertBeatGenAllowed(
   userId: string,
   durationSec?: number,
-  opts?: { forceBillable?: boolean }
+  opts?: { forceBillable?: boolean; projectId?: string }
 ): Promise<BeatQuotaSnapshot> {
   if (await hasInFlightBeatGeneration(userId)) {
     throw new MusicGenerationError(
@@ -509,12 +544,42 @@ export async function assertBeatGenAllowed(
     })
   );
 
-  if (!snap.isPaid) {
-    // Free length cap always applies unless user explicitly accepts a billable longer beat
-    if (want > snap.freeMaxDurationSec && !forceBillable && !snap.billableGeneration) {
+  // Per-song/project regeneration cap (all plans). Only successful COMPLETED+audio count.
+  const projectId = opts?.projectId ? String(opts.projectId) : "";
+  if (projectId) {
+    const usedForSong = await countSuccessfulBeatGensForProject(projectId);
+    if (usedForSong >= MAX_BEAT_GENS_PER_SONG) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
-        `Free beats are limited to ${snap.freeMaxDurationSec}s (${Math.round(snap.freeMaxDurationSec / 60)} min). Shorten the length or upgrade for longer beats.`,
+        "You've used all " +
+          String(MAX_BEAT_GENS_PER_SONG) +
+          " beats for this song. You can upload your own beat instead.",
+        {
+          details: {
+            code: "PER_SONG_BEAT_GEN_LIMIT",
+            used: usedForSong,
+            limit: MAX_BEAT_GENS_PER_SONG,
+            projectId,
+            upgradePath: "upload_beat",
+          },
+        }
+      );
+    }
+  }
+
+  if (!snap.isPaid) {
+    // Free length cap always applies unless user explicitly accepts a billable longer beat
+    const freeOpts = FREE_DURATION_OPTIONS_SEC.length
+      ? FREE_DURATION_OPTIONS_SEC
+      : [60, 90].filter((s) => s <= snap.freeMaxDurationSec);
+    if (
+      !forceBillable &&
+      !snap.billableGeneration &&
+      !freeOpts.includes(want)
+    ) {
+      throw new MusicGenerationError(
+        "LIMIT_EXCEEDED",
+        `Free beats are 60 or 90 seconds. Longer beats unlock when you subscribe or finish a song.`,
         {
           details: {
             code: "FREE_DURATION_CAP",

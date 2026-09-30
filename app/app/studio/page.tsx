@@ -97,8 +97,9 @@ const STYLE_PRESETS = [
   "Gospel choir pocket",
   "Amapiano night drive",
 ];
-/** Beat length presets (seconds). Free tier covers ≤30s. */
-const LENGTH_PRESETS = [15, 30, 60, 120, 180, 240] as const;
+/** Beat length presets (seconds). Free tier: 60s and 90s only. */
+const LENGTH_PRESETS = [60, 90, 120, 180, 240] as const;
+const FREE_LENGTH_PRESETS = [60, 90] as const;
 /** Estimated USD/sec — override via env on server; client mirror for preview. */
 /** $1.00 per 2 minutes (120s) — scales with selected length */
 const COST_PER_SEC_USD = 1 / 120;
@@ -106,7 +107,7 @@ function estimateStudioBeatCostUsd(sec: number): number {
   const s = Math.max(5, Math.min(240, Math.round(sec || 60)));
   return Math.max(0.25, Math.round(s * COST_PER_SEC_USD * 100) / 100);
 }
-const FREE_MAX_SEC = 180;
+const FREE_MAX_SEC = 90;
 const FREE_GEN_COUNT = 3;
 type Project = {
   id: string;
@@ -584,13 +585,18 @@ function StudioPageInner() {
               code?: string;
               estimatedCostUsd?: number;
               canBillable?: boolean;
+              upgradePath?: string;
             };
             const msg =
               typeof j.error === "string"
                 ? j.error
                 : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
             setLimitMessage(msg);
-            if (details.code === "BEAT_GEN_IN_FLIGHT") {
+            if (details.code === "PER_SONG_BEAT_GEN_LIMIT" || details.upgradePath === "upload_beat") {
+              setLimitMessage(msg);
+              setBeatMode("upload");
+              setError(msg);
+            } else if (details.code === "BEAT_GEN_IN_FLIGHT") {
               setLimitMessage(msg);
             } else if (
               details.code === "SEQUENTIAL_FREE_BLOCKED" ||
@@ -1009,16 +1015,35 @@ function StudioPageInner() {
                       Duration · {beatDurationSec}s
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-                      {LENGTH_PRESETS.map((s) => (
-                        <button key={s} type="button" style={chip(beatDurationSec === s)} onClick={() => setBeatDurationSec(s)}>
-                          {s}s
+                      {LENGTH_PRESETS.map((s) => {
+                        const freeLocked = !isPaidPlan && !(FREE_LENGTH_PRESETS as readonly number[]).includes(s);
+                        return (
+                        <button
+                          key={s}
+                          type="button"
+                          style={{
+                            ...chip(beatDurationSec === s && !freeLocked),
+                            opacity: freeLocked ? 0.45 : 1,
+                            cursor: freeLocked ? "not-allowed" : "pointer",
+                          }}
+                          title={freeLocked ? "Longer beats unlock when you subscribe or finish a song." : undefined}
+                          onClick={() => {
+                            if (freeLocked) {
+                              setError("Longer beats unlock when you subscribe or finish a song.");
+                              return;
+                            }
+                            setBeatDurationSec(s);
+                          }}
+                        >
+                          {s}s{freeLocked ? " 🔒" : ""}
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                     <input
                       type="range"
                       min={10}
-                      max={240}
+                      max={(isPaidPlan ? 240 : FREE_MAX_SEC)}
                       step={5}
                       value={beatDurationSec}
                       onChange={(e) => setBeatDurationSec(Number(e.target.value))}
@@ -1138,7 +1163,7 @@ function StudioPageInner() {
               Free AP beats
             </div>
             We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time; next unlocks after you download a produced song (up to{" "}
-            <strong style={{ color: C.text }}>{Math.max(1, Math.round(FREE_MAX_SEC / 60))} minutes</strong> each).
+            <strong style={{ color: C.text }}>90 seconds</strong> each).
             Generate one at a time — the next free beat unlocks after you{" "}
             <strong style={{ color: C.text }}>record and Produce</strong> the current one.
             After all {FREE_GEN_COUNT} free beats, AP still generates; the{" "}

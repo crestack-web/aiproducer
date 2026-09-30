@@ -16,9 +16,12 @@ export {
   recordSongDownloadForBeatUnlock,
   isPaidBeatSubscriber,
   estimateBeatCostUsd,
-  estimatedMusicCostUsdPerSec,
+  elevenLabsMusicUsdPerMin,
+  countSuccessfulBeatGensForProject,
   FREE_BEAT_GEN_COUNT,
   FREE_MAX_DURATION_SEC,
+  FREE_DURATION_OPTIONS_SEC,
+  MAX_BEAT_GENS_PER_SONG,
   DEFAULT_FULL_BEAT_SEC,
 } from "./beat-quota";
 export type { BeatQuotaSnapshot } from "./beat-quota";

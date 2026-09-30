@@ -169,8 +169,9 @@ export async function enqueueMusicGeneration(
 
   // New generation only — successful COMPLETED jobs consume quota; failures do not
   const requestedSec = Math.round(req.durationSec || DEFAULT_FULL_BEAT_SEC);
-  const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec, {
-    forceBillable: Boolean(req.forceBillable),
+  const quotaSnap = await assertBeatGenAllowed(req.userId, durationSec, {
+    forceBillable: !!req.billableGeneration,
+    projectId: req.projectId,
   });
   // Section / AI beat edits: Creator & Pro only
   if (req.editSection && String(req.editSection).trim()) {
