@@ -3961,7 +3961,7 @@ export function ProducerView({
   const brass = C.brass || "#E7A961";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
-  const sidebarW = sidebarCollapsed ? (isNarrow ? 52 : 64) : isNarrow ? 212 : 280;
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 48 : 64) : isNarrow ? 168 : 280;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -4831,13 +4831,13 @@ export function ProducerView({
             const stackOpen = stackMenuId === tr.id;
             const colorOpen = colorPickerId === tr.id;
             const rowH = isTakeEditingSide
-              ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+              ? Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160)
               : stackOpen
                 ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
               : colorOpen && isExpanded
                 ? Math.max(TRACK_ROW_H_EXPANDED + 36, 160)
               : isExpanded
-                ? TRACK_ROW_H_EXPANDED
+                ? (isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 56, 184) : TRACK_ROW_H_EXPANDED)
                 : TRACK_ROW_H;
             return (
               <div
@@ -4856,13 +4856,13 @@ export function ProducerView({
                       : isExpanded || stackOpen
                         ? "rgba(255,255,255,0.03)"
                         : "transparent",
-                  overflow: stackOpen || colorOpen ? "visible" : "hidden",
+                  overflowX: "hidden", overflowY: isNarrow && isExpanded ? "auto" : stackOpen || colorOpen ? "visible" : "hidden",
                   zIndex: stackOpen || colorOpen ? 8 : 1,
                   position: "relative",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: isExpanded ? "flex-start" : "center",
-                  gap: isExpanded ? 6 : 4,
+                  gap: isNarrow ? (isExpanded ? 4 : 2) : isExpanded ? 6 : 4,
                   boxShadow:
                     armedTrackId === tr.id ? `inset 0 0 0 1px ${brass}` : undefined,
                   transition: "height 0.15s ease, background 0.15s ease",
@@ -5027,21 +5027,20 @@ export function ProducerView({
                     }}
                     style={{
                       alignSelf: "flex-start",
-                      marginLeft: 20,
-                      padding: "2px 8px",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      fontFamily: "inherit",
-                      color: brass,
+                      marginLeft: isNarrow ? 0 : 20,
+                      padding: isNarrow ? "2px 6px" : "2px 8px",
+                      borderRadius: 999,
+                      border: `1px solid ${border}`,
                       background: "transparent",
-                      border: `1px solid ${brass}66`,
-                      borderRadius: 6,
+                      color: brass,
+                      fontSize: isNarrow ? 9 : 10,
+                      fontWeight: 700,
                       cursor: "pointer",
-                      flexShrink: 0,
                     }}
                   >
-                    Rename
+                    {isNarrow ? "✎ Name" : "Rename"}
                   </button>
+                ) : null}
                 ) : null}
                 {!sidebarCollapsed ? (
                 <div
@@ -5067,7 +5066,7 @@ export function ProducerView({
                     type="button"
                     title="Solo"
                     onClick={() => setSoloId(soloId === tr.id ? null : tr.id)}
-                    style={miniChip(border, brass, isSolo, text)}
+                    style={miniChip(border, brass, isSolo, text, isNarrow)}
                   >
                     S
                   </button>
@@ -5533,7 +5532,7 @@ export function ProducerView({
                   : tr.id;
               const clipW = Math.max(10, msToX(clipEndMs) - msToX(clipStartMs));
               const rowH = isTakeEditing
-                ? Math.max(TRACK_ROW_H_EXPANDED + 44, 160)
+                ? Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160)
                 : stackOpen
                   ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
                 : colorOpen && expanded
@@ -7480,15 +7479,23 @@ function iconBtn(border: string, surface: string, text: string): React.CSSProper
   };
 }
 
-function miniChip(border: string, brass: string, on: boolean, text: string): React.CSSProperties {
+function miniChip(
+  border: string,
+  brass: string,
+  on: boolean,
+  text: string,
+  compact?: boolean
+): React.CSSProperties {
+  const s = compact ? 22 : 26;
+  const h = compact ? 22 : 24;
   return {
-    width: 26,
-    height: 24,
+    width: s,
+    height: h,
     borderRadius: 6,
     border: `1px solid ${on ? brass : border}`,
     background: on ? "rgba(231,169,97,0.2)" : "transparent",
     color: text,
-    fontSize: 10,
+    fontSize: compact ? 9 : 10,
     fontWeight: 800,
     cursor: "pointer",
     fontFamily: "inherit",
