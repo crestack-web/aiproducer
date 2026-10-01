@@ -5041,7 +5041,6 @@ export function ProducerView({
                     {isNarrow ? "✎ Name" : "Rename"}
                   </button>
                 ) : null}
-                ) : null}
                 {!sidebarCollapsed ? (
                 <div
                   style={{
