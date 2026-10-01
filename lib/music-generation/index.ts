@@ -28,3 +28,7 @@ export type { BeatQuotaSnapshot } from "./beat-quota";
 export { ReplicateMusicProvider } from "./replicate-provider";
 export { ElevenLabsMusicProvider, buildElevenLabsCompositionPlan } from "./elevenlabs-provider";
 export { MockMusicProvider } from "./mock-provider";
+
+export { MurekaMusicProvider, murekaSubmitAroundVocal, murekaSubmitAddInstrument } from "./mureka-provider";
+export { isMurekaConfigured } from "./mureka-client";
+export { buildInstrumentalPrompt, buildAddInstrumentPrompt } from "./producer-spec";

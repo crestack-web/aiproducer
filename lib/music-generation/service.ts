@@ -5,6 +5,7 @@ import type { MusicGenerationProvider } from "./provider";
 import { MockMusicProvider } from "./mock-provider";
 import { ReplicateMusicProvider } from "./replicate-provider";
 import { ElevenLabsMusicProvider } from "./elevenlabs-provider";
+import { MurekaMusicProvider } from "./mureka-provider";
 import type {
   GeneratedMusicAsset,
   GenerationKind,
@@ -33,19 +34,28 @@ export function getMusicGenerationMode(): "mock" | "provider" {
 
 export function getMusicProvider(): MusicGenerationProvider {
   if (getMusicGenerationMode() === "mock") return new MockMusicProvider();
-  const name = (process.env.MUSIC_GENERATION_PROVIDER || "").toLowerCase().trim();
-  // Explicit choice
+  const name = (
+    process.env.MUSIC_PROVIDER ||
+    process.env.MUSIC_GENERATION_PROVIDER ||
+    ""
+  )
+    .toLowerCase()
+    .trim();
+  if (name === "mock") return new MockMusicProvider();
+  if (name === "mureka") return new MurekaMusicProvider();
   if (name === "replicate") return new ReplicateMusicProvider();
   if (name === "elevenlabs" || name === "eleven") return new ElevenLabsMusicProvider();
-  // Auto: ElevenLabs first when key present, else Replicate, else ElevenLabs (will throw NOT_CONFIGURED)
-  if (
-    process.env.ELEVENLABS_API_KEY?.trim() ||
-    process.env.ELEVEN_API_KEY?.trim() ||
-    process.env.XI_API_KEY?.trim()
-  ) {
+  // Auto: explicit keys — prefer Mureka when configured as primary test engine, else ElevenLabs, else Replicate
+  if ((process.env.MUREKA_API_KEY || "").trim() && (process.env.MUSIC_PROVIDER_AUTO_PREFER || "").toLowerCase() === "mureka") {
+    return new MurekaMusicProvider();
+  }
+  if ((process.env.ELEVENLABS_API_KEY || "").trim()) {
     return new ElevenLabsMusicProvider();
   }
-  if (process.env.REPLICATE_API_TOKEN?.trim()) {
+  if ((process.env.MUREKA_API_KEY || "").trim()) {
+    return new MurekaMusicProvider();
+  }
+  if ((process.env.REPLICATE_API_TOKEN || process.env.REPLICATE_API_KEY || "").trim()) {
     return new ReplicateMusicProvider();
   }
   return new ElevenLabsMusicProvider();

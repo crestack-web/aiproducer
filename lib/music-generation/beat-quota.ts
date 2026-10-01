@@ -65,6 +65,11 @@ export function estimateBeatCostUsd(durationSec: number): number {
   return Math.round(raw * 1000) / 1000;
 }
 
+/** Linear per-second COGS rate derived from the per-minute list price (for quota math / UI). */
+export function estimatedMusicCostUsdPerSec(): number {
+  return elevenLabsMusicUsdPerMin() / 60;
+}
+
 
 /**
  * Monthly beat-generation seconds by subscription plan.

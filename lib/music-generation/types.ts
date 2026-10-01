@@ -5,7 +5,9 @@
 
 export type MusicGenerationMode = "mock" | "provider";
 
-export type MusicProviderName = "replicate" | "elevenlabs" | "mock" | "future_provider";
+export type MusicProviderName = "replicate" | "elevenlabs" | "mock" | "mureka" | "future_provider";
+
+export type MusicJobKind = "preview" | "full" | "section_edit" | "instrumental" | "around_vocal" | "add_instrument";
 
 export type GenerationKind = "preview" | "full";
 
