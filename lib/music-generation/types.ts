@@ -95,6 +95,8 @@ export type GeneratedMusicAsset = {
 export type ProviderSubmitResult = {
   providerPredictionId: string;
   status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+  model?: string;
+  metadata?: Record<string, unknown>;
   raw?: Record<string, unknown>;
 };
 
