@@ -751,6 +751,10 @@ export function ProducerView({
   const [decodeStatus, setDecodeStatus] = useState<string>("");
   const [editMsg, setEditMsg] = useState<string | null>(null);
   const [showAddTrack, setShowAddTrack] = useState(false);
+  const [aiInstrumentBusy, setAiInstrumentBusy] = useState(false);
+  const [aiInstrumentError, setAiInstrumentError] = useState<string | null>(null);
+  const [aiAroundBusy, setAiAroundBusy] = useState(false);
+  const [aiAroundError, setAiAroundError] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [promptBarOpen, setPromptBarOpen] = useState(true);
   const [isNarrow, setIsNarrow] = useState(false);
@@ -4683,6 +4687,88 @@ export function ProducerView({
         </div>
       )}
 
+
+  async function pollMusicJob(jobId: string, timeoutMs = 360_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await fetch(`/api/music/generate/${jobId}`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
+      }
+      const status = String(j.status || j.job?.status || "").toUpperCase();
+      if (status === "COMPLETED" || status === "SUCCEEDED" || status === "COMPLETE") return;
+      if (status === "FAILED" || status === "CANCELED" || status === "CANCELLED") {
+        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new Error("Generation timed out — try again");
+  }
+
+  async function generateAiInstrument(instrument: string) {
+    if (!projectId || aiInstrumentBusy) return;
+    setAiInstrumentBusy(true);
+    setAiInstrumentError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/add-instrument`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instrument }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start instrument generation");
+      }
+      const jobId = j.jobId || j.job_id;
+      if (!jobId) throw new Error("No job id returned");
+      await pollMusicJob(String(jobId));
+      setShowAddTrack(false);
+      // Reload so the new track appears from session data
+      window.location.reload();
+    } catch (e) {
+      setAiInstrumentError(e instanceof Error ? e.message : "Instrument generation failed");
+    } finally {
+      setAiInstrumentBusy(false);
+    }
+  }
+
+  async function buildAroundSelectedVocal() {
+    if (!projectId || aiAroundBusy) return;
+    const vocalLayer =
+      layers.find(
+        (l) =>
+          l.id !== "beat" &&
+          Boolean(l.recordingId) &&
+          (l.role === "lead" ||
+            l.role === "vocal" ||
+            String(l.role || "").includes("harmony") ||
+            String(l.role || "").includes("double"))
+      ) || layers.find((l) => l.id !== "beat" && Boolean(l.recordingId));
+    const recordingId = vocalLayer?.recordingId || undefined;
+    setAiAroundBusy(true);
+    setAiAroundError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/build-around-vocal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recordingId ? { recordingId } : {}),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not build around vocal");
+      }
+      const jobId = j.jobId || j.job_id;
+      if (!jobId) throw new Error("No job id returned");
+      await pollMusicJob(String(jobId));
+      window.location.reload();
+    } catch (e) {
+      setAiAroundError(e instanceof Error ? e.message : "Build around vocal failed");
+    } finally {
+      setAiAroundBusy(false);
+    }
+  }
+
       {/* Shared beat picker for empty state + Add Track when no beat */}
       <input
         ref={beatFileInputRef}
@@ -7021,6 +7107,73 @@ export function ProducerView({
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>Add track</div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", opacity: 0.55, marginBottom: 8 }}>
+                GENERATE WITH AI
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {(["drums", "bass", "guitar", "keys", "piano", "strings", "synth"] as const).map((inst) => (
+                  <button
+                    key={inst}
+                    type="button"
+                    disabled={aiInstrumentBusy || !projectId}
+                    onClick={() => void generateAiInstrument(inst)}
+                    style={{
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      background: aiInstrumentBusy ? "rgba(255,255,255,0.06)" : "rgba(231,169,97,0.12)",
+                      color: "#F5E6D3",
+                      borderRadius: 999,
+                      padding: "8px 12px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      textTransform: "capitalize",
+                      cursor: aiInstrumentBusy ? "wait" : "pointer",
+                      opacity: aiInstrumentBusy ? 0.7 : 1,
+                    }}
+                  >
+                    {aiInstrumentBusy ? "Working…" : inst}
+                  </button>
+                ))}
+              </div>
+              {aiInstrumentError ? (
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#ff8f8f" }}>{aiInstrumentError}</p>
+              ) : (
+                <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.5 }}>
+                  AP generates a complementary layer from your song direction. One request per tap.
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={aiAroundBusy || !projectId}
+                onClick={() => void buildAroundSelectedVocal()}
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "#F5E6D3",
+                  borderRadius: 12,
+                  padding: "12px 14px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: aiAroundBusy ? "wait" : "pointer",
+                  textAlign: "left",
+                }}
+              >
+                {aiAroundBusy ? "Building production around your vocal…" : "Build production around my vocal"}
+              </button>
+              {aiAroundError ? (
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#ff8f8f" }}>{aiAroundError}</p>
+              ) : (
+                <p style={{ margin: "6px 0 0", fontSize: 11, opacity: 0.5 }}>
+                  Uses your recorded vocal as the guide. Becomes the instrumental bed for this session.
+                </p>
+              )}
+              <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "14px 0" }} />
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", opacity: 0.55, marginBottom: 8 }}>
+                MANUAL
+              </div>
+            </div>
             {!beatUrl ? (
               <button
                 type="button"

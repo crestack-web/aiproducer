@@ -502,6 +502,55 @@ export async function tickMusicGenerationJob(jobId: string) {
       beatId = beat.id;
     }
 
+    // Add-instrument / AI layers: also create a recording_task track so Producer View can show them
+    if (job.kind === "add_instrument") {
+      const meta = (job.metadata || {}) as Record<string, unknown>;
+      const instrument = String(meta.instrument || "custom");
+      const typeMap: Record<string, string> = {
+        drums: "drums",
+        bass: "bass",
+        guitar: "guitar",
+        keys: "keys",
+        piano: "piano",
+        percussion: "percussion",
+        synth: "synth",
+        strings: "strings",
+        fx: "fx",
+      };
+      const taskType = typeMap[instrument] || "custom";
+      try {
+        const { data: newTask } = await supabase
+          .from("recording_tasks")
+          .insert({
+            project_id: job.project_id,
+            type: taskType,
+            label: instrument.charAt(0).toUpperCase() + instrument.slice(1),
+            required: false,
+            status: "ready",
+            track_fx: {},
+            metadata: {
+              source: "mureka_add_instrument",
+              music_generation_job_id: jobId,
+              instrument,
+            },
+          })
+          .select("id")
+          .single();
+        if (newTask?.id) {
+          await supabase.from("recordings").insert({
+            task_id: newTask.id,
+            project_id: job.project_id,
+            audio_path: path,
+            status: "ready",
+            content_type: storeCt,
+            metadata: { generated_by: "mureka", instrument },
+          });
+        }
+      } catch (e) {
+        console.warn("[music] add_instrument track insert skipped", e);
+      }
+    }
+
     await supabase
       .from("music_generation_jobs")
       .update({

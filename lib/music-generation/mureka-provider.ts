@@ -51,8 +51,19 @@ function classifyHttp(status: number, data: Record<string, unknown>): MusicGener
 
 function queryPathForTask(taskId: string, kind: "instrumental" | "song" | "track"): string {
   if (kind === "instrumental") return `/v1/instrumental/query/${encodeURIComponent(taskId)}`;
-  if (kind === "track") return `/v1/song/query/${encodeURIComponent(taskId)}`;
+  if (kind === "track") return `/v1/track/query/${encodeURIComponent(taskId)}`;
   return `/v1/song/query/${encodeURIComponent(taskId)}`;
+}
+
+/** Encode kind into prediction id so pollPrediction can pick the right query endpoint. */
+function encodeTaskRef(kind: "instrumental" | "song" | "track", taskId: string): string {
+  return `${kind}:${taskId}`;
+}
+
+function decodeTaskRef(ref: string): { kind: "instrumental" | "song" | "track"; taskId: string } {
+  const m = /^(instrumental|song|track):(.+)$/.exec(ref);
+  if (m) return { kind: m[1] as "instrumental" | "song" | "track", taskId: m[2] };
+  return { kind: "instrumental", taskId: ref };
 }
 
 export class MurekaMusicProvider implements MusicGenerationProvider {
@@ -109,7 +120,7 @@ export class MurekaMusicProvider implements MusicGenerationProvider {
     }
 
     return {
-      providerPredictionId: task.id,
+      providerPredictionId: encodeTaskRef("instrumental", task.id),
       status: "starting",
       model: String(task.model || modelName()),
       metadata: {
@@ -122,14 +133,15 @@ export class MurekaMusicProvider implements MusicGenerationProvider {
   }
 
   async pollPrediction(providerPredictionId: string): Promise<ProviderPollResult> {
+    const { kind, taskId } = decodeTaskRef(providerPredictionId);
     const { status, data } = await murekaGet(
-      queryPathForTask(providerPredictionId, "instrumental"),
+      queryPathForTask(taskId, kind),
       { timeoutMs: 30_000 }
     );
     if (status >= 400) {
       // Some deployments use song/query for mixed tasks — try fallback once
       if (status === 404) {
-        const fb = await murekaGet(queryPathForTask(providerPredictionId, "song"), {
+        const fb = await murekaGet(queryPathForTask(taskId, kind), {
           timeoutMs: 30_000,
         });
         if (fb.status < 400) return this.mapPoll(asMurekaTask(fb.data));
@@ -242,7 +254,7 @@ export class MurekaMusicProvider implements MusicGenerationProvider {
 
 /**
  * Generate a complementary instrument layer (drums, bass, guitar, …) via Mureka track API.
- * Returns provider task id; caller should poll via song/query.
+ * Returns provider task id; caller should poll via track/query.
  * Cost-sensitive: one explicit user action → one request.
  */
 export async function murekaSubmitAddInstrument(opts: {
@@ -273,7 +285,7 @@ export async function murekaSubmitAddInstrument(opts: {
     });
   }
   return {
-    providerPredictionId: task.id,
+    providerPredictionId: encodeTaskRef("track", task.id),
     status: "starting" as const,
     model: String(task.model || modelName()),
     metadata: { endpoint: "track", track_type: body.track_type, trace_id: task.trace_id },
@@ -323,7 +335,7 @@ export async function murekaSubmitAroundVocal(opts: {
     if (fb.status >= 400) throw classifyHttp(fb.status, fb.data);
     const task = asMurekaTask(fb.data);
     return {
-      providerPredictionId: task.id,
+      providerPredictionId: encodeTaskRef("instrumental", task.id),
       status: "starting" as const,
       model: String(task.model || modelName()),
       metadata: {
@@ -340,7 +352,7 @@ export async function murekaSubmitAroundVocal(opts: {
     });
   }
   return {
-    providerPredictionId: task.id,
+    providerPredictionId: encodeTaskRef("song", task.id),
     status: "starting" as const,
     model: String(task.model || modelName()),
     metadata: { endpoint: "song_melody", melody_id: fileId, trace_id: task.trace_id },
