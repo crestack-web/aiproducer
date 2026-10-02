@@ -46,7 +46,7 @@ function classifyHttp(status: number, data: Record<string, unknown>): MusicGener
       retryable: true,
     });
   }
-  return new MusicGenerationError("INVALID_REQUEST", String(msg), { provider: "mureka" });
+  return new MusicGenerationError("INVALID_INPUT", String(msg), { provider: "mureka" });
 }
 
 function queryPathForTask(taskId: string, kind: "instrumental" | "song" | "track"): string {
