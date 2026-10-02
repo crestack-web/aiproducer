@@ -25,7 +25,10 @@ const Body = z.object({
 
 export async function POST(req: Request, ctx: Ctx) {
   try {
-    const user = await requireUser();
+    const { user, error: authError } = await requireUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const { id: projectId } = await ctx.params;
     if (!isMurekaConfigured()) {
       return NextResponse.json(
