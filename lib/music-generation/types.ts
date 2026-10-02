@@ -105,6 +105,7 @@ export type ProviderPollResult = {
   outputUrl?: string | null;
   error?: string | null;
   metrics?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   raw?: Record<string, unknown>;
 };
 
