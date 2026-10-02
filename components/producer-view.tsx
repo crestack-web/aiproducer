@@ -3978,6 +3978,89 @@ export function ProducerView({
     });
   };
 
+
+  async function pollMusicJob(jobId: string, timeoutMs = 360_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await fetch(`/api/music/generate/${jobId}`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
+      }
+      const status = String(j.status || j.job?.status || "").toUpperCase();
+      if (status === "COMPLETED" || status === "SUCCEEDED" || status === "COMPLETE") return;
+      if (status === "FAILED" || status === "CANCELED" || status === "CANCELLED") {
+        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    throw new Error("Generation timed out — try again");
+  }
+
+  async function generateAiInstrument(instrument: string) {
+    if (!projectId || aiInstrumentBusy) return;
+    setAiInstrumentBusy(true);
+    setAiInstrumentError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/add-instrument`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instrument }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start instrument generation");
+      }
+      const jobId = j.jobId || j.job_id;
+      if (!jobId) throw new Error("No job id returned");
+      await pollMusicJob(String(jobId));
+      setShowAddTrack(false);
+      // Reload so the new track appears from session data
+      window.location.reload();
+    } catch (e) {
+      setAiInstrumentError(e instanceof Error ? e.message : "Instrument generation failed");
+    } finally {
+      setAiInstrumentBusy(false);
+    }
+  }
+
+  async function buildAroundSelectedVocal() {
+    if (!projectId || aiAroundBusy) return;
+    const vocalLayer =
+      layers.find(
+        (l) =>
+          l.id !== "beat" &&
+          Boolean(l.recordingId) &&
+          (l.role === "lead" ||
+            l.role === "vocal" ||
+            String(l.role || "").includes("harmony") ||
+            String(l.role || "").includes("double"))
+      ) || layers.find((l) => l.id !== "beat" && Boolean(l.recordingId));
+    const recordingId = vocalLayer?.recordingId || undefined;
+    setAiAroundBusy(true);
+    setAiAroundError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/build-around-vocal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recordingId ? { recordingId } : {}),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not build around vocal");
+      }
+      const jobId = j.jobId || j.job_id;
+      if (!jobId) throw new Error("No job id returned");
+      await pollMusicJob(String(jobId));
+      window.location.reload();
+    } catch (e) {
+      setAiAroundError(e instanceof Error ? e.message : "Build around vocal failed");
+    } finally {
+      setAiAroundBusy(false);
+    }
+  }
+
+
   return (
     <div
       style={{
@@ -4687,87 +4770,6 @@ export function ProducerView({
         </div>
       )}
 
-
-  async function pollMusicJob(jobId: string, timeoutMs = 360_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const res = await fetch(`/api/music/generate/${jobId}`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
-      }
-      const status = String(j.status || j.job?.status || "").toUpperCase();
-      if (status === "COMPLETED" || status === "SUCCEEDED" || status === "COMPLETE") return;
-      if (status === "FAILED" || status === "CANCELED" || status === "CANCELLED") {
-        throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
-      }
-      await new Promise((r) => setTimeout(r, 2500));
-    }
-    throw new Error("Generation timed out — try again");
-  }
-
-  async function generateAiInstrument(instrument: string) {
-    if (!projectId || aiInstrumentBusy) return;
-    setAiInstrumentBusy(true);
-    setAiInstrumentError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/add-instrument`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instrument }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof j.error === "string" ? j.error : "Could not start instrument generation");
-      }
-      const jobId = j.jobId || j.job_id;
-      if (!jobId) throw new Error("No job id returned");
-      await pollMusicJob(String(jobId));
-      setShowAddTrack(false);
-      // Reload so the new track appears from session data
-      window.location.reload();
-    } catch (e) {
-      setAiInstrumentError(e instanceof Error ? e.message : "Instrument generation failed");
-    } finally {
-      setAiInstrumentBusy(false);
-    }
-  }
-
-  async function buildAroundSelectedVocal() {
-    if (!projectId || aiAroundBusy) return;
-    const vocalLayer =
-      layers.find(
-        (l) =>
-          l.id !== "beat" &&
-          Boolean(l.recordingId) &&
-          (l.role === "lead" ||
-            l.role === "vocal" ||
-            String(l.role || "").includes("harmony") ||
-            String(l.role || "").includes("double"))
-      ) || layers.find((l) => l.id !== "beat" && Boolean(l.recordingId));
-    const recordingId = vocalLayer?.recordingId || undefined;
-    setAiAroundBusy(true);
-    setAiAroundError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/build-around-vocal`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(recordingId ? { recordingId } : {}),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof j.error === "string" ? j.error : "Could not build around vocal");
-      }
-      const jobId = j.jobId || j.job_id;
-      if (!jobId) throw new Error("No job id returned");
-      await pollMusicJob(String(jobId));
-      window.location.reload();
-    } catch (e) {
-      setAiAroundError(e instanceof Error ? e.message : "Build around vocal failed");
-    } finally {
-      setAiAroundBusy(false);
-    }
-  }
 
       {/* Shared beat picker for empty state + Add Track when no beat */}
       <input
