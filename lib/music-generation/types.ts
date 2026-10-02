@@ -47,6 +47,10 @@ export type MusicGenerationRequest = {
   durationSec?: number;
   /** User accepted paid beat (cost on song download) */
   forceBillable?: boolean;
+  /** Internal: 0 or 1 for A/B beat pair */
+  variantIndex?: number;
+  /** Skip quota when enqueueing variant B of the same user action */
+  skipQuotaCheck?: boolean;
   /** Section label for AI tweak of existing beat */
   editSection?: string;
   instrumentalOnly?: boolean;

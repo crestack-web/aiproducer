@@ -90,6 +90,36 @@ export async function POST(req: Request, ctx: Ctx) {
           : `beat:${user.id}:${projectId}:${kind}`),
     });
 
+    // Dual options: second arrangement (same user action, no extra quota hit)
+    if (kind === "full" || kind === "preview") {
+      const basePrompt = parsed.data.prompt || "";
+      void enqueueMusicGeneration({
+        projectId,
+        userId: user.id,
+        genre: parsed.data.genre,
+        mood: parsed.data.mood,
+        bpm: parsed.data.tempo,
+        prompt: `${basePrompt} Variation B — alternate arrangement, different melodic motif, same genre and energy.`.trim(),
+        energy: parsed.data.energy,
+        instrumentation: parsed.data.instrumentation,
+        referenceStyle: parsed.data.reference_style,
+        structure: parsed.data.structure,
+        kind,
+        durationSec,
+        skipQuotaCheck: true,
+        variantIndex: 1,
+        idempotencyKey: `beat-b:${user.id}:${projectId}:${kind}:${Date.now()}`,
+      })
+        .then(async (b) => {
+          try {
+            await tickMusicGenerationJob(b.jobId);
+          } catch {
+            /* job row holds error */
+          }
+        })
+        .catch((e) => console.warn("[generate-beat] variant B failed to enqueue", e));
+    }
+
     // Drive the job to completion (or failure) within this request.
     // Mock is instant; provider mode may need a few polls.
     let job = await getMusicGenerationJob(enqueued.jobId, user.id);

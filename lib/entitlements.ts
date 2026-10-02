@@ -1,0 +1,79 @@
+/**
+ * Commercial access — download / license unlock.
+ * Preview & in-app listening stay free; export needs plan or paid session.
+ */
+import { createServiceClient } from "@/lib/supabase/service";
+
+export type CommercialAccess = {
+  ok: boolean;
+  reason?: "login" | "payment_required";
+  source?: "project_unlock" | "subscription" | "admin";
+  message?: string;
+};
+
+/**
+ * Full commercial license path: paid session on this project, or active Creator/Pro.
+ */
+export async function assertCommercialDownloadAccess(
+  userId: string,
+  projectId: string
+): Promise<CommercialAccess> {
+  const service = createServiceClient();
+
+  const { data: project } = await service
+    .from("projects")
+    .select("id, user_id, metadata")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (!project || project.user_id !== userId) {
+    return { ok: false, reason: "login", message: "Project not found." };
+  }
+
+  const meta = (project.metadata || {}) as Record<string, unknown>;
+  if (meta.download_unlocked === true || meta.session_paid === true) {
+    return { ok: true, source: "project_unlock" };
+  }
+
+  // Profile-level subscription (Creator / Pro)
+  const { data: profile } = await service
+    .from("profiles")
+    .select("id, metadata")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const pMeta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
+    {}) as Record<string, unknown>;
+  const plan = String(pMeta.subscription_plan || pMeta.plan || "").toLowerCase();
+
+  if (plan === "creator" || plan === "pro") {
+    const expires = pMeta.subscription_expires_at
+      ? Date.parse(String(pMeta.subscription_expires_at))
+      : null;
+    if (!expires || Number.isNaN(expires) || expires > Date.now()) {
+      return { ok: true, source: "subscription" };
+    }
+  }
+
+  // Any other project unlocked with subscription_plan for this user (legacy)
+  const { data: subProjects } = await service
+    .from("projects")
+    .select("id, metadata")
+    .eq("user_id", userId)
+    .limit(40);
+
+  for (const row of subProjects || []) {
+    const m = (row.metadata || {}) as Record<string, unknown>;
+    const sp = String(m.subscription_plan || "").toLowerCase();
+    if (sp === "creator" || sp === "pro") {
+      return { ok: true, source: "subscription" };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: "payment_required",
+    message:
+      "Unlock this song to download with a full commercial license — pay for this session ($4.99) or subscribe to Creator/Pro.",
+  };
+}

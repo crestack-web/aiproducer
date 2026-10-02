@@ -18,7 +18,7 @@ export type PlanDef = {
 };
 
 /** One-time unlock — subscriptions must beat this per finished song. */
-export const SESSION_PRICE_USD = 2.99;
+export const SESSION_PRICE_USD = 4.99;
 
 export const PLANS: PlanDef[] = [
   {
@@ -42,11 +42,11 @@ export const PLANS: PlanDef[] = [
     priceUsd: 19,
     priceUsdYear: 190, // ~2 months free
     songsPerMonth: 10,
-    // $19 / 10 = $1.90 — under $2.99 session
+    // $19 / 10 = $1.90 — under $4.99 session
     perSongHint: "~$1.90 / song",
     features: [
       "10 finished songs / month",
-      "About $1.90 per song (vs $2.99 one-time)",
+      "About $1.90 per song (vs $4.99 one-time)",
       "~30 min AP beat generation / month (10 × 3 min)",
       "WAV + MP3 export",
       "Professional mix & master",
@@ -65,7 +65,7 @@ export const PLANS: PlanDef[] = [
     perSongHint: "~$1.63 / song",
     features: [
       "30 finished songs / month",
-      "About $1.63 per song (vs $2.99 one-time)",
+      "About $1.63 per song (vs $4.99 one-time)",
       "~90 min AP beat generation / month (30 × 3 min)",
       "Everything in Creator",
       "Priority mastering queue",

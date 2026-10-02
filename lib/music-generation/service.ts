@@ -179,9 +179,18 @@ export async function enqueueMusicGeneration(
 
   // New generation only — successful COMPLETED jobs consume quota; failures do not
   const requestedSec = Math.round(req.durationSec || DEFAULT_FULL_BEAT_SEC);
-  const quotaSnap = await assertBeatGenAllowed(req.userId, requestedSec, {
-    projectId: req.projectId,
-  });
+  // Variant B of a dual generate shares the parent action's quota (see generate-beat).
+  const quotaSnap = req.skipQuotaCheck
+    ? ({
+        allowed: true,
+        isPaid: false,
+        billableGeneration: false,
+        message: null,
+        remainingFreeGens: 0,
+      } as Awaited<ReturnType<typeof assertBeatGenAllowed>>)
+    : await assertBeatGenAllowed(req.userId, requestedSec, {
+        projectId: req.projectId,
+      });
   // Section / AI beat edits: Creator & Pro only
   if (req.editSection && String(req.editSection).trim()) {
     const paid = await isPaidBeatSubscriber(req.userId);

@@ -122,8 +122,8 @@ export default function WelcomePage() {
               <div className="cost-label">Studio app</div>
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
-              <div className="cost-total">From $2.99<span> / song</span></div>
-              <div className="cost-sub">Session: $2.99/song · Creator: ~$1.90/song · Pro: ~$1.63/song</div>
+              <div className="cost-total">From $4.99<span> / song</span></div>
+              <div className="cost-sub">Session: $4.99/song · Creator: ~$1.90/song · Pro: ~$1.63/song</div>
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
                 <li>Guided recording (unlimited takes*) <em>included</em></li>
@@ -152,7 +152,7 @@ export default function WelcomePage() {
           <div className="pricing">
             <div className="price-card">
               <div className="price-name">Session</div>
-              <div className="price-amount">$2.99 <span>/ song</span></div>
+              <div className="price-amount">$4.99 <span>/ song</span></div>
               <p className="price-desc">One full song so you can experience the producer flow end-to-end.</p>
               <ul className="price-list">
                 <li>1 finished song credit</li>

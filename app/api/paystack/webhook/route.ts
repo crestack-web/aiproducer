@@ -61,6 +61,18 @@ export async function POST(req: Request) {
   meta.paystack_paid_at = event.data?.paid_at || new Date().toISOString();
   if (plan === "creator" || plan === "pro") {
     meta.subscription_plan = plan;
+        // Persist on profile so Creator/Pro unlocks downloads across projects
+    try {
+      const { data: prof } = await service.from("profiles").select("metadata").eq("id", project.user_id).maybeSingle();
+      const pm = { ...((prof?.metadata as Record<string, unknown>) || {}) };
+      pm.subscription_plan = plan;
+      pm.subscription_interval = interval;
+      pm.subscription_updated_at = new Date().toISOString();
+      await service.from("profiles").update({ metadata: pm }).eq("id", project.user_id);
+    } catch (e) {
+      console.warn("[paystack] profile subscription stamp failed", e);
+    }
+
     meta.subscription_interval = interval;
   }
   delete meta.paystack_pending;

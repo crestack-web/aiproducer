@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { downloadStorageObject } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
+import { assertCommercialDownloadAccess } from "@/lib/entitlements";
 
 type Ctx = { params: Promise<{ id: string }> };
 

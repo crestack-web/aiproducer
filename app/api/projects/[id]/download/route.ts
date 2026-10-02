@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
+import { assertCommercialDownloadAccess } from "@/lib/entitlements";
 import { createServiceClient } from "@/lib/supabase/server";
 import { isStoragePath, resolveAudioUrl } from "@/lib/storage";
 import { recordSongDownloadForBeatUnlock } from "@/lib/music-generation/beat-quota";
@@ -24,9 +25,21 @@ function safeFilename(title: string, kind: string, format: string, version?: num
 
 export async function GET(req: Request, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
-  const { user, supabase, error } = await requireUser();
+  const { user, error } = await requireUser();
   if (error || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const access = await assertCommercialDownloadAccess(user.id, projectId);
+  if (!access.ok) {
+    return NextResponse.json(
+      {
+        error: access.message || "Payment required for commercial download",
+        code: "PAYMENT_REQUIRED",
+        reason: access.reason,
+      },
+      { status: 402 }
+    );
   }
 
   const url = new URL(req.url);
