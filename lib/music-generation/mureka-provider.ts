@@ -62,6 +62,12 @@ export class MurekaMusicProvider implements MusicGenerationProvider {
     return isMurekaConfigured();
   }
 
+  maxDurationSec(kind: "preview" | "full"): number {
+    if (kind === "preview") return Number(process.env.MUSIC_PREVIEW_DURATION_SEC || 12);
+    // Mureka instrumental defaults; overridable via env
+    return Number(process.env.MUREKA_MAX_DURATION_SEC || process.env.MUSIC_FULL_DURATION_SEC || 120);
+  }
+
   async submitPrediction(req: MusicGenerationRequest): Promise<ProviderSubmitResult> {
     if (!this.isConfigured()) {
       throw new MusicGenerationError(
