@@ -213,14 +213,14 @@ export class MurekaMusicProvider implements MusicGenerationProvider {
         const durationSec =
           typeof last.metadata?.duration_sec === "number"
             ? Number(last.metadata.duration_sec)
-            : req.durationSec;
+            : Number(req.durationSec ?? 30);
         return {
           buffer: dl.buffer,
           contentType: dl.contentType,
           extension: dl.extension,
           durationSec,
           providerPredictionId: submitted.providerPredictionId,
-          model: submitted.model,
+          model: submitted.model || modelName(),
           metadata: { ...submitted.metadata, ...last.metadata },
         };
       }
