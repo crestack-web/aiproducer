@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { assertCommercialDownloadAccess } from "@/lib/entitlements";
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { isStoragePath, resolveAudioUrl } from "@/lib/storage";
 import { recordSongDownloadForBeatUnlock } from "@/lib/music-generation/beat-quota";
 
@@ -41,6 +41,9 @@ export async function GET(req: Request, ctx: Ctx) {
       { status: 402 }
     );
   }
+
+  const service = createServiceClient();
+  const supabase = service;
 
   const url = new URL(req.url);
   const kind = (url.searchParams.get("kind") || "master") as "master" | "mix" | "preview_mix";
@@ -82,8 +85,7 @@ export async function GET(req: Request, ctx: Ctx) {
     );
   }
 
-  const service = createServiceClient();
-  const kindFilter =
+    const kindFilter =
     kind === "mix" ? ["mix", "preview_mix"] : kind === "preview_mix" ? ["preview_mix"] : ["master"];
 
   const { data: version } = await service
