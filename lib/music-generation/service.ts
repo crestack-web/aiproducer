@@ -184,10 +184,20 @@ export async function enqueueMusicGeneration(
     ? ({
         allowed: true,
         isPaid: false,
+        usedSuccessful: 0,
+        freeBaseAllowance: 3,
+        downloadUnlocks: 0,
+        freeLimit: 3,
+        usedSecondsThisMonth: 0,
+        paidSecondsBudget: 0,
+        freeMaxDurationSec: 90,
+        remainingFree: 0,
         billableGeneration: false,
         message: null,
-        remainingFreeGens: 0,
-      } as Awaited<ReturnType<typeof assertBeatGenAllowed>>)
+        costUsdEstimate: 0,
+        perSongGensUsed: 0,
+        perSongGensMax: 3,
+      } as unknown as Awaited<ReturnType<typeof assertBeatGenAllowed>>)
     : await assertBeatGenAllowed(req.userId, requestedSec, {
         projectId: req.projectId,
       });
