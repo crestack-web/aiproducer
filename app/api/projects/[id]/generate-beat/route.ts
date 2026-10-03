@@ -103,7 +103,6 @@ export async function POST(req: Request, ctx: Ctx) {
         energy: parsed.data.energy,
         instrumentation: parsed.data.instrumentation,
         referenceStyle: parsed.data.referenceStyle,
-        structure: parsed.data.structure,
         kind,
         durationSec,
         skipQuotaCheck: true,
