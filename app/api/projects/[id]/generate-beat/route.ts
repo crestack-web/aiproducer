@@ -102,7 +102,7 @@ export async function POST(req: Request, ctx: Ctx) {
         prompt: `${basePrompt} Variation B — alternate arrangement, different melodic motif, same genre and energy.`.trim(),
         energy: parsed.data.energy,
         instrumentation: parsed.data.instrumentation,
-        referenceStyle: parsed.data.reference_style,
+        referenceStyle: parsed.data.referenceStyle,
         structure: parsed.data.structure,
         kind,
         durationSec,
