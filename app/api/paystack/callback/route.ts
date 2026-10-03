@@ -49,7 +49,7 @@ export async function GET(req: Request) {
   const service = createServiceClient();
   const { data: project } = await service
     .from("projects")
-    .select("id, metadata")
+    .select("id, user_id, metadata")
     .eq("id", projectId)
     .maybeSingle();
 
