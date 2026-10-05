@@ -3548,7 +3548,7 @@ export function ProducerView({
     setProduceUi("failed");
     setProduceError(
       reason === "timeout"
-        ? "Production timed out after 25 minutes. Tap Produce again to start a new job — your recordings are safe."
+        ? "Production timed out after 120 minutes. Tap Produce again to start a new job — your recordings are safe."
         : "Production cancelled. Your recordings are safe — tap Produce when you want to try again."
     );
     setProduceStage("failed");
@@ -6246,7 +6246,7 @@ export function ProducerView({
                   Cancel production
                 </button>
                 <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginTop: 8, lineHeight: 1.4 }}>
-                  Auto-cancels after 25 minutes if still running. Recordings stay safe either way.
+                  Auto-cancels after 120 minutes if still running. Recordings stay safe either way.
                 </div>
               </>
             ) : null}

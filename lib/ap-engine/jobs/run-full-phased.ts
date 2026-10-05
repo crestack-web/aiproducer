@@ -23,6 +23,7 @@ import { encodeStereoWav } from "../dsp";
 import { validateAudioBuffer } from "../ingestion/validate";
 import type { PlacementLog } from "./collect-vocals";
 import { isFullQualityProduce, produceWorkerTickBudgetMs } from "@/lib/produce/execution-mode";
+import { runFastArrangement } from "@/lib/ap-engine/jobs/fast-produce";
 
 type ReportFn = (stage: ApStage) => Promise<void>;
 type PatchFn = (stage: string, progress: number, extra?: Record<string, unknown>) => Promise<void>;
@@ -355,69 +356,142 @@ export async function runFullProduceWithCheckpoints(opts: {
       void heartbeatProduceJob(jobId, workerId).catch(() => undefined);
     };
 
-    let result: Awaited<ReturnType<typeof runApArrangement>>;
+    // Arrange+mix+master: prefer fast timeline assembly.
+    // Full runApArrangement is CPU-bound and blocks the event loop — Promise.race
+    // timeouts never fire, jobs sit at ~76% "Arrange on beat" until the safety reaper.
+    // AP_ARRANGE_FULL=1 re-enables the heavy path for debugging.
+    const forceFullArrange = String(process.env.AP_ARRANGE_FULL || "").trim() === "1";
+    let result: {
+      ok: boolean;
+      masterPath?: string;
+      mixPath?: string;
+      mp3Path?: string;
+      engineVersion?: string;
+      error?: string;
+      meta?: Record<string, unknown>;
+    };
+
     try {
-      result = await Promise.race([
-        runApArrangement(
-          {
-            jobId,
-            projectId,
-            userId,
-            beatBuffer,
-            beatPathHint: beatPath,
-            vocals: arrangedVocals,
-            genre,
-            productionDirection: productionDirection ?? null,
-            skipRestoration: true,
-            deadlineAt: Math.min(deadlineAt, arrangeDeadline),
+      if (!forceFullArrange) {
+        console.info("[ap-tick] arrange via runFastArrangement (reliable path)", {
+          jobId,
+          layers: arrangedVocals.length,
+        });
+        await reportWithProgress("arranging", { sub: "stack", progressHint: 78 });
+        const fast = await runFastArrangement({
+          beatPath,
+          vocals: arrangedVocals.map((v) => ({
+            buffer: v.buffer,
+            pathHint: v.pathHint,
+            taskType: v.taskType,
+            startMs: v.startMs,
+            endMs: v.endMs,
+            role: v.role,
+          })),
+          onStage: async (s) => {
+            const hint =
+              s.includes("mix") || s.includes("blend")
+                ? 88
+                : s.includes("master")
+                  ? 92
+                  : 80;
+            await reportWithProgress(
+              s.includes("master") ? "mastering" : s.includes("mix") ? "mixing" : "arranging",
+              { progressHint: hint }
+            );
           },
-          reportWithProgress
-        ),
-        new Promise<Awaited<ReturnType<typeof runApArrangement>>>((_, rej) => {
-          setTimeout(
-            () => rej(new Error(`Arrangement timed out after ${Math.round(arrangeBudgetMs / 1000)}s`)),
-            arrangeBudgetMs
-          );
-        }),
-      ]);
+          genre: genre || null,
+        });
+        if (!fast.wav?.length) throw new Error("Fast arrangement returned empty audio");
+        result = {
+          ok: true,
+          masterWav: fast.wav,
+          mixWav: fast.wav,
+          engineVersion: "ap-fast",
+          meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
+        };
+      } else {
+        result = await Promise.race([
+          runApArrangement(
+            {
+              jobId,
+              projectId,
+              userId,
+              beatPath,
+              vocals: arrangedVocals,
+              genre: genre || null,
+              productionDirection: productionDirection || null,
+              placementLog,
+              skipRestore: true,
+              deadlineAt: Math.min(deadlineAt, arrangeDeadline),
+            },
+            reportWithProgress
+          ),
+          new Promise<never>((_, rej) => {
+            setTimeout(() => rej(new Error("arrange_timeout")), arrangeCapMs);
+          }),
+        ]);
+      }
     } catch (ae) {
       clearInterval(hb);
       const msg = ae instanceof Error ? ae.message : String(ae);
       console.error("[ap-tick] arrange failed/timeout", msg);
-      // Leave checkpoint at arranging so next tick can retry (not a permanent fail on soft timeout
-      // unless we're out of wall budget)
-      if (/timed out/i.test(msg) && budgetOk()) {
+      // Fallback: always try fast path once before giving up
+      try {
+        console.info("[ap-tick] arrange fallback → runFastArrangement", { jobId });
+        await reportWithProgress("arranging", { sub: "stack", progressHint: 78 });
+        const fast = await runFastArrangement({
+          beatPath,
+          vocals: arrangedVocals.map((v) => ({
+            buffer: v.buffer,
+            pathHint: v.pathHint,
+            taskType: v.taskType,
+            startMs: v.startMs,
+            endMs: v.endMs,
+            role: v.role,
+          })),
+          onStage: async (s) => {
+            await reportWithProgress(
+              s.includes("master") ? "mastering" : s.includes("mix") ? "mixing" : "arranging",
+              { progressHint: 85 }
+            );
+          },
+          genre: genre || null,
+        });
+        if (!fast.wav?.length) throw new Error(msg || "Fast arrangement returned empty audio");
+        result = {
+          ok: true,
+          masterWav: fast.wav,
+          mixWav: fast.wav,
+          engineVersion: "ap-fast",
+          meta: { path: "fast_arrange_fallback", layerCount: fast.layerCount, durationMs: fast.durationMs },
+        };
+      } catch (fe) {
+        const fmsg = fe instanceof Error ? fe.message : String(fe);
         const attempts = Number((cp as { arrangeAttempts?: number }).arrangeAttempts || 0) + 1;
         (cp as { arrangeAttempts?: number }).arrangeAttempts = attempts;
-        cp.lastCheckpointAt = new Date().toISOString();
         cp.resumedFrom = "arranging";
-        if (attempts >= 3) {
-          await patch("failed", 100, {
-            error:
-              "Arrangement timed out after 3 attempts. Try Produce again with fewer choir/stack layers, or a shorter song.",
+        if (attempts < 3) {
+          await patch("arranging", 70, {
             ap_checkpoint: cp,
             arrange_timeout: true,
             arrange_attempts: attempts,
+            message: "Retrying arrangement…",
           });
-          return { complete: false, error: "Arrangement timed out after 3 attempts" };
+          return { complete: false };
         }
-        await patch("arranging", 65, {
+        await patch("failed", 100, {
+          error: `Arrangement could not finish (${fmsg.slice(0, 200)}). Tap Produce again — your recordings are safe.`,
           ap_checkpoint: cp,
-          path: "full",
-          message: `Arrangement still running — retry ${attempts}/3…`,
           arrange_timeout: true,
           arrange_attempts: attempts,
         });
-        return { complete: false };
+        return { complete: false, error: fmsg };
       }
-      await patch("failed", 100, {
-        error: msg.slice(0, 400),
-        ap_checkpoint: cp,
-      });
-      return { complete: false, error: msg };
     } finally {
       clearInterval(hb);
     }
+
 
     cp.stageTimingsMs.arrange = Date.now() - tArr;
 
