@@ -112,11 +112,17 @@ async function processJob(jobId: string): Promise<void> {
     await heartbeatProduceJob(jobId, WORKER_ID);
     log("JOB_TICK", { jobId, round, elapsedMs: elapsed });
 
+    // Keep lock fresh during long ticks so the reaper never kills a live job
+    const hbTimer = setInterval(() => {
+      void heartbeatProduceJob(jobId, WORKER_ID).catch(() => undefined);
+    }, 60_000);
     try {
       await tickProduceJob(jobId, { maxWorkMs: TICK_MS });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log("JOB_TICK_ERROR", { jobId, round, error: message });
+    } finally {
+      clearInterval(hbTimer);
     }
 
     const { data: job } = await supabase

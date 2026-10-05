@@ -211,7 +211,7 @@ export async function reapAbandonedProduceJobs(workerId: string): Promise<number
   const fromEnv = Number(process.env.PRODUCE_JOB_MAX_MS || "");
   const ceilingMs = Number.isFinite(fromEnv) && fromEnv >= 600_000
     ? Math.floor(fromEnv)
-    : 90 * 60_000; // align with produceJobHardCeilingMs default
+    : 180 * 60_000; // align with produceJobHardCeilingMs default
 
   const { data: rows, error } = await supabase
     .from("jobs")
@@ -246,9 +246,10 @@ export async function reapAbandonedProduceJobs(workerId: string): Promise<number
     const ageMs = now - origin;
     if (ageMs < ceilingMs) continue;
 
-    // Also require lock to be stale OR age > 2x ceiling (zombie heartbeats)
+    // Only abandon when the lock is stale (worker dead/hung). Never kill a
+    // heartbeating job — full-quality pipelines can run well past 90 minutes.
     const lockAge = lockAt ? now - lockAt : ageMs;
-    if (lockAge < STALE_MS && ageMs < ceilingMs * 2) continue;
+    if (lockAge < STALE_MS) continue;
 
     const { error: upErr } = await supabase
       .from("jobs")

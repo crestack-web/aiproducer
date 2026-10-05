@@ -843,7 +843,7 @@ export function ProducerView({
   const produceStartedAtRef = useRef(0);
   const produceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Client-side hard stop so produce UI cannot hang forever */
-  const PRODUCE_CLIENT_TIMEOUT_MS = 25 * 60 * 1000;
+  const PRODUCE_CLIENT_TIMEOUT_MS = 120 * 60 * 1000;
   const produceActiveRef = useRef(false);
   const masterAudioRef = useRef<HTMLAudioElement | null>(null);
   const [masterPlaying, setMasterPlaying] = useState(false);
@@ -3431,7 +3431,7 @@ export function ProducerView({
   const scheduleProducePoll = useCallback(() => {
     clearProducePoll();
     produceActiveRef.current = true;
-    const PRODUCE_CLIENT_TIMEOUT_MS = 25 * 60 * 1000; // 25 min hard client timeout
+    const PRODUCE_CLIENT_TIMEOUT_MS = 120 * 60 * 1000; // 120 min hard client timeout
   const PRODUCE_CLIENT_WARN_MS = 12 * 60 * 1000; // show stronger cancel hint
   const PRODUCE_POLL_MS = 4000;
     // Full AP engine often exceeds 10m (restore + arrange + mix + master). Align with worker ceiling.
