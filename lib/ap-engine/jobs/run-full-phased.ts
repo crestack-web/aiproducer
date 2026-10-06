@@ -434,8 +434,9 @@ export async function runFullProduceWithCheckpoints(opts: {
               beatPathHint: beatPath,
               vocals: arrangedVocals,
               genre: genre || null,
-              mood: null,
               productionDirection: productionDirection || null,
+              skipRestoration: true,
+              deadlineAt: Math.min(deadlineAt, arrangeDeadline),
             },
             reportWithProgress
           ),
