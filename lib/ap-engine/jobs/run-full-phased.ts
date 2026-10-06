@@ -423,6 +423,11 @@ export async function runFullProduceWithCheckpoints(opts: {
       if (!fast.masterWav?.length || !fast.mixWav?.length) {
         throw new Error("Fast arrangement returned empty mix/master audio");
       }
+      await patch("mastering", 90, {
+        path: "fast",
+        message: "Mix ready — uploading master…",
+        ap_checkpoint: cp,
+      }).catch(() => undefined);
       const masterBuf = Buffer.isBuffer(fast.masterWav)
         ? fast.masterWav
         : Buffer.from(fast.masterWav as Uint8Array);
@@ -467,7 +472,7 @@ export async function runFullProduceWithCheckpoints(opts: {
           onStage: async (s) => {
             await reportWithProgress(
               s.includes("master") ? "mastering" : s.includes("mix") ? "mixing" : "arranging",
-              { progressHint: 85 }
+              { progressHint: s.includes("master") ? 92 : s.includes("mix") ? 84 : 74 }
             );
           },
           genre: genre || null,

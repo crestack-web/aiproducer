@@ -389,6 +389,7 @@ export async function runFastArrangement(opts: {
     arrangement = null;
   }
 
+  await report("arranging"); // structure applied
   await report("mixing");
 
   // --- Sum beat + vocals with envelope ducking ---
@@ -455,6 +456,7 @@ export async function runFastArrangement(opts: {
   const mixRmsProxyDb = estimateLoudnessProxyDb(mix);
   const mixWav = encodeStereoWav(mix);
 
+  await report("mixing"); // bus glue done — keep UI moving past 80%
   await report("mastering");
 
   // --- MASTER: clone mix, then tonal polish + streaming loudness + true-peak ---
