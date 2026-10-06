@@ -3339,32 +3339,32 @@ export function ProducerView({
         error?: string;
         output_data?: Record<string, unknown>;
       }[];
-      const activeJob = jobs.find(
-        (j) =>
-          j.type === "PRODUCE_SONG" &&
-          ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
-      );
+      // Strict tracking: while produceJobId is set, only that job can finish the run.
+      // Falling back to any PRODUCE_SONG (or project_status=completed) made "Produce again"
+      // complete in seconds with the previous master.
       const tracked =
         produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined;
       const trackedStatus = String(tracked?.status || "").toLowerCase();
-      let produceJob = activeJob;
-      if (!produceJob && tracked) {
-        if (trackedStatus === "failed") {
-          setProduceJobId(null);
-          setProduceError(humanProduceError(tracked.error, tracked.stage));
-          setProduceUi("failed");
-          setProduceProgress(100);
-          return "failed";
-        }
-        produceJob = tracked;
-      }
-      if (!produceJob) {
-        produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+
+      if (produceJobId && tracked && trackedStatus === "failed") {
+        setProduceError(humanProduceError(tracked.error, tracked.stage));
+        setProduceUi("failed");
+        setProduceProgress(100);
+        return "failed";
       }
 
-      if (produceJob?.id && String(produceJob.status || "").toLowerCase() !== "failed") {
-        setProduceJobId(String(produceJob.id));
+      let produceJob = tracked;
+      if (!produceJob && !produceJobId) {
+        // Resume path only (no active job id yet): prefer in-flight, else newest
+        produceJob =
+          jobs.find(
+            (j) =>
+              j.type === "PRODUCE_SONG" &&
+              ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+          ) || jobs.find((j) => j.type === "PRODUCE_SONG");
+        if (produceJob?.id) setProduceJobId(String(produceJob.id));
       }
+
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
       if (produceJob?.status) setProduceJobStatus(String(produceJob.status));
       if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
@@ -3372,9 +3372,8 @@ export function ProducerView({
       }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
-      const projectStatus = String(st.project?.status || st.status || "").toLowerCase();
 
-      if (jobStatus === "failed" || projectStatus === "failed") {
+      if (jobStatus === "failed") {
         setProduceError(humanProduceError(produceJob?.error, produceJob?.stage));
         setProduceUi("failed");
         return "failed";
@@ -3387,31 +3386,24 @@ export function ProducerView({
           !String(st.master.audio_path).startsWith("http") &&
           !String(st.master.audio_path).startsWith("mock://"));
 
-      if (
-        (jobStatus === "complete" ||
-          jobStatus === "completed" ||
-          projectStatus === "complete" ||
-          projectStatus === "completed" ||
-          projectStatus === "produced") &&
-        (st.master_url || masterReady)
-      ) {
-        let url = st.master_url ? String(st.master_url) : null;
-        if (!url) {
-          const alt = st.master?.url || st.audio_url;
-          if (alt) url = String(alt);
-        }
-        if (!url) {
-          url = await resolveMasterPlayUrl();
-        }
-        if (url) setMasterUrl(url);
-        if (produceJob?.id) setMasterJobId(String(produceJob.id));
-        setProduceStage("complete");
-        setProduceUi("complete");
-        setProduceError(null);
-        return "complete";
-      }
-
+      // Complete only when THIS job is completed (not merely project still marked produced).
       if (jobStatus === "complete" || jobStatus === "completed") {
+        if (st.master_url || masterReady) {
+          let url = st.master_url ? String(st.master_url) : null;
+          if (!url) {
+            const alt = st.master?.url || st.audio_url;
+            if (alt) url = String(alt);
+          }
+          if (!url) {
+            url = await resolveMasterPlayUrl();
+          }
+          if (url) setMasterUrl(url);
+          if (produceJob?.id) setMasterJobId(String(produceJob.id));
+          setProduceStage("complete");
+          setProduceUi("complete");
+          setProduceError(null);
+          return "complete";
+        }
         // Job done but URL lag — keep pending briefly
         setProduceStage(produceJob?.stage || "complete");
         return "pending";
@@ -3422,6 +3414,7 @@ export function ProducerView({
         return "pending";
       }
 
+      // produceJobId set but not in list yet (just enqueued) — keep waiting
       return "pending";
     } catch {
       return "error";

@@ -826,63 +826,42 @@ export default function ProjectDetailPage() {
         progress?: number;
         error?: string;
       }[];
-      // Prefer a live job. Never latch onto a failed job when retrying Produce.
-      const activeJob = jobs.find(
-        (j) =>
-          j.type === "PRODUCE_SONG" &&
-          ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
-      );
+      // Strict: with produceJobId set, only that job can complete the run.
       const tracked =
         produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined;
       const trackedStatus = String(tracked?.status || "").toLowerCase();
-      let produceJob = activeJob;
-      if (!produceJob && tracked) {
-        if (trackedStatus === "failed") {
-          setProduceJobId(null);
-          setError(tracked.error || "Produce failed");
-          setProduceProgress(100);
-          setProducing(false);
-          return "failed";
-        }
-        produceJob = tracked;
-      }
-      if (!produceJob) {
-        produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+
+      if (produceJobId && tracked && trackedStatus === "failed") {
+        setError(tracked.error || "Produce failed");
+        setProduceProgress(100);
+        setProducing(false);
+        return "failed";
       }
 
-      if (produceJob?.id && String(produceJob.status || "").toLowerCase() !== "failed") {
-        setProduceJobId(String(produceJob.id));
+      let produceJob = tracked;
+      if (!produceJob && !produceJobId) {
+        produceJob =
+          jobs.find(
+            (j) =>
+              j.type === "PRODUCE_SONG" &&
+              ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+          ) || jobs.find((j) => j.type === "PRODUCE_SONG");
+        if (produceJob?.id) setProduceJobId(String(produceJob.id));
       }
+
       if (produceJob?.stage) setProduceStage(String(produceJob.stage));
       if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
         setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
       }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
-      const projectStatus = String(st.project?.status || "").toLowerCase();
 
-      if (jobStatus === "failed" || projectStatus === "failed") {
+      if (jobStatus === "failed") {
         setError(produceJob?.error || "Produce failed");
         return "failed";
       }
 
-      if (
-        (jobStatus === "complete" || projectStatus === "complete") &&
-        st.master_url &&
-        st.master?.audio_path &&
-        !String(st.master.audio_path).startsWith("http")
-      ) {
-        setMasterUrl(st.master_url);
-        return "complete";
-      }
-
-      if (jobStatus === "complete" && st.master_url) {
-        setMasterUrl(st.master_url);
-        return "complete";
-      }
-
-      // Job finished but signed URL not ready yet — treat as complete so UI leaves spinner
-      if (jobStatus === "complete" || projectStatus === "complete") {
+      if (jobStatus === "complete" || jobStatus === "completed") {
         if (st.master_url) setMasterUrl(st.master_url);
         return "complete";
       }
