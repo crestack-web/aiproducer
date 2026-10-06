@@ -18,6 +18,7 @@ import {
 import type { PcmStereo } from "../types";
 import { treatMouthNoise } from "./mouth-noise";
 import { trimVocalSilence } from "./silence-trim";
+import { cleanTakeEdges } from "./edge-fade";
 
 export type RestorationConfidence = "high" | "medium" | "low";
 
@@ -153,6 +154,8 @@ export function runRestorationFrontEnd(raw: PcmStereo): RestorationFrontEndResul
   // Preserve intentional silence / hum / breaths — no content trim or musical fades.
   const trimmed = trimVocalSilence(pcm);
   pcm = trimmed.pcm;
+  // Short edge fades only — does not change length or remove internal gaps
+  pcm = cleanTakeEdges(pcm, { fadeInMs: 25, fadeOutMs: 40, maxLeadMs: 200, maxTailMs: 250 });
   flags.push("space_preserved");
 
   let maxNrDb = 8;

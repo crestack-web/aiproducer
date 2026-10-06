@@ -53,7 +53,7 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-5";
+export const FAST_ENGINE_VERSION = "ap-fast-space-6";
 
 /** Post level-match fader — modest; level-match already sits the take. */
 const ROLE_GAIN: Record<string, number> = {
@@ -525,7 +525,21 @@ export async function runFastArrangement(opts: {
       spaceCharacter: L.spaceCharacter,
       duckDb: L.duckDb,
     })),
-    note: "Mix = pre-loudness bus; master = loudness + true-peak. Full engine off by default.",
+    vocalStructure: arrangement
+      ? {
+          phraseCount: arrangement.phrases?.length ?? 0,
+          sectionCount: arrangement.sections.length,
+          overallConfidence: arrangement.confidence,
+          method: arrangement.method,
+          sections: arrangement.sections.map((s) => ({
+            type: s.type,
+            startMs: s.startMs,
+            endMs: s.endMs,
+            confidence: s.confidence,
+          })),
+        }
+      : null,
+    note: "Arrangement Mind: phrase+section map on continuous vocal; mix then master loudness.",
   };
   console.info(
     "[fast-produce] done",

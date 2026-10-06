@@ -1,197 +1,238 @@
 /**
- * Cheap, deterministic song structure from beat + vocal energy.
- * No ASR. Bias toward 8/16-bar blocks when BPM is known.
+ * Beat-aware section inference from vocal phrases + energy.
+ * Timeline is never altered — this only builds a processing map.
  */
-import { peakOf, rmsOf, stereoToMono } from "../dsp";
+import { rmsOf, stereoToMono } from "../dsp";
 import type { PcmStereo } from "../types";
-import type { ArrangementPlan, SectionType, VocalSection, VocalTreatment } from "./types";
+import { detectVocalActivity, type VocalPhrase } from "../analysis/vocal-structure";
+import type {
+  VocalArrangementMap,
+  VocalSection,
+  VocalSectionType,
+  VocalTreatment,
+} from "./types";
 import { treatmentFor } from "./treatments";
-
-const FRAME_SEC = 0.5;
-
-function frameRms(mono: Float32Array, sampleRate: number): { tMs: number; rms: number }[] {
-  const frame = Math.max(256, Math.floor(sampleRate * FRAME_SEC));
-  const out: { tMs: number; rms: number }[] = [];
-  for (let i = 0; i + frame <= mono.length; i += frame) {
-    let s = 0;
-    for (let j = 0; j < frame; j++) {
-      const v = mono[i + j] || 0;
-      s += v * v;
-    }
-    out.push({ tMs: (i / sampleRate) * 1000, rms: Math.sqrt(s / frame) });
-  }
-  if (!out.length && mono.length) {
-    out.push({ tMs: 0, rms: rmsOf(mono) });
-  }
-  return out;
-}
-
-function normalize(vals: number[]): number[] {
-  const max = Math.max(...vals, 1e-9);
-  return vals.map((v) => v / max);
-}
 
 function median(nums: number[]): number {
   if (!nums.length) return 0;
   const a = [...nums].sort((x, y) => x - y);
   const m = Math.floor(a.length / 2);
-  return a.length % 2 ? a[m]! : (a[m - 1]! + a[m]!) / 2;
+  return a.length % 2 ? a[m]! : ((a[m - 1]! + a[m]!) / 2);
+}
+
+function blockEnergy(
+  mono: Float32Array,
+  sampleRate: number,
+  startMs: number,
+  endMs: number
+): number {
+  const a = Math.max(0, Math.floor((startMs / 1000) * sampleRate));
+  const b = Math.min(mono.length, Math.floor((endMs / 1000) * sampleRate));
+  if (b <= a) return 0;
+  let s = 0;
+  for (let i = a; i < b; i++) {
+    const v = mono[i] || 0;
+    s += v * v;
+  }
+  return Math.sqrt(s / (b - a));
 }
 
 /**
- * Detect section boundaries. Prefer bar-aligned cuts when bpm is available.
+ * Build arrangement map: phrases → 8-bar blocks → labeled sections + treatments.
  */
+export function buildArrangementPlan(opts: {
+  beat: PcmStereo;
+  vocal: PcmStereo | null;
+  bpm?: number | null;
+  durationMs?: number;
+}): VocalArrangementMap {
+  const sr = opts.beat.sampleRate;
+  const beatMono = stereoToMono(opts.beat);
+  const vocalMono = opts.vocal ? stereoToMono(opts.vocal) : null;
+  const durationMs =
+    opts.durationMs ??
+    Math.round(
+      (Math.max(opts.beat.left.length, opts.vocal?.left.length || 0) / sr) * 1000
+    );
+
+  const activity = opts.vocal
+    ? detectVocalActivity(opts.vocal)
+    : { phrases: [] as VocalPhrase[], noiseFloorRms: 0, activeRatio: 0, durationMs };
+
+  const phrases = activity.phrases.filter((p) => !p.isBreathLike);
+  const bpm = opts.bpm && opts.bpm > 40 && opts.bpm < 220 ? opts.bpm : 100;
+  const barMs = (4 * 60_000) / bpm;
+  const blockMs = barMs * 8;
+
+  // Candidate blocks on musical grid
+  const blocks: {
+    startMs: number;
+    endMs: number;
+    beatE: number;
+    vocE: number;
+    phraseCount: number;
+    phraseEnergy: number;
+  }[] = [];
+
+  for (let t = 0; t < durationMs; t += blockMs) {
+    const end = Math.min(durationMs, t + blockMs);
+    const beatE = blockEnergy(beatMono, sr, t, end);
+    const vocE = vocalMono ? blockEnergy(vocalMono, sr, t, end) : 0;
+    const inBlock = phrases.filter((p) => p.startMs < end && p.endMs > t);
+    const phraseEnergy =
+      inBlock.length > 0
+        ? inBlock.reduce((s, p) => s + p.energy, 0) / inBlock.length
+        : 0;
+    blocks.push({
+      startMs: Math.round(t),
+      endMs: Math.round(end),
+      beatE,
+      vocE,
+      phraseCount: inBlock.length,
+      phraseEnergy,
+    });
+  }
+  if (!blocks.length) {
+    blocks.push({
+      startMs: 0,
+      endMs: durationMs,
+      beatE: 0.5,
+      vocE: 0.5,
+      phraseCount: phrases.length,
+      phraseEnergy: 0.5,
+    });
+  }
+
+  const score = blocks.map(
+    (b) => 0.35 * b.beatE + 0.45 * b.vocE + 0.2 * b.phraseEnergy
+  );
+  const maxS = Math.max(...score, 1e-9);
+  const norm = score.map((s) => s / maxS);
+  const med = median(norm);
+
+  // Repetition signal: similar phrase-count + energy to a later high block → chorus-like
+  const sections: VocalSection[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]!;
+    const n = norm[i]!;
+    const isFirst = i === 0;
+    const isLast = i === blocks.length - 1;
+    const high = n >= med + 0.1;
+    const lowVoc = b.vocE < med * 0.35 * maxS || b.phraseCount === 0;
+
+    let type: VocalSectionType = "unknown";
+    let confidence = 0.4;
+
+    if (isFirst && (lowVoc || n < med - 0.08)) {
+      type = "intro";
+      confidence = 0.55 + (lowVoc ? 0.15 : 0);
+    } else if (isLast && blocks.length > 2 && !high) {
+      type = "outro";
+      confidence = 0.5;
+    } else if (high && b.phraseCount >= 2) {
+      type = "chorus";
+      confidence = 0.55 + Math.min(0.3, (n - med) * 1.5);
+      // Boost if a later/earlier block looks similar (repeat)
+      for (let j = 0; j < blocks.length; j++) {
+        if (j === i) continue;
+        const other = norm[j]!;
+        if (Math.abs(other - n) < 0.12 && blocks[j]!.phraseCount >= 2) {
+          confidence = Math.min(0.92, confidence + 0.12);
+          break;
+        }
+      }
+    } else if (
+      i > 0 &&
+      sections[i - 1]?.type === "verse" &&
+      n > med - 0.05 &&
+      n < med + 0.1
+    ) {
+      type = "prechorus";
+      confidence = 0.5;
+    } else if (
+      blocks.length >= 4 &&
+      i >= Math.floor(blocks.length * 0.55) &&
+      i < blocks.length - 1 &&
+      !high &&
+      n < med
+    ) {
+      type = "bridge";
+      confidence = 0.48;
+    } else if (b.phraseCount === 0 && n < med) {
+      type = "break";
+      confidence = 0.45;
+    } else if (b.phraseCount > 0 || n >= med - 0.15) {
+      type = "verse";
+      confidence = 0.5 + Math.min(0.2, b.phraseCount * 0.03);
+    } else {
+      type = "unknown";
+      confidence = 0.35;
+    }
+
+    // Low overall activity → prefer unknown/conservative
+    if (activity.activeRatio < 0.08 && type !== "intro" && type !== "outro") {
+      type = "unknown";
+      confidence = Math.min(confidence, 0.4);
+    }
+
+    sections.push({
+      startMs: b.startMs,
+      endMs: b.endMs,
+      type,
+      confidence: Math.round(confidence * 100) / 100,
+      energy: Math.round(n * 1000) / 1000,
+      vocalDensity: Math.round((b.phraseCount / Math.max(1, (b.endMs - b.startMs) / 1000)) * 100) / 100,
+      phraseCount: b.phraseCount,
+    });
+  }
+
+  // Ensure at least one chorus if clear high-energy blocks exist
+  if (!sections.some((s) => s.type === "chorus")) {
+    let best = 0;
+    for (let i = 1; i < sections.length; i++) {
+      if (sections[i]!.energy > sections[best]!.energy) best = i;
+    }
+    if (sections[best] && sections[best]!.energy >= med && sections[best]!.phraseCount >= 1) {
+      sections[best] = {
+        ...sections[best]!,
+        type: "chorus",
+        confidence: Math.max(sections[best]!.confidence, 0.55),
+      };
+    }
+  }
+
+  const treatments: VocalTreatment[] = sections.map((s, idx) => {
+    const isFinalChorus =
+      s.type === "chorus" &&
+      !sections.slice(idx + 1).some((x) => x.type === "chorus");
+    return treatmentFor(s.type, {
+      isFinalChorus,
+      energy: s.energy,
+      confidence: s.confidence,
+    });
+  });
+
+  const overall =
+    sections.length > 0
+      ? sections.reduce((a, s) => a + s.confidence, 0) / sections.length
+      : 0.3;
+
+  return {
+    phrases: activity.phrases,
+    sections,
+    treatments,
+    confidence: Math.round(overall * 100) / 100,
+    bpm,
+    method: "phrase_bar_energy_v2",
+  };
+}
+
+/** @deprecated use buildArrangementPlan */
 export function detectVocalSections(opts: {
   beat: PcmStereo;
   vocal: PcmStereo | null;
   bpm?: number | null;
   durationMs?: number;
 }): VocalSection[] {
-  const sr = opts.beat.sampleRate;
-  const durMs =
-    opts.durationMs ??
-    Math.round((Math.max(opts.beat.left.length, opts.vocal?.left.length || 0) / sr) * 1000);
-  if (durMs < 2000) {
-    return [
-      {
-        startMs: 0,
-        endMs: durMs,
-        type: "verse",
-        energy: 0.5,
-        vocalDensity: 0.5,
-        confidence: 0.3,
-      },
-    ];
-  }
-
-  const beatMono = stereoToMono(opts.beat);
-  const vocalMono = opts.vocal ? stereoToMono(opts.vocal) : null;
-  const beatFrames = frameRms(beatMono, sr);
-  const vocalFrames = vocalMono ? frameRms(vocalMono, sr) : beatFrames.map((f) => ({ ...f, rms: 0 }));
-
-  const n = Math.min(beatFrames.length, vocalFrames.length);
-  const beatN = normalize(beatFrames.slice(0, n).map((f) => f.rms));
-  const vocN = normalize(vocalFrames.slice(0, n).map((f) => f.rms));
-  const score = beatN.map((b, i) => 0.4 * b + 0.6 * (vocN[i] ?? 0));
-
-  const med = median(score);
-  const hi = med + 0.12;
-
-  // Bar length in ms
-  const bpm = opts.bpm && opts.bpm > 40 && opts.bpm < 220 ? opts.bpm : 100;
-  const barMs = (4 * 60_000) / bpm;
-  const blockMs = barMs * 8; // 8-bar bias
-
-  const blocks: { startMs: number; endMs: number; avg: number; vocAvg: number }[] = [];
-  for (let t = 0; t < durMs; t += blockMs) {
-    const end = Math.min(durMs, t + blockMs);
-    let sum = 0;
-    let vsum = 0;
-    let c = 0;
-    for (let i = 0; i < n; i++) {
-      const tm = beatFrames[i]!.tMs;
-      if (tm >= t && tm < end) {
-        sum += score[i] ?? 0;
-        vsum += vocN[i] ?? 0;
-        c++;
-      }
-    }
-    blocks.push({
-      startMs: Math.round(t),
-      endMs: Math.round(end),
-      avg: c ? sum / c : 0,
-      vocAvg: c ? vsum / c : 0,
-    });
-  }
-  if (!blocks.length) {
-    blocks.push({ startMs: 0, endMs: durMs, avg: 0.5, vocAvg: 0.5 });
-  }
-
-  // Label blocks: first low-voc → intro; high energy → chorus; last high → final chorus pattern
-  const energyVals = blocks.map((b) => b.avg);
-  const eMed = median(energyVals);
-  const sections: VocalSection[] = [];
-  let verseCount = 0;
-  let chorusCount = 0;
-
-  for (let i = 0; i < blocks.length; i++) {
-    const b = blocks[i]!;
-    const isFirst = i === 0;
-    const isLast = i === blocks.length - 1;
-    const high = b.avg >= eMed + 0.08;
-    const lowVoc = b.vocAvg < 0.25;
-
-    let type: SectionType;
-    if (isFirst && (lowVoc || b.avg < eMed - 0.05)) {
-      type = "intro";
-    } else if (isLast && blocks.length > 2 && !high) {
-      type = "outro";
-    } else if (high) {
-      type = "chorus";
-      chorusCount++;
-    } else if (
-      i > 0 &&
-      sections[i - 1]?.type === "verse" &&
-      b.avg > eMed - 0.02 &&
-      b.avg < eMed + 0.08
-    ) {
-      type = "prechorus";
-    } else if (
-      blocks.length >= 4 &&
-      i === Math.floor(blocks.length * 0.65) &&
-      !high
-    ) {
-      type = "bridge";
-    } else {
-      type = "verse";
-      verseCount++;
-    }
-
-    const confidence = Math.min(0.9, 0.4 + Math.abs(b.avg - eMed) * 1.2);
-    sections.push({
-      startMs: b.startMs,
-      endMs: b.endMs,
-      type,
-      energy: Math.round(b.avg * 1000) / 1000,
-      vocalDensity: Math.round(b.vocAvg * 1000) / 1000,
-      confidence: Math.round(confidence * 100) / 100,
-    });
-  }
-
-  // Ensure at least one chorus if any high region existed
-  if (!sections.some((s) => s.type === "chorus") && sections.length >= 2) {
-    let best = 0;
-    for (let i = 1; i < sections.length; i++) {
-      if (sections[i]!.energy > sections[best]!.energy) best = i;
-    }
-    sections[best] = { ...sections[best]!, type: "chorus" };
-  }
-
-  void verseCount;
-  void chorusCount;
-  void hi;
-  return sections;
-}
-
-export function buildArrangementPlan(opts: {
-  beat: PcmStereo;
-  vocal: PcmStereo | null;
-  bpm?: number | null;
-  durationMs?: number;
-}): ArrangementPlan {
-  const sections = detectVocalSections(opts);
-  const treatments = sections.map((s, idx) =>
-    treatmentFor(s.type, {
-      isFinalChorus:
-        s.type === "chorus" &&
-        !sections.slice(idx + 1).some((x) => x.type === "chorus"),
-      energy: s.energy,
-    })
-  );
-  return {
-    sections,
-    treatments,
-    bpm: opts.bpm ?? null,
-    method: "energy_8bar_v1",
-  };
+  return buildArrangementPlan(opts).sections;
 }
