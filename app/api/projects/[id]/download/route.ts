@@ -51,6 +51,7 @@ export async function GET(req: Request, ctx: Ctx) {
   const kind = (url.searchParams.get("kind") || "master") as "master" | "mix" | "preview_mix";
   const format = (url.searchParams.get("format") || "wav").toLowerCase() as "wav" | "mp3";
   const wantRedirect = url.searchParams.get("redirect") === "1";
+  const wantProxy = url.searchParams.get("proxy") === "1" || url.searchParams.get("dl") === "1";
   const jobIdParam = (url.searchParams.get("jobId") || url.searchParams.get("job_id") || "").trim();
   const versionParam = url.searchParams.get("version");
 
@@ -248,6 +249,35 @@ export async function GET(req: Request, ctx: Ctx) {
     const res = NextResponse.redirect(downloadUrl, 302);
     res.headers.set("Content-Disposition", `attachment; filename="${filename}"`);
     return res;
+  }
+
+  // Stream through our origin so the browser gets audio/wav + attachment
+  // (opening the raw R2 signed URL often shows binary as text).
+  if (wantProxy) {
+    try {
+      const upstream = await fetch(downloadUrl);
+      if (!upstream.ok || !upstream.body) {
+        return NextResponse.json(
+          { error: "Could not fetch master from storage", status: upstream.status },
+          { status: 502 }
+        );
+      }
+      const contentType =
+        ext === "mp3" ? "audio/mpeg" : "audio/wav";
+      const headers = new Headers();
+      headers.set("Content-Type", contentType);
+      headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+      headers.set("Cache-Control", "private, no-store");
+      const len = upstream.headers.get("content-length");
+      if (len) headers.set("Content-Length", len);
+      return new NextResponse(upstream.body, { status: 200, headers });
+    } catch (e) {
+      console.error("[download] proxy failed", e);
+      return NextResponse.json(
+        { error: "Proxy download failed", message: e instanceof Error ? e.message : String(e) },
+        { status: 502 }
+      );
+    }
   }
 
   return NextResponse.json({

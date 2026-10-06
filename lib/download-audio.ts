@@ -9,9 +9,50 @@ export async function forceDownloadFromApi(
   opts?: { jobId?: string; version?: number }
 ): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
   try {
-    const q = new URLSearchParams({ kind: "master", format });
+    const q = new URLSearchParams({ kind: "master", format, proxy: "1" });
     if (opts?.jobId) q.set("jobId", opts.jobId);
     else if (opts?.version != null) q.set("version", String(opts.version));
+    // Prefer same-origin proxy (correct Content-Type + attachment) over raw R2 URL
+    try {
+      const proxyRes = await fetch(
+        `/api/projects/${projectId}/download?${q.toString()}`,
+        { credentials: "same-origin" }
+      );
+      if (
+        proxyRes.ok &&
+        (proxyRes.headers.get("content-type") || "").includes("audio")
+      ) {
+        const blob = await proxyRes.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = fallbackName || `song.${format}`;
+        a.rel = "noopener";
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 4_000);
+        return { ok: true };
+      }
+      // Paywall JSON from proxy path
+      if (proxyRes.status === 402) {
+        const j = (await proxyRes.json().catch(() => ({}))) as {
+          message?: string;
+          error?: string;
+          code?: string;
+        };
+        return {
+          ok: false,
+          code: "PAYWALL",
+          error: j.message || j.error || "Unlock required to download.",
+        };
+      }
+    } catch {
+      /* fall through to signed-URL JSON path */
+    }
+
+    q.delete("proxy");
     const res = await fetch(
       `/api/projects/${projectId}/download?${q.toString()}`,
       { credentials: "same-origin" }
