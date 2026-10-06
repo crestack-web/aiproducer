@@ -363,11 +363,18 @@ export async function runFullProduceWithCheckpoints(opts: {
     const forceFullArrange = String(process.env.AP_ARRANGE_FULL || "").trim() === "1";
     let result: {
       ok: boolean;
+      masterWav?: Buffer;
+      mixWav?: Buffer;
+      processedVocalWav?: Buffer;
+      restoredVocalWav?: Buffer;
+      masterMp3?: Buffer;
       masterPath?: string;
       mixPath?: string;
       mp3Path?: string;
       engineVersion?: string;
       error?: string;
+      detail?: string;
+      decision?: { notes?: string[] };
       meta?: Record<string, unknown>;
     };
 
@@ -584,7 +591,7 @@ export async function runFullProduceWithCheckpoints(opts: {
       master_storage_path: masterPath,
       mix_storage_path: mixPath,
     }).catch(() => undefined);
-    const roleNote = result.decision.notes.find((n) => n.startsWith("roles:"));
+    const roleNote = result.decision?.notes?.find((n) => n.startsWith("roles:"));
     cp.phase = "done";
     const wallMs = Date.now() - new Date(cp.wallStartedAt).getTime();
     const metaExtra: Record<string, unknown> = {
