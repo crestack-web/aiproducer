@@ -74,6 +74,14 @@ export async function GET() {
   const mastered = new Set<string>();
   const withBeat = new Set<string>();
   const beatSourceByProject = new Map<string, string>();
+  type MasterRow = {
+    job_id: string;
+    version: number;
+    audio_path: string;
+    completed_at: string | null;
+    engine_version: string | null;
+  };
+  const mastersByProject = new Map<string, MasterRow[]>();
   if (ids.length) {
     const { data: songs } = await supabase
       .from("songs")
@@ -111,6 +119,56 @@ export async function GET() {
         "";
       if (path) mastered.add(pid);
     }
+
+    // Per-produce masters for Library Songs (versioned rows)
+    {
+      const { data: allDone } = await supabase
+        .from("jobs")
+        .select("id, project_id, status, output_data, completed_at, created_at")
+        .eq("type", "PRODUCE_SONG")
+        .in("status", ["complete", "completed"])
+        .in("project_id", ids)
+        .order("created_at", { ascending: true });
+      const byProj = new Map<string, typeof allDone>();
+      for (const j of allDone || []) {
+        const pid = j.project_id as string;
+        if (!pid) continue;
+        const list = byProj.get(pid) || [];
+        list.push(j);
+        byProj.set(pid, list);
+      }
+      for (const [pid, list] of byProj) {
+        const rows: MasterRow[] = [];
+        let ver = 0;
+        for (const j of list || []) {
+          const out =
+            j.output_data && typeof j.output_data === "object"
+              ? (j.output_data as Record<string, unknown>)
+              : {};
+          const path =
+            (typeof out.master_storage_path === "string" && out.master_storage_path) ||
+            (typeof out.master_path === "string" && out.master_path) ||
+            (typeof out.masterPath === "string" && out.masterPath) ||
+            "";
+          if (!path) continue;
+          ver += 1;
+          rows.push({
+            job_id: String(j.id),
+            version: ver,
+            audio_path: path,
+            completed_at: (j.completed_at as string) || (j.created_at as string) || null,
+            engine_version:
+              (typeof out.engineVersion === "string" && out.engineVersion) ||
+              (typeof out.engine_version === "string" && out.engine_version) ||
+              null,
+          });
+        }
+        if (rows.length) {
+          mastersByProject.set(pid, rows);
+          mastered.add(pid);
+        }
+      }
+    }
     const { data: beats } = await supabase
       .from("beats")
       .select("project_id, source, metadata, created_at")
@@ -145,14 +203,23 @@ export async function GET() {
   }
 
   const enriched = projects.map((p: { id: string; status?: string }) => {
-    const hasMaster = mastered.has(p.id);
+    const masters = mastersByProject.get(p.id) || [];
+    const hasMaster = mastered.has(p.id) || masters.length > 0;
     const hasBeat = withBeat.has(p.id);
     const status =
       hasMaster && p.status !== "complete" && p.status !== "completed"
         ? "complete"
         : p.status;
     const beat_source = beatSourceByProject.get(p.id) || (hasBeat ? "unknown" : null);
-    return { ...p, status, has_master: hasMaster, has_beat: hasBeat, beat_source };
+    return {
+      ...p,
+      status,
+      has_master: hasMaster,
+      has_beat: hasBeat,
+      beat_source,
+      masters,
+      master_count: masters.length,
+    };
   });
 
   return NextResponse.json({ projects: enriched });

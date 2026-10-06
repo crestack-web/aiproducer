@@ -17,6 +17,14 @@ import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 
+type MasterVersion = {
+  job_id: string;
+  version: number;
+  audio_path: string;
+  completed_at: string | null;
+  engine_version: string | null;
+};
+
 type Project = {
   id: string;
   title: string;
@@ -27,6 +35,8 @@ type Project = {
   has_master?: boolean;
   has_beat?: boolean;
   beat_source?: string | null;
+  masters?: MasterVersion[];
+  master_count?: number;
 };
 type Tab = "home" | "library" | "profile";
 
@@ -63,7 +73,7 @@ function AppInner() {
   const [tab, setTab] = useState<Tab>("home");
   const [libraryTab, setLibraryTab] = useState<"songs" | "beats" | "recordings">("songs");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [downloadModal, setDownloadModal] = useState<{ id: string; title: string } | null>(null);
+  const [downloadModal, setDownloadModal] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
@@ -72,6 +82,8 @@ function AppInner() {
     title: string;
     meta: string;
     isReady: boolean;
+    jobId?: string;
+    version?: number;
   } | null>(null);
   const beatAudio = useBeatAudio({
     onError: (message) => setBeatPlayError(message),
@@ -345,9 +357,19 @@ function AppInner() {
     textDecoration: "none",
   };
 
-  async function runDownload(projectId: string, title: string, format: "wav" | "mp3") {
+  async function runDownload(
+    projectId: string,
+    title: string,
+    format: "wav" | "mp3",
+    opts?: { jobId?: string; version?: number }
+  ) {
     setDownloadBusy(true);
-    const result = await forceDownloadFromApi(projectId, format, `${title || "song"}.${format}`);
+    const result = await forceDownloadFromApi(
+      projectId,
+      format,
+      `${title || "song"}.${format}`,
+      opts
+    );
     setDownloadBusy(false);
     if (!result.ok) {
       window.alert(result.error);
@@ -389,6 +411,79 @@ function AppInner() {
       >
         {children}
       </button>
+    );
+  }
+
+  function SongVersionRow({
+    projectId,
+    title,
+    meta,
+    jobId,
+    version,
+    isReady,
+  }: {
+    projectId: string;
+    title: string;
+    meta: string;
+    jobId?: string;
+    version: number;
+    isReady: boolean;
+  }) {
+    return (
+      <div style={rowStyle}>
+        <Link
+          href={`/app/studio/${projectId}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flex: 1,
+            minWidth: 0,
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <CoverArt seed={title || projectId} size={48} />
+          <div style={rowBody}>
+            <div style={rowTitle}>{title}</div>
+            <div style={rowMeta}>{meta}</div>
+          </div>
+        </Link>
+        {isReady && (
+          <IconBtn
+            label="Download this version"
+            onClick={() => {
+              void forceDownloadFromApi(
+                projectId,
+                "wav",
+                `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
+                jobId ? { jobId } : { version }
+              ).then((r) => {
+                if (!r.ok) window.alert(r.error);
+              });
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v12" />
+              <path d="M8 11l4 4 4-4" />
+              <path d="M5 21h14" />
+            </svg>
+          </IconBtn>
+        )}
+        <BeatMoreButton
+          active={projectMenu?.id === projectId && projectMenu?.meta === meta}
+          onClick={() =>
+            setProjectMenu({
+              id: projectId,
+              title,
+              meta,
+              isReady,
+              jobId,
+              version,
+            })
+          }
+        />
+      </div>
     );
   }
 
@@ -646,13 +741,56 @@ function AppInner() {
                 )}
                 {projects
                   .filter((p) => isFinishedSong(p))
-                  .map((p) => (
-                    <ProjectRow
-                      key={p.id}
-                      p={p}
-                      meta={`Song ready · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`}
-                    />
-                  ))}
+                  .flatMap((p) => {
+                    const masters =
+                      p.masters && p.masters.length > 0
+                        ? p.masters
+                        : p.has_master
+                          ? [
+                              {
+                                job_id: "",
+                                version: 1,
+                                audio_path: "",
+                                completed_at: p.updated_at || null,
+                                engine_version: null,
+                              } as MasterVersion,
+                            ]
+                          : [];
+                    const total = Math.max(masters.length, 1);
+                    return masters.map((m) => {
+                      const label =
+                        total > 1
+                          ? `${p.title} · Take ${m.version}`
+                          : p.title;
+                      const when = m.completed_at
+                        ? new Date(m.completed_at).toLocaleString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : null;
+                      const eng = m.engine_version ? ` · ${m.engine_version}` : "";
+                      const meta = [
+                        total > 1 ? `Version ${m.version} of ${total}` : "Song ready",
+                        when,
+                        [p.genre, p.mood].filter(Boolean).join(" · ") || null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <SongVersionRow
+                          key={`${p.id}-${m.job_id || m.version}`}
+                          projectId={p.id}
+                          title={label}
+                          meta={meta + eng}
+                          jobId={m.job_id || undefined}
+                          version={m.version}
+                          isReady
+                        />
+                      );
+                    });
+                  })}
               </div>
             )}
             {libraryTab === "beats" && (
@@ -1241,7 +1379,7 @@ function AppInner() {
               <button
                 type="button"
                 disabled={downloadBusy}
-                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "wav")}
+                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "wav", { jobId: downloadModal.jobId, version: downloadModal.version })}
                 style={{
                   width: "100%",
                   padding: "12px 14px",
@@ -1261,7 +1399,7 @@ function AppInner() {
               <button
                 type="button"
                 disabled={downloadBusy}
-                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "mp3")}
+                onClick={() => void runDownload(downloadModal.id, downloadModal.title, "mp3", { jobId: downloadModal.jobId, version: downloadModal.version })}
                 style={{
                   width: "100%",
                   padding: "12px 14px",

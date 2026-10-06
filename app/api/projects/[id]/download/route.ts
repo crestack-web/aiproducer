@@ -51,6 +51,8 @@ export async function GET(req: Request, ctx: Ctx) {
   const kind = (url.searchParams.get("kind") || "master") as "master" | "mix" | "preview_mix";
   const format = (url.searchParams.get("format") || "wav").toLowerCase() as "wav" | "mp3";
   const wantRedirect = url.searchParams.get("redirect") === "1";
+  const jobIdParam = (url.searchParams.get("jobId") || url.searchParams.get("job_id") || "").trim();
+  const versionParam = url.searchParams.get("version");
 
   const { data: project } = await supabase
     .from("projects")
@@ -122,20 +124,48 @@ export async function GET(req: Request, ctx: Ctx) {
     }
   }
 
-  // Job output fallback (AP engine)
-  if (!audioPath || audioPath.startsWith("mock://")) {
-    const { data: jobs } = await service
+  // Prefer explicit job master (Library version row) or latest complete job
+  if (jobIdParam || !audioPath || audioPath.startsWith("mock://") || versionParam) {
+    let jobsQuery = service
       .from("jobs")
-      .select("output_data, status, completed_at")
+      .select("id, output_data, status, completed_at, created_at")
       .eq("project_id", projectId)
       .eq("type", "PRODUCE_SONG")
-      .order("created_at", { ascending: false })
-      .limit(3);
-    const done = (jobs || []).find((j) => j.status === "complete" || j.status === "completed");
-    const od = (done?.output_data || {}) as AudioMeta & { master_storage_path?: string };
-    if (od.master_storage_path && isStoragePath(od.master_storage_path)) {
-      audioPath = od.master_storage_path;
-      source = "job_output";
+      .in("status", ["complete", "completed"])
+      .order("created_at", { ascending: true });
+    if (jobIdParam) {
+      jobsQuery = service
+        .from("jobs")
+        .select("id, output_data, status, completed_at, created_at")
+        .eq("project_id", projectId)
+        .eq("id", jobIdParam)
+        .eq("type", "PRODUCE_SONG");
+    }
+    const { data: jobs } = await jobsQuery;
+    const completeJobs = (jobs || []).filter(
+      (j) => j.status === "complete" || j.status === "completed" || jobIdParam
+    );
+    let done = completeJobs[completeJobs.length - 1];
+    if (versionParam) {
+      const v = Math.max(1, parseInt(String(versionParam), 10) || 0);
+      if (v >= 1 && v <= completeJobs.length) done = completeJobs[v - 1];
+    }
+    if (jobIdParam) {
+      done = (jobs || []).find((j) => String(j.id) === jobIdParam) || done;
+    }
+    const od = (done?.output_data || {}) as AudioMeta & {
+      master_storage_path?: string;
+      master_path?: string;
+      masterPath?: string;
+    };
+    const jobPath =
+      (od.master_storage_path && isStoragePath(od.master_storage_path) && od.master_storage_path) ||
+      (od.master_path && isStoragePath(od.master_path) && od.master_path) ||
+      (od.masterPath && isStoragePath(String(od.masterPath)) && String(od.masterPath)) ||
+      null;
+    if (jobPath) {
+      audioPath = jobPath;
+      source = jobIdParam ? `job:${jobIdParam}` : `job_output_v${versionParam || completeJobs.length}`;
       meta = { ...meta, ...od };
     }
   }

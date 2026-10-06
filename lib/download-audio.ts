@@ -5,11 +5,15 @@
 export async function forceDownloadFromApi(
   projectId: string,
   format: "wav" | "mp3",
-  fallbackName?: string
+  fallbackName?: string,
+  opts?: { jobId?: string; version?: number }
 ): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
   try {
+    const q = new URLSearchParams({ kind: "master", format });
+    if (opts?.jobId) q.set("jobId", opts.jobId);
+    else if (opts?.version != null) q.set("version", String(opts.version));
     const res = await fetch(
-      `/api/projects/${projectId}/download?kind=master&format=${format}`,
+      `/api/projects/${projectId}/download?${q.toString()}`,
       { credentials: "same-origin" }
     );
     const j = (await res.json().catch(() => ({}))) as {
