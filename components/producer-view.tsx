@@ -3386,10 +3386,31 @@ export function ProducerView({
           !String(st.master.audio_path).startsWith("http") &&
           !String(st.master.audio_path).startsWith("mock://"));
 
-      // Complete only when THIS job is completed (not merely project still marked produced).
+      // Complete only when THIS job is completed AND it looks like a real new finish
+      // (not a stale completed row or project still pointing at the previous master).
       if (jobStatus === "complete" || jobStatus === "completed") {
-        if (st.master_url || masterReady) {
-          let url = st.master_url ? String(st.master_url) : null;
+        const out = (produceJob?.output_data || {}) as Record<string, unknown>;
+        const jobHasMaster = Boolean(out.master_path || out.master_url || out.masterPath);
+        const completedAtMs = (() => {
+          const raw = (produceJob as { completed_at?: string } | undefined)?.completed_at
+            || (out.completed_at as string | undefined);
+          const n = raw ? Date.parse(String(raw)) : NaN;
+          return Number.isFinite(n) ? n : 0;
+        })();
+        const started = produceStartedAtRef.current || 0;
+        // Allow small clock skew; require finish after this Produce click when we have a start time
+        const finishedAfterStart = !started || !completedAtMs || completedAtMs >= started - 15_000;
+        if (!jobHasMaster && !finishedAfterStart) {
+          return "pending";
+        }
+        if (!jobHasMaster && (st.master_url || masterReady) && started && completedAtMs && completedAtMs < started - 15_000) {
+          // Old master still on project; this job has not written output yet
+          return "pending";
+        }
+        if (jobHasMaster || st.master_url || masterReady) {
+          let url =
+            (typeof out.master_url === "string" && out.master_url) ||
+            (st.master_url ? String(st.master_url) : null);
           if (!url) {
             const alt = st.master?.url || st.audio_url;
             if (alt) url = String(alt);
@@ -3404,7 +3425,6 @@ export function ProducerView({
           setProduceError(null);
           return "complete";
         }
-        // Job done but URL lag — keep pending briefly
         setProduceStage(produceJob?.stage || "complete");
         return "pending";
       }
@@ -3647,27 +3667,16 @@ export function ProducerView({
           "Production job was not created. Check your connection and try Produce again."
         );
       }
+      // Always wait for THIS job — never short-circuit on a prior master_url.
+      produceStartedAtRef.current = Date.now();
       setProduceJobId(String(jid));
       setProduceJobStatus(String(j.status || "queued"));
-      setProduceStage(String(j.stage || j.status || "queued"));
-      setProduceProgress(j.status === "processing" ? 10 : 5);
-      // Read status (worker owns heavy work; inline mode may tick on GET)
-      void fetch(`/api/jobs/${jid}`).catch(() => undefined);
-
-      if (
-        j.master_url &&
-        res.status === 200 &&
-        (j.status === "complete" || j.status === "completed")
-      ) {
-        setMasterUrl(String(j.master_url));
-        setMasterJobId(String(jid));
-        setProduceUi("complete");
-        setProduceStage("complete");
-        setProduceProgress(100);
-        return;
+      setProduceStage(String(j.stage || "queued"));
+      setProduceProgress(5);
+      if (j.deduped) {
+        console.warn("[produce] unexpected dedupe on force Produce again", jid, j);
       }
-
-      produceStartedAtRef.current = Date.now();
+      // Do not GET /api/jobs here — that can tick inline and race the worker. Polling handles status.
       if (produceTimeoutRef.current) clearTimeout(produceTimeoutRef.current);
       produceTimeoutRef.current = setTimeout(() => {
         if (produceActiveRef.current) void cancelProduce("timeout");

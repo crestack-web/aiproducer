@@ -2849,18 +2849,11 @@ export default function ProjectDetailPage() {
           "Production job was not created. Check your connection and try Produce again."
         );
       }
-      setProduceJobId(String(jid));
-      setProduceStage(String(j.stage || j.status || "queued"));
-      setProduceProgress(5);
-
-      if (j.master_url && res.status === 200 && j.status === "complete") {
-        setMasterUrl(j.master_url);
-        setProducing(false);
-        setScreen("done");
-        return;
-      }
-
       produceStartedAtRef.current = Date.now();
+      setProduceJobId(String(jid));
+      setProduceStage(String(j.stage || "queued"));
+      setProduceProgress(5);
+      // Always poll — never treat a prior master as this run finishing.
       scheduleProducePoll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Produce failed");
