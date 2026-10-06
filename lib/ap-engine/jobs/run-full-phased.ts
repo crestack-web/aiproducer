@@ -385,7 +385,13 @@ export async function runFullProduceWithCheckpoints(opts: {
             pathHint: v.pathHint,
             taskType: v.taskType,
             startMs: v.startMs ?? undefined,
-            role: v.role,
+            role: (v.taskType || "lead").toLowerCase().includes("harm")
+              ? "harmony"
+              : (v.taskType || "lead").toLowerCase().includes("double")
+                ? "double"
+                : (v.taskType || "lead").toLowerCase().includes("adlib")
+                  ? "adlib"
+                  : "lead",
           })),
           onStage: async (s) => {
             const hint =
@@ -447,7 +453,13 @@ export async function runFullProduceWithCheckpoints(opts: {
             pathHint: v.pathHint,
             taskType: v.taskType,
             startMs: v.startMs ?? undefined,
-            role: v.role,
+            role: (v.taskType || "lead").toLowerCase().includes("harm")
+              ? "harmony"
+              : (v.taskType || "lead").toLowerCase().includes("double")
+                ? "double"
+                : (v.taskType || "lead").toLowerCase().includes("adlib")
+                  ? "adlib"
+                  : "lead",
           })),
           onStage: async (s) => {
             await reportWithProgress(
