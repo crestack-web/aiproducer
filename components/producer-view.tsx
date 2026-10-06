@@ -6182,24 +6182,43 @@ export function ProducerView({
                   ).map(([key, label]) => {
                     const order = ["queued", "analyzing", "restoring", "arranging", "mixing", "mastering", "completed"];
                     const curRaw = String(produceStage || "queued").toLowerCase().trim();
+                    const jobSt = String(produceJobStatus || "").toLowerCase();
+                    const progress = typeof produceProgress === "number" ? produceProgress : 0;
                     const normalizeStage = (x: string): string => {
-                      if (!x || x === "queued" || x === "pending") return "queued";
-                      if (x.includes("analy")) return "analyzing";
-                      if (x.includes("restor") || x.includes("polish")) return "restoring";
-                      if (x.includes("arrang") || x === "producing" || x === "produce") return "arranging";
+                      // Still waiting for worker — stay on first step
+                      if (
+                        jobSt === "queued" ||
+                        jobSt === "pending" ||
+                        !x ||
+                        x === "queued" ||
+                        x === "pending" ||
+                        x.includes("waiting") ||
+                        x.includes("preparing") ||
+                        x.includes("queue")
+                      ) {
+                        return "queued";
+                      }
+                      if (x.includes("analy") || x.includes("collect") || x.includes("ingest"))
+                        return "analyzing";
+                      if (x.includes("restor") || x.includes("clean")) return "restoring";
+                      if (x.includes("arrang") || x.includes("polish") || x.includes("space"))
+                        return "arranging";
                       if (x.includes("mix")) return "mixing";
                       if (x.includes("master") || x.includes("quality") || x === "qc") return "mastering";
                       if (x.includes("complete") || x.includes("export") || x === "done") return "completed";
-                      return x;
+                      // progress fallback for unknown stage strings
+                      if (progress >= 90) return "completed";
+                      if (progress >= 82) return "mastering";
+                      if (progress >= 70) return "mixing";
+                      if (progress >= 48) return "arranging";
+                      if (progress >= 28) return "restoring";
+                      if (progress >= 12) return "analyzing";
+                      return "queued";
                     };
                     const cur = normalizeStage(curRaw);
                     let curIdx = order.indexOf(cur);
-                    if (curIdx < 0) {
-                      curIdx =
-                        produceJobStatus === "processing" || produceUi === "producing"
-                          ? order.indexOf("arranging")
-                          : 0;
-                    }
+                    // Never assume "arranging" just because the UI is open — unknown → queued
+                    if (curIdx < 0) curIdx = 0;
                     const stepIdx = order.indexOf(key);
                     // This block only renders while producing/starting — mark prior steps done
                     const done = stepIdx >= 0 && curIdx > stepIdx;
