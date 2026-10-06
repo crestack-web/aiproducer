@@ -104,16 +104,33 @@ export function customBeatPath(userId: string, projectId: string, ext = "wav") {
   return `users/${userId}/projects/${projectId}/beats/custom.${ext}`;
 }
 
-function toUint8Array(body: Buffer | ArrayBuffer | Blob | Uint8Array): Promise<Uint8Array> {
-  if (body instanceof Uint8Array) return Promise.resolve(body);
-  if (Buffer.isBuffer(body)) return Promise.resolve(new Uint8Array(body));
-  if (body instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(body));
-  return body.arrayBuffer().then((ab) => new Uint8Array(ab));
+async function toUint8Array(body: unknown): Promise<Uint8Array> {
+  if (body == null) {
+    throw new Error("uploadBuffer: empty body (null/undefined)");
+  }
+  if (body instanceof Uint8Array) return body;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) {
+    const v = body as ArrayBufferView;
+    return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return new Uint8Array(await body.arrayBuffer());
+  }
+  throw new Error(
+    `uploadBuffer: unsupported body type ${typeof body}` +
+      (typeof body === "object" && body
+        ? ` (${Object.prototype.toString.call(body)})`
+        : "")
+  );
 }
 
 export async function uploadBuffer(
   path: string,
-  body: Buffer | ArrayBuffer | Blob | Uint8Array,
+  body: unknown,
   contentType: string
 ): Promise<string> {
   const client = getR2Client();

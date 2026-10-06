@@ -403,10 +403,11 @@ export async function runFullProduceWithCheckpoints(opts: {
           genre: genre || null,
         });
         if (!fast.wav?.length) throw new Error("Fast arrangement returned empty audio");
+        const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
         result = {
           ok: true,
-          masterWav: fast.wav,
-          mixWav: fast.wav,
+          masterWav: wavBuf,
+          mixWav: wavBuf,
           engineVersion: "ap-fast",
           meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
         };
@@ -459,10 +460,11 @@ export async function runFullProduceWithCheckpoints(opts: {
           genre: genre || null,
         });
         if (!fast.wav?.length) throw new Error(msg || "Fast arrangement returned empty audio");
+        const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
         result = {
           ok: true,
-          masterWav: fast.wav,
-          mixWav: fast.wav,
+          masterWav: wavBuf,
+          mixWav: wavBuf,
           engineVersion: "ap-fast",
           meta: { path: "fast_arrange_fallback", layerCount: fast.layerCount, durationMs: fast.durationMs },
         };
@@ -532,15 +534,26 @@ export async function runFullProduceWithCheckpoints(opts: {
         path: "full",
         message: "Uploading master and stems…",
       }).catch(() => undefined);
+      const asBuf = (b: unknown): Buffer => {
+        if (Buffer.isBuffer(b)) return b;
+        if (b instanceof Uint8Array) return Buffer.from(b);
+        if (b instanceof ArrayBuffer) return Buffer.from(b);
+        throw new Error("export: expected audio Buffer");
+      };
       const uploads: Promise<unknown>[] = [
-        uploadBuffer(mixPath, result.mixWav, "audio/wav"),
-        uploadBuffer(masterPath, result.masterWav, "audio/wav"),
-        uploadBuffer(processedVocalPath, result.processedVocalWav, "audio/wav"),
-        uploadBuffer(restoredVocalPath, result.restoredVocalWav, "audio/wav"),
+        uploadBuffer(mixPath, asBuf(result.mixWav), "audio/wav"),
+        uploadBuffer(masterPath, asBuf(result.masterWav), "audio/wav"),
       ];
-      if (result.masterMp3) {
+      // Optional stems — full engine only; fast arrange omits these
+      if (result.processedVocalWav?.length) {
+        uploads.push(uploadBuffer(processedVocalPath, asBuf(result.processedVocalWav), "audio/wav"));
+      }
+      if (result.restoredVocalWav?.length) {
+        uploads.push(uploadBuffer(restoredVocalPath, asBuf(result.restoredVocalWav), "audio/wav"));
+      }
+      if (result.masterMp3?.length) {
         mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
-        uploads.push(uploadBuffer(mp3Path, result.masterMp3, "audio/mpeg"));
+        uploads.push(uploadBuffer(mp3Path, asBuf(result.masterMp3), "audio/mpeg"));
       }
       await Promise.all(uploads);
     } catch (upErr) {
