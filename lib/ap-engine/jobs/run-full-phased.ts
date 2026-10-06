@@ -374,6 +374,8 @@ export async function runFullProduceWithCheckpoints(opts: {
       error?: string;
       detail?: string;
       decision?: { notes?: string[] };
+      qc?: unknown;
+      retryCount?: number;
       meta?: Record<string, unknown>;
     };
 
@@ -578,8 +580,8 @@ export async function runFullProduceWithCheckpoints(opts: {
       restored_vocal_path: restoredVocalPath,
       decision: result.decision,
       roles: roleNote || null,
-      qc: result.qc,
-      retryCount: result.retryCount,
+      qc: result.qc ?? null,
+      retryCount: result.retryCount ?? 0,
       path: "full",
       engineVersion,
       stage_timings_ms: { ...cp.stageTimingsMs, ...(result.stageTimingsMs || {}) },
