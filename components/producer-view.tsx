@@ -843,6 +843,14 @@ export function ProducerView({
   const [paywallOpen, setPaywallOpen] = useState(false);
   const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const produceStartedAtRef = useRef(0);
+  /** Last time server progress/stage changed — used to detect dead jobs */
+  const produceLastChangeRef = useRef<{ at: number; progress: number; stage: string; status: string }>({
+    at: 0,
+    progress: -1,
+    stage: "",
+    status: "",
+  });
+
   const produceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Client-side hard stop so produce UI cannot hang forever */
   const PRODUCE_CLIENT_TIMEOUT_MS = 120 * 60 * 1000;
@@ -3309,6 +3317,52 @@ export function ProducerView({
             if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
               setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
             }
+            // Honest progress: detect stuck queue / dead processing (worker never advances)
+            {
+              const stNow = String(jj.status || "").toLowerCase();
+              const stageNow = String(jj.stage || "").toLowerCase();
+              const progNow =
+                typeof jj.progress === "number" && Number.isFinite(jj.progress)
+                  ? Math.round(jj.progress)
+                  : produceLastChangeRef.current.progress;
+              const prev = produceLastChangeRef.current;
+              const changed =
+                progNow !== prev.progress || stageNow !== prev.stage || stNow !== prev.status;
+              if (changed) {
+                produceLastChangeRef.current = {
+                  at: Date.now(),
+                  progress: progNow,
+                  stage: stageNow,
+                  status: stNow,
+                };
+              } else if (prev.at > 0) {
+                const idleMs = Date.now() - prev.at;
+                // Queued too long → worker never claimed
+                if (stNow === "queued" && idleMs > 60_000) {
+                  setProduceJobId(null);
+                  setProduceUi("failed");
+                  setProduceStage("failed");
+                  setProduceError(
+                    "Production never started — the studio engine did not pick up this job. Tap Produce again. If it keeps happening, the worker may be offline."
+                  );
+                  setProduceProgress(0);
+                  return "failed";
+                }
+                // Processing but no stage/progress change → worker died mid-job
+                if (
+                  (stNow === "processing" || stNow === "running") &&
+                  idleMs > 4 * 60_000
+                ) {
+                  setProduceJobId(null);
+                  setProduceUi("failed");
+                  setProduceStage("failed");
+                  setProduceError(
+                    "Production stalled on the studio engine (no progress for several minutes). Your recordings are safe — cancel if needed, then tap Produce again."
+                  );
+                  return "failed";
+                }
+              }
+            }
             if (jj.status === "failed" || jj.status === "FAILED") {
               setProduceJobId(null);
               setProduceError(humanProduceError(jj.error, jj.stage));
@@ -3523,14 +3577,39 @@ export function ProducerView({
           stage?: string;
           error?: string;
         }[];
-        const produceJob = jobs.find((j) => j.type === "PRODUCE_SONG");
+        // Prefer newest in-flight PRODUCE_SONG; never pretend a dead job is actively producing
+        const produceJobs = jobs.filter((j) => j.type === "PRODUCE_SONG");
+        const inflight = produceJobs.find((j) => {
+          const s = (j.status || "").toLowerCase();
+          return s === "queued" || s === "processing" || s === "running";
+        });
+        const produceJob = inflight || produceJobs[0];
         const js = (produceJob?.status || "").toLowerCase();
         if (produceJob?.id) setProduceJobId(String(produceJob.id));
         if (js === "queued" || js === "processing" || js === "running") {
-          setProduceUi("producing");
-          setProduceStage(produceJob?.stage || "processing");
-          produceStartedAtRef.current = Date.now();
-          scheduleProducePoll();
+          const startedRaw = (produceJob as { started_at?: string })?.started_at
+            || (produceJob as { created_at?: string })?.created_at;
+          const startedMs = startedRaw ? Date.parse(String(startedRaw)) : 0;
+          const ageMs = startedMs ? Date.now() - startedMs : 0;
+          // Older than 8 minutes with no active poll session → treat as stalled, not "working"
+          if (ageMs > 8 * 60_000 && js !== "queued") {
+            setProduceUi("failed");
+            setProduceStage("failed");
+            setProduceError(
+              "A previous produce run stalled. Your recordings are safe — tap Produce to start a fresh job."
+            );
+          } else {
+            setProduceUi("producing");
+            setProduceStage(js === "queued" ? "queued" : (produceJob?.stage || "queued"));
+            produceStartedAtRef.current = Date.now();
+            produceLastChangeRef.current = {
+              at: Date.now(),
+              progress: 0,
+              stage: String(produceJob?.stage || js),
+              status: js,
+            };
+            scheduleProducePoll();
+          }
         } else if (js === "failed") {
           setProduceUi("failed");
           setProduceError(
@@ -3659,8 +3738,9 @@ export function ProducerView({
     setProduceJobStatus("queued");
     setProduceProgress(0);
     setProduceError(null);
-    setProduceStage("preparing takes");
+    setProduceStage("queued");
     setProduceUi("producing");
+    produceLastChangeRef.current = { at: Date.now(), progress: 0, stage: "queued", status: "queued" };
 
     // Shared prep (same as Booth) — originals kept; new WAV take selected when needed
     try {
@@ -6250,7 +6330,12 @@ export function ProducerView({
                       if (progress >= 12) return "analyzing";
                       return "queued";
                     };
-                    const cur = normalizeStage(curRaw);
+                    // If server says queued, never show Analyze/Arrange as active (stale progress)
+                    const statusLower = String(produceJobStatus || "").toLowerCase();
+                    const cur =
+                      statusLower === "queued" || statusLower === "starting"
+                        ? "queued"
+                        : normalizeStage(curRaw);
                     let curIdx = order.indexOf(cur);
                     // Never assume "arranging" just because the UI is open — unknown → queued
                     if (curIdx < 0) curIdx = 0;

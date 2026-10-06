@@ -1007,9 +1007,10 @@ export default function ProjectDetailPage() {
             String(produceJob?.started_at || produceJob?.created_at || "")
           );
           const ageMs = origin && Number.isFinite(origin) ? Date.now() - origin : 0;
-          if (ageMs > 2 * 60 * 60 * 1000) {
+          // 8 min with no live advance = stalled (worker restart / empty queue), not "still working"
+          if (ageMs > 8 * 60_000) {
             setError(
-              "A previous produce job was stuck. Tap Produce again to start a fresh job — your recordings are safe."
+              "A previous produce job stalled. Tap Produce again to start a fresh job — your recordings are safe."
             );
             setProducing(false);
             setProduceStage("failed");
