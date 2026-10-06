@@ -3316,7 +3316,10 @@ export function ProducerView({
             }
             if (
               (jj.status === "complete" || jj.status === "completed") &&
-              (jj.output_data?.master_url || jj.output_data?.master_path)
+              (jj.output_data?.master_url ||
+                jj.output_data?.master_path ||
+                jj.output_data?.master_storage_path ||
+                jj.output_data?.masterPath)
             ) {
               // Fall through to status for signed master URL
             }
@@ -3390,7 +3393,14 @@ export function ProducerView({
       // (not a stale completed row or project still pointing at the previous master).
       if (jobStatus === "complete" || jobStatus === "completed") {
         const out = (produceJob?.output_data || {}) as Record<string, unknown>;
-        const jobHasMaster = Boolean(out.master_path || out.master_url || out.masterPath);
+        // Worker writes master_storage_path (R2 key); legacy keys kept for older jobs
+        const jobHasMaster = Boolean(
+          out.master_storage_path ||
+            out.master_path ||
+            out.master_url ||
+            out.masterPath ||
+            out.mix_storage_path
+        );
         const completedAtMs = (() => {
           const raw = (produceJob as { completed_at?: string } | undefined)?.completed_at
             || (out.completed_at as string | undefined);
@@ -3407,26 +3417,36 @@ export function ProducerView({
           // Old master still on project; this job has not written output yet
           return "pending";
         }
-        if (jobHasMaster || st.master_url || masterReady) {
-          let url =
-            (typeof out.master_url === "string" && out.master_url) ||
-            (st.master_url ? String(st.master_url) : null);
-          if (!url) {
-            const alt = st.master?.url || st.audio_url;
-            if (alt) url = String(alt);
-          }
-          if (!url) {
-            url = await resolveMasterPlayUrl();
-          }
-          if (url) setMasterUrl(url);
-          if (produceJob?.id) setMasterJobId(String(produceJob.id));
-          setProduceStage("complete");
-          setProduceUi("complete");
-          setProduceError(null);
-          return "complete";
+        // Job is complete on the server — never stay stuck on Arrange@80%
+        // just because signed URL resolution lags a poll cycle.
+        let url =
+          (typeof out.master_url === "string" && out.master_url) ||
+          (st.master_url ? String(st.master_url) : null);
+        if (!url) {
+          const alt = st.master?.url || st.audio_url;
+          if (alt) url = String(alt);
         }
-        setProduceStage(produceJob?.stage || "complete");
-        return "pending";
+        if (!url) {
+          try {
+            url = await resolveMasterPlayUrl();
+          } catch {
+            url = null;
+          }
+        }
+        if (url) setMasterUrl(url);
+        if (produceJob?.id) setMasterJobId(String(produceJob.id));
+        setProduceStage("complete");
+        setProduceProgress(100);
+        setProduceUi("complete");
+        setProduceError(null);
+        // If we still lack a playable URL but the job is done, exit producing UI —
+        // user can refresh / open library; blocking at 80% is worse.
+        if (!jobHasMaster && !st.master_url && !masterReady && !url) {
+          setProduceError(
+            "Song finished on the server — refresh if playback does not appear yet."
+          );
+        }
+        return "complete";
       }
 
       if (jobStatus === "queued" || jobStatus === "processing" || jobStatus === "running") {
@@ -6207,6 +6227,7 @@ export function ProducerView({
                       if (x.includes("master") || x.includes("quality") || x === "qc") return "mastering";
                       if (x.includes("complete") || x.includes("export") || x === "done") return "completed";
                       // progress fallback for unknown stage strings
+                      if (progress >= 98 || progress >= 100) return "completed";
                       if (progress >= 90) return "completed";
                       if (progress >= 82) return "mastering";
                       if (progress >= 70) return "mixing";
