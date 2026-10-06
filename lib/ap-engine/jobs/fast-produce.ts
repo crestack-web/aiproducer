@@ -520,10 +520,9 @@ export async function runFastArrangement(opts: {
       ceilingDb: CEILING_DB,
     },
     layers: layers.map((L) => ({
-      role: L.role,
+      role: L.type,
       startMs: L.startMs,
       samples: L.pcm.left.length,
-      spaceCharacter: L.spaceCharacter,
       duckDb: L.duckDb,
     })),
     vocalStructure: arrangement
