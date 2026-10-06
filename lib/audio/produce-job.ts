@@ -177,13 +177,17 @@ export async function enqueueProduceSong(
 
   const baseKey = `produce:${projectId}`;
 
-  const { data: inflight } = await supabase
+  // jobs has created_at/started_at/completed_at — no updated_at (selecting it fails the whole query)
+  const { data: inflight, error: inflightErr } = await supabase
     .from("jobs")
-    .select("id, status, provider_task_id, stage, output_data, attempts, started_at, updated_at, created_at")
+    .select("id, status, provider_task_id, stage, output_data, attempts, started_at, created_at")
     .eq("project_id", projectId)
     .eq("type", "PRODUCE_SONG")
     .in("status", ["queued", "processing"])
     .order("created_at", { ascending: false });
+  if (inflightErr) {
+    console.error("[enqueueProduceSong] inflight query failed", inflightErr.message);
+  }
 
   const existing = (inflight && inflight[0]) || null;
 

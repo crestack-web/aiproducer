@@ -3602,7 +3602,14 @@ export function ProducerView({
 
   async function startConsoleProduce() {
     if (!projectId) return;
-    if (produceUi === "producing" || produceUi === "starting") return;
+    // Allow restart while stuck on producing: cancel in-flight UI + server job first
+    if (produceUi === "producing" || produceUi === "starting") {
+      try {
+        await cancelProduce("user");
+      } catch {
+        /* continue to new job */
+      }
+    }
 
     setProduceUi("starting");
     setProduceError(null);
