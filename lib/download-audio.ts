@@ -18,10 +18,16 @@ export async function forceDownloadFromApi(
       error?: string;
       message?: string;
       code?: string;
+      reason?: string;
       available?: string[];
     };
 
-    if (res.status === 402 || j.code === "PAYWALL") {
+    if (
+      res.status === 402 ||
+      j.code === "PAYWALL" ||
+      j.code === "PAYMENT_REQUIRED" ||
+      j.reason === "payment_required"
+    ) {
       return {
         ok: false,
         code: "PAYWALL",

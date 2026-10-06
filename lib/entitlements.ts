@@ -1,24 +1,71 @@
 /**
  * Commercial access — download / license unlock.
- * Preview & in-app listening stay free; export needs plan or paid session.
+ * Preview & in-app listening stay free; export needs plan, paid session, or allowlisted account.
  */
 import { createServiceClient } from "@/lib/supabase/service";
 
 export type CommercialAccess = {
   ok: boolean;
   reason?: "login" | "payment_required";
-  source?: "project_unlock" | "subscription" | "admin";
+  source?: "project_unlock" | "subscription" | "admin" | "allowlist";
   message?: string;
 };
 
+/** Always-free download accounts (owner / internal). Comma-separated env AP_FREE_DOWNLOAD_EMAILS extends this. */
+const BUILTIN_FREE_DOWNLOAD_EMAILS = ["crestack@gmail.com"];
+
+function freeDownloadEmails(): Set<string> {
+  const set = new Set(BUILTIN_FREE_DOWNLOAD_EMAILS.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const extra = (process.env.AP_FREE_DOWNLOAD_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  for (const e of extra) set.add(e);
+  return set;
+}
+
+async function resolveUserEmail(userId: string): Promise<string | null> {
+  const service = createServiceClient();
+  try {
+    const { data, error } = await service.auth.admin.getUserById(userId);
+    if (!error && data?.user?.email) return String(data.user.email).trim().toLowerCase();
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { data: profile } = await service
+      .from("profiles")
+      .select("email, metadata")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profile && typeof (profile as { email?: string }).email === "string") {
+      return String((profile as { email: string }).email).trim().toLowerCase();
+    }
+    const meta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
+      {}) as Record<string, unknown>;
+    if (typeof meta.email === "string") return String(meta.email).trim().toLowerCase();
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /**
- * Full commercial license path: paid session on this project, or active Creator/Pro.
+ * Full commercial license path: allowlisted email, paid session on this project, or active Creator/Pro.
  */
 export async function assertCommercialDownloadAccess(
   userId: string,
-  projectId: string
+  projectId: string,
+  opts?: { email?: string | null }
 ): Promise<CommercialAccess> {
   const service = createServiceClient();
+
+  const email =
+    (opts?.email && String(opts.email).trim().toLowerCase()) ||
+    (await resolveUserEmail(userId));
+  if (email && freeDownloadEmails().has(email)) {
+    return { ok: true, source: "allowlist" };
+  }
 
   const { data: project } = await service
     .from("projects")
@@ -74,6 +121,6 @@ export async function assertCommercialDownloadAccess(
     ok: false,
     reason: "payment_required",
     message:
-      "Unlock this song to download with a full commercial license — pay for this session ($4.99) or subscribe to Creator/Pro.",
+      "Unlock this song to download — pay for this session or subscribe to Creator / Pro.",
   };
 }

@@ -30,7 +30,9 @@ export async function GET(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const access = await assertCommercialDownloadAccess(user.id, projectId);
+  const access = await assertCommercialDownloadAccess(user.id, projectId, {
+    email: user.email,
+  });
   if (!access.ok) {
     return NextResponse.json(
       {

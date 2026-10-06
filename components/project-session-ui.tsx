@@ -2798,6 +2798,12 @@ export default function ProjectDetailPage() {
     );
     setDownloadBusy(false);
     if (!result.ok) {
+      if (result.code === "PAYWALL") {
+        setDownloadModalOpen(false);
+        setPaywallOpen(true);
+        setError(null);
+        return;
+      }
       setError(result.error);
       return;
     }

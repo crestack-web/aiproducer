@@ -30,6 +30,7 @@ import {
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
 import { forceDownloadFromApi } from "@/lib/download-audio";
+import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
 import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
@@ -839,6 +840,7 @@ export function ProducerView({
   const [masterJobId, setMasterJobId] = useState<string | null>(null);
   const [produceError, setProduceError] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
   const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const produceStartedAtRef = useRef(0);
   const produceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3734,6 +3736,11 @@ export function ProducerView({
     );
     setDownloadBusy(false);
     if (!result.ok) {
+      if (result.code === "PAYWALL") {
+        setPaywallOpen(true);
+        setProduceError(null);
+        return;
+      }
       if (format === "mp3") {
         setProduceError(
           result.error || "MP3 is not ready yet — try Download WAV."
@@ -7449,6 +7456,28 @@ export function ProducerView({
           </div>
         </div>
       )}
+
+
+      {paywallOpen && projectId ? (
+        <ApPaywall
+          open={paywallOpen}
+          onClose={() => setPaywallOpen(false)}
+          songTitle={titleDraft || projectTitle || undefined}
+          projectId={projectId}
+          colors={{
+            text,
+            textMuted: mutedText,
+            surface: bg,
+            border,
+            accent: brass,
+            bg,
+          }}
+          onUnlocked={() => {
+            setPaywallOpen(false);
+            void downloadMaster("wav");
+          }}
+        />
+      ) : null}
 
       {/* FX modal — Suno-style plugin sheet */}
       {fxOpenId && (

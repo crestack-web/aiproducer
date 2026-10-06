@@ -695,12 +695,16 @@ function StudioPageInner() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        if (res.status === 402 || j.code === "PAYMENT_REQUIRED") {
-          throw new Error(
-            typeof j.error === "string"
-              ? j.error
-              : "Unlock commercial download — subscribe or pay $4.99 for this session after you produce the song."
-          );
+        if (
+          res.status === 402 ||
+          j.code === "PAYMENT_REQUIRED" ||
+          j.code === "PAYWALL" ||
+          j.reason === "payment_required"
+        ) {
+          setSubscribePaywallProjectId(projectId);
+          setSubscribePaywallOpen(true);
+          setError(null);
+          return;
         }
         throw new Error(typeof j.error === "string" ? j.error : "Could not download beat");
       }
