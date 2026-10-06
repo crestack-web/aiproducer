@@ -3312,10 +3312,23 @@ export function ProducerView({
           const jr = await fetch(`/api/jobs/${produceJobId}`);
           const jj = await jr.json().catch(() => ({}));
           if (jr.ok) {
-            if (jj.stage) setProduceStage(String(jj.stage));
+            const stGate = String(jj.status || "").toLowerCase();
             if (jj.status) setProduceJobStatus(String(jj.status));
-            if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
-              setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
+            // Only show engine stages after the worker has claimed the job.
+            // Queued jobs must not display arranging@80% from stale/default progress.
+            if (stGate === "queued" || stGate === "pending" || !stGate) {
+              setProduceStage("queued");
+              setProduceProgress(5);
+            } else if (stGate === "processing" || stGate === "running") {
+              if (jj.stage) setProduceStage(String(jj.stage));
+              if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
+                setProduceProgress(Math.max(5, Math.min(99, Math.round(jj.progress))));
+              }
+            } else if (stGate === "complete" || stGate === "completed") {
+              if (jj.stage) setProduceStage(String(jj.stage));
+              if (typeof jj.progress === "number" && Number.isFinite(jj.progress)) {
+                setProduceProgress(Math.max(0, Math.min(100, Math.round(jj.progress))));
+              }
             }
             // Honest progress: detect stuck queue / dead processing (worker never advances)
             {
@@ -3424,10 +3437,21 @@ export function ProducerView({
         if (produceJob?.id) setProduceJobId(String(produceJob.id));
       }
 
-      if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+      const stGate2 = String(produceJob?.status || "").toLowerCase();
       if (produceJob?.status) setProduceJobStatus(String(produceJob.status));
-      if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
-        setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+      if (stGate2 === "queued" || stGate2 === "pending" || !stGate2) {
+        setProduceStage("queued");
+        setProduceProgress(5);
+      } else if (stGate2 === "processing" || stGate2 === "running") {
+        if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+        if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+          setProduceProgress(Math.max(5, Math.min(99, Math.round(produceJob.progress))));
+        }
+      } else {
+        if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+        if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+          setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+        }
       }
 
       const jobStatus = (produceJob?.status || "").toLowerCase();
@@ -3779,8 +3803,9 @@ export function ProducerView({
       // Always wait for THIS job — never short-circuit on a prior master_url.
       produceStartedAtRef.current = Date.now();
       setProduceJobId(String(jid));
-      setProduceJobStatus(String(j.status || "queued"));
-      setProduceStage(String(j.stage || "queued"));
+      // Job exists but worker has not claimed yet — never show arrange progress here
+      setProduceJobStatus("queued");
+      setProduceStage("queued");
       setProduceProgress(5);
       if (j.deduped) {
         console.warn("[produce] unexpected dedupe on force Produce again", jid, j);

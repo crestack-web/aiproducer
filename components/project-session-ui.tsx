@@ -849,12 +849,22 @@ export default function ProjectDetailPage() {
         if (produceJob?.id) setProduceJobId(String(produceJob.id));
       }
 
-      if (produceJob?.stage) setProduceStage(String(produceJob.stage));
-      if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
-        setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
-      }
-
       const jobStatus = (produceJob?.status || "").toLowerCase();
+      // Only show engine stages after worker claim — queued stays at "waiting"
+      if (jobStatus === "queued" || jobStatus === "pending" || !jobStatus) {
+        setProduceStage("queued");
+        setProduceProgress(5);
+      } else if (jobStatus === "processing" || jobStatus === "running") {
+        if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+        if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+          setProduceProgress(Math.max(5, Math.min(99, Math.round(produceJob.progress))));
+        }
+      } else {
+        if (produceJob?.stage) setProduceStage(String(produceJob.stage));
+        if (typeof produceJob?.progress === "number" && Number.isFinite(produceJob.progress)) {
+          setProduceProgress(Math.max(0, Math.min(100, Math.round(produceJob.progress))));
+        }
+      }
 
       if (jobStatus === "failed") {
         setError(produceJob?.error || "Produce failed");
@@ -1023,7 +1033,11 @@ export default function ProjectDetailPage() {
           } else {
             setProducing(true);
             setScreen("assemble");
-            setProduceStage(produceJob?.stage || "processing");
+            setProduceStage(
+              (produceJob?.status || "").toLowerCase() === "queued"
+                ? "queued"
+                : (produceJob?.stage || "queued")
+            );
             produceStartedAtRef.current = origin && ageMs > 0 ? origin : Date.now();
             produceActiveRef.current = true;
             resumedRef.current = true;
@@ -2858,7 +2872,8 @@ export default function ProjectDetailPage() {
       }
       produceStartedAtRef.current = Date.now();
       setProduceJobId(String(jid));
-      setProduceStage(String(j.stage || "queued"));
+      setProduceStage("queued");
+      setProduceProgress(5);
       setProduceProgress(5);
       // Always poll — never treat a prior master as this run finishing.
       scheduleProducePoll();
