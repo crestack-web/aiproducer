@@ -15,6 +15,7 @@ import { downloadStorageOrUrl } from "@/lib/audio/roex-assets";
 import {
   encodeStereoWav,
   cloneStereo,
+  dbToGain,
   applyGainStereo,
   peakOf,
   rmsOf,
@@ -40,6 +41,9 @@ export type FastVocalLayer = {
   taskId?: string;
   sectionLabel?: string | null;
 };
+
+/** Fast path engine id — bump when mix/master separation or loudness changes. */
+export const FAST_ENGINE_VERSION = "ap-fast-space-4";
 
 /** Post level-match fader — modest; level-match already sits the take. */
 const ROLE_GAIN: Record<string, number> = {
@@ -193,11 +197,15 @@ export async function runFastArrangement(opts: {
   genre?: string | null;
   bpm?: number | null;
 }): Promise<{
+  /** @deprecated same as masterWav — kept for older callers */
   wav: Buffer;
+  mixWav: Buffer;
+  masterWav: Buffer;
   layerCount: number;
   durationMs: number;
   path: "fast-space" | "fast-stopgap";
   diagnostics: Record<string, unknown>;
+  engineVersion: string;
 }> {
   const report = opts.onStage || (async () => undefined);
 
@@ -308,83 +316,116 @@ export async function runFastArrangement(opts: {
   }
 
   await report("mixing");
-  let needSamples = beat.left.length;
-  for (const L of layers) {
-    const end = Math.floor((L.startMs / 1000) * beat.sampleRate) + L.pcm.left.length;
-    needSamples = Math.max(needSamples, end + beat.sampleRate);
-  }
-  if (needSamples > beat.left.length) {
-    const left = new Float32Array(needSamples);
-    const right = new Float32Array(needSamples);
-    left.set(beat.left);
-    right.set(beat.right);
-    beat = { left, right, sampleRate: beat.sampleRate };
-  }
 
-  const mix = cloneStereo(beat);
-  applyGainStereo(mix, 0.75);
-
-  // Genre-aware default duck depth (linear amount ~ from dB)
-  let maxDuckDb = 2.0;
-  try {
-    const gp = resolveGenreProfile(opts.genre ?? null);
-    maxDuckDb = 1.2 + (1 - gp.beatRespect) * 1.5;
-  } catch {
-    /* default */
+  // --- MIX bus (pre-master): glue only, preserve headroom for loudness stage ---
+  const peakBeforeGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
+  compressStereo(mix, {
+    thresholdDb: -18,
+    ratio: 1.35,
+    attackMs: 18,
+    releaseMs: 160,
+    kneeDb: 6,
+    makeupDb: 0.4,
+  });
+  const peakAfterGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
+  // Soft safety on the mix only — do NOT push loudness here
+  if (peakAfterGlue > dbToGain(-0.5)) {
+    limitStereo(mix, -0.5);
   }
-  for (const L of layers) {
-    const start = Math.floor((L.startMs / 1000) * mix.sampleRate);
-    const duckDb = L.duckDb ?? maxDuckDb;
-    // Convert dB to linear depth for envelope duck (cap conservative)
-    const depth = Math.min(0.78, 1 - Math.pow(10, -Math.min(duckDb, 3.5) / 20));
-    // Lead drives duck stronger; supports lighter
-    const isLead = (L.type || "").includes("lead") || L.type === "main";
-    const depthUse = isLead ? depth : depth * 0.45;
-    duckBeatUnderVocalEnvelope(mix, L.pcm, start, depthUse, 280, 420);
-    mixOnto(mix, L.pcm, start, L.gain);
-  }
-
-  const peakBeforeLimit = Math.max(peakOf(mix.left), peakOf(mix.right));
+  const mixPeak = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
+  const mixRmsProxyDb = estimateLoudnessProxyDb(mix);
+  const mixWav = encodeStereoWav(mix);
 
   await report("mastering");
-  compressStereo(mix, {
-    thresholdDb: -14,
-    ratio: 2.0,
-    attackMs: 25,
-    releaseMs: 180,
-    makeupDb: 1.2,
-  });
-  applyEqStereo(mix, [
-    { type: "highpass", freq: 30, q: 0.7 },
-    { type: "highshelf", freq: 12000, gainDb: 0.5, q: 0.7 },
-  ]);
-  limitStereo(mix, -1.0);
-  const peak = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-6);
-  if (peak > 0.95) applyGainStereo(mix, 0.95 / peak);
 
-  const wav = encodeStereoWav(mix);
+  // --- MASTER: clone mix, then tonal polish + streaming loudness + true-peak ---
+  const master = cloneStereo(mix);
+  // Subtle polish EQ (master only)
+  applyEqStereo(master, [
+    { type: "peaking", freqHz: 120, gainDb: -0.6, q: 0.7 },
+    { type: "peaking", freqHz: 3200, gainDb: 0.7, q: 0.9 },
+    { type: "highShelf", freqHz: 11000, gainDb: 0.5, q: 0.7 },
+  ]);
+
+  const TARGET_LUFS = -11.5;
+  const CEILING_DB = -1.0;
+  const proxyBeforeDb = estimateLoudnessProxyDb(master);
+  const loudness = normalizeToStreamingTarget(master, TARGET_LUFS, CEILING_DB, 0.35);
+  truePeakLimit(master, CEILING_DB, 0.35);
+  const proxyAfterDb = estimateLoudnessProxyDb(master);
+  const masterPeak = Math.max(peakOf(master.left), peakOf(master.right), 1e-9);
+  const masterTruePeakDbApprox = 20 * Math.log10(masterPeak + 1e-12);
+
+  // Clamp any numerical overshoot before encode
+  for (let i = 0; i < master.left.length; i++) {
+    if (master.left[i] > 1) master.left[i] = 1;
+    if (master.left[i] < -1) master.left[i] = -1;
+    if (master.right[i] > 1) master.right[i] = 1;
+    if (master.right[i] < -1) master.right[i] = -1;
+  }
+
+  const masterWav = encodeStereoWav(master);
   const durationMs = Math.round((mix.left.length / mix.sampleRate) * 1000);
-  const diagnostics = {
-    path: "fast-space" as const,
-    engineVersion: "ap-fast-space-3",
-    duck: {
-      depthLinear: 0.68,
-      depthDbApprox: -3.3,
-      attackMs: 300,
-      releaseMs: 350,
-      mode: "vocal_envelope",
+
+  const diagnostics: Record<string, unknown> = {
+    path: "fast-space",
+    engineVersion: FAST_ENGINE_VERSION,
+    layerCount: layers.length,
+    durationMs,
+    beatGain,
+    duckDb,
+    spaceCharacter,
+    spaceNotes,
+    loudness: {
+      targetLufs: TARGET_LUFS,
+      proxyBeforeDb: Math.round(proxyBeforeDb * 10) / 10,
+      proxyAfterDb: Math.round(proxyAfterDb * 10) / 10,
+      totalGainDb: Math.round(loudness.totalGainDb * 100) / 100,
+      passes: loudness.passes,
+      method: loudness.method,
     },
-    bedGain: 0.75,
-    beatRms: Number(beatRms.toFixed(5)),
-    beatPeak: Number(beatPeak.toFixed(4)),
-    peakBeforeLimit: Number(peakBeforeLimit.toFixed(4)),
-    peakAfterLimit: Number(Math.min(peak, 0.95).toFixed(4)),
-    layers: layerDiag,
-    note: "AP SPACE integrated on fast path; enable AP_FULL_ENGINE=1 for full restoration/QC",
+    mix: {
+      peak: Math.round(mixPeak * 1000) / 1000,
+      peakDb: Math.round(20 * Math.log10(mixPeak + 1e-12) * 10) / 10,
+      rmsProxyDb: Math.round(mixRmsProxyDb * 10) / 10,
+      peakBeforeGlue: Math.round(peakBeforeGlue * 1000) / 1000,
+      peakAfterGlue: Math.round(peakAfterGlue * 1000) / 1000,
+    },
+    master: {
+      peak: Math.round(masterPeak * 1000) / 1000,
+      peakDb: Math.round(20 * Math.log10(masterPeak + 1e-12) * 10) / 10,
+      rmsProxyDb: Math.round(proxyAfterDb * 10) / 10,
+      truePeakDbApprox: Math.round(masterTruePeakDbApprox * 10) / 10,
+      ceilingDb: CEILING_DB,
+    },
+    layers: layers.map((L) => ({
+      role: L.role,
+      startMs: L.startMs,
+      samples: L.pcm.left.length,
+      spaceCharacter: L.spaceCharacter,
+      duckDb: L.duckDb,
+    })),
+    note: "Mix = pre-loudness bus; master = loudness + true-peak. Full engine off by default.",
   };
   console.info(
-    "[fast-produce-stopgap] done",
-    JSON.stringify({ layerCount: layers.length, durationMs, diagnostics })
+    "[fast-produce] done",
+    JSON.stringify({
+      engineVersion: FAST_ENGINE_VERSION,
+      layerCount: layers.length,
+      durationMs,
+      loudness: diagnostics.loudness,
+      mixPeakDb: (diagnostics.mix as { peakDb: number }).peakDb,
+      masterPeakDb: (diagnostics.master as { peakDb: number }).peakDb,
+    })
   );
-  return { wav, layerCount: layers.length, durationMs, path: "fast-space", diagnostics };
+  return {
+    wav: masterWav,
+    mixWav,
+    masterWav,
+    layerCount: layers.length,
+    durationMs,
+    path: "fast-space",
+    diagnostics,
+    engineVersion: FAST_ENGINE_VERSION,
+  };
 }

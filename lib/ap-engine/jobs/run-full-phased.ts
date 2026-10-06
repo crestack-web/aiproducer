@@ -420,14 +420,26 @@ export async function runFullProduceWithCheckpoints(opts: {
         },
         genre: genre || null,
       });
-      if (!fast.wav?.length) throw new Error("Fast arrangement returned empty audio");
-      const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
+      if (!fast.masterWav?.length || !fast.mixWav?.length) {
+        throw new Error("Fast arrangement returned empty mix/master audio");
+      }
+      const masterBuf = Buffer.isBuffer(fast.masterWav)
+        ? fast.masterWav
+        : Buffer.from(fast.masterWav as Uint8Array);
+      const mixBuf = Buffer.isBuffer(fast.mixWav)
+        ? fast.mixWav
+        : Buffer.from(fast.mixWav as Uint8Array);
       result = {
         ok: true,
-        masterWav: wavBuf,
-        mixWav: wavBuf,
-        engineVersion: "ap-fast",
-        meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
+        masterWav: masterBuf,
+        mixWav: mixBuf,
+        engineVersion: fast.engineVersion || "ap-fast-space-4",
+        meta: {
+          path: "fast_arrange",
+          layerCount: fast.layerCount,
+          durationMs: fast.durationMs,
+          diagnostics: fast.diagnostics,
+        },
       };
     } catch (ae) {
       clearInterval(hb);
@@ -460,14 +472,26 @@ export async function runFullProduceWithCheckpoints(opts: {
           },
           genre: genre || null,
         });
-        if (!fast.wav?.length) throw new Error(msg || "Fast arrangement returned empty audio");
-        const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
+        if (!fast.masterWav?.length || !fast.mixWav?.length) {
+          throw new Error(msg || "Fast arrangement returned empty mix/master audio");
+        }
+        const masterBuf = Buffer.isBuffer(fast.masterWav)
+          ? fast.masterWav
+          : Buffer.from(fast.masterWav as Uint8Array);
+        const mixBuf = Buffer.isBuffer(fast.mixWav)
+          ? fast.mixWav
+          : Buffer.from(fast.mixWav as Uint8Array);
         result = {
           ok: true,
-          masterWav: wavBuf,
-          mixWav: wavBuf,
-          engineVersion: "ap-fast",
-          meta: { path: "fast_arrange_fallback", layerCount: fast.layerCount, durationMs: fast.durationMs },
+          masterWav: masterBuf,
+          mixWav: mixBuf,
+          engineVersion: fast.engineVersion || "ap-fast-space-4",
+          meta: {
+            path: "fast_arrange_fallback",
+            layerCount: fast.layerCount,
+            durationMs: fast.durationMs,
+            diagnostics: fast.diagnostics,
+          },
         };
       } catch (fe) {
         const fmsg = fe instanceof Error ? fe.message : String(fe);
