@@ -367,7 +367,7 @@ export async function runFullProduceWithCheckpoints(opts: {
       mixWav?: Buffer;
       processedVocalWav?: Buffer;
       restoredVocalWav?: Buffer;
-      masterMp3?: Buffer;
+      masterMp3?: Buffer | null;
       masterPath?: string;
       mixPath?: string;
       mp3Path?: string;
@@ -424,7 +424,7 @@ export async function runFullProduceWithCheckpoints(opts: {
           meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
         };
       } else {
-        result = await Promise.race([
+        result = (await Promise.race([
           runApArrangement(
             {
               jobId,
@@ -443,7 +443,7 @@ export async function runFullProduceWithCheckpoints(opts: {
           new Promise<never>((_, rej) => {
             setTimeout(() => rej(new Error("arrange_timeout")), arrangeCapMs);
           }),
-        ]);
+        ])) as typeof result;
       }
     } catch (ae) {
       clearInterval(hb);
