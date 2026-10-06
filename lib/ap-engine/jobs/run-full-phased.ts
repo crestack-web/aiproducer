@@ -384,8 +384,7 @@ export async function runFullProduceWithCheckpoints(opts: {
             buffer: v.buffer,
             pathHint: v.pathHint,
             taskType: v.taskType,
-            startMs: v.startMs,
-            endMs: v.endMs,
+            startMs: v.startMs ?? undefined,
             role: v.role,
           })),
           onStage: async (s) => {
@@ -447,8 +446,7 @@ export async function runFullProduceWithCheckpoints(opts: {
             buffer: v.buffer,
             pathHint: v.pathHint,
             taskType: v.taskType,
-            startMs: v.startMs,
-            endMs: v.endMs,
+            startMs: v.startMs ?? undefined,
             role: v.role,
           })),
           onStage: async (s) => {
