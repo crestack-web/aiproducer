@@ -27,7 +27,17 @@ import {
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import type { PcmStereo } from "@/lib/ap-engine/types";
+import {
+  normalizeToStreamingTarget,
+  truePeakLimit,
+  estimateLoudnessProxyDb,
+} from "@/lib/ap-engine/master/loudness";
 import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "@/lib/ap-engine/space";
+import {
+  buildArrangementPlan,
+  applySectionAutomation,
+  type ArrangementPlan,
+} from "@/lib/ap-engine/arrangement";
 import { resolveGenreProfile } from "@/lib/ap-engine/profiles/genre-profiles";
 
 export type FastVocalLayer = {
@@ -43,7 +53,7 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-4";
+export const FAST_ENGINE_VERSION = "ap-fast-space-5";
 
 /** Post level-match fader — modest; level-match already sits the take. */
 const ROLE_GAIN: Record<string, number> = {
@@ -224,6 +234,13 @@ export async function runFastArrangement(opts: {
 
   const beatRms = Math.max(rmsOf(beat.left), rmsOf(beat.right), 1e-6);
   const beatPeak = Math.max(peakOf(beat.left), peakOf(beat.right));
+  const sampleRate = beat.sampleRate;
+  let totalSamples = beat.left.length;
+  const beatGain = 0.92;
+  let duckDb = 3.5;
+  let spaceCharacter: string | null = null;
+  let spaceNotes: string[] = [];
+
 
   await report("processing_vocals");
   const layers: { pcm: PcmStereo; startMs: number; gain: number; type: string; duckDb?: number }[] = [];
@@ -288,6 +305,7 @@ export async function runFastArrangement(opts: {
       const startMs = Math.max(0, Number(v.startMs) || 0);
       const peakPreMix = Math.max(peakOf(pcm.left), peakOf(pcm.right));
       layers.push({ pcm, startMs, gain: fader, type, duckDb: duckDbLayer });
+      if ((type || "").includes("lead") && duckDbLayer) duckDb = duckDbLayer;
       layerDiag.push({
         label,
         type,
@@ -315,7 +333,110 @@ export async function runFastArrangement(opts: {
     );
   }
 
+  for (const L of layers) {
+    const end = Math.floor((L.startMs / 1000) * sampleRate) + L.pcm.left.length;
+    if (end > totalSamples) totalSamples = end;
+  }
+  if (totalSamples > beat.left.length) {
+    const nl = new Float32Array(totalSamples);
+    const nr = new Float32Array(totalSamples);
+    nl.set(beat.left);
+    nr.set(beat.right);
+    beat.left = nl;
+    beat.right = nr;
+  }
+
+  // --- Phase 1: Vocal Arrangement Mind (section map + automation) ---
+  const leadLayer = layers.find((L) => (L.type || "").includes("lead")) || layers[0]!;
+  let arrangement: ArrangementPlan | null = null;
+  try {
+    arrangement = buildArrangementPlan({
+      beat,
+      vocal: leadLayer.pcm,
+      bpm: opts.bpm ?? null,
+      durationMs: Math.round((totalSamples / sampleRate) * 1000),
+    });
+    for (const L of layers) {
+      const role = (L.type || "lead").toLowerCase();
+      const roleScale =
+        role.includes("lead") ? 1 :
+        role.includes("double") ? 0.55 :
+        role.includes("harm") ? 0.45 :
+        role.includes("adlib") ? 0.4 :
+        role.includes("choir") ? 0.35 : 0.5;
+      applySectionAutomation(L.pcm, arrangement, {
+        roleScale,
+        layerStartMs: L.startMs,
+      });
+    }
+    console.info(
+      "[fast-produce] arrangement",
+      JSON.stringify({
+        method: arrangement.method,
+        sections: arrangement.sections.map((s) => ({
+          type: s.type,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          energy: s.energy,
+        })),
+      })
+    );
+  } catch (arrErr) {
+    console.warn(
+      "[fast-produce] arrangement skip",
+      arrErr instanceof Error ? arrErr.message : arrErr
+    );
+    arrangement = null;
+  }
+
   await report("mixing");
+
+  // --- Sum beat + vocals with envelope ducking ---
+  const mix: PcmStereo = {
+    left: new Float32Array(totalSamples),
+    right: new Float32Array(totalSamples),
+    sampleRate,
+  };
+  const bg = beatGain;
+  for (let i = 0; i < totalSamples; i++) {
+    mix.left[i] = (beat.left[i] || 0) * bg;
+    mix.right[i] = (beat.right[i] || 0) * bg;
+  }
+
+  // Vocal envelope for ducking (sum of all vocal abs)
+  const vocalEnv = new Float32Array(totalSamples);
+  for (const L of layers) {
+    const start = Math.min(totalSamples - 1, Math.floor((L.startMs / 1000) * sampleRate));
+    const len = Math.min(L.pcm.left.length, totalSamples - start);
+    for (let i = 0; i < len; i++) {
+      const a = Math.abs(L.pcm.left[i] || 0) + Math.abs(L.pcm.right[i] || 0);
+      vocalEnv[start + i] = Math.max(vocalEnv[start + i] || 0, a * 0.5);
+    }
+  }
+  // Smooth envelope
+  const envSmooth = Math.exp(-1 / (0.02 * sampleRate));
+  let e = 0;
+  for (let i = 0; i < totalSamples; i++) {
+    e = e * envSmooth + (vocalEnv[i] || 0) * (1 - envSmooth);
+    vocalEnv[i] = e;
+  }
+  const duckAmt = Math.min(0.35, Math.max(0.12, duckDb / 12)); // mild
+  for (let i = 0; i < totalSamples; i++) {
+    const duck = 1 - Math.min(0.35, (vocalEnv[i] || 0) * duckAmt * 2.5);
+    mix.left[i]! *= duck;
+    mix.right[i]! *= duck;
+  }
+
+  // Add vocals
+  for (const L of layers) {
+    const start = Math.min(totalSamples - 1, Math.floor((L.startMs / 1000) * sampleRate));
+    const len = Math.min(L.pcm.left.length, totalSamples - start);
+    const g = L.gain;
+    for (let i = 0; i < len; i++) {
+      mix.left[start + i]! += (L.pcm.left[i] || 0) * g;
+      mix.right[start + i]! += (L.pcm.right[i] || 0) * g;
+    }
+  }
 
   // --- MIX bus (pre-master): glue only, preserve headroom for loudness stage ---
   const peakBeforeGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
@@ -328,7 +449,6 @@ export async function runFastArrangement(opts: {
     makeupDb: 0.4,
   });
   const peakAfterGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
-  // Soft safety on the mix only — do NOT push loudness here
   if (peakAfterGlue > dbToGain(-0.5)) {
     limitStereo(mix, -0.5);
   }
@@ -342,9 +462,9 @@ export async function runFastArrangement(opts: {
   const master = cloneStereo(mix);
   // Subtle polish EQ (master only)
   applyEqStereo(master, [
-    { type: "peaking", freqHz: 120, gainDb: -0.6, q: 0.7 },
-    { type: "peaking", freqHz: 3200, gainDb: 0.7, q: 0.9 },
-    { type: "highShelf", freqHz: 11000, gainDb: 0.5, q: 0.7 },
+    { type: "peak", freq: 120, gainDb: -0.6, q: 0.7 },
+    { type: "peak", freq: 3200, gainDb: 0.7, q: 0.9 },
+    { type: "highshelf", freq: 11000, gainDb: 0.5, q: 0.7 },
   ]);
 
   const TARGET_LUFS = -11.5;
