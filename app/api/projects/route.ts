@@ -90,6 +90,27 @@ export async function GET() {
     for (const v of versions || []) {
       if (v.project_id) mastered.add(v.project_id as string);
     }
+    // Completed produce jobs with a master path count even if songs/audio_versions insert failed
+    const { data: doneJobs } = await supabase
+      .from("jobs")
+      .select("project_id, status, output_data")
+      .eq("type", "PRODUCE_SONG")
+      .in("status", ["complete", "completed"])
+      .in("project_id", ids);
+    for (const j of doneJobs || []) {
+      const pid = j.project_id as string | null;
+      if (!pid) continue;
+      const out =
+        j.output_data && typeof j.output_data === "object"
+          ? (j.output_data as Record<string, unknown>)
+          : {};
+      const path =
+        (typeof out.master_storage_path === "string" && out.master_storage_path) ||
+        (typeof out.master_path === "string" && out.master_path) ||
+        (typeof out.masterPath === "string" && out.masterPath) ||
+        "";
+      if (path) mastered.add(pid);
+    }
     const { data: beats } = await supabase
       .from("beats")
       .select("project_id, source, metadata, created_at")

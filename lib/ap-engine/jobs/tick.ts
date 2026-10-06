@@ -219,8 +219,8 @@ export async function runInternalApProduceJob(opts: {
     };
 
     // Catalog writes are best-effort — never fail a successful export over a songs row.
-    try {
-      await supabase.from("songs").insert({
+    {
+      const { error: songErr } = await supabase.from("songs").insert({
         project_id: projectId,
         audio_path: masterPath,
         status: "ready",
@@ -232,18 +232,17 @@ export async function runInternalApProduceJob(opts: {
           ...metaExtra,
         },
       });
-    } catch (songErr) {
-      console.warn("[ap-tick] songs insert skipped", songErr);
+      if (songErr) console.warn("[ap-tick] songs insert skipped", songErr.message || songErr);
     }
 
-    try {
+    {
       const { count } = await supabase
         .from("audio_versions")
         .select("*", { count: "exact", head: true })
         .eq("project_id", projectId)
         .eq("kind", "master");
       const nextVer = (count || 0) + 1;
-      await supabase.from("audio_versions").insert({
+      const { error: avErr } = await supabase.from("audio_versions").insert({
         project_id: projectId,
         kind: "master",
         version: nextVer,
@@ -258,8 +257,7 @@ export async function runInternalApProduceJob(opts: {
           placements: placementLog,
         },
       });
-    } catch (avErr) {
-      console.warn("[ap-tick] audio_versions insert skipped", avErr);
+      if (avErr) console.warn("[ap-tick] audio_versions insert skipped", avErr.message || avErr);
     }
 
     // Always mark complete after successful phased export (master is on R2)
@@ -294,7 +292,13 @@ export async function runInternalApProduceJob(opts: {
       return { complete: false, error: completeErr.message };
     }
 
-    await supabase.from("projects").update({ status: "complete" }).eq("id", projectId);
+    {
+      const { error: projErr } = await supabase
+        .from("projects")
+        .update({ status: "complete" })
+        .eq("id", projectId);
+      if (projErr) console.warn("[ap-tick] project status complete failed", projErr.message || projErr);
+    }
     console.info(
       "[ap-tick] PRODUCE COMPLETE",
       JSON.stringify({ jobId, projectId, masterPath, mp3Path, layers: vocals.length })
