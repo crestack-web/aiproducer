@@ -501,7 +501,9 @@ export async function runFastArrangement(opts: {
       proxyAfterDb: Math.round(proxyAfterDb * 10) / 10,
       totalGainDb: Math.round(loudness.totalGainDb * 100) / 100,
       passes: loudness.passes,
-      method: loudness.method,
+      beforeDb: Math.round(loudness.beforeDb * 10) / 10,
+      afterDb: Math.round(loudness.afterDb * 10) / 10,
+      targetDb: loudness.targetDb,
     },
     mix: {
       peak: Math.round(mixPeak * 1000) / 1000,
