@@ -445,7 +445,6 @@ export async function runFastArrangement(opts: {
     ratio: 1.35,
     attackMs: 18,
     releaseMs: 160,
-    kneeDb: 6,
     makeupDb: 0.4,
   });
   const peakAfterGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
