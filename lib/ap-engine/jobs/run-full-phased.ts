@@ -360,7 +360,6 @@ export async function runFullProduceWithCheckpoints(opts: {
     // Full runApArrangement is CPU-bound and blocks the event loop — Promise.race
     // timeouts never fire, jobs sit at ~76% "Arrange on beat" until the safety reaper.
     // AP_ARRANGE_FULL=1 re-enables the heavy path for debugging.
-    const forceFullArrange = String(process.env.AP_ARRANGE_FULL || "").trim() === "1";
     let result: {
       ok: boolean;
       masterWav?: Buffer;
@@ -378,73 +377,51 @@ export async function runFullProduceWithCheckpoints(opts: {
       meta?: Record<string, unknown>;
     };
 
+    // Fast timeline assembly only — full runApArrangement blocks the event loop.
     try {
-      if (!forceFullArrange) {
-        console.info("[ap-tick] arrange via runFastArrangement (reliable path)", {
-          jobId,
-          layers: arrangedVocals.length,
-        });
-        await reportWithProgress("arranging", { sub: "stack", progressHint: 78 });
-        const fast = await runFastArrangement({
-          beatPath,
-          vocals: arrangedVocals.map((v) => ({
-            buffer: v.buffer,
-            pathHint: v.pathHint,
-            taskType: v.taskType,
-            startMs: v.startMs ?? undefined,
-            role: (v.taskType || "lead").toLowerCase().includes("harm")
-              ? "harmony"
-              : (v.taskType || "lead").toLowerCase().includes("double")
-                ? "double"
-                : (v.taskType || "lead").toLowerCase().includes("adlib")
-                  ? "adlib"
-                  : "lead",
-          })),
-          onStage: async (s) => {
-            const hint =
-              s.includes("mix") || s.includes("blend")
-                ? 88
-                : s.includes("master")
-                  ? 92
-                  : 80;
-            await reportWithProgress(
-              s.includes("master") ? "mastering" : s.includes("mix") ? "mixing" : "arranging",
-              { progressHint: hint }
-            );
-          },
-          genre: genre || null,
-        });
-        if (!fast.wav?.length) throw new Error("Fast arrangement returned empty audio");
-        const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
-        result = {
-          ok: true,
-          masterWav: wavBuf,
-          mixWav: wavBuf,
-          engineVersion: "ap-fast",
-          meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
-        };
-      } else {
-        result = (await Promise.race([
-          runApArrangement(
-            {
-              jobId,
-              projectId,
-              userId,
-              beatBuffer,
-              beatPathHint: beatPath,
-              vocals: arrangedVocals,
-              genre: genre || null,
-              productionDirection: productionDirection || null,
-              skipRestoration: true,
-              deadlineAt: Math.min(deadlineAt, arrangeDeadline),
-            },
-            reportWithProgress
-          ),
-          new Promise<never>((_, rej) => {
-            setTimeout(() => rej(new Error("arrange_timeout")), arrangeCapMs);
-          }),
-        ])) as typeof result;
-      }
+      console.info("[ap-tick] arrange via runFastArrangement", {
+        jobId,
+        layers: arrangedVocals.length,
+      });
+      await reportWithProgress("arranging", { sub: "stack", progressHint: 78 });
+      const fast = await runFastArrangement({
+        beatPath,
+        vocals: arrangedVocals.map((v) => ({
+          buffer: v.buffer,
+          pathHint: v.pathHint,
+          taskType: v.taskType,
+          startMs: v.startMs ?? undefined,
+          role: (v.taskType || "lead").toLowerCase().includes("harm")
+            ? "harmony"
+            : (v.taskType || "lead").toLowerCase().includes("double")
+              ? "double"
+              : (v.taskType || "lead").toLowerCase().includes("adlib")
+                ? "adlib"
+                : "lead",
+        })),
+        onStage: async (s) => {
+          const hint =
+            s.includes("mix") || s.includes("blend")
+              ? 88
+              : s.includes("master")
+                ? 92
+                : 80;
+          await reportWithProgress(
+            s.includes("master") ? "mastering" : s.includes("mix") ? "mixing" : "arranging",
+            { progressHint: hint }
+          );
+        },
+        genre: genre || null,
+      });
+      if (!fast.wav?.length) throw new Error("Fast arrangement returned empty audio");
+      const wavBuf = Buffer.isBuffer(fast.wav) ? fast.wav : Buffer.from(fast.wav as Uint8Array);
+      result = {
+        ok: true,
+        masterWav: wavBuf,
+        mixWav: wavBuf,
+        engineVersion: "ap-fast",
+        meta: { path: "fast_arrange", layerCount: fast.layerCount, durationMs: fast.durationMs },
+      };
     } catch (ae) {
       clearInterval(hb);
       const msg = ae instanceof Error ? ae.message : String(ae);
