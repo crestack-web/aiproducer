@@ -360,6 +360,7 @@ export async function runFullProduceWithCheckpoints(opts: {
     // Full runApArrangement is CPU-bound and blocks the event loop — Promise.race
     // timeouts never fire, jobs sit at ~76% "Arrange on beat" until the safety reaper.
     // AP_ARRANGE_FULL=1 re-enables the heavy path for debugging.
+    // Permissive: fast path + full ApProduceResult fields
     let result: {
       ok: boolean;
       masterWav?: Buffer;
@@ -376,7 +377,11 @@ export async function runFullProduceWithCheckpoints(opts: {
       decision?: { notes?: string[] };
       qc?: unknown;
       retryCount?: number;
+      stageTimingsMs?: Record<string, number>;
+      stageStatus?: unknown;
+      durationMs?: number;
       meta?: Record<string, unknown>;
+      [key: string]: unknown;
     };
 
     // Fast timeline assembly only — full runApArrangement blocks the event loop.
