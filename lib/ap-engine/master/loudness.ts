@@ -83,21 +83,23 @@ export function normalizeToStreamingTarget(
 ): LoudnessNormalizeResult {
   // RMS proxy vs integrated LUFS: aim hotter so phones/speakers feel competitive.
   // Streaming refs often sit ~-9 to -11 LUFS; push RMS a couple dB above target label.
-  const targetRmsDb = targetLufs + 2.4;
+  // Push RMS proxy hotter so phones feel competitive after platform normalization.
+  const targetRmsDb = targetLufs + 3.2;
   const beforeDb = estimateLoudnessProxyDb(pcm);
   let totalGainDb = 0;
   let passes = 0;
-  const maxPasses = 5;
+  const maxPasses = 7;
 
   for (let i = 0; i < maxPasses; i++) {
     const cur = estimateLoudnessProxyDb(pcm);
     const err = targetRmsDb - cur;
-    if (Math.abs(err) < 0.6) break;
-    // Progressive boost: don't dump full delta in one go (limiter sounds better)
-    const step = Math.max(-6, Math.min(8, err * (i === 0 ? 0.85 : 0.7)));
-    if (Math.abs(step) < 0.25) break;
+    if (Math.abs(err) < 0.5) break;
+    // Progressive boost; allow larger early steps so quiet mixes leave the -20 LUFS floor.
+    const step = Math.max(-6, Math.min(10, err * (i === 0 ? 0.95 : 0.8)));
+    if (Math.abs(step) < 0.2) break;
     applyGainStereo(pcm, dbToGain(step));
     totalGainDb += step;
+    // Soft bus-style limit between passes so RMS can rise without one-sample spikes blocking boosts
     truePeakLimit(pcm, ceilingDb, marginDb);
     passes++;
   }

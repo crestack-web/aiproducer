@@ -272,7 +272,7 @@ export function decideArrangementMix(
   const profile = resolveGenreProfile(genre);
   const notes: string[] = [`genre:${profile.id}`, `layers:${layerCount}`];
 
-  let vocalGainDb = 1.4 * profile.leadForwardness;
+  let vocalGainDb = 2.2 * profile.leadForwardness;
   let beatGainDb = -0.4 * profile.beatRespect;
   if (leadAnalysis) {
     const ratio = leadAnalysis.rms / (beatAnalysis.rms + 1e-9);
@@ -337,7 +337,7 @@ export function decideArrangementMix(
     },
     limiterCeilingDb: -1.0,
     // Competitive pre-normalization (−10…−13); agent may refine by mood
-    targetLufs: Math.min(-10, Math.max(-13.5, profile.targetLufs ?? -11)),
+    targetLufs: Math.min(-9.5, Math.max(-12.5, profile.targetLufs ?? -10.5)),
     makeupDb: 1.2,
     truePeakMarginDb: 0.35,
   };

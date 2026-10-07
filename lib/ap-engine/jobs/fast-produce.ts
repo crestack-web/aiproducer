@@ -53,20 +53,21 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-6";
+export const FAST_ENGINE_VERSION = "ap-fast-space-7";
 
 /** Post level-match fader — modest; level-match already sits the take. */
 const ROLE_GAIN: Record<string, number> = {
-  lead: 1.12,
-  double: 0.72,
-  harmony: 0.65,
-  harmony_high: 0.62,
-  harmony_mid: 0.65,
-  harmony_low: 0.65,
-  adlib: 0.62,
-  background: 0.5,
-  intro: 1.0,
-  outro: 1.0,
+  // Lead sits clearly above the instrumental (commercial vocal-forward).
+  lead: 1.38,
+  double: 0.78,
+  harmony: 0.7,
+  harmony_high: 0.68,
+  harmony_mid: 0.7,
+  harmony_low: 0.7,
+  adlib: 0.68,
+  background: 0.55,
+  intro: 1.15,
+  outro: 1.15,
 };
 
 function roleGain(type: string): number {
@@ -150,13 +151,15 @@ function levelMatchToBeat(vocal: PcmStereo, beatRms: number, role: string): void
     role.includes("chorus") ||
     role === "intro" ||
     role === "outro";
-  const targetRatio = isLead ? 1.15 : 0.9;
-  const target = Math.max(beatRms * targetRatio, 0.035);
+  // Lead ~+4 dB vs beat RMS proxy so the voice reads as the focus, not a layer under the beat.
+  const targetRatio = isLead ? 1.65 : 0.95;
+  const target = Math.max(beatRms * targetRatio, 0.045);
   let g = target / vRms;
-  g = Math.min(4, Math.max(0.6, g));
+  g = Math.min(5.5, Math.max(0.75, g));
   applyGainStereo(vocal, g);
   const pk = Math.max(peakOf(vocal.left), peakOf(vocal.right), 1e-6);
-  if (pk > 0.85) applyGainStereo(vocal, 0.85 / pk);
+  // Allow hotter peaks into the fader — bus glue + limiter handle crests.
+  if (pk > 0.92) applyGainStereo(vocal, 0.92 / pk);
 }
 
 /** Light noise floor control before any boost stack. */
@@ -168,7 +171,7 @@ function lightCleanVocal(pcm: PcmStereo): void {
 }
 
 /** Ensure peak * fader stays under headroom before summing into the beat. */
-function headroomForFader(pcm: PcmStereo, fader: number, maxIntoBus = 0.85): void {
+function headroomForFader(pcm: PcmStereo, fader: number, maxIntoBus = 0.95): void {
   const pk = Math.max(peakOf(pcm.left), peakOf(pcm.right), 1e-6);
   const into = pk * fader;
   if (into > maxIntoBus) {
@@ -236,8 +239,9 @@ export async function runFastArrangement(opts: {
   const beatPeak = Math.max(peakOf(beat.left), peakOf(beat.right));
   const sampleRate = beat.sampleRate;
   let totalSamples = beat.left.length;
-  const beatGain = 0.92;
-  let duckDb = 3.5;
+  // Leave room for vocal-forward balance; beat still present but not masking lead.
+  const beatGain = 0.78;
+  let duckDb = 5.0;
   let spaceCharacter: string | null = null;
   let spaceNotes: string[] = [];
 
@@ -267,17 +271,17 @@ export async function runFastArrangement(opts: {
         { type: "highshelf", freq: 10000, gainDb: 0.8, q: 0.7 },
       ]);
       compressStereo(pcm, {
-        thresholdDb: -18,
-        ratio: 2.4,
-        attackMs: 15,
-        releaseMs: 120,
-        makeupDb: 1.5,
+        thresholdDb: -16,
+        ratio: 2.8,
+        attackMs: 12,
+        releaseMs: 100,
+        makeupDb: 2.5,
       });
 
       const type = String(v.taskType || v.type || v.role || "lead").toLowerCase();
       levelMatchToBeat(pcm, beatRms, type);
       const fader = roleGain(type);
-      headroomForFader(pcm, fader, 0.85);
+      headroomForFader(pcm, fader, 0.95);
 
       // —— AP SPACE: performance → space decision → integrate into arrangement ——
       let spaceNotes: string[] = [];
@@ -421,9 +425,9 @@ export async function runFastArrangement(opts: {
     e = e * envSmooth + (vocalEnv[i] || 0) * (1 - envSmooth);
     vocalEnv[i] = e;
   }
-  const duckAmt = Math.min(0.35, Math.max(0.12, duckDb / 12)); // mild
+  const duckAmt = Math.min(0.55, Math.max(0.2, duckDb / 10));
   for (let i = 0; i < totalSamples; i++) {
-    const duck = 1 - Math.min(0.35, (vocalEnv[i] || 0) * duckAmt * 2.5);
+    const duck = 1 - Math.min(0.48, (vocalEnv[i] || 0) * duckAmt * 2.8);
     mix.left[i]! *= duck;
     mix.right[i]! *= duck;
   }
@@ -442,11 +446,11 @@ export async function runFastArrangement(opts: {
   // --- MIX bus (pre-master): glue only, preserve headroom for loudness stage ---
   const peakBeforeGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
   compressStereo(mix, {
-    thresholdDb: -18,
-    ratio: 1.35,
-    attackMs: 18,
-    releaseMs: 160,
-    makeupDb: 0.4,
+    thresholdDb: -16,
+    ratio: 1.8,
+    attackMs: 12,
+    releaseMs: 140,
+    makeupDb: 1.2,
   });
   const peakAfterGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
   if (peakAfterGlue > dbToGain(-0.5)) {
@@ -462,13 +466,16 @@ export async function runFastArrangement(opts: {
   // --- MASTER: clone mix, then tonal polish + streaming loudness + true-peak ---
   const master = cloneStereo(mix);
   // Subtle polish EQ (master only)
+  // Vocal presence + air so the master doesn't read as a quiet instrumental bed.
   applyEqStereo(master, [
-    { type: "peak", freq: 120, gainDb: -0.6, q: 0.7 },
-    { type: "peak", freq: 3200, gainDb: 0.7, q: 0.9 },
-    { type: "highshelf", freq: 11000, gainDb: 0.5, q: 0.7 },
+    { type: "peak", freq: 120, gainDb: -0.8, q: 0.7 },
+    { type: "peak", freq: 2500, gainDb: 1.4, q: 0.9 },
+    { type: "peak", freq: 4500, gainDb: 0.9, q: 1.1 },
+    { type: "highshelf", freq: 11000, gainDb: 1.0, q: 0.7 },
   ]);
 
-  const TARGET_LUFS = -11.5;
+  // Competitive streaming master (pre-platform-normalization feel).
+  const TARGET_LUFS = -10.5;
   const CEILING_DB = -1.0;
   const proxyBeforeDb = estimateLoudnessProxyDb(master);
   const loudness = normalizeToStreamingTarget(master, TARGET_LUFS, CEILING_DB, 0.35);
