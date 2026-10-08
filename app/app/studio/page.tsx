@@ -805,9 +805,6 @@ function StudioPageInner() {
           alignItems: "stretch",
         }}
       >
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 10 }}>
-          ◆ STUDIO
-        </div>
         <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.5rem, 2.8vw, 2rem)", fontWeight: 500, margin: "0 0 6px", color: C.text }}>
           Create your beat
         </h1>

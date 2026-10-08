@@ -636,7 +636,6 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <div style={eyebrow}>◆ HOME</div>
             <h1 style={h1}>
               {userName && userName !== "Artist" ? (
                 <>
@@ -784,9 +783,9 @@ function AppInner() {
 
         {tab === "library" && (
           <>
-            <div style={eyebrow}>◆ LIBRARY</div>
-            <h1 style={h1}>Your library</h1>
-            <p style={sub}>Songs, instrumentals, and takes in one place.</p>
+            <p style={{ ...sub, marginTop: 0, marginBottom: 4 }}>
+              Songs, instrumentals, and takes in one place.
+            </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, marginBottom: 12 }}>
               {(
                 [
@@ -1128,8 +1127,6 @@ function AppInner() {
               paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
             }}
           >
-            <div style={eyebrow}>◆ PROFILE</div>
-
             {/* Identity */}
             <div
               style={{
