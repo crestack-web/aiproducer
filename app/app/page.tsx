@@ -8,6 +8,7 @@ import {
   BeatMoreButton,
   BeatActionsSheet,
   LibraryMiniPlayer,
+  LibraryFullPlayer,
   formatAudioTime,
 } from "@/components/beat-preview-player";
 import Link from "next/link";
@@ -79,6 +80,7 @@ function AppInner() {
   const [downloadModal, setDownloadModal] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  const [fullPlayerOpen, setFullPlayerOpen] = useState(false);
   const [paywallProject, setPaywallProject] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
@@ -1458,7 +1460,7 @@ function AppInner() {
 
       
       <LibraryMiniPlayer
-        open={tab === "library" && Boolean(activeId)}
+        open={tab === "library" && Boolean(activeId) && !fullPlayerOpen}
         title={trackMeta?.title || "Now playing"}
         subtitle={
           trackMeta?.subtitle ||
@@ -1477,7 +1479,53 @@ function AppInner() {
         }}
         onSeek={seek}
         onSkip={skip}
-        onClose={() => stop()}
+        onClose={() => {
+          setFullPlayerOpen(false);
+          stop();
+        }}
+        onExpand={() => setFullPlayerOpen(true)}
+      />
+
+      <LibraryFullPlayer
+        open={tab === "library" && Boolean(activeId) && fullPlayerOpen}
+        title={trackMeta?.title || "Now playing"}
+        subtitle={trackMeta?.subtitle || "AP Studio"}
+        seed={trackMeta?.seed}
+        isPlaying={audioIsPlaying}
+        loading={Boolean(loadingPlayId)}
+        currentTime={currentTime}
+        duration={duration}
+        onTogglePlay={() => {
+          if (audioIsPlaying) pauseAudio();
+          else void resumeAudio();
+        }}
+        onSeek={seek}
+        onSkip={skip}
+        onClose={() => setFullPlayerOpen(false)}
+        onDownload={
+          activeId && String(activeId).startsWith("master:")
+            ? () => {
+                // activeId = master:projectId:jobOrVersion
+                const parts = String(activeId).split(":");
+                const projectId = parts[1];
+                const rest = parts.slice(2).join(":");
+                if (!projectId) return;
+                const opts =
+                  rest.startsWith("v") && !rest.includes("-")
+                    ? { version: Number(rest.slice(1)) || 1 }
+                    : rest
+                      ? { jobId: rest }
+                      : undefined;
+                setFullPlayerOpen(false);
+                setDownloadModal({
+                  id: projectId,
+                  title: trackMeta?.title || "song",
+                  jobId: opts && "jobId" in opts ? opts.jobId : undefined,
+                  version: opts && "version" in opts ? opts.version : undefined,
+                });
+              }
+            : undefined
+        }
       />
 
       <ApPaywall

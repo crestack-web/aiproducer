@@ -713,6 +713,7 @@ export function LibraryMiniPlayer({
   onSeek,
   onSkip,
   onClose,
+  onExpand,
 }: {
   open: boolean;
   title: string;
@@ -726,6 +727,8 @@ export function LibraryMiniPlayer({
   onSeek: (sec: number) => void;
   onSkip: (delta: number) => void;
   onClose?: () => void;
+  /** Tap cover/title → full-screen player (Suno / Mureka). */
+  onExpand?: () => void;
 }) {
   const { colors: C } = useTheme();
   if (!open) return null;
@@ -777,59 +780,78 @@ export function LibraryMiniPlayer({
           padding: "10px 12px 12px",
         }}
       >
-        <div
+        <button
+          type="button"
+          onClick={() => onExpand?.()}
+          aria-label="Open full player"
           style={{
-            width: 44,
-            height: 44,
-            borderRadius: 10,
-            overflow: "hidden",
-            flexShrink: 0,
-            background: C.bgDeep || "#111",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flex: 1,
+            minWidth: 0,
+            border: "none",
+            background: "transparent",
+            padding: 0,
+            cursor: onExpand ? "pointer" : "default",
+            textAlign: "left",
+            fontFamily: "inherit",
+            color: "inherit",
           }}
         >
-          {/* CoverArt is in studio-player; use CSS gradient seed for self-contained mini */}
           <div
             style={{
-              width: "100%",
-              height: "100%",
-              background: `linear-gradient(145deg, ${C.brass}55, #2a1a0a 60%, #0d0d0d)`,
-              display: "grid",
-              placeItems: "center",
-              color: C.brass,
-              fontSize: 16,
-              fontWeight: 700,
-            }}
-          >
-            {(title || "S").slice(0, 1).toUpperCase()}
-          </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              color: C.text,
+              width: 44,
+              height: 44,
+              borderRadius: 10,
               overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              flexShrink: 0,
+              background: C.bgDeep || "#111",
             }}
           >
-            {title || "Now playing"}
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                background: `linear-gradient(145deg, ${C.brass}55, #2a1a0a 60%, #0d0d0d)`,
+                display: "grid",
+                placeItems: "center",
+                color: C.brass,
+                fontSize: 16,
+                fontWeight: 700,
+              }}
+            >
+              {(title || "S").slice(0, 1).toUpperCase()}
+            </div>
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: C.textMuted,
-              marginTop: 2,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {subtitle ||
-              `${formatAudioTime(currentTime)} / ${formatAudioTime(dur)}`}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontWeight: 600,
+                fontSize: 14,
+                color: C.text,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {title || "Now playing"}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: C.textMuted,
+                marginTop: 2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {subtitle ||
+                `${formatAudioTime(currentTime)} / ${formatAudioTime(dur)}`}
+            </div>
           </div>
-        </div>
+        </button>
         <button
           type="button"
           aria-label="Back 10 seconds"
@@ -880,6 +902,322 @@ export function LibraryMiniPlayer({
       </div>
     </div>
   );
+}
+
+
+
+/** Full-screen now-playing (Suno / Mureka style). */
+export function LibraryFullPlayer({
+  open,
+  title,
+  subtitle,
+  seed,
+  isPlaying,
+  loading,
+  currentTime,
+  duration,
+  onTogglePlay,
+  onSeek,
+  onSkip,
+  onClose,
+  onDownload,
+}: {
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  seed?: string;
+  isPlaying: boolean;
+  loading?: boolean;
+  currentTime: number;
+  duration: number;
+  onTogglePlay: () => void;
+  onSeek: (sec: number) => void;
+  onSkip: (delta: number) => void;
+  onClose: () => void;
+  onDownload?: () => void;
+}) {
+  const { colors: C } = useTheme();
+  if (!open) return null;
+  const dur = duration > 0 ? duration : 0;
+  const pct = dur > 0 ? Math.min(100, (currentTime / dur) * 100) : 0;
+  const letter = (title || "S").slice(0, 1).toUpperCase();
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Now playing"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        background: C.bg || C.bgDeep || "#0c0c0c",
+        display: "flex",
+        flexDirection: "column",
+        padding:
+          "calc(12px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))",
+        color: C.text,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button
+          type="button"
+          aria-label="Close full player"
+          onClick={onClose}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 999,
+            border: `1px solid ${C.border}`,
+            background: "transparent",
+            color: C.textMuted,
+            fontSize: 18,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          ˅
+        </button>
+        <span
+          style={{
+            fontSize: 12,
+            letterSpacing: 1.5,
+            textTransform: "uppercase",
+            color: C.textMuted,
+            fontWeight: 600,
+          }}
+        >
+          Now playing
+        </span>
+        <div style={{ width: 40 }} />
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 28,
+          minHeight: 0,
+          padding: "12px 0",
+        }}
+      >
+        <div
+          style={{
+            width: "min(78vw, 320px)",
+            aspectRatio: "1",
+            borderRadius: 24,
+            overflow: "hidden",
+            boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
+            background: `linear-gradient(145deg, ${C.brass}66, #3a2410 45%, #0a0a0a)`,
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "Georgia, serif",
+              fontSize: 72,
+              fontWeight: 600,
+              color: C.brass,
+              opacity: 0.9,
+            }}
+          >
+            {letter}
+          </span>
+        </div>
+
+        <div style={{ width: "100%", maxWidth: 360, textAlign: "left" }}>
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              lineHeight: 1.25,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title || "Untitled"}
+          </div>
+          <div
+            style={{
+              fontSize: 14,
+              color: C.textMuted,
+              marginTop: 6,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {subtitle || "AP Studio"}
+          </div>
+        </div>
+
+        {/* scrubber */}
+        <div style={{ width: "100%", maxWidth: 360 }}>
+          <div
+            role="slider"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(dur)}
+            aria-valuenow={Math.round(currentTime)}
+            tabIndex={0}
+            onClick={(e) => {
+              if (dur <= 0) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              onSeek(x * dur);
+            }}
+            style={{
+              height: 28,
+              display: "flex",
+              alignItems: "center",
+              cursor: "pointer",
+              touchAction: "none",
+            }}
+          >
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                height: 4,
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.12)",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${pct}%`,
+                  borderRadius: 999,
+                  background: C.text || "#fff",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  left: `calc(${pct}% - 6px)`,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 12,
+                  height: 12,
+                  borderRadius: 999,
+                  background: C.text || "#fff",
+                }}
+              />
+            </div>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 11,
+              color: C.textMuted,
+              fontVariantNumeric: "tabular-nums",
+              marginTop: 2,
+            }}
+          >
+            <span>{formatAudioTime(currentTime)}</span>
+            <span>{formatAudioTime(dur)}</span>
+          </div>
+        </div>
+
+        {/* transport */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 28,
+            width: "100%",
+            maxWidth: 360,
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Back 10 seconds"
+            onClick={() => onSkip(-10)}
+            style={fullCtrl(C)}
+          >
+            ‹‹
+          </button>
+          <button
+            type="button"
+            aria-label={isPlaying ? "Pause" : "Play"}
+            disabled={loading}
+            onClick={onTogglePlay}
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 999,
+              border: "none",
+              background: C.text || "#fff",
+              color: C.bg || "#0c0c0c",
+              fontSize: 22,
+              fontWeight: 700,
+              cursor: loading ? "wait" : "pointer",
+              fontFamily: "inherit",
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
+            {loading ? "…" : isPlaying ? "❚❚" : "▶"}
+          </button>
+          <button
+            type="button"
+            aria-label="Forward 10 seconds"
+            onClick={() => onSkip(10)}
+            style={fullCtrl(C)}
+          >
+            ››
+          </button>
+        </div>
+
+        {onDownload && (
+          <button
+            type="button"
+            onClick={onDownload}
+            style={{
+              marginTop: 8,
+              padding: "12px 28px",
+              borderRadius: 999,
+              border: `1px solid ${C.border}`,
+              background: "transparent",
+              color: C.text,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Download
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function fullCtrl(C: { border: string; textMuted: string }): React.CSSProperties {
+  return {
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    border: "none",
+    background: "transparent",
+    color: C.textMuted,
+    fontSize: 18,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    display: "grid",
+    placeItems: "center",
+  };
 }
 
 function miniCtrl(C: { border: string; textMuted: string; surface?: string }): React.CSSProperties {
