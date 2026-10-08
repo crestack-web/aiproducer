@@ -110,6 +110,24 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     [urls]
   );
 
+  const ensureAudio = useCallback(() => {
+    if (!audioRef.current) {
+      const a = new Audio();
+      a.preload = "auto";
+      a.addEventListener("ended", () => {
+        setPlayingId(null);
+        stopRaf();
+        setCurrentTime(0);
+      });
+      a.addEventListener("loadedmetadata", () => {
+        if (Number.isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
+      });
+      a.addEventListener("timeupdate", () => setCurrentTime(a.currentTime));
+      audioRef.current = a;
+    }
+    return audioRef.current;
+  }, [stopRaf]);
+
   const playWithResolver = useCallback(
     async (playId: string, resolveUrl: () => Promise<string | null>) => {
       try {
@@ -145,24 +163,6 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     },
     [ensureAudio, startRaf, stopRaf]
   );
-
-  const ensureAudio = useCallback(() => {
-    if (!audioRef.current) {
-      const a = new Audio();
-      a.preload = "auto";
-      a.addEventListener("ended", () => {
-        setPlayingId(null);
-        stopRaf();
-        setCurrentTime(0);
-      });
-      a.addEventListener("loadedmetadata", () => {
-        if (Number.isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
-      });
-      a.addEventListener("timeupdate", () => setCurrentTime(a.currentTime));
-      audioRef.current = a;
-    }
-    return audioRef.current;
-  }, [stopRaf]);
 
   const toggle = useCallback(
     async (projectId: string) => {
