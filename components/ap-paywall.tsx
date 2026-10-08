@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import {
   PLANS,
   planPriceLabel,
@@ -97,7 +98,9 @@ export function ApPaywall({
   const toggleBg = cardBg;
 
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -105,7 +108,7 @@ export function ApPaywall({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 1000,
+        zIndex: 300,
         background: "rgba(0,0,0,0.82)",
         display: "flex",
         alignItems: "flex-end",
@@ -123,7 +126,7 @@ export function ApPaywall({
           overflowY: "auto",
           background: sheetBg,
           borderRadius: "24px 24px 0 0",
-          padding: "20px 20px 28px",
+          padding: "20px 20px calc(28px + env(safe-area-inset-bottom, 0px))",
           border: `1px solid ${C.border}`,
           color: C.text,
           boxShadow: "0 -12px 40px rgba(0,0,0,.55)",
@@ -319,6 +322,7 @@ export function ApPaywall({
           Preview stays free. Download unlocks after purchase.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

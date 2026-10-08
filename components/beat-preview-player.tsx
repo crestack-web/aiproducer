@@ -880,7 +880,7 @@ export function LibraryMiniPlayer({
         right: 12,
         /* Sit above bottom nav (~74px) without covering it */
         bottom: "calc(78px + env(safe-area-inset-bottom, 0px))",
-        zIndex: 50,
+        zIndex: 60,
         borderRadius: 18,
         background: C.surface || "#1a1a1a",
         border: `1px solid ${C.border}`,

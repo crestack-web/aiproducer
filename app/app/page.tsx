@@ -1567,7 +1567,8 @@ function AppInner() {
         }}
       />
 
-      {downloadModal && (
+      {downloadModal &&
+        createPortal(
           <div
             role="dialog"
             aria-modal="true"
@@ -1576,11 +1577,12 @@ function AppInner() {
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 200,
+              zIndex: 230,
               background: "rgba(0,0,0,0.55)",
               display: "grid",
               placeItems: "center",
-              padding: "20px 20px calc(20px + env(safe-area-inset-bottom, 0px))",
+              padding:
+                "calc(20px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))",
             }}
           >
             <div
@@ -1659,7 +1661,8 @@ function AppInner() {
                 Cancel
               </button>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
     </AppShell>
   );
