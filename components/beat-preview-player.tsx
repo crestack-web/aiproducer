@@ -138,24 +138,11 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
       const q = new URLSearchParams();
       if (opts?.jobId) q.set("jobId", opts.jobId);
       else if (opts?.version != null) q.set("version", String(opts.version));
-      const qs = q.toString();
-      const res = await fetch(
-        `/api/projects/${projectId}/master${qs ? `?${qs}` : ""}`,
-        { credentials: "same-origin" }
-      );
-      if (!res.ok) return null;
-      const j = (await res.json().catch(() => ({}))) as {
-        audio_url?: string;
-        download_url?: string;
-      };
-      const url =
-        typeof j.audio_url === "string"
-          ? j.audio_url
-          : typeof j.download_url === "string"
-            ? j.download_url
-            : null;
-      if (url) setUrls((prev) => ({ ...prev, [key]: url }));
-      return url;
+      q.set("stream", "1");
+      // Same-origin stream — avoids R2 CORS blocking <audio>
+      const streamUrl = `/api/projects/${projectId}/master?${q.toString()}`;
+      setUrls((prev) => ({ ...prev, [key]: streamUrl }));
+      return streamUrl;
     },
     [urls]
   );
@@ -174,6 +161,20 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
         if (Number.isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
       });
       a.addEventListener("timeupdate", () => setCurrentTime(a.currentTime));
+      a.addEventListener("error", () => {
+        const code = a.error?.code;
+        const msg =
+          code === 2
+            ? "Network error loading audio."
+            : code === 4
+              ? "Audio format not supported or file missing."
+              : "Could not play this track.";
+        onErrorRef.current?.(msg);
+        setLoadingId(null);
+        setPlayingId(null);
+        setIsPlaying(false);
+        stopRaf();
+      });
       audioRef.current = a;
     }
     return audioRef.current;
@@ -206,6 +207,10 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
           return;
         }
         setLoadingId(playId);
+        if (meta) setTrackMeta(meta);
+        // Select track immediately so mini / full player can open while loading
+        setActiveId(playId);
+        activeIdRef.current = playId;
         const url = await resolveUrl();
         setLoadingId(null);
         if (!url) {
@@ -218,9 +223,7 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
           setCurrentTime(0);
           setDuration(0);
         }
-        if (meta) setTrackMeta(meta);
         await a.play();
-        setActiveId(playId);
         setPlayingId(playId);
         setIsPlaying(true);
         startRaf();
@@ -289,9 +292,11 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
   const seek = useCallback(
     (seconds: number) => {
       const a = audioRef.current;
-      if (!a || !playingIdRef.current) return;
+      // Allow seek while paused (active track in mini/full player)
+      if (!a || (!playingIdRef.current && !activeIdRef.current)) return;
+      if (!a.src) return;
       const dur = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : duration;
-      const next = Math.max(0, Math.min(dur || seconds, seconds));
+      const next = Math.max(0, Math.min(dur > 0 ? dur : seconds, seconds));
       try {
         a.currentTime = next;
         setCurrentTime(next);
@@ -305,7 +310,8 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
   const skip = useCallback(
     (deltaSec: number) => {
       const a = audioRef.current;
-      if (!a || !playingIdRef.current) return;
+      if (!a || (!playingIdRef.current && !activeIdRef.current)) return;
+      if (!a.src) return;
       seek(a.currentTime + deltaSec);
     },
     [seek]

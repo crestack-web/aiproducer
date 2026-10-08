@@ -5,36 +5,12 @@ import { isStoragePath, resolveAudioUrl } from "@/lib/storage";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/**
- * GET /api/projects/:id/master
- * Signed URL for in-app playback only (Library Songs). Auth + ownership required.
- * Not a commercial download path — no paywall / unlock recording.
- *
- * Query: jobId | version (optional) — pick a specific produce take.
- */
-export async function GET(req: Request, ctx: Ctx) {
-  const { id: projectId } = await ctx.params;
-  const { user, error } = await requireUser();
-  if (error || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const service = createServiceClient();
-  const { data: project } = await service
-    .from("projects")
-    .select("id, user_id, title, status")
-    .eq("id", projectId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (!project) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const url = new URL(req.url);
-  const jobIdParam = (url.searchParams.get("jobId") || url.searchParams.get("job_id") || "").trim();
-  const versionParam = url.searchParams.get("version");
-
+async function resolveMasterPath(
+  service: ReturnType<typeof createServiceClient>,
+  projectId: string,
+  jobIdParam: string,
+  versionParam: string | null
+): Promise<{ audioPath: string | null; source: string; version: number | null }> {
   let audioPath: string | null = null;
   let source = "none";
   let version: number | null = null;
@@ -78,7 +54,6 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 
   if (!audioPath) {
-    // Newest complete PRODUCE_SONG with a master path
     const { data: jobs } = await service
       .from("jobs")
       .select("id, status, output_data, created_at")
@@ -117,6 +92,48 @@ export async function GET(req: Request, ctx: Ctx) {
     }
   }
 
+  return { audioPath, source, version };
+}
+
+/**
+ * GET /api/projects/:id/master
+ * Playback for Library Songs. Auth + ownership required.
+ * Query: jobId | version; stream=1 → same-origin audio body (avoids R2 CORS on <audio>).
+ */
+export async function GET(req: Request, ctx: Ctx) {
+  const { id: projectId } = await ctx.params;
+  const { user, error } = await requireUser();
+  if (error || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const service = createServiceClient();
+  const { data: project } = await service
+    .from("projects")
+    .select("id, user_id, title, status")
+    .eq("id", projectId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!project) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const url = new URL(req.url);
+  const jobIdParam = (url.searchParams.get("jobId") || url.searchParams.get("job_id") || "").trim();
+  const versionParam = url.searchParams.get("version");
+  const wantStream =
+    url.searchParams.get("stream") === "1" ||
+    url.searchParams.get("stream") === "true" ||
+    (req.headers.get("accept") || "").includes("audio/");
+
+  const { audioPath, source, version } = await resolveMasterPath(
+    service,
+    projectId,
+    jobIdParam,
+    versionParam
+  );
+
   if (!audioPath) {
     return NextResponse.json(
       { error: "No master available for playback yet.", project_status: project.status },
@@ -124,19 +141,60 @@ export async function GET(req: Request, ctx: Ctx) {
     );
   }
 
-  const audio_url = await resolveAudioUrl(audioPath, 3600);
-  if (!audio_url) {
+  const signed = await resolveAudioUrl(audioPath, 3600);
+  if (!signed) {
     return NextResponse.json(
       { error: "Could not sign master for playback.", path: audioPath },
       { status: 404 }
     );
   }
 
+  const lower = audioPath.toLowerCase();
+  const contentType = lower.endsWith(".mp3")
+    ? "audio/mpeg"
+    : lower.endsWith(".m4a") || lower.endsWith(".mp4")
+      ? "audio/mp4"
+      : "audio/wav";
+
+  if (wantStream) {
+    try {
+      const upstream = await fetch(signed);
+      if (!upstream.ok || !upstream.body) {
+        return NextResponse.json(
+          { error: "Could not fetch master from storage", status: upstream.status },
+          { status: 502 }
+        );
+      }
+      const headers = new Headers();
+      headers.set("Content-Type", contentType);
+      headers.set("Cache-Control", "private, max-age=300");
+      headers.set("Accept-Ranges", "none");
+      const len = upstream.headers.get("content-length");
+      if (len) headers.set("Content-Length", len);
+      return new NextResponse(upstream.body, { status: 200, headers });
+    } catch (e) {
+      console.error("[master] stream failed", e);
+      return NextResponse.json(
+        { error: "Stream failed", message: e instanceof Error ? e.message : String(e) },
+        { status: 502 }
+      );
+    }
+  }
+
+  // JSON: prefer same-origin stream URL so <audio> never hits R2 CORS
+  const streamUrl = new URL(req.url);
+  streamUrl.searchParams.set("stream", "1");
+  // strip host to path for relative use
+  const stream_path = `${streamUrl.pathname}${streamUrl.search}`;
+
   return NextResponse.json({
-    audio_url,
+    audio_url: stream_path,
+    signed_url: signed,
+    stream_url: stream_path,
     path: audioPath,
     source,
     version,
     expires_in: 3600,
+    content_type: contentType,
   });
 }
