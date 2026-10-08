@@ -128,11 +128,13 @@ function AppInner() {
   }, [searchParams, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (tab !== "library" || libraryTab !== "beats") {
+    if (tab !== "library") {
+      setFullPlayerOpen(false);
       stop();
       setBeatMenu(null);
+      setProjectMenu(null);
     }
-  }, [tab, libraryTab, stop]);
+  }, [tab, stop]);
 
   useEffect(() => {
     (async () => {
