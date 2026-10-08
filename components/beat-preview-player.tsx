@@ -4,6 +4,42 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "@/lib/theme";
 
+
+export function IconPlay({ size = 18, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden>
+      <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14Z" />
+    </svg>
+  );
+}
+
+export function IconPause({ size = 18, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden>
+      <rect x="6" y="5" width="4" height="14" rx="1.2" />
+      <rect x="14" y="5" width="4" height="14" rx="1.2" />
+    </svg>
+  );
+}
+
+export function IconSkipBack({ size = 18, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M11 12 19 6v12l-8-6Z" fill={color} />
+      <path d="M5 6v12" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconSkipFwd({ size = 18, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M13 12 5 6v12l8-6Z" fill={color} />
+      <path d="M19 6v12" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function formatAudioTime(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
   const s = Math.floor(sec);
@@ -507,7 +543,13 @@ export function BeatPlayButton({
         opacity: disabled || loading ? 0.6 : 1,
       }}
     >
-      {loading ? "…" : isPlaying ? "❚❚" : "▶"}
+      {loading ? (
+        <span style={{ fontSize: 12, fontWeight: 700 }}>…</span>
+      ) : isPlaying ? (
+        <IconPause size={18} color="currentColor" />
+      ) : (
+        <IconPlay size={18} color="currentColor" />
+      )}
     </button>
   );
 }
@@ -994,7 +1036,7 @@ export function LibraryMiniPlayer({
           onClick={() => onSkip(-10)}
           style={miniCtrl(C)}
         >
-          ‹‹
+          <IconSkipBack size={18} color="currentColor" />
         </button>
         <button
           type="button"
@@ -1015,7 +1057,13 @@ export function LibraryMiniPlayer({
             fontFamily: "inherit",
           }}
         >
-          {loading ? "…" : isPlaying ? "❚❚" : "▶"}
+          {loading ? (
+            <span style={{ fontSize: 12 }}>…</span>
+          ) : isPlaying ? (
+            <IconPause size={18} color="currentColor" />
+          ) : (
+            <IconPlay size={18} color="currentColor" />
+          )}
         </button>
         <button
           type="button"
@@ -1023,7 +1071,7 @@ export function LibraryMiniPlayer({
           onClick={() => onSkip(10)}
           style={miniCtrl(C)}
         >
-          ››
+          <IconSkipFwd size={18} color="currentColor" />
         </button>
         {onClose && (
           <button
@@ -1282,7 +1330,7 @@ export function LibraryFullPlayer({
             onClick={() => onSkip(-10)}
             style={fullCtrl(C)}
           >
-            ‹‹
+            <IconSkipBack size={22} color="currentColor" />
           </button>
           <button
             type="button"
@@ -1304,7 +1352,13 @@ export function LibraryFullPlayer({
               placeItems: "center",
             }}
           >
-            {loading ? "…" : isPlaying ? "❚❚" : "▶"}
+            {loading ? (
+            <span style={{ fontSize: 12 }}>…</span>
+          ) : isPlaying ? (
+            <IconPause size={18} color="currentColor" />
+          ) : (
+            <IconPlay size={18} color="currentColor" />
+          )}
           </button>
           <button
             type="button"
@@ -1312,7 +1366,7 @@ export function LibraryFullPlayer({
             onClick={() => onSkip(10)}
             style={fullCtrl(C)}
           >
-            ››
+            <IconSkipFwd size={22} color="currentColor" />
           </button>
         </div>
 

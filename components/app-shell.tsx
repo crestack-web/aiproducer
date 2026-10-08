@@ -163,6 +163,24 @@ export function AppShell({
   const projectIdFromPath = projectPathMatch?.[2] || null;
   const onBoothPage = projectPathMatch?.[1] === "studio";
   const onStudioPage = projectPathMatch?.[1] === "console";
+  const tabParam =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tab")
+      : null;
+  /** Home hub only — logo + wordmark. Everywhere else: page name (Suno/Mureka style). */
+  const isHomeShell =
+    (pathname === "/app" || pathname === "/app/") &&
+    (!tabParam || tabParam === "home") &&
+    !projectIdFromPath;
+  const mobileHeaderTitle = (() => {
+    if (onBoothPage) return "Booth";
+    if (onStudioPage) return "Console";
+    if (pathname?.startsWith("/app/studio")) return "Studio";
+    if (visual === "library" || tabParam === "library") return "Library";
+    if (visual === "profile" || tabParam === "profile") return "Profile";
+    if (visual === "studio") return "Studio";
+    return "Studio";
+  })();
   const initials = (userName || "A")
     .split(/\s+/)
     .map((w) => w[0])
@@ -677,48 +695,75 @@ export function AppShell({
           role="banner"
           aria-label="App bar"
         >
-          <button
-            type="button"
-            onClick={() => router.push("/app")}
-            aria-label="Go to Home"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              minWidth: 0,
-              flex: 1,
-              background: "none",
-              border: "none",
-              padding: 0,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              textAlign: "left",
-            }}
-          >
-            <img
-              src={STUDIO_LOGO_URL}
-              alt=""
-              width={28}
-              height={28}
+          {isHomeShell ? (
+            <button
+              type="button"
+              onClick={() => router.push("/app")}
+              aria-label="Home"
               style={{
-                borderRadius: 8,
-                objectFit: "cover",
-                flexShrink: 0,
-                boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-              }}
-            />
-            <span
-              style={{
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 12,
-                letterSpacing: 2,
-                color: C.brass,
-                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                minWidth: 0,
+                flex: 1,
+                background: "none",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textAlign: "left",
               }}
             >
-              STUDIO
-            </span>
-          </button>
+              <img
+                src={STUDIO_LOGO_URL}
+                alt=""
+                width={32}
+                height={32}
+                style={{
+                  borderRadius: 9,
+                  objectFit: "cover",
+                  flexShrink: 0,
+                  boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  fontSize: 18,
+                  letterSpacing: 2.5,
+                  color: C.brass,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}
+              >
+                STUDIO
+              </span>
+            </button>
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: C.text,
+                  letterSpacing: -0.3,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontFamily: "inherit",
+                }}
+              >
+                {mobileHeaderTitle}
+              </span>
+            </div>
+          )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <ThemeToggle compact />

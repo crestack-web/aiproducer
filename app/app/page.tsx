@@ -10,6 +10,8 @@ import {
   BeatActionsSheet,
   LibraryMiniPlayer,
   LibraryFullPlayer,
+  IconPlay,
+  IconPause,
   formatAudioTime,
 } from "@/components/beat-preview-player";
 import Link from "next/link";
@@ -510,7 +512,13 @@ function AppInner() {
               fontWeight: 700,
             }}
           >
-            {loadingPlayId === playId ? "…" : isPlaying ? "❚❚" : "▶"}
+            {loadingPlayId === playId ? (
+              "…"
+            ) : isPlaying ? (
+              <IconPause size={18} color="#fff" />
+            ) : (
+              <IconPlay size={18} color="#fff" />
+            )}
           </span>
         </button>
         <Link
@@ -957,7 +965,13 @@ function AppInner() {
                                 fontWeight: 700,
                               }}
                             >
-                              {loadingPlayId === p.id ? "…" : isPlaying ? "❚❚" : "▶"}
+                              {loadingPlayId === p.id ? (
+                                "…"
+                              ) : isPlaying ? (
+                                <IconPause size={18} color="#fff" />
+                              ) : (
+                                <IconPlay size={18} color="#fff" />
+                              )}
                             </span>
                           </button>
                           <div style={{ flex: 1, minWidth: 0 }}>
