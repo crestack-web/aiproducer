@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
+import { ApPaywall } from "@/components/ap-paywall";
 
 type MasterVersion = {
   job_id: string;
@@ -75,6 +76,8 @@ function AppInner() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [downloadModal, setDownloadModal] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
+  const [paywallProject, setPaywallProject] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
   const [projectMenu, setProjectMenu] = useState<{
@@ -358,6 +361,30 @@ function AppInner() {
     textDecoration: "none",
   };
 
+
+  function openDownloadPaywall(projectId: string, title: string, opts?: { jobId?: string; version?: number }) {
+    setDownloadModal(null);
+    setPaywallProject({ id: projectId, title, jobId: opts?.jobId, version: opts?.version });
+    setPaywallOpen(true);
+  }
+
+  function handleDownloadResult(
+    result: { ok: true } | { ok: false; error: string; code?: string },
+    projectId: string,
+    title: string,
+    opts?: { jobId?: string; version?: number }
+  ) {
+    if (result.ok) {
+      setDownloadModal(null);
+      return;
+    }
+    if (result.code === "PAYWALL" || result.code === "PAYMENT_REQUIRED") {
+      openDownloadPaywall(projectId, title, opts);
+      return;
+    }
+    window.alert(result.error);
+  }
+
   async function runDownload(
     projectId: string,
     title: string,
@@ -372,11 +399,7 @@ function AppInner() {
       opts
     );
     setDownloadBusy(false);
-    if (!result.ok) {
-      window.alert(result.error);
-      return;
-    }
-    setDownloadModal(null);
+    handleDownloadResult(result, projectId, title, opts);
   }
 
   function IconBtn({
@@ -479,14 +502,13 @@ function AppInner() {
             <IconBtn
               label="Download this version"
               onClick={() => {
+                const opts = jobId ? { jobId } : { version };
                 void forceDownloadFromApi(
                   projectId,
                   "wav",
                   `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
-                  jobId ? { jobId } : { version }
-                ).then((r) => {
-                  if (!r.ok) window.alert(r.error);
-                });
+                  opts
+                ).then((r) => handleDownloadResult(r, projectId, title, opts));
               }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1366,7 +1388,12 @@ function AppInner() {
                           key: "download",
                           label: "Download song",
                           onClick: () =>
-                            setDownloadModal({ id: projectMenu.id, title: projectMenu.title }),
+                            setDownloadModal({
+                              id: projectMenu.id,
+                              title: projectMenu.title,
+                              jobId: projectMenu.jobId,
+                              version: projectMenu.version,
+                            }),
                         },
                       ]
                     : []),
@@ -1382,7 +1409,38 @@ function AppInner() {
           }
         />
 
-{downloadModal && (
+
+      <ApPaywall
+        open={paywallOpen}
+        onClose={() => {
+          setPaywallOpen(false);
+          setPaywallProject(null);
+        }}
+        songTitle={paywallProject?.title}
+        projectId={paywallProject?.id}
+        colors={{
+          text: C.text,
+          textMuted: C.textMuted,
+          surface: C.surface,
+          border: C.border,
+          accent: C.brass,
+          bg: C.bg || C.surface,
+        }}
+        onUnlocked={() => {
+          setPaywallOpen(false);
+          if (paywallProject) {
+            setDownloadModal({
+              id: paywallProject.id,
+              title: paywallProject.title,
+              jobId: paywallProject.jobId,
+              version: paywallProject.version,
+            });
+          }
+          setPaywallProject(null);
+        }}
+      />
+
+      {downloadModal && (
           <div
             role="dialog"
             aria-modal="true"
