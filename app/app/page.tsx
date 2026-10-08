@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, Suspense } from "react";
+import { createPortal } from "react-dom";
 import {
   useBeatAudio,
   BeatPreviewTransport,
@@ -1575,11 +1576,11 @@ function AppInner() {
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 80,
+              zIndex: 200,
               background: "rgba(0,0,0,0.55)",
               display: "grid",
               placeItems: "center",
-              padding: 20,
+              padding: "20px 20px calc(20px + env(safe-area-inset-bottom, 0px))",
             }}
           >
             <div

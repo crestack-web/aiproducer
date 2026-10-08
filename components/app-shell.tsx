@@ -366,7 +366,7 @@ export function AppShell({
     background: C.navGlass,
     backdropFilter: "blur(16px)",
     borderTop: `1px solid ${C.border}`,
-    zIndex: 50,
+    zIndex: 40,
     alignItems: "stretch",
     justifyContent: "space-around",
     boxSizing: "border-box",
@@ -429,7 +429,8 @@ export function AppShell({
             left: 0 !important;
             right: 0 !important;
             bottom: 0 !important;
-            z-index: 55 !important;
+            /* Below modals/sheets/players; above page content */
+            z-index: 40 !important;
           }
           .studio-mobile-appbar {
             display: flex !important;
@@ -439,13 +440,15 @@ export function AppShell({
             top: 0 !important;
             left: 0 !important;
             right: 0 !important;
-            z-index: 60 !important;
+            /* Below modals; above page content */
+            z-index: 45 !important;
             width: 100% !important;
             transform: none !important;
           }
           .studio-main-pad {
-            padding-top: calc(52px + env(safe-area-inset-top, 0px) + 8px) !important;
-            padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
+            padding-top: calc(56px + env(safe-area-inset-top, 0px) + 10px) !important;
+            /* Room for bottom nav (~74px) + mini player (~72px) + safe area */
+            padding-bottom: calc(160px + env(safe-area-inset-bottom, 0px)) !important;
           }
           .studio-main-pad::after {
             height: 16px;

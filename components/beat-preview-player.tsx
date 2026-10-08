@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTheme } from "@/lib/theme";
 
 export function formatAudioTime(sec: number): string {
@@ -558,8 +559,9 @@ export function BeatActionsSheet({
   }, [open, onClose]);
 
   if (!open) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -567,7 +569,7 @@ export function BeatActionsSheet({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 80,
+        zIndex: 200,
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
@@ -591,14 +593,16 @@ export function BeatActionsSheet({
           position: "relative",
           width: "100%",
           maxWidth: 420,
-          margin: "0 0 env(safe-area-inset-bottom, 0)",
+          margin: 0,
           borderRadius: "18px 18px 0 0",
           background: C.surface || "#1A1510",
           border: `1px solid ${C.border}`,
           borderBottom: "none",
           boxShadow: "0 -12px 40px rgba(0,0,0,0.45)",
-          padding: "12px 14px 20px",
+          padding: "12px 14px calc(28px + env(safe-area-inset-bottom, 0px))",
           boxSizing: "border-box",
+          maxHeight: "min(88vh, 680px)",
+          overflowY: "auto",
         }}
       >
         <div
@@ -718,81 +722,8 @@ export function BeatActionsSheet({
           })}
         </div>
       </div>
-    </div>
-  );
-}
-
-
-function SheetIcon({ name }: { name: string }) {
-  const n = name.toLowerCase();
-  const common = {
-    width: 20,
-    height: 20,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.75,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-  };
-  if (n === "booth" || n === "mic") {
-    return (
-      <svg {...common}>
-        <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
-        <path d="M19 11a7 7 0 0 1-14 0" />
-        <path d="M12 18v3" />
-      </svg>
-    );
-  }
-  if (n === "console" || n === "edit") {
-    return (
-      <svg {...common}>
-        <rect x="3" y="4" width="18" height="14" rx="2" />
-        <path d="M7 15h4M7 8h10M7 11h10" />
-      </svg>
-    );
-  }
-  if (n === "download") {
-    return (
-      <svg {...common}>
-        <path d="M12 3v12" />
-        <path d="M8 11l4 4 4-4" />
-        <path d="M5 21h14" />
-      </svg>
-    );
-  }
-  if (n === "delete") {
-    return (
-      <svg {...common}>
-        <path d="M3 6h18" />
-        <path d="M8 6V4h8v2" />
-        <path d="M19 6l-1 14H6L5 6" />
-      </svg>
-    );
-  }
-  if (n === "link" || n === "share") {
-    return (
-      <svg {...common}>
-        <circle cx="18" cy="5" r="3" />
-        <circle cx="6" cy="12" r="3" />
-        <circle cx="18" cy="19" r="3" />
-        <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
-      </svg>
-    );
-  }
-  if (n === "play") {
-    return (
-      <svg {...common}>
-        <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...common}>
-      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="6" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
+    </div>,
+    document.body
   );
 }
 
@@ -861,10 +792,11 @@ export function LibraryMiniPlayer({
 }) {
   const { colors: C } = useTheme();
   if (!open) return null;
+  if (typeof document === "undefined") return null;
   const dur = duration > 0 ? duration : 0;
   const pct = dur > 0 ? Math.min(100, (currentTime / dur) * 100) : 0;
 
-  return (
+  return createPortal(
     <div
       role="region"
       aria-label="Now playing"
@@ -872,8 +804,9 @@ export function LibraryMiniPlayer({
         position: "fixed",
         left: 12,
         right: 12,
-        bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
-        zIndex: 70,
+        /* Sit above bottom nav (~74px) without covering it */
+        bottom: "calc(78px + env(safe-area-inset-bottom, 0px))",
+        zIndex: 50,
         borderRadius: 18,
         background: C.surface || "#1a1a1a",
         border: `1px solid ${C.border}`,
@@ -1029,7 +962,8 @@ export function LibraryMiniPlayer({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1067,11 +1001,12 @@ export function LibraryFullPlayer({
 }) {
   const { colors: C } = useTheme();
   if (!open) return null;
+  if (typeof document === "undefined") return null;
   const dur = duration > 0 ? duration : 0;
   const pct = dur > 0 ? Math.min(100, (currentTime / dur) * 100) : 0;
   const letter = (title || "S").slice(0, 1).toUpperCase();
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -1079,7 +1014,7 @@ export function LibraryFullPlayer({
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 90,
+        zIndex: 220,
         background: C.bg || C.bgDeep || "#0c0c0c",
         display: "flex",
         flexDirection: "column",
@@ -1328,7 +1263,8 @@ export function LibraryFullPlayer({
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
