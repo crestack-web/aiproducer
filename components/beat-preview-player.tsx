@@ -511,12 +511,25 @@ export function BeatPlayButton({
   );
 }
 
+export type BeatActionsSheetIcon =
+  | "booth"
+  | "console"
+  | "download"
+  | "delete"
+  | "link"
+  | "edit"
+  | "play"
+  | "share"
+  | "more";
+
 export type BeatActionsSheetItem = {
   key: string;
   label: string;
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** Visual icon key — falls back to key if omitted. */
+  icon?: BeatActionsSheetIcon | string;
 };
 
 /** Suno-style ⋮ → bottom/side sheet of actions (no crowded card chips). */
@@ -594,14 +607,43 @@ export function BeatActionsSheet({
             height: 4,
             borderRadius: 999,
             background: C.border,
-            margin: "0 auto 12px",
+            margin: "0 auto 10px",
           }}
         />
-        <div style={{ marginBottom: 12, padding: "0 4px" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+            padding: "0 4px 8px",
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>More</div>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 999,
+              border: "none",
+              background: "rgba(255,255,255,0.06)",
+              color: C.textMuted,
+              cursor: "pointer",
+              fontSize: 14,
+              fontFamily: "inherit",
+            }}
+          >
+            ˅
+          </button>
+        </div>
+        <div style={{ marginBottom: 10, padding: "0 4px 12px", borderBottom: `1px solid ${C.border}` }}>
           <div
             style={{
-              fontWeight: 700,
-              fontSize: 15,
+              fontWeight: 600,
+              fontSize: 14,
               color: C.text,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -611,59 +653,146 @@ export function BeatActionsSheet({
             {title}
           </div>
           {subtitle ? (
-            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>
-          ) : null}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {items.map((it) => (
-            <button
-              key={it.key}
-              type="button"
-              disabled={it.disabled}
-              onClick={() => {
-                if (it.disabled) return;
-                it.onClick();
-                onClose();
-              }}
+            <div
               style={{
-                textAlign: "left",
-                padding: "14px 12px",
-                borderRadius: 12,
-                border: `1px solid ${C.border}`,
-                background: C.bgDeep || "transparent",
-                color: it.danger ? "#E07070" : C.text,
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: it.disabled ? "wait" : "pointer",
-                fontFamily: "inherit",
-                opacity: it.disabled ? 0.5 : 1,
+                fontSize: 12,
+                color: C.textMuted,
+                marginTop: 3,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
-              {it.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              marginTop: 6,
-              textAlign: "center",
-              padding: "14px 12px",
-              borderRadius: 12,
-              border: `1px solid ${C.border}`,
-              background: "transparent",
-              color: C.textMuted,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            Cancel
-          </button>
+              {subtitle}
+            </div>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {items.map((it) => {
+            const iconKey = String(it.icon || it.key);
+            return (
+              <button
+                key={it.key}
+                type="button"
+                disabled={it.disabled}
+                onClick={() => {
+                  if (it.disabled) return;
+                  it.onClick();
+                  onClose();
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  textAlign: "left",
+                  padding: "14px 8px",
+                  borderRadius: 0,
+                  border: "none",
+                  borderBottom: `1px solid rgba(255,255,255,0.04)`,
+                  background: "transparent",
+                  color: it.danger ? "#E07070" : C.text,
+                  fontSize: 15,
+                  fontWeight: 500,
+                  cursor: it.disabled ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                  opacity: it.disabled ? 0.5 : 1,
+                  width: "100%",
+                }}
+              >
+                <span
+                  style={{
+                    width: 28,
+                    height: 28,
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                    color: it.danger ? "#E07070" : C.textMuted,
+                  }}
+                  aria-hidden
+                >
+                  <SheetIcon name={iconKey} />
+                </span>
+                <span style={{ flex: 1 }}>{it.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
+  );
+}
+
+
+function SheetIcon({ name }: { name: string }) {
+  const n = name.toLowerCase();
+  const common = {
+    width: 20,
+    height: 20,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.75,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  if (n === "booth" || n === "mic") {
+    return (
+      <svg {...common}>
+        <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+        <path d="M19 11a7 7 0 0 1-14 0" />
+        <path d="M12 18v3" />
+      </svg>
+    );
+  }
+  if (n === "console" || n === "edit") {
+    return (
+      <svg {...common}>
+        <rect x="3" y="4" width="18" height="14" rx="2" />
+        <path d="M7 15h4M7 8h10M7 11h10" />
+      </svg>
+    );
+  }
+  if (n === "download") {
+    return (
+      <svg {...common}>
+        <path d="M12 3v12" />
+        <path d="M8 11l4 4 4-4" />
+        <path d="M5 21h14" />
+      </svg>
+    );
+  }
+  if (n === "delete") {
+    return (
+      <svg {...common}>
+        <path d="M3 6h18" />
+        <path d="M8 6V4h8v2" />
+        <path d="M19 6l-1 14H6L5 6" />
+      </svg>
+    );
+  }
+  if (n === "link" || n === "share") {
+    return (
+      <svg {...common}>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+      </svg>
+    );
+  }
+  if (n === "play") {
+    return (
+      <svg {...common}>
+        <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 

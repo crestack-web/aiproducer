@@ -1036,21 +1036,25 @@ function AppInner() {
                       ? [
                           {
                             key: "booth",
+                            icon: "booth",
                             label: "Open Booth",
                             onClick: () => router.push(`/app/studio/${beatMenu.id}`),
                           },
                           {
                             key: "console",
+                            icon: "console",
                             label: "Open Console",
                             onClick: () => router.push(`/app/console/${beatMenu.id}`),
                           },
                           {
                             key: "download",
+                            icon: "download",
                             label: "Download beat",
                             onClick: () => void downloadBeatFile(beatMenu.id, beatMenu.title),
                           },
                           {
                             key: "delete",
+                            icon: "delete",
                             label: deletingId === beatMenu.id ? "Deleting…" : "Delete",
                             danger: true,
                             disabled: deletingId === beatMenu.id,
@@ -1422,11 +1426,13 @@ function AppInner() {
               ? [
                   {
                     key: "booth",
+                    icon: "booth",
                     label: "Open Booth",
                     onClick: () => router.push(`/app/studio/${projectMenu.id}`),
                   },
                   {
                     key: "console",
+                    icon: "console",
                     label: "Open Console",
                     onClick: () => router.push(`/app/console/${projectMenu.id}`),
                   },
@@ -1434,6 +1440,7 @@ function AppInner() {
                     ? [
                         {
                           key: "download",
+                          icon: "download",
                           label: "Download song",
                           onClick: () =>
                             setDownloadModal({
@@ -1447,6 +1454,7 @@ function AppInner() {
                     : []),
                   {
                     key: "delete",
+                    icon: "delete",
                     label: deletingId === projectMenu.id ? "Deleting…" : "Delete",
                     danger: true,
                     disabled: deletingId === projectMenu.id,
