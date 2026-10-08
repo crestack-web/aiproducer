@@ -534,6 +534,80 @@ export type BeatActionsSheetItem = {
 };
 
 /** Suno-style ⋮ → bottom/side sheet of actions (no crowded card chips). */
+
+function SheetIcon({ name }: { name: string }) {
+  const n = name.toLowerCase();
+  const common = {
+    width: 20,
+    height: 20,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.75,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  if (n === "booth" || n === "mic") {
+    return (
+      <svg {...common}>
+        <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+        <path d="M19 11a7 7 0 0 1-14 0" />
+        <path d="M12 18v3" />
+      </svg>
+    );
+  }
+  if (n === "console" || n === "edit") {
+    return (
+      <svg {...common}>
+        <rect x="3" y="4" width="18" height="14" rx="2" />
+        <path d="M7 15h4M7 8h10M7 11h10" />
+      </svg>
+    );
+  }
+  if (n === "download") {
+    return (
+      <svg {...common}>
+        <path d="M12 3v12" />
+        <path d="M8 11l4 4 4-4" />
+        <path d="M5 21h14" />
+      </svg>
+    );
+  }
+  if (n === "delete") {
+    return (
+      <svg {...common}>
+        <path d="M3 6h18" />
+        <path d="M8 6V4h8v2" />
+        <path d="M19 6l-1 14H6L5 6" />
+      </svg>
+    );
+  }
+  if (n === "link" || n === "share") {
+    return (
+      <svg {...common}>
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+      </svg>
+    );
+  }
+  if (n === "play") {
+    return (
+      <svg {...common}>
+        <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="6" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function BeatActionsSheet({
   open,
   title,
