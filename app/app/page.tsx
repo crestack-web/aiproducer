@@ -94,6 +94,7 @@ function AppInner() {
     currentTime,
     duration,
     toggle: togglePlayBeat,
+    toggleMaster: togglePlayMaster,
     seek,
     skip,
     stop,
@@ -429,60 +430,96 @@ function AppInner() {
     version: number;
     isReady: boolean;
   }) {
+    const playId = `master:${projectId}:${jobId || `v${version}`}`;
+    const isPlaying = playingId === playId;
+    const busy = loadingPlayId === playId || deletingId === projectId;
     return (
-      <div style={rowStyle}>
-        <Link
-          href={`/app/studio/${projectId}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            flex: 1,
-            minWidth: 0,
-            textDecoration: "none",
-            color: "inherit",
-          }}
-        >
-          <CoverArt seed={title || projectId} size={48} />
-          <div style={rowBody}>
-            <div style={rowTitle}>{title}</div>
-            <div style={rowMeta}>{meta}</div>
-          </div>
-        </Link>
-        {isReady && (
-          <IconBtn
-            label="Download this version"
-            onClick={() => {
-              void forceDownloadFromApi(
-                projectId,
-                "wav",
-                `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
-                jobId ? { jobId } : { version }
-              ).then((r) => {
-                if (!r.ok) window.alert(r.error);
-              });
+      <div
+        style={{
+          ...rowStyle,
+          flexDirection: "column",
+          alignItems: "stretch",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          {isReady ? (
+            <BeatPlayButton
+              isPlaying={isPlaying}
+              loading={loadingPlayId === playId}
+              disabled={busy}
+              onClick={() => {
+                void togglePlayMaster(playId, projectId, jobId ? { jobId } : { version });
+              }}
+            />
+          ) : (
+            <CoverArt seed={title || projectId} size={40} />
+          )}
+          <Link
+            href={`/app/studio/${projectId}`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flex: 1,
+              minWidth: 0,
+              textDecoration: "none",
+              color: "inherit",
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 3v12" />
-              <path d="M8 11l4 4 4-4" />
-              <path d="M5 21h14" />
-            </svg>
-          </IconBtn>
+            <div style={rowBody}>
+              <div style={rowTitle}>{title}</div>
+              <div style={rowMeta}>
+                {meta}
+                {isPlaying ? " · Playing" : ""}
+              </div>
+            </div>
+          </Link>
+          {isReady && (
+            <IconBtn
+              label="Download this version"
+              onClick={() => {
+                void forceDownloadFromApi(
+                  projectId,
+                  "wav",
+                  `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
+                  jobId ? { jobId } : { version }
+                ).then((r) => {
+                  if (!r.ok) window.alert(r.error);
+                });
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 3v12" />
+                <path d="M8 11l4 4 4-4" />
+                <path d="M5 21h14" />
+              </svg>
+            </IconBtn>
+          )}
+          <BeatMoreButton
+            active={projectMenu?.id === projectId && projectMenu?.meta === meta}
+            onClick={() =>
+              setProjectMenu({
+                id: projectId,
+                title,
+                meta,
+                isReady,
+                jobId,
+                version,
+              })
+            }
+          />
+        </div>
+        {isReady && (
+          <BeatPreviewTransport
+            active={isPlaying}
+            currentTime={isPlaying ? currentTime : 0}
+            duration={isPlaying ? duration : 0}
+            onSeek={seek}
+            onSkip={skip}
+            disabled={busy || !isPlaying}
+          />
         )}
-        <BeatMoreButton
-          active={projectMenu?.id === projectId && projectMenu?.meta === meta}
-          onClick={() =>
-            setProjectMenu({
-              id: projectId,
-              title,
-              meta,
-              isReady,
-              jobId,
-              version,
-            })
-          }
-        />
       </div>
     );
   }
@@ -726,6 +763,9 @@ function AppInner() {
             </div>
             {libraryTab === "songs" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {beatPlayError && (
+                  <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
+                )}
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
                 {!loading && projects.filter((p) => isFinishedSong(p)).length === 0 && (
                   <EmptyState

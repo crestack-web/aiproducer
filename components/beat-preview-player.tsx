@@ -65,15 +65,85 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
 
   const ensureUrl = useCallback(
     async (projectId: string): Promise<string | null> => {
-      if (urls[projectId]) return urls[projectId];
+      const key = `beat:${projectId}`;
+      if (urls[key] || urls[projectId]) return urls[key] || urls[projectId];
       const res = await fetch(`/api/projects/${projectId}/beat`);
       if (!res.ok) return null;
       const j = await res.json();
       const url = typeof j.audio_url === "string" ? j.audio_url : null;
-      if (url) setUrls((prev) => ({ ...prev, [projectId]: url }));
+      if (url) setUrls((prev) => ({ ...prev, [key]: url, [projectId]: url }));
       return url;
     },
     [urls]
+  );
+
+  /** Signed master URL for Library Songs playback (per job / version). */
+  const ensureMasterUrl = useCallback(
+    async (
+      projectId: string,
+      opts?: { jobId?: string; version?: number }
+    ): Promise<string | null> => {
+      const key = `master:${projectId}:${opts?.jobId || (opts?.version != null ? `v${opts.version}` : "latest")}`;
+      if (urls[key]) return urls[key];
+      const q = new URLSearchParams();
+      if (opts?.jobId) q.set("jobId", opts.jobId);
+      else if (opts?.version != null) q.set("version", String(opts.version));
+      const qs = q.toString();
+      const res = await fetch(
+        `/api/projects/${projectId}/master${qs ? `?${qs}` : ""}`,
+        { credentials: "same-origin" }
+      );
+      if (!res.ok) return null;
+      const j = (await res.json().catch(() => ({}))) as {
+        audio_url?: string;
+        download_url?: string;
+      };
+      const url =
+        typeof j.audio_url === "string"
+          ? j.audio_url
+          : typeof j.download_url === "string"
+            ? j.download_url
+            : null;
+      if (url) setUrls((prev) => ({ ...prev, [key]: url }));
+      return url;
+    },
+    [urls]
+  );
+
+  const playWithResolver = useCallback(
+    async (playId: string, resolveUrl: () => Promise<string | null>) => {
+      try {
+        const a = ensureAudio();
+        if (playingIdRef.current === playId && a && !a.paused) {
+          a.pause();
+          stopRaf();
+          setPlayingId(null);
+          return;
+        }
+        setLoadingId(playId);
+        const url = await resolveUrl();
+        setLoadingId(null);
+        if (!url) {
+          onErrorRef.current?.("Could not load this track for playback.");
+          return;
+        }
+        if (playingIdRef.current && playingIdRef.current !== playId) a.pause();
+        if (a.src !== url) {
+          a.src = url;
+          setCurrentTime(0);
+          setDuration(0);
+        }
+        await a.play();
+        setPlayingId(playId);
+        startRaf();
+      } catch (e) {
+        setLoadingId(null);
+        setPlayingId(null);
+        stopRaf();
+        onErrorRef.current?.(e instanceof Error ? e.message : "Playback failed");
+      }
+    },
+    [ensureAudio, startRaf, stopRaf]
   );
 
   const ensureAudio = useCallback(() => {
@@ -96,38 +166,21 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
 
   const toggle = useCallback(
     async (projectId: string) => {
-      try {
-        const a = ensureAudio();
-        if (playingIdRef.current === projectId && a && !a.paused) {
-          a.pause();
-          stopRaf();
-          setPlayingId(null);
-          return;
-        }
-        setLoadingId(projectId);
-        const url = await ensureUrl(projectId);
-        setLoadingId(null);
-        if (!url) {
-          onErrorRef.current?.("Could not load this beat for playback.");
-          return;
-        }
-        if (playingIdRef.current && playingIdRef.current !== projectId) a.pause();
-        if (a.src !== url) {
-          a.src = url;
-          setCurrentTime(0);
-          setDuration(0);
-        }
-        await a.play();
-        setPlayingId(projectId);
-        startRaf();
-      } catch (e) {
-        setLoadingId(null);
-        setPlayingId(null);
-        stopRaf();
-        onErrorRef.current?.(e instanceof Error ? e.message : "Playback failed");
-      }
+      await playWithResolver(projectId, () => ensureUrl(projectId));
     },
-    [ensureAudio, ensureUrl, startRaf, stopRaf]
+    [playWithResolver, ensureUrl]
+  );
+
+  /** Play a produced master (Library Songs). playId should be unique per take. */
+  const toggleMaster = useCallback(
+    async (
+      playId: string,
+      projectId: string,
+      opts?: { jobId?: string; version?: number }
+    ) => {
+      await playWithResolver(playId, () => ensureMasterUrl(projectId, opts));
+    },
+    [playWithResolver, ensureMasterUrl]
   );
 
   const seek = useCallback(
@@ -178,11 +231,13 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     currentTime,
     duration,
     toggle,
+    toggleMaster,
     seek,
     skip,
     stop,
     stopIfPlaying,
     ensureUrl,
+    ensureMasterUrl,
   };
 }
 
