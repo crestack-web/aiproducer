@@ -23,14 +23,27 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [urls, setUrls] = useState<Record<string, string>>({});
+  /** Track stays selected when paused (for mini player). */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [trackMeta, setTrackMeta] = useState<{
+    title: string;
+    subtitle?: string;
+    seed?: string;
+  } | null>(null);
   const rafRef = useRef<number | null>(null);
   const playingIdRef = useRef<string | null>(null);
+  const activeIdRef = useRef<string | null>(null);
   const onErrorRef = useRef(opts?.onError);
   onErrorRef.current = opts?.onError;
 
   useEffect(() => {
     playingIdRef.current = playingId;
   }, [playingId]);
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
@@ -116,6 +129,7 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
       a.preload = "auto";
       a.addEventListener("ended", () => {
         setPlayingId(null);
+        setIsPlaying(false);
         stopRaf();
         setCurrentTime(0);
       });
@@ -128,14 +142,30 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     return audioRef.current;
   }, [stopRaf]);
 
+  type TrackMetaInput = { title: string; subtitle?: string; seed?: string };
+
   const playWithResolver = useCallback(
-    async (playId: string, resolveUrl: () => Promise<string | null>) => {
+    async (
+      playId: string,
+      resolveUrl: () => Promise<string | null>,
+      meta?: TrackMetaInput
+    ) => {
       try {
         const a = ensureAudio();
-        if (playingIdRef.current === playId && a && !a.paused) {
+        // Same track playing → pause but keep mini player
+        if (activeIdRef.current === playId && a && !a.paused) {
           a.pause();
           stopRaf();
           setPlayingId(null);
+          setIsPlaying(false);
+          return;
+        }
+        // Same track paused → resume
+        if (activeIdRef.current === playId && a && a.paused && a.src) {
+          await a.play();
+          setPlayingId(playId);
+          setIsPlaying(true);
+          startRaf();
           return;
         }
         setLoadingId(playId);
@@ -145,18 +175,22 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
           onErrorRef.current?.("Could not load this track for playback.");
           return;
         }
-        if (playingIdRef.current && playingIdRef.current !== playId) a.pause();
+        if (activeIdRef.current && activeIdRef.current !== playId) a.pause();
         if (a.src !== url) {
           a.src = url;
           setCurrentTime(0);
           setDuration(0);
         }
+        if (meta) setTrackMeta(meta);
         await a.play();
+        setActiveId(playId);
         setPlayingId(playId);
+        setIsPlaying(true);
         startRaf();
       } catch (e) {
         setLoadingId(null);
         setPlayingId(null);
+        setIsPlaying(false);
         stopRaf();
         onErrorRef.current?.(e instanceof Error ? e.message : "Playback failed");
       }
@@ -165,8 +199,8 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
   );
 
   const toggle = useCallback(
-    async (projectId: string) => {
-      await playWithResolver(projectId, () => ensureUrl(projectId));
+    async (projectId: string, meta?: TrackMetaInput) => {
+      await playWithResolver(projectId, () => ensureUrl(projectId), meta);
     },
     [playWithResolver, ensureUrl]
   );
@@ -176,12 +210,44 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     async (
       playId: string,
       projectId: string,
-      opts?: { jobId?: string; version?: number }
+      opts?: { jobId?: string; version?: number; title?: string; subtitle?: string; seed?: string }
     ) => {
-      await playWithResolver(playId, () => ensureMasterUrl(projectId, opts));
+      const { jobId, version, title, subtitle, seed } = opts || {};
+      await playWithResolver(
+        playId,
+        () => ensureMasterUrl(projectId, { jobId, version }),
+        title
+          ? { title, subtitle, seed: seed || title }
+          : undefined
+      );
     },
     [playWithResolver, ensureMasterUrl]
   );
+
+  const pause = useCallback(() => {
+    try {
+      audioRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+    stopRaf();
+    setPlayingId(null);
+    setIsPlaying(false);
+  }, [stopRaf]);
+
+  const resume = useCallback(async () => {
+    const a = audioRef.current;
+    const id = activeIdRef.current;
+    if (!a || !id) return;
+    try {
+      await a.play();
+      setPlayingId(id);
+      setIsPlaying(true);
+      startRaf();
+    } catch (e) {
+      onErrorRef.current?.(e instanceof Error ? e.message : "Playback failed");
+    }
+  }, [startRaf]);
 
   const seek = useCallback(
     (seconds: number) => {
@@ -216,6 +282,10 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
     }
     stopRaf();
     setPlayingId(null);
+    setIsPlaying(false);
+    setActiveId(null);
+    setTrackMeta(null);
+    setCurrentTime(0);
   }, [stopRaf]);
 
   const stopIfPlaying = useCallback(
@@ -227,11 +297,16 @@ export function useBeatAudio(opts?: UseBeatAudioOptions) {
 
   return {
     playingId,
+    activeId,
+    isPlaying,
+    trackMeta,
     loadingId,
     currentTime,
     duration,
     toggle,
     toggleMaster,
+    pause,
+    resume,
     seek,
     skip,
     stop,
@@ -621,4 +696,207 @@ export function BeatMoreButton({ onClick, active }: { onClick: () => void; activ
       ⋮
     </button>
   );
+}
+
+
+/** Sticky mini player (Library Songs / Beats) — Mureka-style bottom bar. */
+export function LibraryMiniPlayer({
+  open,
+  title,
+  subtitle,
+  seed,
+  isPlaying,
+  loading,
+  currentTime,
+  duration,
+  onTogglePlay,
+  onSeek,
+  onSkip,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  seed?: string;
+  isPlaying: boolean;
+  loading?: boolean;
+  currentTime: number;
+  duration: number;
+  onTogglePlay: () => void;
+  onSeek: (sec: number) => void;
+  onSkip: (delta: number) => void;
+  onClose?: () => void;
+}) {
+  const { colors: C } = useTheme();
+  if (!open) return null;
+  const dur = duration > 0 ? duration : 0;
+  const pct = dur > 0 ? Math.min(100, (currentTime / dur) * 100) : 0;
+
+  return (
+    <div
+      role="region"
+      aria-label="Now playing"
+      style={{
+        position: "fixed",
+        left: 12,
+        right: 12,
+        bottom: "calc(64px + env(safe-area-inset-bottom, 0px))",
+        zIndex: 70,
+        borderRadius: 18,
+        background: C.surface || "#1a1a1a",
+        border: `1px solid ${C.border}`,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+        overflow: "hidden",
+        backdropFilter: "blur(12px)",
+      }}
+    >
+      {/* progress */}
+      <div
+        style={{ height: 3, background: "rgba(255,255,255,0.08)", cursor: "pointer" }}
+        onClick={(e) => {
+          if (dur <= 0) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const x = (e.clientX - rect.left) / rect.width;
+          onSeek(x * dur);
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${pct}%`,
+            background: `linear-gradient(90deg, ${C.brass}, #F0BC80)`,
+            transition: "width 0.15s linear",
+          }}
+        />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "10px 12px 12px",
+        }}
+      >
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            overflow: "hidden",
+            flexShrink: 0,
+            background: C.bgDeep || "#111",
+          }}
+        >
+          {/* CoverArt is in studio-player; use CSS gradient seed for self-contained mini */}
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              background: `linear-gradient(145deg, ${C.brass}55, #2a1a0a 60%, #0d0d0d)`,
+              display: "grid",
+              placeItems: "center",
+              color: C.brass,
+              fontSize: 16,
+              fontWeight: 700,
+            }}
+          >
+            {(title || "S").slice(0, 1).toUpperCase()}
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 600,
+              fontSize: 14,
+              color: C.text,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title || "Now playing"}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: C.textMuted,
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {subtitle ||
+              `${formatAudioTime(currentTime)} / ${formatAudioTime(dur)}`}
+          </div>
+        </div>
+        <button
+          type="button"
+          aria-label="Back 10 seconds"
+          onClick={() => onSkip(-10)}
+          style={miniCtrl(C)}
+        >
+          ‹‹
+        </button>
+        <button
+          type="button"
+          aria-label={isPlaying ? "Pause" : "Play"}
+          disabled={loading}
+          onClick={onTogglePlay}
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 999,
+            border: "none",
+            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+            color: "#1A1208",
+            fontWeight: 700,
+            fontSize: 14,
+            cursor: loading ? "wait" : "pointer",
+            flexShrink: 0,
+            fontFamily: "inherit",
+          }}
+        >
+          {loading ? "…" : isPlaying ? "❚❚" : "▶"}
+        </button>
+        <button
+          type="button"
+          aria-label="Forward 10 seconds"
+          onClick={() => onSkip(10)}
+          style={miniCtrl(C)}
+        >
+          ››
+        </button>
+        {onClose && (
+          <button
+            type="button"
+            aria-label="Close player"
+            onClick={onClose}
+            style={{ ...miniCtrl(C), fontSize: 16, opacity: 0.7 }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function miniCtrl(C: { border: string; textMuted: string; surface?: string }): React.CSSProperties {
+  return {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    border: `1px solid ${C.border}`,
+    background: "transparent",
+    color: C.textMuted,
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    flexShrink: 0,
+    fontFamily: "inherit",
+    display: "grid",
+    placeItems: "center",
+    padding: 0,
+  };
 }

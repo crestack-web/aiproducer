@@ -7,6 +7,8 @@ import {
   BeatPlayButton,
   BeatMoreButton,
   BeatActionsSheet,
+  LibraryMiniPlayer,
+  formatAudioTime,
 } from "@/components/beat-preview-player";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -93,11 +95,16 @@ function AppInner() {
   });
   const {
     playingId,
+    activeId,
+    isPlaying: audioIsPlaying,
+    trackMeta,
     loadingId: loadingPlayId,
     currentTime,
     duration,
     toggle: togglePlayBeat,
     toggleMaster: togglePlayMaster,
+    pause: pauseAudio,
+    resume: resumeAudio,
     seek,
     skip,
     stop,
@@ -454,94 +461,108 @@ function AppInner() {
     isReady: boolean;
   }) {
     const playId = `master:${projectId}:${jobId || `v${version}`}`;
-    const isPlaying = playingId === playId;
+    const isActive = activeId === playId;
+    const isPlaying = isActive && audioIsPlaying;
     const busy = loadingPlayId === playId || deletingId === projectId;
     return (
-      <div
-        style={{
-          ...rowStyle,
-          flexDirection: "column",
-          alignItems: "stretch",
-          gap: 8,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          {isReady ? (
-            <BeatPlayButton
-              isPlaying={isPlaying}
-              loading={loadingPlayId === playId}
-              disabled={busy}
-              onClick={() => {
-                void togglePlayMaster(playId, projectId, jobId ? { jobId } : { version });
-              }}
-            />
-          ) : (
-            <CoverArt seed={title || projectId} size={40} />
-          )}
-          <Link
-            href={`/app/studio/${projectId}`}
+      <div style={{ ...rowStyle, gap: 10 }}>
+        <button
+          type="button"
+          aria-label={isPlaying ? "Pause" : "Play"}
+          disabled={!isReady || busy}
+          onClick={() => {
+            if (!isReady) return;
+            void togglePlayMaster(playId, projectId, {
+              ...(jobId ? { jobId } : { version }),
+              title,
+              subtitle: meta,
+              seed: title || projectId,
+            });
+          }}
+          style={{
+            position: "relative",
+            width: 52,
+            height: 52,
+            borderRadius: 12,
+            border: "none",
+            padding: 0,
+            flexShrink: 0,
+            cursor: !isReady || busy ? "default" : "pointer",
+            overflow: "hidden",
+            background: "transparent",
+          }}
+        >
+          <CoverArt seed={title || projectId} size={52} />
+          <span
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flex: 1,
-              minWidth: 0,
-              textDecoration: "none",
-              color: "inherit",
+              position: "absolute",
+              inset: 0,
+              display: "grid",
+              placeItems: "center",
+              background: isPlaying
+                ? "rgba(0,0,0,0.35)"
+                : "rgba(0,0,0,0.25)",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 700,
             }}
           >
-            <div style={rowBody}>
-              <div style={rowTitle}>{title}</div>
-              <div style={rowMeta}>
-                {meta}
-                {isPlaying ? " · Playing" : ""}
-              </div>
+            {loadingPlayId === playId ? "…" : isPlaying ? "❚❚" : "▶"}
+          </span>
+        </button>
+        <Link
+          href={`/app/studio/${projectId}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flex: 1,
+            minWidth: 0,
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <div style={rowBody}>
+            <div style={{ ...rowTitle, color: isActive ? C.brass : C.text }}>{title}</div>
+            <div style={rowMeta}>
+              {meta}
+              {isPlaying ? " · Playing" : isActive ? " · Paused" : ""}
             </div>
-          </Link>
-          {isReady && (
-            <IconBtn
-              label="Download this version"
-              onClick={() => {
-                const opts = jobId ? { jobId } : { version };
-                void forceDownloadFromApi(
-                  projectId,
-                  "wav",
-                  `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
-                  opts
-                ).then((r) => handleDownloadResult(r, projectId, title, opts));
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 3v12" />
-                <path d="M8 11l4 4 4-4" />
-                <path d="M5 21h14" />
-              </svg>
-            </IconBtn>
-          )}
-          <BeatMoreButton
-            active={projectMenu?.id === projectId && projectMenu?.meta === meta}
-            onClick={() =>
-              setProjectMenu({
-                id: projectId,
-                title,
-                meta,
-                isReady,
-                jobId,
-                version,
-              })
-            }
-          />
-        </div>
+          </div>
+        </Link>
         {isReady && (
-          <BeatPreviewTransport
-            active={isPlaying}
-            currentTime={isPlaying ? currentTime : 0}
-            duration={isPlaying ? duration : 0}
-            onSeek={seek}
-            onSkip={skip}
-            disabled={busy || !isPlaying}
-          />
+          <IconBtn
+            label="Download this version"
+            onClick={() => {
+              const opts = jobId ? { jobId } : { version };
+              void forceDownloadFromApi(
+                projectId,
+                "wav",
+                `${title.replace(/[^a-zA-Z0-9._-]+/g, "_")}.wav`,
+                opts
+              ).then((r) => handleDownloadResult(r, projectId, title, opts));
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v12" />
+              <path d="M8 11l4 4 4-4" />
+              <path d="M5 21h14" />
+            </svg>
+          </IconBtn>
         )}
+        <BeatMoreButton
+          active={projectMenu?.id === projectId && projectMenu?.meta === meta}
+          onClick={() =>
+            setProjectMenu({
+              id: projectId,
+              title,
+              meta,
+              isReady,
+              jobId,
+              version,
+            })
+          }
+        />
       </div>
     );
   }
@@ -876,7 +897,8 @@ function AppInner() {
                 {projects
                   .filter((p) => p.has_beat)
                   .map((p) => {
-                    const isPlaying = playingId === p.id;
+                    const isActive = activeId === p.id;
+                    const isPlaying = isActive && audioIsPlaying;
                     const busy = loadingPlayId === p.id || deletingId === p.id;
                     const meta = [p.genre, p.mood].filter(Boolean).join(" · ") || p.status;
                     return (
@@ -889,20 +911,52 @@ function AppInner() {
                           padding: "12px 14px",
                           borderRadius: 16,
                           background: C.surface,
-                          border: `1px solid ${isPlaying ? C.brassLine || C.brass : C.border}`,
+                          border: `1px solid ${isActive ? C.brassLine || C.brass : C.border}`,
                           color: C.text,
                         }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <BeatPlayButton
-                            isPlaying={isPlaying}
-                            loading={loadingPlayId === p.id}
+                          <button
+                            type="button"
+                            aria-label={isPlaying ? "Pause beat" : "Play beat"}
                             disabled={busy && loadingPlayId !== p.id}
                             onClick={() => {
                               setBeatPlayError(null);
-                              void togglePlayBeat(p.id);
+                              void togglePlayBeat(p.id, {
+                                title: p.title,
+                                subtitle: meta || "Beat",
+                                seed: p.title || p.id,
+                              });
                             }}
-                          />
+                            style={{
+                              position: "relative",
+                              width: 52,
+                              height: 52,
+                              borderRadius: 12,
+                              border: "none",
+                              padding: 0,
+                              flexShrink: 0,
+                              cursor: "pointer",
+                              overflow: "hidden",
+                              background: "transparent",
+                            }}
+                          >
+                            <CoverArt seed={p.title || p.id} size={52} />
+                            <span
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                display: "grid",
+                                placeItems: "center",
+                                background: "rgba(0,0,0,0.3)",
+                                color: "#fff",
+                                fontSize: 14,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {loadingPlayId === p.id ? "…" : isPlaying ? "❚❚" : "▶"}
+                            </span>
+                          </button>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div
                               style={{
@@ -953,7 +1007,7 @@ function AppInner() {
                             </div>
                             <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
                               {meta}
-                              {isPlaying ? " · Playing" : ""}
+                              {isPlaying ? " · Playing" : isActive ? " · Paused" : ""}
                             </div>
                           </div>
                           <BeatMoreButton
@@ -967,14 +1021,6 @@ function AppInner() {
                             }
                           />
                         </div>
-                        <BeatPreviewTransport
-                          active={isPlaying}
-                          currentTime={currentTime}
-                          duration={duration}
-                          onSeek={seek}
-                          onSkip={skip}
-                          disabled={busy}
-                        />
                       </div>
                     );
                   })}
@@ -1409,6 +1455,30 @@ function AppInner() {
           }
         />
 
+
+      
+      <LibraryMiniPlayer
+        open={tab === "library" && Boolean(activeId)}
+        title={trackMeta?.title || "Now playing"}
+        subtitle={
+          trackMeta?.subtitle ||
+          (duration > 0
+            ? `${formatAudioTime(currentTime)} / ${formatAudioTime(duration)}`
+            : undefined)
+        }
+        seed={trackMeta?.seed}
+        isPlaying={audioIsPlaying}
+        loading={Boolean(loadingPlayId)}
+        currentTime={currentTime}
+        duration={duration}
+        onTogglePlay={() => {
+          if (audioIsPlaying) pauseAudio();
+          else void resumeAudio();
+        }}
+        onSeek={seek}
+        onSkip={skip}
+        onClose={() => stop()}
+      />
 
       <ApPaywall
         open={paywallOpen}
