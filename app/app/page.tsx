@@ -23,6 +23,7 @@ import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
+import { ArtistAvatar, IconSettingsCog } from "@/components/artist-avatar";
 
 type MasterVersion = {
   job_id: string;
@@ -1421,25 +1422,22 @@ function AppInner() {
                         background: C.surface,
                         color: C.text,
                         cursor: "pointer",
-                        fontSize: 18,
+                        display: "grid",
+                        placeItems: "center",
                         fontFamily: "inherit",
+                        padding: 0,
                       }}
                     >
-                      ⚙
+                      <IconSettingsCog size={20} color={C.text} />
                     </button>
                   </div>
 
                   <div style={{ textAlign: "center", marginBottom: 20 }}>
-                    <div
-                      style={{
-                        ...avatar,
-                        width: 88,
-                        height: 88,
-                        fontSize: 28,
-                        margin: "0 auto 14px",
-                      }}
-                    >
-                      {initials || "A"}
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+                      <ArtistAvatar
+                        seed={userEmail || userName || "artist"}
+                        size={96}
+                      />
                     </div>
                     <div
                       style={{
