@@ -70,7 +70,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
-  if (isAuthPage && user) {
+  // Never intercept /auth/callback — it must run code exchange with the OAuth ?code=
+  if (isAuthPage && user && !path.startsWith("/auth/callback")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/app";
     redirect.search = "";

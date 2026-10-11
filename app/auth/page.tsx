@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { useEffect, FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -161,6 +161,18 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  useEffect(() => {
+    const err = search.get("error");
+    const detail = search.get("detail");
+    if (err === "oauth") {
+      setError(
+        detail
+          ? `Google sign-in failed: ${detail}`
+          : "Google sign-in failed. Try again, or use email."
+      );
+    }
+  }, [search]);
 
   const title = useMemo(() => {
     if (mode === "login") return "Welcome back";

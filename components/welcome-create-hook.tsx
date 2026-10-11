@@ -119,8 +119,8 @@ export function WelcomeCreateHook() {
       const { error: oauthErr } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/app")}`,
-          queryParams: { access_type: "offline", prompt: "consent" },
+          // New Google users still go through onboarding via /auth/callback
+          redirectTo: `${origin}/auth/callback?next=${encodeURIComponent("/onboarding")}`,
         },
       });
       if (oauthErr) throw oauthErr;
