@@ -141,35 +141,37 @@ export function FeatureBanner({ seed = "ap-studio", variant = "home" }: Props) {
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          marginTop: 10,
-        }}
-      >
-        {chips.map((c) => (
-          <button
-            key={c.label}
-            type="button"
-            onClick={() => router.push(c.href)}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: `1px solid ${C.border}`,
-              background: C.surface,
-              color: C.text,
-              fontSize: 12.5,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
+      {variant === "home" && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginTop: 10,
+          }}
+        >
+          {chips.map((c) => (
+            <button
+              key={c.label}
+              type="button"
+              onClick={() => router.push(c.href)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: C.surface,
+                color: C.text,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

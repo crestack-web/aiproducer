@@ -735,12 +735,16 @@ function AppInner() {
 
         {tab === "library" && (
           <>
+            {!librarySearchOpen && (
+              <FeatureBanner seed={userEmail || userName || "ap-library"} variant="library" />
+            )}
             {librarySearchOpen ? (
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
+                  marginTop: 12,
                   marginBottom: 16,
                 }}
               >
@@ -765,15 +769,18 @@ function AppInner() {
                     value={libraryQuery}
                     onChange={(e) => setLibraryQuery(e.target.value)}
                     placeholder="Search your library"
+                    enterKeyHint="search"
                     style={{
                       flex: 1,
                       border: "none",
                       outline: "none",
                       background: "transparent",
                       color: C.text,
-                      fontSize: 15,
+                      // 16px minimum — iOS Safari zooms focused inputs under 16px
+                      fontSize: 16,
                       fontFamily: "inherit",
                       minWidth: 0,
+                      WebkitTextSizeAdjust: "100%",
                     }}
                   />
                 </div>
@@ -809,6 +816,7 @@ function AppInner() {
                   alignItems: "center",
                   justifyContent: "flex-end",
                   gap: 8,
+                  marginTop: 10,
                   marginBottom: 10,
                 }}
               >
@@ -836,9 +844,6 @@ function AppInner() {
                   </svg>
                 </button>
               </div>
-            )}
-            {!librarySearchOpen && (
-              <FeatureBanner seed={userEmail || userName || "ap-library"} variant="library" />
             )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 12 }}>
               {(
