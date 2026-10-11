@@ -3,6 +3,7 @@
  * Preview & in-app listening stay free; export needs plan, paid session, or allowlisted account.
  */
 import { createServiceClient } from "@/lib/supabase/service";
+import { grantedPlanForEmail } from "@/lib/subscription-grants";
 
 export type CommercialAccess = {
   ok: boolean;
@@ -65,6 +66,10 @@ export async function assertCommercialDownloadAccess(
     (await resolveUserEmail(userId));
   if (email && freeDownloadEmails().has(email)) {
     return { ok: true, source: "allowlist" };
+  }
+  // Hard-granted subscription (e.g. Record Label for owner)
+  if (email && grantedPlanForEmail(email)) {
+    return { ok: true, source: "subscription" };
   }
 
   const { data: project } = await service

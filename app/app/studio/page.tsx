@@ -15,6 +15,7 @@ import {
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { waitForBeatReady } from "@/lib/studio/poll-beat-ready";
 import { useTheme } from "@/lib/theme";
+import { grantedPlanForEmail, planDisplayName, resolveSubscriptionPlan } from "@/lib/subscription-grants";
 import { ApPaywall } from "@/components/ap-paywall";
 
 const GENRES = [
@@ -231,7 +232,12 @@ function StudioPageInner() {
           .select("subscription_plan, plan, metadata")
           .eq("id", user.id)
           .maybeSingle();
-        if (cancelled || !profile) return;
+        if (cancelled) return;
+        if (grantedPlanForEmail(user.email)) {
+          setIsPaidPlan(true);
+          return;
+        }
+        if (!profile) return;
         const plan = String(
           (profile as { subscription_plan?: string }).subscription_plan ||
             (profile as { plan?: string }).plan ||

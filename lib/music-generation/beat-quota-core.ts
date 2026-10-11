@@ -1,3 +1,4 @@
+import { grantedPlanForEmail } from "@/lib/subscription-grants";
 import { createServiceClient } from "@/lib/supabase/server";
 
 export const FREE_BEAT_GEN_COUNT = Number(process.env.BEAT_GEN_FREE_COUNT || 3) || 3;
@@ -45,11 +46,27 @@ export async function getSubscriberPlanName(userId: string): Promise<string> {
   if (!userId) return "";
   const supabase = createServiceClient();
   try {
+    // Email grants (e.g. crestack → Record Label / pro)
+    try {
+      const { data } = await supabase.auth.admin.getUserById(userId);
+      const email = data?.user?.email ? String(data.user.email).toLowerCase() : "";
+      const granted = grantedPlanForEmail(email);
+      if (granted) return granted;
+    } catch {
+      /* ignore */
+    }
     const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
     const p = profile as Record<string, unknown> | null;
     if (!p) return "";
+    const emailFromProfile =
+      typeof p.email === "string" ? String(p.email).toLowerCase() : "";
+    const granted2 = grantedPlanForEmail(emailFromProfile);
+    if (granted2) return granted2;
     const plan = String(p.subscription_plan || p.plan || "").toLowerCase();
     if (plan === "creator" || plan === "band" || plan === "pro") return plan;
+    const meta = (p.metadata || {}) as Record<string, unknown>;
+    const mp = String(meta.subscription_plan || meta.plan || "").toLowerCase();
+    if (mp === "creator" || mp === "band" || mp === "pro") return mp;
   } catch {
     /* ignore */
   }

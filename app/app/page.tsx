@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState } from "@/components/empty-state";
 import { useTheme } from "@/lib/theme";
+import { grantedPlanForEmail, planDisplayName, resolveSubscriptionPlan } from "@/lib/subscription-grants";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
@@ -213,12 +214,11 @@ function AppInner() {
       setUserGenre(genre);
       const meta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
         {}) as Record<string, unknown>;
-      const plan =
-        (typeof meta.subscription_plan === "string" && meta.subscription_plan) ||
-        (typeof meta.plan === "string" && meta.plan) ||
-        null;
-      const planLabel = plan ? String(plan) : "Free";
-      setUserPlan(planLabel);
+      const resolved = resolveSubscriptionPlan({
+        email: user.email,
+        metadata: meta,
+      });
+      setUserPlan(planDisplayName(resolved));
       setEditName(name);
       setEditGenre(genre || "");
       const res = await fetch("/api/projects");
