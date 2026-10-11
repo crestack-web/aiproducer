@@ -24,6 +24,13 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { PwaInstallButton } from "@/components/pwa-install";
 import { ProductTour, useProductTour } from "@/components/product-tour"
 import { ArtistAvatar } from "@/components/artist-avatar";
+import {
+  IconBell,
+  IconInvitePerson,
+  InviteFriendsSheet,
+  NotificationsPanel,
+  HeaderIconButton,
+} from "@/components/invite-notifications";
 
 function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
@@ -122,6 +129,11 @@ export function AppShell({
       return false;
     }
   });
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const handle =
+    (userName || "artist").toLowerCase().replace(/\s+/g, "") || "artist";
+
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -765,6 +777,20 @@ export function AppShell({
           )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <HeaderIconButton
+              label="Invite friends"
+              onClick={() => setInviteOpen(true)}
+              colors={C}
+            >
+              <IconInvitePerson size={17} color={C.text} />
+            </HeaderIconButton>
+            <HeaderIconButton
+              label="Notifications"
+              onClick={() => setNotifOpen(true)}
+              colors={C}
+            >
+              <IconBell size={17} color={C.text} />
+            </HeaderIconButton>
             <ThemeToggle compact />
             <button
               type="button"
@@ -792,6 +818,21 @@ export function AppShell({
       </main>
 
       <ProductTour open={tour.open} onClose={tour.close} index={tour.index} onIndexChange={tour.setIndex} />
+
+      <NotificationsPanel
+        open={notifOpen}
+        onClose={() => setNotifOpen(false)}
+        onInvite={() => setInviteOpen(true)}
+        colors={C}
+      />
+      <InviteFriendsSheet
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        userName={userName || "Artist"}
+        handle={handle}
+        avatarSeed={avatarSeed}
+        colors={C}
+      />
 
       <nav className="studio-bottom-nav" style={bottomNav} aria-label="Main">
         {projectIdFromPath ? (
