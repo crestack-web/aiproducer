@@ -13,7 +13,7 @@ export type AdminMetrics = {
     last7d: number;
     last30d: number;
     onboarded: number;
-    paidPlans: { creator: number; pro: number; unknown: number };
+    paidPlans: { creator: number; band: number; pro: number; unknown: number };
   };
   activity: {
     projectsTotal: number;
@@ -98,7 +98,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
   let last7 = 0;
   let last30 = 0;
   let onboarded = 0;
-  const paidPlans = { creator: 0, pro: 0, unknown: 0 };
+  const paidPlans = { creator: 0, band: 0, pro: 0, unknown: 0 };
   for (const p of profileRows) {
     const created = (p as { created_at?: string }).created_at || "";
     if (created >= t7) last7 += 1;
@@ -111,6 +111,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
         ""
     ).toLowerCase();
     if (plan === "creator") paidPlans.creator += 1;
+    else if (plan === "band") paidPlans.band += 1;
     else if (plan === "pro") paidPlans.pro += 1;
     else if (plan && plan !== "free" && plan !== "session") paidPlans.unknown += 1;
   }

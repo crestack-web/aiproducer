@@ -289,11 +289,11 @@ export function ApPaywall({
                         style={{
                           marginTop: 4,
                           fontSize: 12,
-                          color: plan.id === "pro" ? "#e8c547" : plan.id === "creator" ? "#3dd68c" : accent,
+                          color: plan.id === "pro" ? "#e8c547" : plan.id === "band" ? "#5b9fd4" : plan.id === "creator" ? "#3dd68c" : accent,
                           fontWeight: 600,
                         }}
                       >
-                        {plan.id === "pro" ? "♔ " : plan.id === "creator" ? "♥ " : "◆ "}
+                        {plan.id === "pro" ? "♔ " : plan.id === "band" ? "♠ " : plan.id === "creator" ? "♥ " : "◆ "}
                         {plan.badge}
                       </div>
                     )}

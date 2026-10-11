@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   meta.download_plan = plan;
   meta.paystack_reference = event.data?.reference;
   meta.paystack_paid_at = event.data?.paid_at || new Date().toISOString();
-  if (plan === "creator" || plan === "pro") {
+  if (plan === "creator" || plan === "band" || plan === "pro") {
     meta.subscription_plan = plan;
         // Persist on profile so Creator/Pro unlocks downloads across projects
     try {

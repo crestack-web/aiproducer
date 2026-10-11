@@ -242,7 +242,7 @@ function StudioPageInner() {
           meta && typeof meta === "object"
             ? String(meta.plan || meta.subscription_plan || "").toLowerCase()
             : "";
-        setIsPaidPlan(plan === "creator" || plan === "pro" || mp === "creator" || mp === "pro");
+        setIsPaidPlan(plan === "creator" || plan === "band" || plan === "pro" || mp === "creator" || mp === "band" || mp === "pro");
       } catch {
         /* stay free */
       }
@@ -1420,7 +1420,7 @@ function StudioPageInner() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 8 }}>
-                AI EDIT SECTION{isPaidPlan ? "" : " · Creator / Pro"}
+                AI EDIT SECTION{isPaidPlan ? "" : " · Artist / Band / Label"}
               </div>
               {!isPaidPlan && (
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>
@@ -1833,8 +1833,8 @@ function StudioPageInner() {
             <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>AI beat editing</div>
             <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
               Reworking intro, verse, chorus, and other sections is included on{" "}
-              <strong style={{ color: C.text }}>Creator</strong> and{" "}
-              <strong style={{ color: C.text }}>Pro</strong>. You can keep the single unedited beat you already generated and continue to record.
+              <strong style={{ color: C.text }}>Artist</strong> and{" "}
+              <strong style={{ color: C.text }}>Band</strong>. You can keep the single unedited beat you already generated and continue to record.
             </p>
             <button
               type="button"

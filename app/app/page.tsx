@@ -2001,7 +2001,7 @@ function AppInner() {
         }}
         onUnlocked={() => {
           setSubscribeOpen(false);
-          setUserPlan("Creator");
+          setUserPlan("Artist");
           setProfileMsg("Plan updated");
           setTimeout(() => setProfileMsg(null), 2500);
         }}

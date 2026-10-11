@@ -1,6 +1,6 @@
 /** AP Studio commercial plans — paywall after the produce “aha” moment. */
 
-export type PlanId = "session" | "creator" | "pro";
+export type PlanId = "session" | "creator" | "band" | "pro";
 export type BillingInterval = "month" | "year";
 
 export type PlanDef = {
@@ -36,13 +36,12 @@ export const PLANS: PlanDef[] = [
   },
   {
     id: "creator",
-    name: "Creator",
-    tagline: "Lower cost per song when you ship monthly",
+    name: "Artist",
+    tagline: "For solo artists shipping songs every month",
     badge: "Most popular",
     priceUsd: 19,
     priceUsdYear: 190, // ~2 months free
     songsPerMonth: 10,
-    // $19 / 10 = $1.90 — under $4.99 session
     perSongHint: "~$1.90 / song",
     features: [
       "10 finished songs / month",
@@ -54,23 +53,42 @@ export const PLANS: PlanDef[] = [
     ],
   },
   {
-    id: "pro",
-    name: "Pro",
-    tagline: "Best per-song rate for EPs & catalogs",
+    id: "band",
+    name: "Band",
+    tagline: "For groups shipping more music together",
     badge: "Best value",
     priceUsd: 49,
     priceUsdYear: 490,
     songsPerMonth: 30,
-    // $49 / 30 ≈ $1.63
     perSongHint: "~$1.63 / song",
     features: [
       "30 finished songs / month",
       "About $1.63 per song (vs $4.99 one-time)",
       "~90 min AP beat generation / month (30 × 3 min)",
-      "Everything in Creator",
+      "Everything in Artist",
       "Priority mastering queue",
       "Stem export when available",
       "Commercial use license",
+    ],
+  },
+  {
+    id: "pro",
+    name: "Record Label",
+    tagline: "For labels and high-volume catalogs",
+    badge: "Studio scale",
+    priceUsd: 99,
+    priceUsdYear: 990,
+    songsPerMonth: 80,
+    perSongHint: "~$1.24 / song",
+    features: [
+      "80 finished songs / month",
+      "About $1.24 per song (vs $4.99 one-time)",
+      "~240 min AP beat generation / month",
+      "Everything in Band",
+      "Priority mastering queue",
+      "Stem export when available",
+      "Commercial use license",
+      "Multi-artist friendly workflow",
     ],
   },
 ];

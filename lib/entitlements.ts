@@ -51,7 +51,7 @@ async function resolveUserEmail(userId: string): Promise<string | null> {
 }
 
 /**
- * Full commercial license path: allowlisted email, paid session on this project, or active Creator/Pro.
+ * Full commercial license path: allowlisted email, paid session on this project, or active Artist/Band/Record Label.
  */
 export async function assertCommercialDownloadAccess(
   userId: string,
@@ -82,7 +82,7 @@ export async function assertCommercialDownloadAccess(
     return { ok: true, source: "project_unlock" };
   }
 
-  // Profile-level subscription (Creator / Pro)
+  // Profile-level subscription (Artist / Band)
   const { data: profile } = await service
     .from("profiles")
     .select("id, metadata")
@@ -93,7 +93,7 @@ export async function assertCommercialDownloadAccess(
     {}) as Record<string, unknown>;
   const plan = String(pMeta.subscription_plan || pMeta.plan || "").toLowerCase();
 
-  if (plan === "creator" || plan === "pro") {
+  if (plan === "creator" || plan === "band" || plan === "pro") {
     const expires = pMeta.subscription_expires_at
       ? Date.parse(String(pMeta.subscription_expires_at))
       : null;
@@ -112,7 +112,7 @@ export async function assertCommercialDownloadAccess(
   for (const row of subProjects || []) {
     const m = (row.metadata || {}) as Record<string, unknown>;
     const sp = String(m.subscription_plan || "").toLowerCase();
-    if (sp === "creator" || sp === "pro") {
+    if (sp === "creator" || sp === "band" || sp === "pro") {
       return { ok: true, source: "subscription" };
     }
   }
@@ -121,6 +121,6 @@ export async function assertCommercialDownloadAccess(
     ok: false,
     reason: "payment_required",
     message:
-      "Unlock this song to download — pay for this session or subscribe to Creator / Pro.",
+      "Unlock this song to download — pay for this session or subscribe to Artist, Band, or Record Label.",
   };
 }

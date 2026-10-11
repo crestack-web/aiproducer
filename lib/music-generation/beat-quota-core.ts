@@ -49,7 +49,7 @@ export async function getSubscriberPlanName(userId: string): Promise<string> {
     const p = profile as Record<string, unknown> | null;
     if (!p) return "";
     const plan = String(p.subscription_plan || p.plan || "").toLowerCase();
-    if (plan === "creator" || plan === "pro") return plan;
+    if (plan === "creator" || plan === "band" || plan === "pro") return plan;
   } catch {
     /* ignore */
   }
@@ -58,7 +58,7 @@ export async function getSubscriberPlanName(userId: string): Promise<string> {
 
 export async function isPaidBeatSubscriber(userId: string): Promise<boolean> {
   const plan = await getSubscriberPlanName(userId);
-  return plan === "creator" || plan === "pro";
+  return plan === "creator" || plan === "band" || plan === "pro";
 }
 
 async function countSuccessfulGens(userId: string): Promise<number> {
@@ -115,7 +115,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     };
   }
   const planName = await getSubscriberPlanName(userId);
-  const isPaid = planName === "creator" || planName === "pro";
+  const isPaid = planName === "creator" || planName === "band" || planName === "pro";
   const usedSuccessful = await countSuccessfulGens(userId);
   const freeLimit = freeBaseAllowance;
   if (isPaid) {

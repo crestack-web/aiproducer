@@ -123,7 +123,7 @@ export default function WelcomePage() {
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
               <div className="cost-total">From $4.99<span> / song</span></div>
-              <div className="cost-sub">Session: $4.99/song · Creator: ~$1.90/song · Pro: ~$1.63/song</div>
+              <div className="cost-sub">Session: $4.99/song · Artist: ~$1.90 · Band: ~$1.63 · Label: ~$1.24</div>
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
                 <li>Guided recording (unlimited takes*) <em>included</em></li>
@@ -167,7 +167,7 @@ export default function WelcomePage() {
             </div>
             <div className="price-card featured">
               <div className="price-badge">Popular</div>
-              <div className="price-name">Creator</div>
+              <div className="price-name">Artist</div>
               <div className="price-amount">$19 <span>/ month</span></div>
               <p className="price-desc">For artists shipping singles regularly with real mastering cost covered.</p>
               <ul className="price-list">
@@ -178,21 +178,35 @@ export default function WelcomePage() {
                 <li>Unlimited takes per song</li>
                 <li>Commercial use license</li>
               </ul>
-              <Link href={START_HREF} className="primary block">Start Creator</Link>
+              <Link href={START_HREF} className="primary block">Start Artist</Link>
             </div>
             <div className="price-card">
-              <div className="price-name">Pro</div>
+              <div className="price-name">Band</div>
               <div className="price-amount">$49 <span>/ month</span></div>
-              <p className="price-desc">Higher volume for catalogs, EPs, and faster turnaround.</p>
+              <p className="price-desc">Higher volume for groups, EPs, and faster turnaround.</p>
               <ul className="price-list">
                 <li>30 finished songs / month</li>
-                <li>Everything in Creator</li>
+                <li>Everything in Artist</li>
                 <li>Priority mastering queue</li>
                 <li>Stem export (when available)</li>
                 <li>Early access to new producer tools</li>
                 <li>Commercial use license</li>
               </ul>
-              <Link href={START_HREF} className="secondary block">Go Pro</Link>
+              <Link href={START_HREF} className="secondary block">Start Band</Link>
+            </div>
+            <div className="price-card">
+              <div className="price-name">Record Label</div>
+              <div className="price-amount">$99 <span>/ month</span></div>
+              <p className="price-desc">Studio scale for labels and high-volume catalogs.</p>
+              <ul className="price-list">
+                <li>80 finished songs / month</li>
+                <li>Everything in Band</li>
+                <li>Priority mastering queue</li>
+                <li>Stem export (when available)</li>
+                <li>Multi-artist friendly workflow</li>
+                <li>Commercial use license</li>
+              </ul>
+              <Link href={START_HREF} className="secondary block">Start Record Label</Link>
             </div>
           </div>
           <p className="price-note">

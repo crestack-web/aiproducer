@@ -201,13 +201,13 @@ export async function enqueueMusicGeneration(
     : await assertBeatGenAllowed(req.userId, requestedSec, {
         projectId: req.projectId,
       });
-  // Section / AI beat edits: Creator & Pro only
+  // Section / AI beat edits: Artist & Band only
   if (req.editSection && String(req.editSection).trim()) {
     const paid = await isPaidBeatSubscriber(req.userId);
     if (!paid) {
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
-        "AI beat editing is included on Creator and Pro. Keep the beat you generated, or subscribe to rework sections.",
+        "AI beat editing is included on Artist, Band, and Record Label. Keep the beat you generated, or subscribe to rework sections.",
         {
           details: {
             code: "BEAT_EDIT_PAID_ONLY",

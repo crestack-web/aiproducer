@@ -214,13 +214,13 @@ export default function AdminDashboardPage() {
               <StatCard label="New (30d)" value={metrics.users.last30d} colors={palette} />
               <StatCard label="Onboarded" value={metrics.users.onboarded} colors={palette} />
               <StatCard
-                label="Creator"
+                label="Artist"
                 value={metrics.users.paidPlans.creator}
                 sub="Active plan flag on profile"
                 colors={palette}
               />
               <StatCard
-                label="Pro"
+                label="Band"
                 value={metrics.users.paidPlans.pro}
                 sub="Active plan flag on profile"
                 colors={palette}
