@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "@/lib/theme";
+import { ArtistAvatar } from "@/components/artist-avatar";
 
 
 export function IconPlay({ size = 18, color = "currentColor" }: { size?: number; color?: string }) {
@@ -993,20 +994,13 @@ export function LibraryMiniPlayer({
               background: C.bgDeep || "#111",
             }}
           >
-            <div
-              style={{
-                width: "100%",
-                height: "100%",
-                background: `linear-gradient(145deg, ${C.brass}55, #2a1a0a 60%, #0d0d0d)`,
-                display: "grid",
-                placeItems: "center",
-                color: C.brass,
-                fontSize: 16,
-                fontWeight: 700,
-              }}
-            >
-              {(title || "S").slice(0, 1).toUpperCase()}
-            </div>
+            <ArtistAvatar
+              seed={seed || title || "now-playing"}
+              size={44}
+              shape="rounded"
+              animated={isPlaying}
+              style={{ borderRadius: 10, boxShadow: "none" }}
+            />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
@@ -1132,8 +1126,6 @@ export function LibraryFullPlayer({
   if (typeof document === "undefined") return null;
   const dur = duration > 0 ? duration : 0;
   const pct = dur > 0 ? Math.min(100, (currentTime / dur) * 100) : 0;
-  const letter = (title || "S").slice(0, 1).toUpperCase();
-
   return createPortal(
     <div
       role="dialog"
@@ -1154,21 +1146,26 @@ export function LibraryFullPlayer({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <button
           type="button"
-          aria-label="Close full player"
+          aria-label="Close"
           onClick={onClose}
           style={{
             width: 40,
             height: 40,
             borderRadius: 999,
             border: `1px solid ${C.border}`,
-            background: "transparent",
-            color: C.textMuted,
-            fontSize: 18,
+            background: C.surface || "rgba(0,0,0,0.04)",
+            color: C.text,
+            fontSize: 22,
+            fontWeight: 500,
+            lineHeight: 1,
             cursor: "pointer",
             fontFamily: "inherit",
+            display: "grid",
+            placeItems: "center",
+            padding: 0,
           }}
         >
-          ˅
+          ×
         </button>
         <span
           style={{
@@ -1202,23 +1199,24 @@ export function LibraryFullPlayer({
             aspectRatio: "1",
             borderRadius: 24,
             overflow: "hidden",
-            boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
-            background: `linear-gradient(145deg, ${C.brass}66, #3a2410 45%, #0a0a0a)`,
+            boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
             display: "grid",
             placeItems: "center",
+            background: C.surface || "#111",
           }}
         >
-          <span
+          <ArtistAvatar
+            seed={seed || title || "now-playing"}
+            size={320}
+            shape="rounded"
+            animated={isPlaying}
             style={{
-              fontFamily: "Georgia, serif",
-              fontSize: 72,
-              fontWeight: 600,
-              color: C.brass,
-              opacity: 0.9,
+              width: "100%",
+              height: "100%",
+              borderRadius: 24,
+              boxShadow: "none",
             }}
-          >
-            {letter}
-          </span>
+          />
         </div>
 
         <div style={{ width: "100%", maxWidth: 360, textAlign: "left" }}>

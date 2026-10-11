@@ -41,11 +41,16 @@ export function ArtistAvatar({
   size = 88,
   className,
   style,
+  animated = false,
+  shape = "circle",
 }: {
   seed: string;
   size?: number;
   className?: string;
   style?: React.CSSProperties;
+  /** Gentle motion for now-playing / hero surfaces */
+  animated?: boolean;
+  shape?: "circle" | "rounded";
 }) {
   const normalized = (seed || "artist").trim().toLowerCase() || "artist";
   const art = useMemo(() => {
@@ -95,13 +100,16 @@ export function ArtistAvatar({
     return { deep, warm, cool, glow, uid, blobs, waves, dots };
   }, [normalized]);
 
+  const radius = shape === "rounded" ? Math.max(16, Math.round(size * 0.18)) : "50%";
+  const animClass = animated ? "ap-avatar-live" : undefined;
+
   return (
     <div
-      className={className}
+      className={[className, animClass].filter(Boolean).join(" ") || undefined}
       style={{
         width: size,
         height: size,
-        borderRadius: "50%",
+        borderRadius: radius,
         overflow: "hidden",
         flexShrink: 0,
         position: "relative",
@@ -110,6 +118,26 @@ export function ArtistAvatar({
       }}
       aria-hidden
     >
+      {animated && (
+        <style>{`
+          @keyframes ap-avatar-spin {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(6deg) scale(1.04); }
+            100% { transform: rotate(0deg) scale(1); }
+          }
+          @keyframes ap-avatar-pulse {
+            0%, 100% { opacity: 0.85; }
+            50% { opacity: 1; }
+          }
+          .ap-avatar-live svg {
+            animation: ap-avatar-spin 12s ease-in-out infinite;
+            transform-origin: 50% 50%;
+          }
+          .ap-avatar-live svg .ap-avatar-glow {
+            animation: ap-avatar-pulse 3.5s ease-in-out infinite;
+          }
+        `}</style>
+      )}
       <svg width={size} height={size} viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">
         <defs>
           <radialGradient id={`${art.uid}-bg`} cx="35%" cy="30%" r="75%">
@@ -130,7 +158,7 @@ export function ArtistAvatar({
         </defs>
         <g clipPath={`url(#${art.uid}-clip)`}>
           <rect width="100" height="100" fill={`url(#${art.uid}-bg)`} />
-          <rect width="100" height="100" fill={`url(#${art.uid}-glow)`} />
+          <rect className="ap-avatar-glow" width="100" height="100" fill={`url(#${art.uid}-glow)`} />
           {art.blobs.map((b, i) => (
             <ellipse
               key={i}
