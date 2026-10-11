@@ -218,7 +218,8 @@ function AppInner() {
         email: user.email,
         metadata: meta,
       });
-      setUserPlan(planDisplayName(resolved));
+      const planLabel = planDisplayName(resolved);
+      setUserPlan(planLabel);
       setEditName(name);
       setEditGenre(genre || "");
       const res = await fetch("/api/projects");
