@@ -2,6 +2,22 @@
 
 import React, { useMemo } from "react";
 
+
+/** Stable, case-insensitive seed for a user identity across routes. */
+export function stableAvatarSeed(parts: {
+  userId?: string | null;
+  email?: string | null;
+  name?: string | null;
+}): string {
+  const id = (parts.userId || "").trim();
+  if (id) return `uid:${id.toLowerCase()}`;
+  const email = (parts.email || "").trim().toLowerCase();
+  if (email) return `email:${email}`;
+  const name = (parts.name || "").trim().toLowerCase();
+  if (name && name !== "artist") return `name:${name}`;
+  return "artist";
+}
+
 /** Deterministic 0–1 PRNG from string seed */
 function seededRandom(seed: string) {
   let s = 0;
@@ -31,8 +47,9 @@ export function ArtistAvatar({
   className?: string;
   style?: React.CSSProperties;
 }) {
+  const normalized = (seed || "artist").trim().toLowerCase() || "artist";
   const art = useMemo(() => {
-    const rnd = seededRandom(seed || "artist");
+    const rnd = seededRandom(normalized);
     const baseHue = rnd() * 360;
     // Palette: deep base + warm accent + cool accent (Suno-adjacent but original)
     const deep = hsl(baseHue, 55 + rnd() * 25, 12 + rnd() * 10);
@@ -40,7 +57,7 @@ export function ArtistAvatar({
     const cool = hsl((baseHue + 180 + rnd() * 50) % 360, 60 + rnd() * 30, 42 + rnd() * 20);
     const glow = hsl((baseHue + 40) % 360, 80, 60, 0.55);
     const uid = `av-${Math.abs(
-      Array.from(seed || "x").reduce((a, c) => a * 31 + c.charCodeAt(0), 7)
+      Array.from(normalized).reduce((a, c) => a * 31 + c.charCodeAt(0), 7)
     ).toString(36)}`;
 
     // Organic blobs
@@ -76,7 +93,7 @@ export function ArtistAvatar({
     }));
 
     return { deep, warm, cool, glow, uid, blobs, waves, dots };
-  }, [seed]);
+  }, [normalized]);
 
   return (
     <div

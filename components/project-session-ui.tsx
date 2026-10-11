@@ -63,6 +63,7 @@ import {
   type SessionTimeline,
 } from "@/lib/audio/session-timeline";
 import { AppShell } from "@/components/app-shell";
+import { stableAvatarSeed } from "@/components/artist-avatar";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import {
   SessionSteps,
@@ -347,6 +348,33 @@ export default function ProjectDetailPage() {
   const id = useParams().id as string;
   const router = useRouter();
   const { colors: C } = useTheme();
+  const [boothUserName, setBoothUserName] = useState("Artist");
+  const [boothUserEmail, setBoothUserEmail] = useState<string | null>(null);
+  const [boothUserId, setBoothUserId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || cancelled) return;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (cancelled) return;
+        setBoothUserId(user.id);
+        setBoothUserEmail(user.email || null);
+        setBoothUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [beatUrl, setBeatUrl] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -2927,7 +2955,7 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <AppShell active="studio" userName="Artist">
+    <AppShell active="studio" userName={boothUserName} userSeed={stableAvatarSeed({ userId: boothUserId, email: boothUserEmail, name: boothUserName })}>
       <div style={{ minHeight: "100%", width: "100%" }}>
         {beatUrl && <audio ref={beatAudioRef} src={beatUrl} preload="auto" style={{ display: "none" }} />}
 

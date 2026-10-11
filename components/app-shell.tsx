@@ -116,7 +116,7 @@ export function AppShell({
   userSeed?: string;
   onSignOut?: () => void;
 }) {
-  const avatarSeed = userSeed || userName || "artist";
+  const avatarSeed = (userSeed || userName || "artist").trim().toLowerCase() || "artist";
   const pathname = usePathname();
   const router = useRouter();
   const { colors: C, mode } = useTheme();

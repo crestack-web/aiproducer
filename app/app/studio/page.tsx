@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState, type CSSProperties } from "react
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
+import { stableAvatarSeed } from "@/components/artist-avatar";
 import {
   useBeatAudio,
   BeatPreviewTransport,
@@ -154,6 +155,8 @@ function StudioPageInner() {
   const startInConsole = searchParams.get("mode") === "console";
   const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -265,6 +268,8 @@ function StudioPageInner() {
         .eq("id", user.id)
         .maybeSingle();
       setUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
+      setUserEmail(user.email || null);
+      setUserId(user.id);
       if (profile?.genre) setGenre(profile.genre);
       const res = await fetch("/api/projects");
       if (res.ok) {
@@ -839,7 +844,7 @@ function StudioPageInner() {
   });
 
   return (
-    <AppShell active="studio" userName={userName} userSeed={userName} onSignOut={signOut}>
+    <AppShell active="studio" userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
       <div
         style={{
           width: "100%",

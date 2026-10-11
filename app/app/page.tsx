@@ -23,7 +23,7 @@ import { useTheme } from "@/lib/theme";
 import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
-import { ArtistAvatar, IconSettingsCog } from "@/components/artist-avatar";
+import { ArtistAvatar, IconSettingsCog, stableAvatarSeed } from "@/components/artist-avatar";
 import { FeatureBanner } from "@/components/feature-banner";
 
 type MasterVersion = {
@@ -55,6 +55,7 @@ function AppInner() {
   const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [userGenre, setUserGenre] = useState<string | null>(null);
   const [userPlan, setUserPlan] = useState<string | null>(null);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
@@ -165,6 +166,7 @@ function AppInner() {
         "Artist";
       setUserName(name);
       setUserEmail(user.email || null);
+      setUserId(user.id);
       setUserGenre(((profile as { genre?: string | null } | null)?.genre as string) || null);
       const meta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
         {}) as Record<string, unknown>;
@@ -638,7 +640,7 @@ function AppInner() {
   const activeNav = tab === "library" ? "library" : tab === "profile" ? "profile" : "home";
 
   return (
-    <AppShell active={activeNav} userName={userName} userSeed={userEmail || userName} onSignOut={signOut}>
+    <AppShell active={activeNav} userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
 <div
         className="dash-content"
         style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
@@ -666,7 +668,7 @@ function AppInner() {
                 <>Welcome back</>
               )}
             </h1>
-            <FeatureBanner seed={userEmail || userName || "ap-home"} variant="home" />
+            <FeatureBanner seed="ap-home-banner" variant="home" />
 
             
 
@@ -710,7 +712,7 @@ function AppInner() {
         {tab === "library" && (
           <>
             {!librarySearchOpen && (
-              <FeatureBanner seed={userEmail || userName || "ap-library"} variant="library" />
+              <FeatureBanner seed="ap-library-banner" variant="library" />
             )}
             {librarySearchOpen ? (
               <div
@@ -1475,7 +1477,7 @@ function AppInner() {
                   <div style={{ textAlign: "center", marginBottom: 20 }}>
                     <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
                       <ArtistAvatar
-                        seed={userEmail || userName || "artist"}
+                        seed={stableAvatarSeed({ userId, email: userEmail, name: userName })}
                         size={96}
                       />
                     </div>
