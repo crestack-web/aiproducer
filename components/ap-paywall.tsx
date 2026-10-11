@@ -16,6 +16,11 @@ type Props = {
   /** Called after successful unlock / checkout redirect handled */
   onUnlocked?: () => void;
   projectId?: string | null;
+  /**
+   * When false, hide the one-time “This song” session card (profile / plan upgrade).
+   * When true (default), show it for song-download unlock flows.
+   */
+  showSessionUnlock?: boolean;
   colors: {
     text: string;
     textMuted: string;
@@ -32,14 +37,17 @@ export function ApPaywall({
   songTitle,
   onUnlocked,
   projectId: projectIdProp,
+  showSessionUnlock = true,
   colors: C,
 }: Props) {
   const [interval, setInterval] = useState<BillingInterval>("year");
-  const [selected, setSelected] = useState<PlanId>("session");
+  const [selected, setSelected] = useState<PlanId>(showSessionUnlock ? "session" : "creator");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
+
+  const plans = showSessionUnlock ? PLANS : PLANS.filter((plan) => plan.id !== "session");
 
   async function ensureProjectId(): Promise<string> {
     if (projectIdProp) return projectIdProp;
@@ -166,9 +174,11 @@ export function ApPaywall({
           Do more with AP
         </h2>
         <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, margin: "0 0 16px" }}>
-          {songTitle
-            ? `You heard it — unlock “${songTitle}” to download.`
-            : "You heard the master — unlock download or go unlimited."}
+          {showSessionUnlock
+            ? songTitle
+              ? `You heard it — unlock “${songTitle}” to download.`
+              : "You heard the master — unlock download or go unlimited."
+            : "Pick a plan for more songs, longer AP beats, and downloads."}
         </p>
 
         {/* Monthly / Annual toggle — subscriptions only */}
@@ -225,7 +235,7 @@ export function ApPaywall({
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {PLANS.map((plan) => {
+          {plans.map((plan) => {
             const price = planPriceLabel(plan, interval);
             const active = selected === plan.id;
             return (
@@ -315,11 +325,13 @@ export function ApPaywall({
             ? "Working…"
             : selected === "session"
               ? "Unlock this song"
-              : "Continue"}
+              : "Continue to checkout"}
         </button>
 
         <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, marginTop: 12 }}>
-          Preview stays free. Download unlocks after purchase.
+          {showSessionUnlock
+            ? "Preview stays free. Download unlocks after purchase."
+            : "Cancel anytime on subscription plans. Checkout is secure."}
         </p>
       </div>
     </div>,

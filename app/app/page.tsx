@@ -1948,7 +1948,7 @@ function AppInner() {
             <ApPaywall
         open={subscribeOpen}
         onClose={() => setSubscribeOpen(false)}
-        songTitle="AP Studio plan"
+        showSessionUnlock={false}
         colors={{
           text: C.text,
           textMuted: C.textMuted,
