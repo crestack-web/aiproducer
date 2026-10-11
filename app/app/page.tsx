@@ -49,6 +49,20 @@ type Project = {
 };
 type Tab = "home" | "library" | "profile";
 
+/** Short-lived client cache so bottom-nav remounts (Studio ↔ Home) feel instant. */
+const APP_CACHE_TTL_MS = 90_000;
+type AppListCache = {
+  at: number;
+  projects: Project[];
+  userName: string;
+  userEmail: string | null;
+  userId: string | null;
+  userGenre: string | null;
+  userPlan: string;
+  isAdmin?: boolean;
+};
+let appListCache: AppListCache | null = null;
+
 function AppInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -136,6 +150,19 @@ function AppInner() {
     }
   }, [searchParams, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Instant tab switches from bottom nav (no wait for router)
+  useEffect(() => {
+    function onShellTab(e: Event) {
+      const tabKey = (e as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (tabKey === "library" || tabKey === "profile" || tabKey === "home") {
+        setTab(tabKey);
+        if (tabKey !== "profile") setProfileSubView("main");
+      }
+    }
+    window.addEventListener("ap-shell-tab", onShellTab);
+    return () => window.removeEventListener("ap-shell-tab", onShellTab);
+  }, []);
+
   useEffect(() => {
     if (tab !== "library") {
       setFullPlayerOpen(false);
@@ -146,7 +173,21 @@ function AppInner() {
   }, [tab, stop]);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      // Paint cached list immediately when returning from Studio / other routes
+      const cached = appListCache;
+      if (cached && Date.now() - cached.at < APP_CACHE_TTL_MS) {
+        setUserName(cached.userName);
+        setUserEmail(cached.userEmail);
+        setUserId(cached.userId);
+        setUserGenre(cached.userGenre);
+        setUserPlan(cached.userPlan);
+        setEditName(cached.userName);
+        setProjects(cached.projects);
+        setLoading(false);
+      }
+
       const supabase = createClient();
       const {
         data: { user },
@@ -160,6 +201,7 @@ function AppInner() {
         .select("display_name, genre, metadata")
         .eq("id", user.id)
         .maybeSingle();
+      if (cancelled) return;
       const name =
         (profile as { display_name?: string } | null)?.display_name ||
         user.email?.split("@")[0] ||
@@ -167,23 +209,40 @@ function AppInner() {
       setUserName(name);
       setUserEmail(user.email || null);
       setUserId(user.id);
-      setUserGenre(((profile as { genre?: string | null } | null)?.genre as string) || null);
+      const genre = ((profile as { genre?: string | null } | null)?.genre as string) || null;
+      setUserGenre(genre);
       const meta = ((profile as { metadata?: Record<string, unknown> } | null)?.metadata ||
         {}) as Record<string, unknown>;
       const plan =
         (typeof meta.subscription_plan === "string" && meta.subscription_plan) ||
         (typeof meta.plan === "string" && meta.plan) ||
         null;
-      setUserPlan(plan ? String(plan) : "Free");
+      const planLabel = plan ? String(plan) : "Free";
+      setUserPlan(planLabel);
       setEditName(name);
-      setEditGenre(((profile as { genre?: string | null } | null)?.genre as string) || "");
+      setEditGenre(genre || "");
       const res = await fetch("/api/projects");
+      if (cancelled) return;
+      let list: Project[] = cached?.projects || [];
       if (res.ok) {
         const json = await res.json();
-        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft"));
+        list = (json.projects || []).filter((p: Project) => p.status !== "draft");
+        setProjects(list);
       }
+      appListCache = {
+        at: Date.now(),
+        projects: list,
+        userName: name,
+        userEmail: user.email || null,
+        userId: user.id,
+        userGenre: genre,
+        userPlan: planLabel,
+      };
       setLoading(false);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   function isFinishedSong(p: Project) {
@@ -254,7 +313,11 @@ function AppInner() {
         throw new Error(j.error || "Could not delete");
       }
       stopIfPlaying(projectId);
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setProjects((prev) => {
+        const next = prev.filter((p) => p.id !== projectId);
+        if (appListCache) appListCache = { ...appListCache, at: Date.now(), projects: next };
+        return next;
+      });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -2137,6 +2200,7 @@ function AppInner() {
     </AppShell>
   );
 }
+
 
 export default function StudioAppPage() {
   return (

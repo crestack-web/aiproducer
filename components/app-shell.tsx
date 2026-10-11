@@ -154,10 +154,34 @@ export function AppShell({
     window.addEventListener("studio-tour-start", onStart);
     return () => window.removeEventListener("studio-tour-start", onStart);
   }, [tour.start]);
-  const search = typeof window !== "undefined" ? window.location.search : "";
-  const current = resolveActive(pathname, search, active);
+  const [softTab, setSoftTab] = useState<AppNavKey | null>(null);
   const [pendingNav, setPendingNav] = useState<AppNavKey | "booth" | "console" | null>(null);
+  // Prefer soft tab (instant bottom-nav) then URL
+  const search =
+    typeof window !== "undefined"
+      ? window.location.search
+      : "";
+  const current = softTab || resolveActive(pathname, search, active);
   const visual = pendingNav || current;
+
+  useEffect(() => {
+    function onShellTab(e: Event) {
+      const tabKey = (e as CustomEvent<{ tab?: AppNavKey }>).detail?.tab;
+      if (tabKey === "home" || tabKey === "library" || tabKey === "profile" || tabKey === "studio") {
+        setSoftTab(tabKey);
+        setPendingNav(null);
+      }
+    }
+    window.addEventListener("ap-shell-tab", onShellTab);
+    return () => window.removeEventListener("ap-shell-tab", onShellTab);
+  }, []);
+
+  // Clear soft tab when leaving /app shell routes
+  useEffect(() => {
+    if (!(pathname === "/app" || pathname === "/app/")) {
+      setSoftTab(null);
+    }
+  }, [pathname]);
 
   // Clear optimistic highlight when the URL catches up
   useEffect(() => {
@@ -201,17 +225,47 @@ export function AppShell({
 
   const go = useCallback(
     (key: AppNavKey, href: string) => {
-      // Already on target — no-op (avoids full remount churn)
+      const onAppShell =
+        pathname === "/app" || pathname === "/app/" || pathname?.startsWith("/app?");
+
+      // Already on target — no-op
       if (
-        (key === "home" && current === "home" && pathname === "/app") ||
-        (key === "library" && current === "library") ||
-        (key === "profile" && current === "profile") ||
+        (key === "home" && current === "home" && onAppShell) ||
+        (key === "library" && current === "library" && onAppShell) ||
+        (key === "profile" && current === "profile" && onAppShell) ||
         (key === "studio" && current === "studio" && pathname === "/app/studio")
       ) {
         return;
       }
 
       setPendingNav(key);
+
+      // Soft tab switch inside /app — no Next.js route work, instant UI
+      if (onAppShell && (key === "home" || key === "library" || key === "profile")) {
+        const url =
+          key === "home" ? "/app" : key === "library" ? "/app?tab=library" : "/app?tab=profile";
+        try {
+          window.history.replaceState(
+            { ...(window.history.state || {}), as: url, apTab: key },
+            "",
+            url
+          );
+        } catch {
+          /* ignore */
+        }
+        setSoftTab(key);
+        window.dispatchEvent(new CustomEvent("ap-shell-tab", { detail: { tab: key } }));
+        // Background URL sync — do not block UI
+        startTransition(() => {
+          try {
+            router.replace(url, { scroll: false });
+          } catch {
+            /* ignore */
+          }
+        });
+        return;
+      }
+
       const dest =
         key === "home"
           ? "/app"
@@ -223,13 +277,13 @@ export function AppShell({
                 ? "/app?tab=profile"
                 : href;
 
-      // Same /app shell: replace is cheaper than push for tab switches
-      const sameShell =
-        pathname === "/app" && (key === "home" || key === "library" || key === "profile");
-
+      try {
+        router.prefetch(dest);
+      } catch {
+        /* ignore */
+      }
       startTransition(() => {
-        if (sameShell) router.replace(dest);
-        else router.push(dest);
+        router.push(dest);
       });
     },
     [current, pathname, router]
