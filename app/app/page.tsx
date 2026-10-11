@@ -82,6 +82,8 @@ function AppInner() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("home");
   const [libraryTab, setLibraryTab] = useState<"songs" | "beats" | "recordings">("songs");
+  const [librarySearchOpen, setLibrarySearchOpen] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [downloadModal, setDownloadModal] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
@@ -185,6 +187,16 @@ function AppInner() {
     if (p.has_master) return true;
     const s = (p.status || "").toLowerCase();
     return s === "complete" || s === "completed" || s === "produced" || s === "done";
+  }
+
+  function matchesLibraryQuery(p: Project, extra = "") {
+    const q = libraryQuery.trim().toLowerCase();
+    if (!q) return true;
+    const hay = [p.title, p.genre, p.mood, p.status, p.beat_source, extra]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
   }
 
   async function signOut() {
@@ -790,10 +802,125 @@ function AppInner() {
 
         {tab === "library" && (
           <>
-            <p style={{ ...sub, marginTop: 0, marginBottom: 4 }}>
-              Songs, instrumentals, and takes in one place.
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16, marginBottom: 12 }}>
+            {librarySearchOpen ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "12px 14px",
+                    borderRadius: 999,
+                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2" strokeLinecap="round" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="M20 20l-3.5-3.5" />
+                  </svg>
+                  <input
+                    autoFocus
+                    value={libraryQuery}
+                    onChange={(e) => setLibraryQuery(e.target.value)}
+                    placeholder="Search your library"
+                    style={{
+                      flex: 1,
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      color: C.text,
+                      fontSize: 15,
+                      fontFamily: "inherit",
+                      minWidth: 0,
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLibrarySearchOpen(false);
+                    setLibraryQuery("");
+                  }}
+                  aria-label="Close search"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    color: C.text,
+                    cursor: "pointer",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                    fontSize: 18,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginBottom: 8,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 28,
+                      fontWeight: 750,
+                      color: C.text,
+                      letterSpacing: -0.4,
+                      lineHeight: 1.15,
+                    }}
+                  >
+                    Library
+                  </div>
+                  <p style={{ ...sub, marginTop: 4, marginBottom: 0 }}>
+                    Songs, instrumentals, and takes in one place.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLibrarySearchOpen(true)}
+                  aria-label="Search library"
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    color: C.text,
+                    cursor: "pointer",
+                    display: "grid",
+                    placeItems: "center",
+                    flexShrink: 0,
+                    padding: 0,
+                  }}
+                >
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="M20 20l-3.5-3.5" />
+                  </svg>
+                </button>
+              </div>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, marginBottom: 12 }}>
               {(
                 [
                   ["songs", "Songs"],
@@ -827,7 +954,12 @@ function AppInner() {
                   <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
                 )}
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
-                {!loading && projects.filter((p) => isFinishedSong(p)).length === 0 && (
+                {!loading && projects.filter((p) => isFinishedSong(p) && matchesLibraryQuery(p)).length === 0 && (
+                  libraryQuery.trim() ? (
+                    <p style={{ color: C.textMuted, fontSize: 14, textAlign: "center", padding: "24px 12px" }}>
+                      No songs match “{libraryQuery.trim()}”
+                    </p>
+                  ) : (
                   <EmptyState
                     scene="songs"
                     title="No finished songs yet"
@@ -838,9 +970,10 @@ function AppInner() {
                       </button>
                     }
                   />
+                  )
                 )}
                 {projects
-                  .filter((p) => isFinishedSong(p))
+                  .filter((p) => isFinishedSong(p) && matchesLibraryQuery(p))
                   .flatMap((p) => {
                     const masters =
                       p.masters && p.masters.length > 0
@@ -896,7 +1029,12 @@ function AppInner() {
             {libraryTab === "beats" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
-                {!loading && projects.filter((p) => p.has_beat).length === 0 && (
+                {!loading && projects.filter((p) => p.has_beat && matchesLibraryQuery(p)).length === 0 && (
+                  libraryQuery.trim() ? (
+                    <p style={{ color: C.textMuted, fontSize: 14, textAlign: "center", padding: "24px 12px" }}>
+                      No beats match “{libraryQuery.trim()}”
+                    </p>
+                  ) : (
                   <EmptyState
                     scene="beats"
                     title="No beats yet"
@@ -907,12 +1045,13 @@ function AppInner() {
                       </button>
                     }
                   />
+                  )
                 )}
                 {beatPlayError && (
                   <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
                 )}
                 {projects
-                  .filter((p) => p.has_beat)
+                  .filter((p) => p.has_beat && matchesLibraryQuery(p))
                   .map((p) => {
                     const isActive = activeId === p.id;
                     const isPlaying = isActive && audioIsPlaying;
@@ -1096,7 +1235,8 @@ function AppInner() {
                       !isFinishedSong(p) &&
                       ["recording", "in_progress", "blueprint_ready", "planned", "beat_ready"].includes(
                         p.status
-                      )
+                      ) &&
+                      matchesLibraryQuery(p)
                   ).length === 0 && (
                     <EmptyState
                       scene="recordings"
@@ -1115,7 +1255,8 @@ function AppInner() {
                       !isFinishedSong(p) &&
                       ["recording", "in_progress", "blueprint_ready", "planned", "beat_ready"].includes(
                         p.status
-                      )
+                      ) &&
+                      matchesLibraryQuery(p)
                   )
                   .map((p) => (
                     <ProjectRow key={p.id} p={p} meta={`Session · ${p.status}`} />
