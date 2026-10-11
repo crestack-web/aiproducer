@@ -49,6 +49,7 @@ import {
   isValidRegion,
   normalizeRegion,
   splitBufferAtMs,
+  peaksFromBuffer,
   detectOnsetMs,
   snapToBeatMs,
   type TakeRegion,
@@ -2260,6 +2261,8 @@ export function ProducerView({
       const { left, right } = splitBufferAtMs(ctx, full, localMs);
       const leftDur = bufferDurationMs(left);
       const rightDur = bufferDurationMs(right);
+      // Placement must follow actual buffer cut (may differ slightly from playhead due to min-region clamp)
+      const cutAtSongMs = target.startMs + leftDur;
 
       // Instant local clips via blob URLs — both halves visible immediately
       const leftBlob = encodeWavBlob(left);
@@ -2272,14 +2275,14 @@ export function ProducerView({
       const leftClip: ProducerClip = {
         id: `local-L-${Date.now()}`,
         startMs: target.startMs,
-        endMs: target.startMs + leftDur,
+        endMs: cutAtSongMs,
         audioUrl: leftLocalUrl,
         recordingId: null,
       };
       const rightClip: ProducerClip = {
-        id: `local-R-${Date.now()}`,
-        startMs: playheadMs,
-        endMs: playheadMs + rightDur,
+        id: `local-R-${Date.now() + 1}`,
+        startMs: cutAtSongMs,
+        endMs: cutAtSongMs + rightDur,
         audioUrl: rightLocalUrl,
         recordingId: null,
       };
@@ -2305,11 +2308,24 @@ export function ProducerView({
         })
       );
       setSelectedClipId(rightClip.id);
-      setDurationById((d) => ({
-        ...d,
-        [leftClip.id]: leftDur,
-        [rightClip.id]: rightDur,
-      }));
+      setDurationById((d) => {
+        const next = { ...d, [leftClip.id]: leftDur, [rightClip.id]: rightDur };
+        // Drop parent full-length duration so multi-clip geometry stays accurate
+        delete next[id];
+        return next;
+      });
+      // Immediate waveforms for both halves (don't wait on decode effect)
+      try {
+        const leftPeaks = peaksFromBuffer(left, Math.min(2048, Math.max(64, Math.floor((leftDur / 1000) * 40))));
+        const rightPeaks = peaksFromBuffer(right, Math.min(2048, Math.max(64, Math.floor((rightDur / 1000) * 40))));
+        setPeaksById((prev) => ({
+          ...prev,
+          [leftClip.id]: new Float32Array(leftPeaks),
+          [rightClip.id]: new Float32Array(rightPeaks),
+        }));
+      } catch {
+        /* decode effect will fill peaks */
+      }
       setEditMsg("Split — both clips on this track. Saving…");
       setTakeEditBusy(false);
 
@@ -2343,6 +2359,24 @@ export function ProducerView({
           };
           if (leftUp.audioUrl) bufferCache.set(leftUp.audioUrl, left);
           if (rightUp.audioUrl) bufferCache.set(rightUp.audioUrl, right);
+
+          // Remap peaks + durations from local blob ids → saved recording ids
+          setPeaksById((prev) => {
+            const next = { ...prev };
+            if (leftSaved.id !== leftClip.id && next[leftClip.id]) {
+              next[leftSaved.id] = next[leftClip.id];
+            }
+            if (rightSaved.id !== rightClip.id && next[rightClip.id]) {
+              next[rightSaved.id] = next[rightClip.id];
+            }
+            return next;
+          });
+          setDurationById((prev) => {
+            const next = { ...prev };
+            next[leftSaved.id] = leftDur;
+            next[rightSaved.id] = rightDur;
+            return next;
+          });
 
           const nextClips = [
             ...existing.filter((c) => c.id !== target.id),
@@ -2830,12 +2864,23 @@ export function ProducerView({
       url: beatUrl,
     });
     for (const l of layers) {
+      const multi = (l.clips && l.clips.length > 1) || false;
       const clips = clipsForLayer(l).map((c) => {
-        const decoded = durationById[c.id] ?? durationById[l.id];
-        const end =
-          typeof decoded === "number" && decoded > 0
-            ? c.startMs + decoded
-            : Math.max(c.endMs, c.startMs + 500);
+        // Per-clip duration only — never fall back to the parent layer's full-take
+        // length (that stretched both halves after a split and broke waveforms).
+        const decoded = durationById[c.id];
+        const span = Math.max(0, c.endMs - c.startMs);
+        let end: number;
+        if (typeof decoded === "number" && decoded > 0) {
+          // Prefer explicit placement span when present; only extend if decoded is close
+          if (multi && span > 200) {
+            end = c.endMs;
+          } else {
+            end = c.startMs + decoded;
+          }
+        } else {
+          end = Math.max(c.endMs, c.startMs + 500);
+        }
         return { ...c, endMs: end };
       });
       const spanStart = Math.min(...clips.map((c) => c.startMs));
@@ -2910,7 +2955,7 @@ export function ProducerView({
         }
       }
       if (!cancelled) {
-        setPeaksById(next);
+        setPeaksById((prev) => ({ ...prev, ...next }));
         setDurationById((prev) => ({ ...prev, ...durs }));
         setDecodeStatus("");
       }
@@ -2919,17 +2964,32 @@ export function ProducerView({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tracks.map((t) => t.url).join("|"), getCtx]);
+  }, [
+    tracks
+      .map((t) => {
+        if (t.clips && t.clips.length > 0) {
+          return t.clips.map((c) => `${c.id}:${c.audioUrl || ""}`).join(",");
+        }
+        return `${t.id}:${t.url || ""}`;
+      })
+      .join("|"),
+    getCtx,
+  ]);
 
   // Re-bucket peaks when zoom changes (from cache, no re-decode)
   useEffect(() => {
     setPeaksById((prev) => {
       const next: Record<string, Float32Array | null> = { ...prev };
       for (const tr of tracks) {
-        if (!tr.url) continue;
-        const hi = peakCache.get(`${tr.url}::2048`);
-        if (hi) {
-          next[tr.id] = peaksForUrl(tr.url, bufferCache.get(tr.url)!, peakBuckets);
+        const parts =
+          tr.clips && tr.clips.length > 0
+            ? tr.clips.map((c) => ({ id: c.id, url: c.audioUrl || null }))
+            : [{ id: tr.id, url: tr.url || null }];
+        for (const part of parts) {
+          if (!part.url) continue;
+          const buf = bufferCache.get(part.url);
+          if (!buf) continue;
+          next[part.id] = peaksForUrl(part.url, buf, peakBuckets);
         }
       }
       return next;
