@@ -123,7 +123,7 @@ export default function WelcomePage() {
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
               <div className="cost-total">From $4.99<span> / song</span></div>
-              <div className="cost-sub">Session: $4.99/song · Artist: ~$1.90 · Band: ~$1.63 · Label: ~$1.24</div>
+              <div className="cost-sub">Session: $4.99/song · Artist: ~$2.50 · Band: ~$2.36 · Label: ~$2.58</div>
               <ul className="cost-list">
                 <li>AI beat + structure plan <em>included</em></li>
                 <li>Guided recording (unlimited takes*) <em>included</em></li>
@@ -168,10 +168,10 @@ export default function WelcomePage() {
             <div className="price-card featured">
               <div className="price-badge">Popular</div>
               <div className="price-name">Artist</div>
-              <div className="price-amount">$19 <span>/ month</span></div>
+              <div className="price-amount">$25 <span>/ month</span></div>
               <p className="price-desc">For artists shipping singles regularly with real mastering cost covered.</p>
               <ul className="price-list">
-                <li>10 finished songs / month</li>
+                <li>10 finished songs / month · ~$2.50/song</li>
                 <li>Everything in Session</li>
                 <li>Professional mix & master</li>
                 <li>WAV + MP3 export</li>
@@ -182,10 +182,10 @@ export default function WelcomePage() {
             </div>
             <div className="price-card">
               <div className="price-name">Band</div>
-              <div className="price-amount">$49 <span>/ month</span></div>
+              <div className="price-amount">$59 <span>/ month</span></div>
               <p className="price-desc">Higher volume for groups, EPs, and faster turnaround.</p>
               <ul className="price-list">
-                <li>30 finished songs / month</li>
+                <li>25 finished songs / month · ~$2.36/song</li>
                 <li>Everything in Artist</li>
                 <li>Priority mastering queue</li>
                 <li>Stem export (when available)</li>
@@ -196,10 +196,10 @@ export default function WelcomePage() {
             </div>
             <div className="price-card">
               <div className="price-name">Record Label</div>
-              <div className="price-amount">$99 <span>/ month</span></div>
+              <div className="price-amount">$129 <span>/ month</span></div>
               <p className="price-desc">Studio scale for labels and high-volume catalogs.</p>
               <ul className="price-list">
-                <li>80 finished songs / month</li>
+                <li>50 finished songs / month · ~$2.58/song</li>
                 <li>Everything in Band</li>
                 <li>Priority mastering queue</li>
                 <li>Stem export (when available)</li>
