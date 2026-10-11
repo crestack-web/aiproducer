@@ -24,6 +24,7 @@ import { CoverArt } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { ArtistAvatar, IconSettingsCog } from "@/components/artist-avatar";
+import { FeatureBanner } from "@/components/feature-banner";
 
 type MasterVersion = {
   job_id: string;
@@ -655,20 +656,17 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <h1 style={h1}>
+            <FeatureBanner seed={userEmail || userName || "ap-home"} variant="home" />
+            <h1 style={{ ...h1, fontSize: "clamp(1.35rem, 4vw, 1.65rem)", marginTop: 4, marginBottom: 8 }}>
               {userName && userName !== "Artist" ? (
                 <>
-                  Welcome back,
-                  <br />
+                  Welcome back,{" "}
                   <span style={{ fontStyle: "italic", fontWeight: 400 }}>{userName}</span>
                 </>
               ) : (
                 <>Welcome back</>
               )}
             </h1>
-            <p style={sub}>
-              Start a session in Booth for guided recording, or open Console for the full timeline — same projects either way.
-            </p>
 
                         <div
               style={{
@@ -874,27 +872,11 @@ function AppInner() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  marginBottom: 8,
+                  justifyContent: "flex-end",
+                  gap: 8,
+                  marginBottom: 10,
                 }}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 28,
-                      fontWeight: 750,
-                      color: C.text,
-                      letterSpacing: -0.4,
-                      lineHeight: 1.15,
-                    }}
-                  >
-                    Library
-                  </div>
-                  <p style={{ ...sub, marginTop: 4, marginBottom: 0 }}>
-                    Songs, instrumentals, and takes in one place.
-                  </p>
-                </div>
                 <button
                   type="button"
                   onClick={() => setLibrarySearchOpen(true)}
@@ -920,7 +902,10 @@ function AppInner() {
                 </button>
               </div>
             )}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, marginBottom: 12 }}>
+            {!librarySearchOpen && (
+              <FeatureBanner seed={userEmail || userName || "ap-library"} variant="library" />
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 12 }}>
               {(
                 [
                   ["songs", "Songs"],
