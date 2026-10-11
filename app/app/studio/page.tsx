@@ -269,7 +269,7 @@ function StudioPageInner() {
       const res = await fetch("/api/projects");
       if (res.ok) {
         const json = await res.json();
-        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft" && p.status !== "failed"));
+        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft" && (p.status !== "failed" || p.has_beat)));
       }
       setLoading(false);
     })();
@@ -623,7 +623,14 @@ function StudioPageInner() {
           );
         }
 
-        await waitForBeatReady(project.id, beatJson as { status?: string; beat?: { audio_path?: string } | null });
+        const waitResult = await waitForBeatReady(
+          project.id,
+          beatJson as { status?: string; beat?: { audio_path?: string } | null }
+        );
+        if (!waitResult.ok && waitResult.reason === "failed") {
+          throw new Error("Beat generation failed. Try again.");
+        }
+        // timeout: keep the project — beat may still finish; show it in Your beats
       }
 
       // AI beats: build section plan in background. Uploaded beats never auto-plan —
@@ -675,7 +682,31 @@ function StudioPageInner() {
       // Auto-load preview in player
       void togglePlayBeat(project.id);
     } catch (e) {
-      if (projectId) await discardFailedProject(projectId);
+      // Never delete a project that already has a beat (poll timeout / UI error after success)
+      if (projectId) {
+        let keep = false;
+        try {
+          const res = await fetch("/api/projects");
+          if (res.ok) {
+            const json = await res.json();
+            const row = (json.projects || []).find((x: Project) => x.id === projectId);
+            if (row?.has_beat || (row?.status && row.status !== "draft" && row.status !== "failed")) {
+              keep = true;
+              setReadyBeat({
+                projectId,
+                title: `${mood} ${genre}`,
+                source: beatMode === "upload" ? "upload" : "ai",
+                genre,
+                mood,
+              });
+              setProjects((json.projects || []).filter((x: Project) => x.status !== "draft" && (x.status !== "failed" || x.has_beat)));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        if (!keep) await discardFailedProject(projectId);
+      }
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setCreating(false);
@@ -689,7 +720,18 @@ function StudioPageInner() {
 
 
   const beats = projects.filter(
-    (p) => p.has_beat || ["beat_ready", "analyzing", "blueprint_ready", "recording", "generating_beat"].includes(p.status)
+    (p) =>
+      p.has_beat ||
+      [
+        "beat_ready",
+        "analyzing",
+        "blueprint_ready",
+        "recording",
+        "generating_beat",
+        "processing",
+        "complete",
+        "completed",
+      ].includes(p.status)
   );
 
   async function downloadBeat(projectId: string, title: string) {
