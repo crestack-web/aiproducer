@@ -668,33 +668,7 @@ function AppInner() {
             </h1>
             <FeatureBanner seed={userEmail || userName || "ap-home"} variant="home" />
 
-            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
-                onClick={() => router.push("/app/try-it")}
-                title="Preview a song in a temporary clone of your voice — not the full Record flow"
-              >
-                Try It
-              </button>
-              <button
-                type="button"
-                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
-                onClick={() => {
-                  setTab("library");
-                  router.replace("/app?tab=library");
-                }}
-              >
-                Library
-              </button>
-              <button
-                type="button"
-                style={{ ...secondary, padding: "10px 14px", fontSize: 13.5 }}
-                onClick={() => window.dispatchEvent(new Event("studio-tour-start"))}
-              >
-                How it works
-              </button>
-            </div>
+            
 
             <div
               style={{
