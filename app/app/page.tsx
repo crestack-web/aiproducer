@@ -656,8 +656,7 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <FeatureBanner seed={userEmail || userName || "ap-home"} variant="home" />
-            <h1 style={{ ...h1, fontSize: "clamp(1.35rem, 4vw, 1.65rem)", marginTop: 4, marginBottom: 8 }}>
+            <h1 style={{ ...h1, fontSize: "clamp(1.45rem, 4.5vw, 1.85rem)", marginTop: 0, marginBottom: 14 }}>
               {userName && userName !== "Artist" ? (
                 <>
                   Welcome back,{" "}
@@ -667,71 +666,7 @@ function AppInner() {
                 <>Welcome back</>
               )}
             </h1>
-
-                        <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: 14,
-                marginTop: 28,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => router.push("/app/studio")}
-                style={{
-                  ...primary,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  padding: "20px 20px",
-                  textAlign: "left",
-                  minHeight: 120,
-                  borderRadius: 16,
-                  boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
-                }}
-              >
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", opacity: 0.9 }}>
-                  BOOTH
-                </span>
-                <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.01em" }}>
-                  New session
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.88, lineHeight: 1.4 }}>
-                  Guided plan + record — easiest path for vocals
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push("/app/studio?mode=console")}
-                style={{
-                  ...secondary,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  padding: "20px 20px",
-                  textAlign: "left",
-                  minHeight: 120,
-                  borderRadius: 16,
-                  borderWidth: 1.5,
-                  borderColor: C.brass || C.brassLine || C.border,
-                  background: C.surface || "rgba(255,255,255,0.03)",
-                  boxShadow: "0 4px 20px rgba(0,0,0,0.12)",
-                }}
-              >
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: C.brass }}>
-                  CONSOLE
-                </span>
-                <span style={{ fontSize: 18, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>
-                  Open Console
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 500, color: C.textMuted, lineHeight: 1.4 }}>
-                  Timeline, layers, and produce from one view
-                </span>
-              </button>
-            </div>
+            <FeatureBanner seed={userEmail || userName || "ap-home"} variant="home" />
 
             <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
