@@ -100,11 +100,31 @@ export function ApPaywall({
 
   const accent = C.accent || "#c17a12";
   const sheetBg = C.bg && !String(C.bg).includes("rgba") ? C.bg : "#121214";
-  const cardBg = String(sheetBg).toLowerCase().includes("f7") || String(sheetBg).startsWith("#f") || String(sheetBg).startsWith("#e")
-    ? "#ffffff"
-    : "#1c1c20";
-  const toggleBg = cardBg;
-
+  const sheetLower = String(sheetBg).toLowerCase();
+  const isLight =
+    sheetLower.includes("f7") ||
+    sheetLower.startsWith("#f") ||
+    sheetLower.startsWith("#e") ||
+    sheetLower.startsWith("#fff") ||
+    sheetLower.includes("255, 255, 255") ||
+    (C.text || "").toLowerCase().startsWith("#1") ||
+    (C.text || "").toLowerCase().startsWith("#0");
+  // Prefer explicit text darkness: dark text ≈ light UI
+  const textIsDark =
+    (C.text || "").startsWith("#1") ||
+    (C.text || "").startsWith("#0") ||
+    (C.text || "").startsWith("#2") ||
+    (C.text || "").toLowerCase().startsWith("rgb(0") ||
+    (C.text || "").toLowerCase().startsWith("rgb(1");
+  const lightMode = isLight || textIsDark;
+  const cardBg = lightMode ? "#ffffff" : "#1c1c20";
+  const toggleTrack = lightMode ? "#ebe7e0" : "#2a2a30";
+  const toggleActiveBg = lightMode ? "#ffffff" : "#3a3a42";
+  const toggleActiveColor = lightMode ? "#14120f" : "#f5f2eb";
+  const toggleIdleColor = lightMode ? "#5c564c" : (C.textMuted || "#9a9590");
+  const closeBtnBg = lightMode ? "#f3efe8" : cardBg;
+  const closeBtnBorder = lightMode ? "#d4cdc2" : C.border;
+  const closeBtnColor = lightMode ? "#14120f" : C.text;
 
   if (typeof document === "undefined") return null;
 
@@ -150,11 +170,15 @@ export function ApPaywall({
               width: 36,
               height: 36,
               borderRadius: 999,
-              border: `1px solid ${C.border}`,
-              background: cardBg,
-              color: C.text,
+              border: `1px solid ${closeBtnBorder}`,
+              background: closeBtnBg,
+              color: closeBtnColor,
               cursor: "pointer",
-              fontSize: 18,
+              fontSize: 20,
+              fontWeight: 600,
+              lineHeight: 1,
+              display: "grid",
+              placeItems: "center",
             }}
           >
             ×
@@ -186,10 +210,10 @@ export function ApPaywall({
           style={{
             display: "flex",
             position: "relative",
-            background: toggleBg,
+            background: toggleTrack,
             borderRadius: 999,
             padding: 4,
-            border: `1px solid ${C.border}`,
+            border: `1px solid ${lightMode ? "#d4cdc2" : C.border}`,
             marginBottom: 16,
           }}
         >
@@ -206,9 +230,13 @@ export function ApPaywall({
                 cursor: "pointer",
                 fontWeight: 600,
                 fontSize: 14,
-                background: interval === iv ? "#2a2a30" : "transparent",
-                color: interval === iv ? C.text : C.textMuted,
-                boxShadow: interval === iv ? `0 0 0 1px ${C.border}` : "none",
+                background: interval === iv ? toggleActiveBg : "transparent",
+                color: interval === iv ? toggleActiveColor : toggleIdleColor,
+                boxShadow: interval === iv
+                  ? lightMode
+                    ? "0 1px 3px rgba(0,0,0,0.12), 0 0 0 1px #d4cdc2"
+                    : `0 0 0 1px ${C.border}`
+                  : "none",
               }}
             >
               {iv === "month" ? "Monthly" : "Annual"}
