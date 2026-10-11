@@ -8,6 +8,10 @@ import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import { generateStack, type StackMode } from "@/lib/ap-engine/fullness";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
 
+/** Long vocals + multi-voice DSP need more than the default serverless window. */
+export const maxDuration = 300;
+export const runtime = "nodejs";
+
 type Ctx = { params: Promise<{ id: string }> };
 
 const BodySchema = z.object({
@@ -513,6 +517,7 @@ export async function POST(req: Request, ctx: Ctx) {
   };
 
   async function insertTask(base: Record<string, unknown>): Promise<{ id: string } | null> {
+    const statusVal = (base.status as string) || "completed";
     const attempts: Record<string, unknown>[] = [
       base,
       {
@@ -520,8 +525,10 @@ export async function POST(req: Request, ctx: Ctx) {
         type: base.type,
         title: base.title,
         instruction: base.instruction,
-        status: "pending",
+        status: statusVal,
         required: false,
+        selected_in_plan: true,
+        active: true,
         start_ms: base.start_ms,
         end_ms: base.end_ms,
         metadata: base.metadata,
@@ -530,7 +537,7 @@ export async function POST(req: Request, ctx: Ctx) {
         project_id: base.project_id,
         type: base.type,
         instruction: base.instruction || "",
-        status: "pending",
+        status: statusVal,
         required: false,
         start_ms: base.start_ms,
         end_ms: base.end_ms,
@@ -539,7 +546,7 @@ export async function POST(req: Request, ctx: Ctx) {
         project_id: base.project_id,
         type: base.type,
         instruction: String(base.instruction || "AP choir layer"),
-        status: "pending",
+        status: statusVal,
       },
     ];
     for (const attempt of attempts) {
@@ -622,12 +629,14 @@ export async function POST(req: Request, ctx: Ctx) {
     const title = v.label || "Choir layer";
     const type = mapTaskType(v.role);
 
+    // status=completed from insert so session-preview / Console soft-refresh
+    // pick up audio immediately (pending tasks are excluded from preview layers).
     const taskRow: Record<string, unknown> = {
       project_id: task.project_id,
       type,
       title,
       instruction: `AP choir layer generated from ${(task.title as string) || "lead"} — still your voice.`,
-      status: "pending",
+      status: "completed",
       required: false,
       recommendation: "optional",
       selected_in_plan: true,

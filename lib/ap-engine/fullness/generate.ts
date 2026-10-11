@@ -35,23 +35,82 @@ function delayPcm(pcm: PcmStereo, delaySamples: number): PcmStereo {
 }
 
 /**
- * Simple resampling pitch shift (formant not perfect — keep intervals small).
- * ratio > 1 = higher pitch.
+ * Independent L/R fractional delay — decorrelates the copy so it stops
+ * phase-locking with the lead (the main “one person, two tracks” tell).
  */
+function delayPcmStereoSplit(
+  pcm: PcmStereo,
+  delayL: number,
+  delayR: number
+): PcmStereo {
+  const n = pcm.left.length;
+  const left = new Float32Array(n);
+  const right = new Float32Array(n);
+  const read = (ch: Float32Array, src: number): number => {
+    if (src < 0) return 0;
+    if (src >= n - 1) return ch[n - 1] || 0;
+    const i0 = Math.floor(src);
+    const f = src - i0;
+    return (ch[i0] || 0) * (1 - f) + (ch[Math.min(n - 1, i0 + 1)] || 0) * f;
+  };
+  for (let i = 0; i < n; i++) {
+    left[i] = read(pcm.left, i - delayL);
+    right[i] = read(pcm.right, i - delayR);
+  }
+  return { left, right, sampleRate: pcm.sampleRate };
+}
+
 /**
- * Formant-safer pitch shift: grain OLA + post EQ so intervals stay more "human"
- * than raw resample (which chipmunks upward shifts).
+ * Chorus-style modulated delay — creates natural pitch shimmer without
+ * grain pitch-shift (grain OLA is the main metallic / robotic artifact).
+ * depthMs ~0.4–2.0, rateHz ~0.3–1.8 feels like real singers drifting.
+ */
+function modulatedDelay(
+  pcm: PcmStereo,
+  opts: { baseMs: number; depthMs: number; rateHz: number; phase?: number }
+): PcmStereo {
+  const sr = pcm.sampleRate;
+  const n = pcm.left.length;
+  const left = new Float32Array(n);
+  const right = new Float32Array(n);
+  const base = Math.max(0, (opts.baseMs / 1000) * sr);
+  const depth = Math.max(0, (opts.depthMs / 1000) * sr);
+  const phase = opts.phase ?? Math.random() * Math.PI * 2;
+  // Slightly different L/R rates → stereo width without processing sameness
+  const rateL = opts.rateHz;
+  const rateR = opts.rateHz * (0.87 + Math.random() * 0.2);
+  const phaseR = phase + 0.7 + Math.random() * 0.9;
+  const read = (ch: Float32Array, src: number): number => {
+    if (src < 0) return 0;
+    if (src >= n - 1) return ch[n - 1] || 0;
+    const i0 = Math.floor(src);
+    const f = src - i0;
+    return (ch[i0] || 0) * (1 - f) + (ch[Math.min(n - 1, i0 + 1)] || 0) * f;
+  };
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const modL = Math.sin(2 * Math.PI * rateL * t + phase) * depth;
+    const modR = Math.sin(2 * Math.PI * rateR * t + phaseR) * depth * 0.92;
+    left[i] = read(pcm.left, i - (base + modL));
+    right[i] = read(pcm.right, i - (base + modR));
+  }
+  return { left, right, sampleRate: sr };
+}
+
+/**
+ * Formant-safer pitch shift: grain OLA. Only used for larger detunes;
+ * small cents use modulated delay instead (far less metallic).
  */
 function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
   if (Math.abs(ratio - 1) < 0.001) return cloneStereo(pcm);
-  // Keep shifts modest — large intervals are the main "robot" source
-  const r = Math.max(0.94, Math.min(1.06, ratio)); // ±~100 cents max — words stay intact
+  // Cap tightly — large intervals destroy formants and sound robotic
+  const r = Math.max(0.97, Math.min(1.03, ratio)); // ±~50 cents
   const sr = pcm.sampleRate;
   const n = pcm.left.length;
-  // Longer grains + more overlap → smoother, less metallic
-  const grainMs = 48;
-  const grain = Math.max(128, Math.floor((sr * grainMs) / 1000));
-  const hop = Math.max(24, Math.floor(grain / 6));
+  // Longer grains + heavy overlap → smoother, less metallic
+  const grainMs = 64;
+  const grain = Math.max(256, Math.floor((sr * grainMs) / 1000));
+  const hop = Math.max(32, Math.floor(grain / 8));
   const left = new Float32Array(n);
   const right = new Float32Array(n);
   const win = new Float32Array(grain);
@@ -75,8 +134,8 @@ function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
         sL = pcm.left[i0] * (1 - f) + pcm.left[Math.min(n - 1, i0 + 1)] * f;
         sR = pcm.right[i0] * (1 - f) + pcm.right[Math.min(n - 1, i0 + 1)] * f;
       } else if (si >= 0 && si < n) {
-        sL = pcm.left[si];
-        sR = pcm.right[si];
+        sL = pcm.left[Math.floor(si)] || 0;
+        sR = pcm.right[Math.floor(si)] || 0;
       }
       const w = win[i];
       left[oi] += sL * w;
@@ -90,41 +149,31 @@ function pitchShiftRatio(pcm: PcmStereo, ratio: number): PcmStereo {
     right[i] *= g;
   }
   const out: PcmStereo = { left, right, sampleRate: sr };
-  // Always soften after any non-trivial shift (removes chipmunk edge)
-  if (r > 1.01) {
-    softenHarmonic(out);
-    let lpL = 0;
-    let lpR = 0;
-    const a = r > 1.12 ? 0.14 : 0.1;
-    for (let i = 0; i < n; i++) {
-      lpL = lpL + a * (left[i] - lpL);
-      lpR = lpR + a * (right[i] - lpR);
-      left[i] = left[i] * 0.28 + lpL * 0.72;
-      right[i] = right[i] * 0.28 + lpR * 0.72;
-    }
-  } else if (r < 0.99) {
-    softenHarmonic(out);
-  }
+  // Mild soften only — heavy LPF made stacks sound muffled/synthetic
+  softenHarmonic(out, r > 1.005 ? 0.35 : 0.25);
   return out;
 }
 
 /**
- * Light gain/pan-style flutter only — no continuous time-stretch.
- * Time-stretch humanize was smearing formants so lyrics became unintelligible.
+ * Light gain flutter — mimics breath/support variation between singers.
+ * No time-stretch (that smears formants).
  */
 function humanizeVoice(pcm: PcmStereo, opts?: { centsPeak?: number; gainDepth?: number }): PcmStereo {
   const out = cloneStereo(pcm);
   const n = out.left.length;
   const sr = out.sampleRate;
-  const gainDepth = opts?.gainDepth ?? 0.035;
-  const rate = 1.8 + Math.random() * 1.2;
+  const gainDepth = opts?.gainDepth ?? 0.045;
+  const rate = 0.35 + Math.random() * 0.9; // slower = more human, less LFO
+  const rate2 = 1.1 + Math.random() * 1.6;
   const phase = Math.random() * Math.PI * 2;
+  const phase2 = Math.random() * Math.PI * 2;
   for (let i = 0; i < n; i++) {
     const t = i / sr;
     const g =
       1 +
       Math.sin(2 * Math.PI * rate * t + phase) * gainDepth +
-      (Math.random() * 2 - 1) * 0.004;
+      Math.sin(2 * Math.PI * rate2 * t + phase2) * (gainDepth * 0.35) +
+      (Math.random() * 2 - 1) * 0.003;
     out.left[i] = (pcm.left[i] || 0) * g;
     out.right[i] = (pcm.right[i] || 0) * g;
   }
@@ -132,21 +181,85 @@ function humanizeVoice(pcm: PcmStereo, opts?: { centsPeak?: number; gainDepth?: 
 }
 
 /**
- * Unison choir voice: same words as the lead, only delay + tiny fixed detune.
- * This is what real "stack" plugins do for width without killing intelligibility.
+ * Per-voice spectral character — real choir members don't share one EQ curve.
+ * brightness < 0 → warmer/darker; > 0 → slightly brighter (still soft).
+ */
+function spectralTint(pcm: PcmStereo, brightness: number): void {
+  const n = pcm.left.length;
+  // One-pole shelf approximation
+  const bright = Math.max(-1, Math.min(1, brightness));
+  // Darker voices: more LP weight; brighter: keep a touch more HF but still tame
+  const lpMix = 0.45 + bright * -0.22; // dark → higher lpMix
+  const dry = 1 - lpMix;
+  let lpL = 0;
+  let lpR = 0;
+  const a = 0.18 + (bright < 0 ? 0.08 : 0);
+  for (let i = 0; i < n; i++) {
+    const l = pcm.left[i] || 0;
+    const r = pcm.right[i] || 0;
+    lpL = lpL + a * (l - lpL);
+    lpR = lpR + a * (r - lpR);
+    pcm.left[i] = l * dry + lpL * lpMix;
+    pcm.right[i] = r * dry + lpR * lpMix;
+  }
+  // Soften onset so stack doesn't click locked with the lead
+  const fade = Math.min(n, Math.floor(pcm.sampleRate * 0.012));
+  for (let i = 0; i < fade; i++) {
+    const w = i / Math.max(1, fade);
+    pcm.left[i] *= w;
+    pcm.right[i] *= w;
+  }
+}
+
+/**
+ * Natural unison choir voice — same words as the lead.
+ * Real stack plugins (and real choirs) rely on timing + level + tiny pitch drift,
+ * NOT aggressive formant-breaking pitch shift. Grain pitch-shift is only a
+ * last resort for larger detunes; micro-detune uses modulated delay.
  */
 function generateUnisonVoice(
   pcm: PcmStereo,
-  opts: { delayMs: number; cents: number; pan: number; gainLinear: number }
+  opts: {
+    delayMs: number;
+    cents: number;
+    pan: number;
+    gainLinear: number;
+    /** -1 warm … +1 bright; default mild random */
+    brightness?: number;
+  }
 ): PcmStereo {
   const sr = pcm.sampleRate;
-  let v = delayPcm(pcm, (opts.delayMs / 1000) * sr);
-  if (Math.abs(opts.cents) >= 0.5) {
-    v = pitchShiftRatio(v, Math.pow(2, opts.cents / 1200));
+  const absCents = Math.abs(opts.cents);
+  // Base timing offset + L/R split so the copy is not mono-correlated with the lead
+  const baseSamples = (opts.delayMs / 1000) * sr;
+  const split = 0.15 + Math.random() * 0.55; // ms-ish in samples later
+  let v = delayPcmStereoSplit(
+    pcm,
+    baseSamples,
+    baseSamples + (split / 1000) * sr * (8 + Math.random() * 18)
+  );
+
+  // Chorus modulation = natural pitch drift without metallic grains
+  const depthMs = 0.55 + Math.min(1.4, absCents * 0.06) + Math.random() * 0.45;
+  const rateHz = 0.28 + Math.random() * 1.1;
+  v = modulatedDelay(v, {
+    baseMs: 0.4 + Math.random() * 1.2,
+    depthMs,
+    rateHz,
+    phase: Math.random() * Math.PI * 2,
+  });
+
+  // Only apply grain pitch-shift above ~10 cents; keep it tiny
+  if (absCents >= 10) {
+    const capped = Math.max(-18, Math.min(18, opts.cents));
+    v = pitchShiftRatio(v, Math.pow(2, capped / 1200));
   }
-  v = humanizeVoice(v, { gainDepth: 0.03 });
+
+  spectralTint(v, opts.brightness ?? (Math.random() * 0.7 - 0.45));
+  v = humanizeVoice(v, { gainDepth: 0.04 + Math.random() * 0.025 });
   applyGainStereo(v, opts.gainLinear);
-  applyWidth(v, 0.4, opts.pan);
+  // Milder width — heavy stereoize made stacks sound synthetic
+  applyWidth(v, 0.28 + Math.random() * 0.18, opts.pan);
   return v;
 }
 
@@ -163,23 +276,26 @@ function intervalRatio(interval: HarmonyInterval, minorPrefer: boolean): number 
   }
 }
 
-/** Soft high-shelf tuck after pitch shift to reduce chipmunk (mutates + returns). */
-function softenHarmonic(pcm: PcmStereo): PcmStereo {
+/**
+ * Soft high-shelf tuck after pitch shift (mutates + returns).
+ * @param amount 0–1 low-pass blend; lower = more natural, higher = duller
+ */
+function softenHarmonic(pcm: PcmStereo, amount = 0.3): PcmStereo {
   let prevL = 0;
   let prevR = 0;
-  const a = 0.28;
+  const mix = Math.max(0.15, Math.min(0.55, amount));
+  const a = 0.22;
   for (let i = 0; i < pcm.left.length; i++) {
     const l = pcm.left[i] || 0;
     const r = pcm.right[i] || 0;
     const lpL = prevL + a * (l - prevL);
     const lpR = prevR + a * (r - prevR);
-    // More low-pass weight = less metallic / robot edge
-    pcm.left[i] = l * 0.4 + lpL * 0.6;
-    pcm.right[i] = r * 0.4 + lpR * 0.6;
+    pcm.left[i] = l * (1 - mix) + lpL * mix;
+    pcm.right[i] = r * (1 - mix) + lpR * mix;
     prevL = lpL;
     prevR = lpR;
   }
-  applyGainStereo(pcm, 0.78);
+  applyGainStereo(pcm, 0.88);
   return pcm;
 }
 
@@ -280,12 +396,12 @@ export function generateAdlibEcho(opts: {
 
 export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
-/** Gain budget — generated layers stay under the lead (distortion fix). */
+/** Gain budget — stacks support the lead; slightly quieter = more natural blend. */
 const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
-  double: [-10, -7],
-  choir_light: [-13, -10],
-  choir_full: [-14, -11],
-  chorus_lift: [-12, -9],
+  double: [-11, -8],
+  choir_light: [-14, -11],
+  choir_full: [-15, -12],
+  chorus_lift: [-13, -10],
 };
 /** Power-sum of generated layers must stay this far under the lead (dB). */
 const MAX_STACK_SUM_DB_UNDER_LEAD = -6;
@@ -375,9 +491,9 @@ export function generateStack(opts: {
   const voices: ChoirVoice[] = [];
 
   /**
-   * Product rule: choir layers must remain intelligible (same words as the take).
-   * Large musical intervals (3rd/5th) with pure DSP pitch-shift destroy formants
-   * and sound fully robotic. Real stack plugins use unison ±cents + delay.
+   * Product rule: same words as the take, natural “extra singers” feel.
+   * Real choirs / stack plugins: timing offsets + level + tiny pitch drift +
+   * spectral variety. Avoid large interval pitch-shift (robotic formants).
    */
   const pushUnison = (
     label: string,
@@ -385,45 +501,81 @@ export function generateStack(opts: {
     delayMs: number,
     cents: number,
     pan: number,
-    gainDb: number
+    gainDb: number,
+    brightness?: number
   ) => {
     const pcm = generateUnisonVoice(lead, {
       delayMs,
       cents,
       pan,
       gainLinear: dbToGain(gainDb),
+      brightness,
     });
     voices.push({ role, label, gainDb, pan, pcm, mode });
   };
 
-  // Core stereo doubles — always
+  // Tight stereo doubles — modest delay, micro-detune via chorus (not heavy cents)
   pushUnison(
     mode === "double" ? "Double L" : "Choir L",
     "double",
-    16 + Math.random() * 10,
-    -8 - Math.random() * 6,
-    -0.55,
-    mode === "double" ? -5 : -6
+    12 + Math.random() * 14,
+    -4 - Math.random() * 5, // was up to -14¢; smaller = less robot
+    -0.48 - Math.random() * 0.12,
+    mode === "double" ? -6.5 : -7.5,
+    -0.15 - Math.random() * 0.25 // slightly warmer
   );
   pushUnison(
     mode === "double" ? "Double R" : "Choir R",
     "double",
-    20 + Math.random() * 14,
-    7 + Math.random() * 7,
-    0.55,
-    mode === "double" ? -5.5 : -6.5
+    18 + Math.random() * 16,
+    3 + Math.random() * 5,
+    0.48 + Math.random() * 0.12,
+    mode === "double" ? -7 : -8,
+    0.05 + Math.random() * 0.2
   );
 
   if (mode === "double") {
     // fall through to gain budget
   } else if (mode === "choir_light" || mode === "chorus_lift") {
-    // One more soft center unison — still same words
-    pushUnison("Choir center", "background", 28 + Math.random() * 12, (Math.random() * 2 - 1) * 5, 0.05, -9);
+    // Soft center body — further back, darker, later
+    pushUnison(
+      "Choir center",
+      "background",
+      28 + Math.random() * 18,
+      (Math.random() * 2 - 1) * 4,
+      (Math.random() * 2 - 1) * 0.12,
+      -10.5,
+      -0.35 - Math.random() * 0.2
+    );
   } else {
-    // choir_full: thicker unison cluster (4–5 voices), still no interval shift
-    pushUnison("Choir center", "double", 24 + Math.random() * 10, (Math.random() * 2 - 1) * 4, 0.0, -8);
-    pushUnison("Choir wide L", "background", 32 + Math.random() * 16, -12 - Math.random() * 5, -0.72, -9.5);
-    pushUnison("Choir wide R", "background", 36 + Math.random() * 18, 11 + Math.random() * 6, 0.72, -9.5);
+    // choir_full: 5-voice cluster — wider timing, still micro-detune only
+    pushUnison(
+      "Choir center",
+      "double",
+      22 + Math.random() * 14,
+      (Math.random() * 2 - 1) * 3,
+      (Math.random() * 2 - 1) * 0.08,
+      -9.5,
+      -0.2
+    );
+    pushUnison(
+      "Choir wide L",
+      "background",
+      34 + Math.random() * 20,
+      -6 - Math.random() * 4,
+      -0.68 - Math.random() * 0.1,
+      -11.5,
+      -0.4
+    );
+    pushUnison(
+      "Choir wide R",
+      "background",
+      38 + Math.random() * 22,
+      5 + Math.random() * 4,
+      0.68 + Math.random() * 0.1,
+      -11.5,
+      0.15
+    );
   }
 
   if (!voices.length) {

@@ -54,6 +54,7 @@ import {
   snapToBeatMs,
   type TakeRegion,
 } from "@/lib/client/take-edit";
+import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 
 export type TrackFx = {
   gainDb: number;
@@ -1442,29 +1443,41 @@ export function ProducerView({
       if (!window.confirm(labels[mode] || labels.choir_full)) return false;
     }
     setSavingId(id);
-    setEditMsg(null);
+    setEditMsg("Building choir…");
     try {
       const layer = layers.find((l) => l.id === id);
-      // Browser can decode webm/opus; Vercel API often cannot (no ffmpeg).
-      // Send a WAV so Stack never depends on server-side conversion.
-      let res: Response;
+      // Prefer client-decoded WAV (browser handles webm/opus; Vercel often cannot).
+      // Fall back to server path if local decode fails (revoked blob URL, CORS, etc.).
+      let res: Response | null = null;
       if (layer?.audioUrl) {
-        const actx = new AudioContext();
         try {
-          const audioBuf = await decodeAudioUrl(actx, layer.audioUrl);
-          const wavBlob = encodeWavBlob(audioBuf);
-          const fd = new FormData();
-          fd.append("mode", mode);
-          if (layer.recordingId) fd.append("recording_id", layer.recordingId);
-          fd.append("file", wavBlob, "lead.wav");
-          res = await fetch(`/api/recording-tasks/${id}/choir`, {
-            method: "POST",
-            body: fd,
-          });
-        } finally {
-          void actx.close().catch(() => undefined);
+          let audioBuf: AudioBuffer | null =
+            (layer.audioUrl && bufferCache.get(layer.audioUrl)) || null;
+          if (!audioBuf) {
+            const actx = new AudioContext();
+            try {
+              audioBuf = await decodeAudioUrl(actx, layer.audioUrl);
+              if (audioBuf) bufferCache.set(layer.audioUrl, audioBuf);
+            } finally {
+              void actx.close().catch(() => undefined);
+            }
+          }
+          if (audioBuf && audioBuf.length > 256) {
+            const wavBlob = encodeWavBlob(audioBuf);
+            const fd = new FormData();
+            fd.append("mode", mode);
+            if (layer.recordingId) fd.append("recording_id", layer.recordingId);
+            fd.append("file", wavBlob, "lead.wav");
+            res = await fetch(`/api/recording-tasks/${id}/choir`, {
+              method: "POST",
+              body: fd,
+            });
+          }
+        } catch (clientErr) {
+          console.warn("[choir] client WAV path failed, falling back to server", clientErr);
         }
-      } else {
+      }
+      if (!res) {
         res = await fetch(`/api/recording-tasks/${id}/choir`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1488,39 +1501,36 @@ export function ProducerView({
         const reason =
           det && typeof (det as { reason?: string }).reason === "string"
             ? `: ${(det as { reason: string }).reason}`
-            : "";
+            : typeof j.detail === "string"
+              ? `: ${j.detail}`
+              : "";
         const saveErrs = Array.isArray((det as { saveErrors?: string[] } | null)?.saveErrors)
           ? ` — ${(det as { saveErrors: string[] }).saveErrors.slice(0, 2).join("; ")}`
           : "";
         setEditMsg(
           hint === "Task not found"
             ? "Track not found — refresh Console and use a recorded vocal layer."
-            : `${hint}${found}${reason}${saveErrs}`
+            : hint.startsWith("No vocal take")
+              ? "No vocal take on this track — record or upload first, then Stack."
+              : `${hint}${found}${reason}${saveErrs}`
         );
         return false;
       }
-      setEditMsg(
+      const msg =
         typeof j.message === "string"
           ? j.message
           : mode === "choir_full"
             ? "Full choir stacked on this vocal — same section timeline."
-            : "Choir layers added on this vocal."
-      );
+            : "Choir layers added on this vocal.";
+      setEditMsg(msg);
       setTimeout(() => setEditMsg(null), 5000);
+      // Soft refresh so new harmony/double tracks appear with audio URLs
       onLayersChanged?.();
-      // soft refresh layers list from parent
-      const tr = await fetch(`/api/projects/${projectId}/recording-tasks`);
-      if (tr.ok) {
-        const tj = await tr.json().catch(() => ({}));
-        // parent owns tasks; callback is enough
-      }
-      if (j.message) {
-        // brief success via editMsg cleared soon
-        setEditMsg(j.message);
-        setTimeout(() => setEditMsg(null), 4000);
-      }
-    } catch {
-      setEditMsg("Network error building choir");
+      // Second pass after a short delay — session-preview may lag one tick behind inserts
+      setTimeout(() => onLayersChanged?.(), 800);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error building choir";
+      setEditMsg(msg.includes("fetch") || msg.includes("Network") ? "Network error building choir" : msg);
       return false;
     } finally {
       setSavingId(null);
@@ -1714,7 +1724,7 @@ export function ProducerView({
       /* ignore */
     }
     const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
-    const durationMs = Math.max(500, Date.now() - rec.startedAt);
+    const wallClockMs = Math.max(500, Date.now() - rec.startedAt);
     const taskId = rec.taskId;
     consoleRecRef.current = null;
     setIsConsoleRecording(false);
@@ -1743,9 +1753,60 @@ export function ProducerView({
 
     setEditMsg("Saving take…");
     try {
+      // Same as Booth: MediaRecorder blob → WAV so waveform + produce use decoded PCM.
+      // Instant local peaks from the decoded buffer (same path as uploaded vocals).
+      let uploadBlob: Blob = blob;
+      let uploadName = `console-take-${Date.now()}.webm`;
+      let durationMs = wallClockMs;
+      let localUrl: string | null = null;
+      try {
+        const wav = await audioBlobToWavDetailed(blob);
+        uploadBlob = wav.blob;
+        uploadName = "take.wav";
+        durationMs = Math.max(
+          500,
+          Math.round((wav.outputDurationSec || wav.sourceDurationSec || wallClockMs / 1000) * 1000)
+        );
+        localUrl = URL.createObjectURL(uploadBlob);
+        // Decode WAV for high-res peaks immediately (matches upload accuracy)
+        const ctx = getCtx();
+        if (ctx && localUrl) {
+          try {
+            const ab = await uploadBlob.arrayBuffer();
+            const audioBuf = await ctx.decodeAudioData(ab.slice(0));
+            bufferCache.set(localUrl, audioBuf);
+            peaksForUrl(localUrl, audioBuf, 2048);
+            const buckets = Math.min(2048, Math.max(64, Math.floor(timelineW || 800)));
+            const hi = peaksForUrl(localUrl, audioBuf, buckets);
+            setPeaksById((prev) => ({ ...prev, [taskId]: hi }));
+            setDurationById((prev) => ({
+              ...prev,
+              [taskId]: Math.round(audioBuf.duration * 1000),
+            }));
+            // Show local WAV on the track right away so clip width + peaks match audio
+            setLayers((prev) =>
+              prev.map((l) =>
+                l.id === taskId
+                  ? {
+                      ...l,
+                      audioUrl: localUrl,
+                      endMs: Math.max(l.endMs, l.startMs + Math.round(audioBuf.duration * 1000)),
+                    }
+                  : l
+              )
+            );
+          } catch {
+            /* peaks still refresh after server URL */
+          }
+        }
+      } catch (convErr) {
+        console.warn("[console] WAV conversion failed — uploading original", convErr);
+      }
+
       const fd = new FormData();
-      fd.append("file", blob, `console-take-${Date.now()}.webm`);
+      fd.append("file", uploadBlob, uploadName);
       fd.append("duration_ms", String(durationMs));
+      fd.append("source", "record");
       const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
         method: "POST",
         body: fd,
@@ -1760,13 +1821,24 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "completed",
-          end_ms: Math.round((layers.find((l) => l.id === taskId)?.startMs || playheadMs) + durationMs),
+          end_ms: Math.round(
+            (layers.find((l) => l.id === taskId)?.startMs || playheadMs) + durationMs
+          ),
         }),
       }).catch(() => null);
 
       const audioUrl =
         uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
       if (audioUrl) {
+        // Prefer server URL; carry local peaks over by seeding cache under the new URL
+        if (localUrl) {
+          const localBuf = bufferCache.get(localUrl);
+          if (localBuf) {
+            bufferCache.set(audioUrl, localBuf);
+            const hi = peakCache.get(`${localUrl}::2048`);
+            if (hi) peakCache.set(`${audioUrl}::2048`, hi);
+          }
+        }
         setLayers((prev) =>
           prev.map((l) =>
             l.id === taskId
@@ -1778,7 +1850,14 @@ export function ProducerView({
               : l
           )
         );
+        // Re-map peaks to task id under the server URL resolution
+        setPeaksById((prev) => {
+          const existing = prev[taskId];
+          if (!existing) return prev;
+          return { ...prev, [taskId]: existing };
+        });
       }
+      // Keep local object URL until React swaps to server URL (revoke would break mid-frame)
       setEditMsg("Take saved — shared with Booth (same recording_tasks)");
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
@@ -2607,8 +2686,9 @@ export function ProducerView({
       liveMeterCtxRef.current = ctx;
       const src = ctx.createMediaStreamSource(clone);
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.65;
+      // Higher fftSize + denser sampling → live clip waveform closer to post-decode peaks
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.35;
       // analyser is a sink only — nothing connects after it to speakers
       src.connect(analyser);
       const data = new Uint8Array(analyser.fftSize);
@@ -2625,16 +2705,14 @@ export function ProducerView({
         }
         const rms = Math.sqrt(sum / data.length);
         setLiveLevel(Math.min(1, rms * 3.2));
-        // ~30 samples/sec into clip history (every other frame ~)
+        // Every animation frame (~60 Hz) — denser history for accurate live shape
         frame += 1;
+        livePeaksBufRef.current.push(Math.min(1, peak));
+        if (livePeaksBufRef.current.length > 4800) {
+          livePeaksBufRef.current = livePeaksBufRef.current.slice(-4800);
+        }
         if (frame % 2 === 0) {
-          livePeaksBufRef.current.push(Math.min(1, peak * 1.4));
-          if (livePeaksBufRef.current.length > 2400) {
-            livePeaksBufRef.current = livePeaksBufRef.current.slice(-2400);
-          }
-          if (frame % 4 === 0) {
-            setLivePeaks(livePeaksBufRef.current.slice());
-          }
+          setLivePeaks(livePeaksBufRef.current.slice());
         }
         liveMeterRafRef.current = requestAnimationFrame(tick);
       };
