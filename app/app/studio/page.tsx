@@ -1124,11 +1124,10 @@ function StudioPageInner() {
                 padding: "10px 12px",
                 borderRadius: 12,
                 border: `1px solid ${C.brass || "#E7A961"}`,
-                background: C.modalSurface || C.surfaceRaised || "rgba(22,20,28,0.98)",
+                background: "rgba(231,169,97,0.08)",
                 fontSize: 12.5,
                 lineHeight: 1.4,
                 color: C.text,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
               }}
             >
               <div style={{ fontWeight: 650, marginBottom: 4 }}>Beat limit</div>
@@ -1156,7 +1155,7 @@ function StudioPageInner() {
             </div>
           )}
           {error && (
-            <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, background: C.modalSurface || "rgba(40,16,16,0.95)", color: "#ffb4b4", fontSize: 12.5, border: "1px solid rgba(255,107,107,0.35)" }}>
+            <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 10, background: "rgba(255,107,107,0.1)", color: "#ffb4b4", fontSize: 12.5 }}>
               {error}
             </div>
           )}
@@ -1167,11 +1166,10 @@ function StudioPageInner() {
               padding: "10px 12px",
               borderRadius: 12,
               border: `1px solid ${C.brassLine || C.brass}`,
-              background: C.modalSurface || C.surfaceRaised || "rgba(22,20,28,0.98)",
+              background: "rgba(231,169,97,0.08)",
               fontSize: 12,
               lineHeight: 1.45,
               color: C.textMuted,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
             }}
           >
             <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
@@ -1779,7 +1777,7 @@ function StudioPageInner() {
               width: "100%",
               maxWidth: 420,
               borderRadius: "18px 18px 0 0",
-              background: C.modalSurface || C.surfaceRaised || "#16141C",
+              background: C.surface || "#16140f",
               border: `1px solid ${C.border}`,
               padding: "18px 16px 28px",
               color: C.text,
@@ -1914,7 +1912,7 @@ function StudioPageInner() {
               width: "100%",
               maxWidth: 420,
               borderRadius: "18px 18px 0 0",
-              background: C.modalSurface || C.surfaceRaised || "#16141C",
+              background: C.surface || "#16140f",
               border: `1px solid ${C.border}`,
               padding: "18px 16px 28px",
               color: C.text,
