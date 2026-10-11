@@ -311,7 +311,6 @@ export default function WelcomePage() {
                 <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.75" />
                 <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" />
               </svg>
-              <span>Instagram</span>
             </a>
             <a
               href="https://www.tiktok.com/@apstudio.site"
@@ -323,7 +322,6 @@ export default function WelcomePage() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .56.04.82.12v-3.4a6.22 6.22 0 0 0-.82-.05A6.34 6.34 0 0 0 3.15 15.4 6.34 6.34 0 0 0 9.49 21.7a6.34 6.34 0 0 0 6.34-6.34V8.92a8.2 8.2 0 0 0 4.76 1.52V7.02a4.84 4.84 0 0 1-1-.33z" />
               </svg>
-              <span>TikTok</span>
             </a>
           </div>
                 </div>
@@ -452,10 +450,10 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .site-footer .footer-legal-link:hover{color:var(--brass)}
   .site-footer .footer-socials{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
   .site-footer .social-link{
-    display:inline-flex;align-items:center;gap:8px;
-    padding:10px 14px;border-radius:999px;
+    display:inline-flex;align-items:center;justify-content:center;
+    width:42px;height:42px;padding:0;border-radius:999px;
     border:1px solid var(--border-hi, rgba(255,255,255,.14));
-    color:var(--muted);text-decoration:none;font-size:13px;font-weight:600;
+    color:var(--muted);text-decoration:none;
     background:rgba(255,255,255,.06);
     transition:color .15s,border-color .15s,background .15s;
   }
