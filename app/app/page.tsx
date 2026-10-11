@@ -60,6 +60,8 @@ function AppInner() {
   const [editGenre, setEditGenre] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
+  const [profileSubView, setProfileSubView] = useState<"main" | "settings">("main");
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -120,6 +122,8 @@ function AppInner() {
   useEffect(() => {
     const t = searchParams.get("tab");
     if (t === "library" || t === "profile" || t === "home") setTab(t);
+    if (t === "profile" && searchParams.get("view") === "settings") setProfileSubView("settings");
+    if (t && t !== "profile") setProfileSubView("main");
     if (t === "create" || t === "studio") router.replace("/app/studio");
     if (searchParams.get("tour") === "1") {
       window.dispatchEvent(new Event("studio-tour-start"));
@@ -1129,238 +1133,79 @@ function AppInner() {
               paddingBottom: "calc(24px + env(safe-area-inset-bottom, 0px))",
             }}
           >
-            {/* Identity */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 16,
-                padding: "16px 16px",
-                borderRadius: 18,
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                marginBottom: 16,
-              }}
-            >
-              <div
-                style={{
-                  ...avatar,
-                  width: 64,
-                  height: 64,
-                  fontSize: 22,
-                  flexShrink: 0,
-                  margin: 0,
-                }}
-              >
-                {initials || "A"}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontFamily: "Georgia, serif",
-                    fontSize: "clamp(1.15rem, 4vw, 1.35rem)",
-                    color: C.text,
-                    fontWeight: 500,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {userName}
-                </div>
-                {userEmail && (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: C.textMuted,
-                      marginTop: 4,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {userEmail}
-                  </div>
-                )}
-                <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 6 }}>
-                  {projects.length} session{projects.length === 1 ? "" : "s"}
-                  {userGenre ? ` · ${userGenre}` : ""}
-                  {userPlan ? ` · ${userPlan}` : ""}
-                </div>
-              </div>
-            </div>
+            {(() => {
+              const beatCount = projects.filter((p) => p.has_beat).length;
+              const songCount = projects.filter((p) => isFinishedSong(p)).length;
+              const sessionCount = projects.length;
+              const handle =
+                (userEmail && userEmail.split("@")[0]) ||
+                userName.toLowerCase().replace(/\s+/g, "") ||
+                "artist";
+              const planLabel = (userPlan || "Free").trim();
+              const isFree =
+                !planLabel ||
+                planLabel.toLowerCase() === "free" ||
+                planLabel.toLowerCase() === "trial";
+              const needsGenre = !userGenre;
+              const needsFirstBeat = beatCount === 0;
+              const completeSteps = [
+                needsGenre
+                  ? {
+                      key: "genre",
+                      title: "Add your primary genre",
+                      sub: "Helps AP match your sound",
+                      action: () => {
+                        setEditName(userName);
+                        setEditGenre(userGenre || "");
+                        setEditProfileOpen(true);
+                        setProfileSubView("main");
+                      },
+                    }
+                  : null,
+                needsFirstBeat
+                  ? {
+                      key: "beat",
+                      title: "Create your first beat",
+                      sub: "Open Studio and generate or upload",
+                      action: () => router.push("/app/studio"),
+                    }
+                  : null,
+              ].filter(Boolean) as Array<{
+                key: string;
+                title: string;
+                sub: string;
+                action: () => void;
+              }>;
 
-            {profileMsg && (
-              <p
-                style={{
-                  fontSize: 13,
-                  color: profileMsg.includes("updated") ? C.brass : "#f07167",
-                  margin: "0 0 12px",
-                }}
-              >
-                {profileMsg}
-              </p>
-            )}
-
-            {/* Edit profile */}
-            {!editProfileOpen ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditName(userName);
-                  setEditGenre(userGenre || "");
-                  setEditProfileOpen(true);
-                  setProfileMsg(null);
-                }}
-                style={{
-                  ...secondary,
-                  width: "100%",
-                  marginBottom: 20,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                }}
-              >
-                Edit profile
-              </button>
-            ) : (
-              <div
-                style={{
-                  padding: 16,
-                  borderRadius: 18,
-                  background: C.surface,
-                  border: `1px solid ${C.border}`,
-                  marginBottom: 20,
-                }}
-              >
-                <div style={{ fontWeight: 650, fontSize: 14, marginBottom: 12, color: C.text }}>
-                  Edit profile
-                </div>
-                <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
-                  Display name
-                </label>
-                <input
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  maxLength={64}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    padding: "12px 14px",
-                    borderRadius: 12,
-                    border: `1px solid ${C.border}`,
-                    background: C.bgDeep || C.bg,
-                    color: C.text,
-                    fontSize: 15,
-                    marginBottom: 12,
-                    fontFamily: "inherit",
-                  }}
-                />
-                <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
-                  Primary genre
-                </label>
-                <input
-                  value={editGenre}
-                  onChange={(e) => setEditGenre(e.target.value)}
-                  placeholder="e.g. R&B, Afrobeats, Gospel"
-                  maxLength={48}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    padding: "12px 14px",
-                    borderRadius: 12,
-                    border: `1px solid ${C.border}`,
-                    background: C.bgDeep || C.bg,
-                    color: C.text,
-                    fontSize: 15,
-                    marginBottom: 14,
-                    fontFamily: "inherit",
-                  }}
-                />
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    disabled={profileSaving}
-                    onClick={() => void saveProfile()}
-                    style={{
-                      ...primary,
-                      flex: 1,
-                      minWidth: 120,
-                      padding: "12px 16px",
-                      opacity: profileSaving ? 0.7 : 1,
-                    }}
-                  >
-                    {profileSaving ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={profileSaving}
-                    onClick={() => {
-                      setEditProfileOpen(false);
-                      setProfileMsg(null);
-                    }}
-                    style={{ ...secondary, flex: 1, minWidth: 100, padding: "12px 16px" }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Settings */}
-            <div style={{ fontWeight: 650, fontSize: 13, color: C.textMuted, marginBottom: 10, letterSpacing: 0.04 }}>
-              App settings
-            </div>
-            <div
-              style={{
-                borderRadius: 18,
-                border: `1px solid ${C.border}`,
-                background: C.surface,
-                overflow: "hidden",
-                marginBottom: 16,
-              }}
-            >
-              {[
-                {
-                  key: "studio",
-                  label: "Studio",
-                  sub: "Create beats and open sessions",
-                  href: "/app/studio",
-                },
-                {
-                  key: "library",
-                  label: "Library",
-                  sub: "Songs, beats, and recordings",
-                  action: () => setTab("library"),
-                },
-                {
-                  key: "tour",
-                  label: "How Studio works",
-                  sub: "Quick product tour",
-                  action: () => window.dispatchEvent(new Event("studio-tour-start")),
-                },
-                {
-                  key: "terms",
-                  label: "Terms of use",
-                  sub: "Legal terms",
-                  href: "/terms",
-                },
-                {
-                  key: "privacy",
-                  label: "Privacy",
-                  sub: "How we handle your data",
-                  href: "/privacy",
-                },
-              ].map((row, i, arr) => {
+              const settingsRow = (
+                label: string,
+                opts?: {
+                  sub?: string;
+                  onClick?: () => void;
+                  href?: string;
+                  trailing?: React.ReactNode;
+                  danger?: boolean;
+                }
+              ) => {
                 const inner = (
                   <>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{row.label}</div>
-                      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{row.sub}</div>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 15,
+                          color: opts?.danger ? "#f07167" : C.text,
+                        }}
+                      >
+                        {label}
+                      </div>
+                      {opts?.sub ? (
+                        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{opts.sub}</div>
+                      ) : null}
                     </div>
-                    <span style={{ color: C.brass, fontSize: 18, flexShrink: 0 }}>›</span>
+                    {opts?.trailing ?? (
+                      <span style={{ color: C.textMuted, fontSize: 18, flexShrink: 0 }}>›</span>
+                    )}
                   </>
                 );
                 const style: React.CSSProperties = {
@@ -1368,65 +1213,617 @@ function AppInner() {
                   alignItems: "center",
                   gap: 12,
                   padding: "14px 16px",
-                  borderBottom: i < arr.length - 1 || isAdmin ? `1px solid ${C.border}` : "none",
-                  textDecoration: "none",
-                  color: "inherit",
-                  background: "transparent",
-                  border: "none",
                   width: "100%",
                   textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: `1px solid ${C.border}`,
+                  color: "inherit",
+                  textDecoration: "none",
                   cursor: "pointer",
                   fontFamily: "inherit",
                   boxSizing: "border-box",
                 };
-                if (row.href) {
+                if (opts?.href) {
                   return (
-                    <Link key={row.key} href={row.href} style={style}>
+                    <Link key={label} href={opts.href} style={style}>
                       {inner}
                     </Link>
                   );
                 }
                 return (
-                  <button key={row.key} type="button" style={style} onClick={row.action}>
+                  <button key={label} type="button" style={style} onClick={opts?.onClick}>
                     {inner}
                   </button>
                 );
-              })}
-              {isAdmin && (
-                <Link
-                  href="/app/admin"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "14px 16px",
-                    textDecoration: "none",
-                    color: "inherit",
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>Admin dashboard</div>
-                    <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Internal metrics</div>
-                  </div>
-                  <span style={{ color: C.brass, fontSize: 18 }}>›</span>
-                </Link>
-              )}
-            </div>
+              };
 
-            <button
-              type="button"
-              style={{
-                ...secondary,
-                width: "100%",
-                color: "#f07167",
-                borderColor: "rgba(240,113,103,0.35)",
-              }}
-              onClick={signOut}
-            >
-              Log out
-            </button>
+              if (profileSubView === "settings") {
+                return (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        marginBottom: 18,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setProfileSubView("main")}
+                        aria-label="Back to profile"
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 999,
+                          border: `1px solid ${C.border}`,
+                          background: C.surface,
+                          color: C.text,
+                          cursor: "pointer",
+                          fontSize: 18,
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        ←
+                      </button>
+                      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text }}>
+                        Settings & preferences
+                      </h1>
+                    </div>
+
+                    <div
+                      style={{
+                        borderRadius: 18,
+                        border: `1px solid ${C.border}`,
+                        background: C.surface,
+                        overflow: "hidden",
+                        marginBottom: 16,
+                      }}
+                    >
+                      {settingsRow("Edit Profile", {
+                        onClick: () => {
+                          setEditName(userName);
+                          setEditGenre(userGenre || "");
+                          setEditProfileOpen(true);
+                          setProfileSubView("main");
+                        },
+                      })}
+                      {settingsRow("Account", {
+                        sub: userEmail || undefined,
+                        onClick: () => {
+                          setEditName(userName);
+                          setEditGenre(userGenre || "");
+                          setEditProfileOpen(true);
+                          setProfileSubView("main");
+                        },
+                      })}
+                      {settingsRow("My Subscription", {
+                        sub: isFree ? "Free plan" : planLabel,
+                        onClick: () => setSubscribeOpen(true),
+                        trailing: isFree ? (
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              padding: "6px 10px",
+                              borderRadius: 999,
+                              background: "linear-gradient(135deg, #7B5CFF, #E060C0)",
+                              color: "#fff",
+                            }}
+                          >
+                            Upgrade now
+                          </span>
+                        ) : (
+                          <span style={{ color: C.textMuted, fontSize: 18 }}>›</span>
+                        ),
+                      })}
+                      {settingsRow("My Downloads", {
+                        sub: "Beats & masters you saved",
+                        onClick: () => {
+                          setTab("library");
+                          router.replace("/app?tab=library");
+                        },
+                      })}
+                      {settingsRow("How Studio works", {
+                        sub: "Quick product tour",
+                        onClick: () => window.dispatchEvent(new Event("studio-tour-start")),
+                      })}
+                      {settingsRow("Notifications", {
+                        sub: "Coming soon",
+                        onClick: () => setProfileMsg("Notifications settings coming soon"),
+                      })}
+                      {settingsRow("Privacy", {
+                        href: "/privacy",
+                      })}
+                      {settingsRow("Terms of use", {
+                        href: "/terms",
+                      })}
+                      {settingsRow("Report a problem", {
+                        href: "mailto:support@apstudio.site?subject=AP%20Studio%20report",
+                      })}
+                      {settingsRow("Support", {
+                        href: "mailto:support@apstudio.site",
+                      })}
+                      {isAdmin &&
+                        settingsRow("Admin dashboard", {
+                          sub: "Internal metrics",
+                          href: "/app/admin",
+                        })}
+                      <button
+                        type="button"
+                        onClick={signOut}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 12,
+                          padding: "14px 16px",
+                          width: "100%",
+                          textAlign: "left",
+                          background: "transparent",
+                          border: "none",
+                          color: "#f07167",
+                          fontWeight: 650,
+                          fontSize: 15,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        Log out
+                      </button>
+                    </div>
+
+                    {isFree && (
+                      <button
+                        type="button"
+                        onClick={() => setSubscribeOpen(true)}
+                        style={{
+                          width: "100%",
+                          padding: "14px 16px",
+                          borderRadius: 14,
+                          border: "none",
+                          background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                          color: "#1A1208",
+                          fontWeight: 750,
+                          fontSize: 15,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          marginBottom: 8,
+                        }}
+                      >
+                        Choose a plan & upgrade
+                      </button>
+                    )}
+                  </>
+                );
+              }
+
+              // —— Main profile (Suno-style) ——
+              return (
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginBottom: 8,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setProfileSubView("settings")}
+                      aria-label="Settings"
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 999,
+                        border: `1px solid ${C.border}`,
+                        background: C.surface,
+                        color: C.text,
+                        cursor: "pointer",
+                        fontSize: 18,
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      ⚙
+                    </button>
+                  </div>
+
+                  <div style={{ textAlign: "center", marginBottom: 20 }}>
+                    <div
+                      style={{
+                        ...avatar,
+                        width: 88,
+                        height: 88,
+                        fontSize: 28,
+                        margin: "0 auto 14px",
+                      }}
+                    >
+                      {initials || "A"}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 24,
+                        fontWeight: 750,
+                        color: C.text,
+                        letterSpacing: -0.02,
+                      }}
+                    >
+                      {userName}
+                    </div>
+                    <div style={{ fontSize: 14, color: C.textMuted, marginTop: 4 }}>@{handle}</div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        gap: 18,
+                        marginTop: 12,
+                        fontSize: 13,
+                        color: C.textMuted,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span>
+                        <strong style={{ color: C.text }}>{beatCount}</strong> beats
+                      </span>
+                      <span>
+                        <strong style={{ color: C.text }}>{songCount}</strong> songs
+                      </span>
+                      <span>
+                        <strong style={{ color: C.text }}>{sessionCount}</strong> sessions
+                      </span>
+                    </div>
+                    {userGenre ? (
+                      <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>{userGenre}</div>
+                    ) : null}
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        background: isFree ? "rgba(255,255,255,0.06)" : "rgba(231,169,97,0.14)",
+                        border: `1px solid ${isFree ? C.border : C.brassLine || C.brass}`,
+                        fontSize: 12,
+                        fontWeight: 650,
+                        color: isFree ? C.textMuted : C.brass,
+                      }}
+                    >
+                      {isFree ? "Free plan" : planLabel}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditName(userName);
+                      setEditGenre(userGenre || "");
+                      setEditProfileOpen(true);
+                      setProfileMsg(null);
+                    }}
+                    style={{
+                      ...secondary,
+                      width: "100%",
+                      marginBottom: 16,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      borderRadius: 999,
+                      padding: "12px 16px",
+                    }}
+                  >
+                    ✎ Edit Profile
+                  </button>
+
+                  {isFree && (
+                    <button
+                      type="button"
+                      onClick={() => setSubscribeOpen(true)}
+                      style={{
+                        width: "100%",
+                        marginBottom: 20,
+                        padding: "13px 16px",
+                        borderRadius: 14,
+                        border: "none",
+                        background: "linear-gradient(135deg, #7B5CFF, #E060C0)",
+                        color: "#fff",
+                        fontWeight: 750,
+                        fontSize: 14.5,
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        boxShadow: "0 8px 24px rgba(123,92,255,0.25)",
+                      }}
+                    >
+                      Upgrade — choose a plan
+                    </button>
+                  )}
+
+                  {profileMsg && (
+                    <p
+                      style={{
+                        fontSize: 13,
+                        color: profileMsg.includes("updated") || profileMsg.includes("soon") ? C.brass : "#f07167",
+                        margin: "0 0 12px",
+                        textAlign: "center",
+                      }}
+                    >
+                      {profileMsg}
+                    </p>
+                  )}
+
+                  {editProfileOpen && (
+                    <div
+                      style={{
+                        padding: 16,
+                        borderRadius: 18,
+                        background: C.surface,
+                        border: `1px solid ${C.border}`,
+                        marginBottom: 20,
+                      }}
+                    >
+                      <div style={{ fontWeight: 650, fontSize: 14, marginBottom: 12, color: C.text }}>
+                        Edit profile
+                      </div>
+                      <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+                        Display name
+                      </label>
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        maxLength={64}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "12px 14px",
+                          borderRadius: 12,
+                          border: `1px solid ${C.border}`,
+                          background: C.bgDeep || C.bg,
+                          color: C.text,
+                          fontSize: 15,
+                          marginBottom: 12,
+                          fontFamily: "inherit",
+                        }}
+                      />
+                      <label style={{ display: "block", fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
+                        Primary genre
+                      </label>
+                      <input
+                        value={editGenre}
+                        onChange={(e) => setEditGenre(e.target.value)}
+                        placeholder="e.g. R&B, Afrobeats, Drill"
+                        maxLength={48}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          padding: "12px 14px",
+                          borderRadius: 12,
+                          border: `1px solid ${C.border}`,
+                          background: C.bgDeep || C.bg,
+                          color: C.text,
+                          fontSize: 15,
+                          marginBottom: 14,
+                          fontFamily: "inherit",
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          disabled={profileSaving}
+                          onClick={() => void saveProfile()}
+                          style={{
+                            ...primary,
+                            flex: 1,
+                            minWidth: 120,
+                            padding: "12px 16px",
+                            opacity: profileSaving ? 0.7 : 1,
+                          }}
+                        >
+                          {profileSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={profileSaving}
+                          onClick={() => {
+                            setEditProfileOpen(false);
+                            setProfileMsg(null);
+                          }}
+                          style={{ ...secondary, flex: 1, minWidth: 100, padding: "12px 16px" }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {completeSteps.length > 0 && (
+                    <div style={{ marginBottom: 22 }}>
+                      <div style={{ fontWeight: 700, fontSize: 16, color: C.text, marginBottom: 4 }}>
+                        Complete Your Profile
+                      </div>
+                      <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 10 }}>
+                        Step {3 - completeSteps.length} of 3
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {completeSteps.map((step) => (
+                          <button
+                            key={step.key}
+                            type="button"
+                            onClick={step.action}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                              padding: "14px 16px",
+                              borderRadius: 14,
+                              border: `1px solid ${C.border}`,
+                              background: C.surface,
+                              color: C.text,
+                              textAlign: "left",
+                              cursor: "pointer",
+                              fontFamily: "inherit",
+                              width: "100%",
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 650, fontSize: 14 }}>{step.title}</div>
+                              <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{step.sub}</div>
+                            </div>
+                            <span style={{ color: C.textMuted, fontSize: 18 }}>›</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Songs */}
+                  <div style={{ marginBottom: 22 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        justifyContent: "space-between",
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 16, color: C.text }}>Songs</div>
+                      <span style={{ fontSize: 12, color: C.textMuted }}>{songCount} published</span>
+                    </div>
+                    {songCount === 0 ? (
+                      <div
+                        style={{
+                          position: "relative",
+                          borderRadius: 16,
+                          border: `1px solid ${C.border}`,
+                          background: C.surface,
+                          padding: "28px 16px",
+                          textAlign: "center",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 12 }}>
+                          No songs published yet
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTab("library");
+                            router.replace("/app?tab=library");
+                          }}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "10px 16px",
+                            borderRadius: 999,
+                            border: "none",
+                            background: C.text,
+                            color: C.bgDeep || "#0a0a0c",
+                            fontWeight: 700,
+                            fontSize: 13,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          ♪ Browse your songs
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {projects
+                          .filter((p) => isFinishedSong(p))
+                          .slice(0, 8)
+                          .map((p) => (
+                            <ProjectRow key={p.id} p={p} meta={`Song · ${p.genre || p.status}`} />
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Beats */}
+                  <div style={{ marginBottom: 22 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        justifyContent: "space-between",
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 16, color: C.text }}>Beats</div>
+                      <span style={{ fontSize: 12, color: C.textMuted }}>{beatCount} generated</span>
+                    </div>
+                    {beatCount === 0 ? (
+                      <div
+                        style={{
+                          borderRadius: 16,
+                          border: `1px solid ${C.border}`,
+                          background: C.surface,
+                          padding: "24px 16px",
+                          textAlign: "center",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 12 }}>
+                          No beats yet
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => router.push("/app/studio")}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                            padding: "10px 16px",
+                            borderRadius: 999,
+                            border: "none",
+                            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                            color: "#1A1208",
+                            fontWeight: 700,
+                            fontSize: 13,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          Create a beat
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {projects
+                          .filter((p) => p.has_beat)
+                          .slice(0, 8)
+                          .map((p) => (
+                            <ProjectRow
+                              key={p.id}
+                              p={p}
+                              meta={`${p.beat_source === "upload" ? "Upload" : "AP beat"} · ${p.genre || p.status}`}
+                            />
+                          ))}
+                        {beatCount > 8 && (
+                          <button
+                            type="button"
+                            onClick={() => router.push("/app/studio")}
+                            style={{
+                              ...secondary,
+                              width: "100%",
+                              marginTop: 4,
+                            }}
+                          >
+                            See all in Studio
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
+
+
       </div>
 
         
@@ -1548,6 +1945,26 @@ function AppInner() {
               }
             : undefined
         }
+      />
+
+            <ApPaywall
+        open={subscribeOpen}
+        onClose={() => setSubscribeOpen(false)}
+        songTitle="AP Studio plan"
+        colors={{
+          text: C.text,
+          textMuted: C.textMuted,
+          surface: C.surface,
+          border: C.border,
+          accent: C.brass,
+          bg: C.bgDeep || C.bg,
+        }}
+        onUnlocked={() => {
+          setSubscribeOpen(false);
+          setUserPlan("Creator");
+          setProfileMsg("Plan updated");
+          setTimeout(() => setProfileMsg(null), 2500);
+        }}
       />
 
       <ApPaywall
