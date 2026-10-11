@@ -839,7 +839,7 @@ function StudioPageInner() {
   });
 
   return (
-    <AppShell active="studio" userName={userName} onSignOut={signOut}>
+    <AppShell active="studio" userName={userName} userSeed={userName} onSignOut={signOut}>
       <div
         style={{
           width: "100%",

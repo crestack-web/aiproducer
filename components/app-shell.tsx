@@ -22,7 +22,8 @@ import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PwaInstallButton } from "@/components/pwa-install";
-import { ProductTour, useProductTour } from "@/components/product-tour";
+import { ProductTour, useProductTour } from "@/components/product-tour"
+import { ArtistAvatar } from "@/components/artist-avatar";
 
 function IconHome({ size = 20, color = "currentColor" }: { size?: number; color?: string }) {
   return (
@@ -98,13 +99,17 @@ export function AppShell({
   children,
   active,
   userName,
+  userSeed,
   onSignOut,
 }: {
   children: ReactNode;
   active?: AppNavKey;
   userName?: string;
+  /** Stable seed for generative avatar (email preferred) */
+  userSeed?: string;
   onSignOut?: () => void;
 }) {
+  const avatarSeed = userSeed || userName || "artist";
   const pathname = usePathname();
   const router = useRouter();
   const { colors: C, mode } = useTheme();
@@ -181,12 +186,6 @@ export function AppShell({
     if (visual === "studio") return "Studio";
     return "Studio";
   })();
-  const initials = (userName || "A")
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 
   const go = useCallback(
     (key: AppNavKey, href: string) => {
@@ -647,7 +646,7 @@ export function AppShell({
               textAlign: "left",
             }}
           >
-            <div style={{ ...avatar, width: sidebarCollapsed ? 40 : 36, height: sidebarCollapsed ? 40 : 36 }}>{initials}</div>
+            <ArtistAvatar seed={avatarSeed} size={sidebarCollapsed ? 40 : 36} />
             {!sidebarCollapsed && (
               <div style={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
                 <div
@@ -772,16 +771,19 @@ export function AppShell({
               onClick={() => go("profile", "/app?tab=profile")}
               aria-label="Profile"
               style={{
-                ...avatar,
                 width: 32,
                 height: 32,
-                fontSize: 12,
                 border: "none",
                 cursor: "pointer",
                 padding: 0,
+                borderRadius: 999,
+                background: "transparent",
+                display: "grid",
+                placeItems: "center",
+                overflow: "hidden",
               }}
             >
-              {initials || "A"}
+              <ArtistAvatar seed={avatarSeed} size={32} />
             </button>
           </div>
         </header>

@@ -625,7 +625,7 @@ function AppInner() {
   const activeNav = tab === "library" ? "library" : tab === "profile" ? "profile" : "home";
 
   return (
-    <AppShell active={activeNav} userName={userName} onSignOut={signOut}>
+    <AppShell active={activeNav} userName={userName} userSeed={userEmail || userName} onSignOut={signOut}>
 <div
         className="dash-content"
         style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
