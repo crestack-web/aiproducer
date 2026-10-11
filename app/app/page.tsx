@@ -73,6 +73,7 @@ function AppInner() {
   const [userId, setUserId] = useState<string | null>(null);
   const [userGenre, setUserGenre] = useState<string | null>(null);
   const [userPlan, setUserPlan] = useState<string | null>(null);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [editName, setEditName] = useState("");
   const [editGenre, setEditGenre] = useState("");
@@ -240,6 +241,15 @@ function AppInner() {
         userPlan: planLabel,
       };
       setLoading(false);
+      try {
+        const wr = await fetch("/api/credits/wallet");
+        if (wr.ok && !cancelled) {
+          const wj = await wr.json();
+          if (typeof wj?.wallet?.balance === "number") setCreditBalance(wj.wallet.balance);
+        }
+      } catch {
+        /* ignore */
+      }
     })();
     return () => {
       cancelled = true;
@@ -1405,6 +1415,13 @@ function AppInner() {
                           setProfileSubView("main");
                         },
                       })}
+                      {settingsRow("AP Credits", {
+                        sub:
+                          creditBalance == null
+                            ? "Production capacity wallet"
+                            : `${creditBalance.toLocaleString()} available · never expire`,
+                        onClick: () => setSubscribeOpen(true),
+                      })}
                       {settingsRow("My Subscription", {
                         sub: isFree ? "Free plan" : planLabel,
                         onClick: () => setSubscribeOpen(true),
@@ -1595,7 +1612,8 @@ function AppInner() {
                         color: isFree ? C.textMuted : C.brass,
                       }}
                     >
-                      {isFree ? "Free plan" : planLabel}
+{isFree ? "Free plan" : planLabel}
+                      {creditBalance != null ? ` · ${creditBalance.toLocaleString()} credits` : ""}
                     </div>
                   </div>
 

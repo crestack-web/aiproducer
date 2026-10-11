@@ -202,7 +202,7 @@ export function ApPaywall({
             ? songTitle
               ? `You heard it — unlock “${songTitle}” to download.`
               : "You heard the master — unlock download or go unlimited."
-            : "Pick a plan for more songs, longer AP beats, and downloads."}
+            : "Buy AP Credits once. Song paths cost ~$2.50 in credits — cheaper than $4.99 per download. Credits never expire."}
         </p>
 
         {/* Monthly / Annual toggle — subscriptions only */}
@@ -359,7 +359,7 @@ export function ApPaywall({
         <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, marginTop: 12 }}>
           {showSessionUnlock
             ? "Preview stays free. Download unlocks after purchase."
-            : "Cancel anytime on subscription plans. Checkout is secure."}
+            : "One-time credit packs. Credits never expire. Checkout is secure."}
         </p>
       </div>
     </div>,

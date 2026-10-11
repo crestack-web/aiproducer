@@ -37,17 +37,17 @@ export const PLANS: PlanDef[] = [
   {
     id: "creator",
     name: "Artist",
-    tagline: "For solo artists shipping songs every month",
+    tagline: "Credit pack for independent artists — never expires",
     badge: "Most popular",
     priceUsd: 25,
     priceUsdYear: 250, // ~2 months free
     songsPerMonth: 10,
     perSongHint: "~$2.50 / song",
     features: [
-      "10 finished songs / month",
-      "About $2.50 per song (vs $4.99 one-time)",
-      "~30 min AP beat generation / month (10 × 3 min)",
-      "WAV + MP3 export",
+      "2,500 AP Credits (never expire)",
+      "~10 song paths at 250 credits (~$2.50 vs $4.99 download)",
+      "One-time purchase — buy again only when you need more",
+      "WAV + MP3 export when unlocked",
       "Professional mix & master",
       "Unlimited takes per song",
     ],
@@ -55,17 +55,17 @@ export const PLANS: PlanDef[] = [
   {
     id: "band",
     name: "Band",
-    tagline: "For groups shipping more music together",
+    tagline: "Credit pack for EPs and multiple releases — never expires",
     badge: "Best value",
     priceUsd: 59,
     priceUsdYear: 590,
     songsPerMonth: 25,
     perSongHint: "~$2.36 / song",
     features: [
-      "25 finished songs / month",
-      "About $2.36 per song (vs $4.99 one-time)",
-      "~75 min AP beat generation / month (25 × 3 min)",
-      "Everything in Artist",
+      "5,900 AP Credits (never expire)",
+      "~23 song paths at 250 credits (better than $4.99 each)",
+      "One-time purchase — credits roll until you use them",
+      "Everything in Artist pack",
       "Priority mastering queue",
       "Stem export when available",
       "Commercial use license",
@@ -74,17 +74,17 @@ export const PLANS: PlanDef[] = [
   {
     id: "pro",
     name: "Record Label",
-    tagline: "For labels and high-volume catalogs",
+    tagline: "Credit pack for labels and high volume — never expires",
     badge: "Studio scale",
     priceUsd: 129,
     priceUsdYear: 1290,
     songsPerMonth: 50,
     perSongHint: "~$2.58 / song",
     features: [
-      "50 finished songs / month",
-      "About $2.58 per song (vs $4.99 one-time)",
-      "~150 min AP beat generation / month (50 × 3 min)",
-      "Everything in Band",
+      "12,900 AP Credits (never expire)",
+      "~51 song paths at 250 credits (far below $4.99 each)",
+      "One-time purchase — no monthly burn of unused capacity",
+      "Everything in Band pack",
       "Priority mastering queue",
       "Stem export when available",
       "Commercial use license",
@@ -109,14 +109,14 @@ export function planPriceLabel(
     const songs = plan.songsPerMonth || 1;
     const perSong = perMo / songs;
     return {
-      primary: `${formatUsd(perMo)}/mo`,
-      secondary: `Billed ${formatUsd(plan.priceUsdYear)}/year · ~${formatUsd(perSong)}/song`,
+      primary: `${formatUsd(plan.priceUsdYear!)}`,
+      secondary: `annual pack · ~${formatUsd(perSong)}/song path · credits never expire`,
     };
   }
   const songs = plan.songsPerMonth || 1;
   const perSong = plan.priceUsd / songs;
   return {
-    primary: `${formatUsd(plan.priceUsd)}/mo`,
-    secondary: `~${formatUsd(perSong)}/song · billed monthly`,
+    primary: `${formatUsd(plan.priceUsd)}`,
+    secondary: `one-time · ${Math.round(plan.priceUsd * 100).toLocaleString()} credits · ~${formatUsd(perSong)}/song path`,
   };
 }

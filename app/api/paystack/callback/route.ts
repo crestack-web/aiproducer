@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { fulfillCreditPackagePurchase } from "@/lib/credits/wallet";
 import { paystackVerify } from "@/lib/paystack";
 
 /**
@@ -75,6 +76,27 @@ export async function GET(req: Request) {
       await service.from("profiles").update({ metadata: pm }).eq("id", project.user_id);
     } catch (e) {
       console.warn("[paystack] profile subscription stamp failed", e);
+    }
+
+    // One-time credit package fulfillment (idempotent on Paystack reference)
+    try {
+      const ref = String(
+        (typeof meta.paystack_reference === "string" && meta.paystack_reference) ||
+          reference ||
+          ""
+      );
+      if (ref && project.user_id) {
+        const granted = await fulfillCreditPackagePurchase({
+          userId: String(project.user_id),
+          planId: plan,
+          paystackReference: ref,
+        });
+        if (!granted.ok) {
+          console.warn("[paystack] credit grant failed", granted.error);
+        }
+      }
+    } catch (e) {
+      console.warn("[paystack] credit grant error", e);
     }
 
     meta.subscription_interval = interval;
