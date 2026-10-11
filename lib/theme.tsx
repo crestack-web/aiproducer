@@ -34,14 +34,16 @@ export type ThemeColors = {
   shadow: string;
   cardShadow: string;
   inputFill: string;
+  /** Opaque panel for dialogs / sheets (never transparent) */
+  modalSurface: string;
 };
 
 /** Dark mode — keep the original Studio night look intact. */
 export const DARK: ThemeColors = {
   bg: "#0B0A0F",
   bgDeep: "#050508",
-  surface: "rgba(255,255,255,0.045)",
-  surfaceRaised: "rgba(255,255,255,0.06)",
+  surface: "rgba(22,20,28,0.92)",
+  surfaceRaised: "rgba(28,26,36,0.96)",
   border: "rgba(255,255,255,0.09)",
   borderHi: "rgba(255,255,255,0.16)",
   brass: "#E7A961",
@@ -56,6 +58,7 @@ export const DARK: ThemeColors = {
   shadow: "rgba(0,0,0,0.35)",
   cardShadow: "0 1px 0 rgba(255,255,255,0.04)",
   inputFill: "rgba(0,0,0,0.28)",
+  modalSurface: "#16141C",
 };
 
 /**
@@ -81,6 +84,7 @@ export const LIGHT: ThemeColors = {
   shadow: "rgba(40, 28, 12, 0.10)",
   cardShadow: "0 2px 4px rgba(40, 28, 12, 0.05), 0 12px 32px rgba(40, 28, 12, 0.08)",
   inputFill: "#F3EDE4",
+  modalSurface: "#FFFFFF",
 };
 
 type ThemeContextValue = {
