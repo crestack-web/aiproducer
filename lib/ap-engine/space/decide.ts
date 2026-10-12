@@ -3,6 +3,7 @@
  * Decision layer only; DSP executes elsewhere.
  */
 import type { VocalRole, SongSectionKind } from "../roles";
+import { resolveVocalRole } from "../roles";
 import { resolveGenreProfile } from "../profiles/genre-profiles";
 import type { PerformanceSignals } from "./performance";
 import { planMusicalSpace, type SpacePlan } from "../production/musical-space";
@@ -46,18 +47,7 @@ function sectionKindFromLabel(label?: string | null): SongSectionKind {
 }
 
 function roleFromType(type?: string | null): VocalRole {
-  const t = String(type ?? "lead").toLowerCase();
-  if (t.includes("double")) return "double";
-  if (t.includes("adlib") || t.includes("ad-lib") || t.includes("ad_lib")) return "adlib";
-  if (t.includes("background") || t.includes("bgv")) return "background";
-  if (t.includes("harmon")) {
-    if (t.includes("high") || t.includes("top")) return "harmony_high";
-    if (t.includes("low") || t.includes("bottom")) return "harmony_low";
-    return "harmony_mid";
-  }
-  if (t.includes("intro")) return "intro";
-  if (t.includes("outro")) return "outro";
-  return "lead";
+  return resolveVocalRole(type, null);
 }
 
 export function decideVocalSpace(opts: {

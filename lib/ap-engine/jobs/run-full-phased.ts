@@ -397,14 +397,10 @@ export async function runFullProduceWithCheckpoints(opts: {
           buffer: v.buffer,
           pathHint: v.pathHint,
           taskType: v.taskType,
+          sectionLabel: v.sectionLabel,
           startMs: v.startMs ?? undefined,
-          role: (v.taskType || "lead").toLowerCase().includes("harm")
-            ? "harmony"
-            : (v.taskType || "lead").toLowerCase().includes("double")
-              ? "double"
-              : (v.taskType || "lead").toLowerCase().includes("adlib")
-                ? "adlib"
-                : "lead",
+          type: v.taskType,
+          role: v.taskType,
         })),
         onStage: async (s) => {
           const hint =
@@ -460,14 +456,10 @@ export async function runFullProduceWithCheckpoints(opts: {
             buffer: v.buffer,
             pathHint: v.pathHint,
             taskType: v.taskType,
+            sectionLabel: v.sectionLabel,
             startMs: v.startMs ?? undefined,
-            role: (v.taskType || "lead").toLowerCase().includes("harm")
-              ? "harmony"
-              : (v.taskType || "lead").toLowerCase().includes("double")
-                ? "double"
-                : (v.taskType || "lead").toLowerCase().includes("adlib")
-                  ? "adlib"
-                  : "lead",
+            type: v.taskType,
+            role: v.taskType,
           })),
           onStage: async (s) => {
             await reportWithProgress(

@@ -67,34 +67,74 @@ export function resolveVocalRole(taskType: string | null | undefined, sectionLab
   }
   if (t.includes("outro")) return "outro";
 
-  if (t.includes("double") || t.includes("doubler")) return "double";
-  if (t.includes("adlib") || t.includes("ad-lib") || t.includes("ad_lib") || t.includes("call") || t.includes("response")) {
+  if (t.includes("double") || t.includes("doubler") || t.includes("dub")) return "double";
+  if (
+    t.includes("adlib") ||
+    t.includes("ad-lib") ||
+    t.includes("ad_lib") ||
+    t.includes("call") ||
+    t.includes("response") ||
+    t.includes("riff")
+  ) {
     return "adlib";
   }
-  if (t.includes("background") || t.includes("bgv") || t.includes("ooh") || t.includes("ahh") || t.includes("hum") || t.includes("texture")) {
+  // Generated choir / stack layers and explicit BGVs sit behind the lead
+  if (
+    t.includes("background") ||
+    t.includes("bgv") ||
+    t.includes("ooh") ||
+    t.includes("ahh") ||
+    t.includes("hum") ||
+    t.includes("texture") ||
+    t.includes("choir") ||
+    t.includes("stack") ||
+    t.includes("pad")
+  ) {
     return "background";
   }
 
-  // Harmonies: high / low / mid
-  if (t.includes("harmony")) {
+  // Harmonies: high / low / mid (also "harm", "hype", title strings)
+  if (t.includes("harmony") || t.includes("harm") || t === "hype") {
     if (t.includes("high") || t.includes("top") || t.includes("upper")) return "harmony_high";
     if (t.includes("low") || t.includes("bottom") || t.includes("bass") || t.includes("2") || t.includes("second")) {
       return "harmony_low";
     }
-    // layer-model harmony2 → low-ish
     const lr = normalizeLayerRole(taskType);
     if (lr === "harmony2") return "harmony_low";
     return "harmony_mid";
   }
 
-  if (t.includes("lead") || t === "main" || normalizeLayerRole(taskType) === "lead") return "lead";
+  if (t.includes("lead") || t === "main" || t.includes("melody") || normalizeLayerRole(taskType) === "lead") {
+    return "lead";
+  }
 
-  // Section-only cues
+  // Title / section cues when type is generic ("custom", "vocal", "upload")
+  if (sec.includes("double") || sec.includes("dub")) return "double";
+  if (sec.includes("adlib") || sec.includes("ad-lib")) return "adlib";
+  if (sec.includes("harmon") || sec.includes("bgv") || sec.includes("choir")) {
+    if (sec.includes("high") || sec.includes("top")) return "harmony_high";
+    if (sec.includes("low") || sec.includes("bottom")) return "harmony_low";
+    if (sec.includes("background") || sec.includes("choir") || sec.includes("bgv")) return "background";
+    return "harmony_mid";
+  }
   if (sec.includes("outro") && !t.includes("lead")) return "outro";
   if (sec.includes("intro") && !t.includes("lead")) return "intro";
 
   return "lead"; // safe default for core takes
 }
+
+/** Stereo pan bias by role (−1 left … +1 right). Leads stay center. */
+export const DEFAULT_ROLE_PAN: Record<VocalRole, number> = {
+  lead: 0,
+  double: -0.22,
+  harmony_high: 0.48,
+  harmony_mid: 0.28,
+  harmony_low: -0.42,
+  adlib: 0.32,
+  background: -0.12,
+  intro: 0.08,
+  outro: -0.08,
+};
 
 export function resolveSectionKind(label: string | null | undefined, type?: string | null): SongSectionKind {
   const s = `${asStr(label)} ${asStr(type)}`.toLowerCase();

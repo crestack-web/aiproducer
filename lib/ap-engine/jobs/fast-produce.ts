@@ -39,6 +39,14 @@ import {
   type ArrangementPlan,
 } from "@/lib/ap-engine/arrangement";
 import { resolveGenreProfile } from "@/lib/ap-engine/profiles/genre-profiles";
+import {
+  resolveVocalRole,
+  DEFAULT_ROLE_GAIN_DB,
+  DEFAULT_ROLE_WIDTH,
+  DEFAULT_ROLE_PAN,
+  type VocalRole,
+} from "@/lib/ap-engine/roles";
+import { applyWidth } from "@/lib/ap-engine/mix/width";
 
 export type FastVocalLayer = {
   buffer?: Buffer;
@@ -53,33 +61,155 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-7";
+export const FAST_ENGINE_VERSION = "ap-fast-space-8";
 
-/** Post level-match fader — modest; level-match already sits the take. */
-const ROLE_GAIN: Record<string, number> = {
-  // Lead sits clearly above the instrumental (commercial vocal-forward).
-  lead: 1.38,
-  double: 0.78,
-  harmony: 0.7,
-  harmony_high: 0.68,
-  harmony_mid: 0.7,
-  harmony_low: 0.7,
-  adlib: 0.68,
-  background: 0.55,
-  intro: 1.15,
-  outro: 1.15,
-};
+/**
+ * Post level-match fader from role hierarchy (linear).
+ * Lead is vocal-forward; support roles sit clearly under.
+ */
+function roleGainLinear(role: VocalRole): number {
+  const db = DEFAULT_ROLE_GAIN_DB[role] ?? 0;
+  // Lead gets a commercial push on top of 0 dB relative target
+  const leadPush = role === "lead" ? 1.32 : role === "intro" || role === "outro" ? 1.12 : 1.0;
+  return Math.pow(10, db / 20) * leadPush;
+}
 
-function roleGain(type: string): number {
-  const k = (type || "lead").toLowerCase().replace(/\s+/g, "_");
-  if (ROLE_GAIN[k] != null) return ROLE_GAIN[k];
-  if (k.includes("harmon")) return 0.65;
-  if (k.includes("adlib") || k.includes("ad-lib")) return 0.62;
-  if (k.includes("double")) return 0.72;
-  if (k.includes("lead") || k.includes("main") || k.includes("verse") || k.includes("chorus")) {
-    return 1.12;
+/** Resolve role from any of the layer's type fields + title/section. */
+function layerRole(v: FastVocalLayer): VocalRole {
+  const raw = v.taskType || v.type || v.role || "";
+  const label = v.sectionLabel || null;
+  return resolveVocalRole(raw, label);
+}
+
+/**
+ * Role-specific EQ — lead present/forward; doubles body; harmonies softer top;
+ * backgrounds darker/wider; adlibs bright and short-feel.
+ */
+function applyRoleEq(pcm: PcmStereo, role: VocalRole): void {
+  switch (role) {
+    case "lead":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 80, q: 0.7 },
+        { type: "peak", freq: 220, gainDb: -1.2, q: 0.9 },
+        { type: "peak", freq: 3200, gainDb: 2.2, q: 1.0 },
+        { type: "highshelf", freq: 10000, gainDb: 1.2, q: 0.7 },
+      ]);
+      break;
+    case "double":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 100, q: 0.7 },
+        { type: "peak", freq: 280, gainDb: -0.8, q: 0.9 },
+        { type: "peak", freq: 2500, gainDb: 0.8, q: 1.0 },
+        { type: "highshelf", freq: 9000, gainDb: -0.5, q: 0.7 },
+      ]);
+      break;
+    case "harmony_high":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 140, q: 0.7 },
+        { type: "peak", freq: 400, gainDb: -1.5, q: 0.8 },
+        { type: "peak", freq: 4500, gainDb: 1.0, q: 1.1 },
+        { type: "highshelf", freq: 11000, gainDb: 0.6, q: 0.7 },
+      ]);
+      break;
+    case "harmony_mid":
+    case "harmony_low":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 120, q: 0.7 },
+        { type: "peak", freq: 350, gainDb: -1.0, q: 0.85 },
+        { type: "peak", freq: 2800, gainDb: 0.4, q: 1.0 },
+        { type: "highshelf", freq: 8000, gainDb: -1.2, q: 0.7 },
+      ]);
+      break;
+    case "adlib":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 110, q: 0.7 },
+        { type: "peak", freq: 3800, gainDb: 1.8, q: 1.1 },
+        { type: "highshelf", freq: 10000, gainDb: 1.0, q: 0.7 },
+      ]);
+      break;
+    case "background":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 150, q: 0.7 },
+        { type: "peak", freq: 500, gainDb: -2.0, q: 0.8 },
+        { type: "peak", freq: 2200, gainDb: -0.8, q: 1.0 },
+        { type: "highshelf", freq: 7000, gainDb: -2.5, q: 0.7 },
+      ]);
+      break;
+    case "intro":
+    case "outro":
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 90, q: 0.7 },
+        { type: "peak", freq: 3000, gainDb: 1.0, q: 1.0 },
+        { type: "highshelf", freq: 9000, gainDb: 0.5, q: 0.7 },
+      ]);
+      break;
+    default:
+      applyEqStereo(pcm, [
+        { type: "highpass", freq: 80, q: 0.7 },
+        { type: "peak", freq: 3000, gainDb: 1.2, q: 1.0 },
+      ]);
   }
-  return 1.0;
+}
+
+/** Role-specific dynamics — lead more controlled; supports lighter glue. */
+function applyRoleDynamics(pcm: PcmStereo, role: VocalRole): void {
+  switch (role) {
+    case "lead":
+      compressStereo(pcm, {
+        thresholdDb: -16,
+        ratio: 3.2,
+        attackMs: 10,
+        releaseMs: 90,
+        makeupDb: 2.8,
+      });
+      break;
+    case "double":
+      compressStereo(pcm, {
+        thresholdDb: -18,
+        ratio: 2.4,
+        attackMs: 14,
+        releaseMs: 110,
+        makeupDb: 1.5,
+      });
+      break;
+    case "harmony_high":
+    case "harmony_mid":
+    case "harmony_low":
+      compressStereo(pcm, {
+        thresholdDb: -20,
+        ratio: 2.0,
+        attackMs: 18,
+        releaseMs: 140,
+        makeupDb: 1.0,
+      });
+      break;
+    case "adlib":
+      compressStereo(pcm, {
+        thresholdDb: -18,
+        ratio: 2.6,
+        attackMs: 8,
+        releaseMs: 80,
+        makeupDb: 1.8,
+      });
+      break;
+    case "background":
+      compressStereo(pcm, {
+        thresholdDb: -22,
+        ratio: 1.8,
+        attackMs: 25,
+        releaseMs: 180,
+        makeupDb: 0.6,
+      });
+      break;
+    default:
+      compressStereo(pcm, {
+        thresholdDb: -18,
+        ratio: 2.4,
+        attackMs: 12,
+        releaseMs: 100,
+        makeupDb: 1.5,
+      });
+  }
 }
 
 function mixOnto(
@@ -139,27 +269,32 @@ function duckBeatUnderVocalEnvelope(
 }
 
 /**
- * Mild level-match — keep phone takes audible without ×20 noise blow-up.
- * Lead targets ~1.15× beat RMS; max boost ×4.
+ * Role-aware level-match vs beat RMS.
+ * Lead sits above the beat; support roles target lower ratios so they don't compete.
  */
-function levelMatchToBeat(vocal: PcmStereo, beatRms: number, role: string): void {
+function levelMatchToBeat(vocal: PcmStereo, beatRms: number, role: VocalRole): void {
   const vRms = Math.max(rmsOf(vocal.left), rmsOf(vocal.right), 1e-8);
-  const isLead =
-    role.includes("lead") ||
-    role.includes("main") ||
-    role.includes("verse") ||
-    role.includes("chorus") ||
-    role === "intro" ||
-    role === "outro";
-  // Lead ~+4 dB vs beat RMS proxy so the voice reads as the focus, not a layer under the beat.
-  const targetRatio = isLead ? 1.65 : 0.95;
-  const target = Math.max(beatRms * targetRatio, 0.045);
+  const targetRatio =
+    role === "lead"
+      ? 1.65
+      : role === "intro" || role === "outro"
+        ? 1.25
+        : role === "double"
+          ? 0.95
+          : role === "adlib"
+            ? 0.88
+            : role.startsWith("harmony")
+              ? 0.78
+              : role === "background"
+                ? 0.62
+                : 0.9;
+  const target = Math.max(beatRms * targetRatio, role === "lead" ? 0.045 : 0.03);
   let g = target / vRms;
-  g = Math.min(5.5, Math.max(0.75, g));
+  g = Math.min(role === "lead" ? 5.5 : 3.5, Math.max(0.55, g));
   applyGainStereo(vocal, g);
   const pk = Math.max(peakOf(vocal.left), peakOf(vocal.right), 1e-6);
-  // Allow hotter peaks into the fader — bus glue + limiter handle crests.
-  if (pk > 0.92) applyGainStereo(vocal, 0.92 / pk);
+  const peakCap = role === "lead" ? 0.92 : role === "background" ? 0.75 : 0.85;
+  if (pk > peakCap) applyGainStereo(vocal, peakCap / pk);
 }
 
 /** Light noise floor control before any boost stack. */
@@ -247,7 +382,15 @@ export async function runFastArrangement(opts: {
 
 
   await report("processing_vocals");
-  const layers: { pcm: PcmStereo; startMs: number; gain: number; type: string; duckDb?: number }[] = [];
+  const layers: {
+    pcm: PcmStereo;
+    startMs: number;
+    gain: number;
+    type: string;
+    role: VocalRole;
+    pan: number;
+    duckDb?: number;
+  }[] = [];
   const skipReasons: string[] = [];
   const layerDiag: Record<string, unknown>[] = [];
 
@@ -262,28 +405,31 @@ export async function runFastArrangement(opts: {
         sampleRate: vocalNorm.pcm.sampleRate,
       };
 
+      // Canonical role from task type + title/section (uploaded tracks included)
+      const role = layerRole(v);
+      const type = role; // keep string field for diagnostics / arrangement
+
       lightCleanVocal(pcm);
       const rmsAfterClean = Math.max(rmsOf(pcm.left), rmsOf(pcm.right));
 
-      applyEqStereo(pcm, [
-        { type: "highpass", freq: 80, q: 0.7 },
-        { type: "peak", freq: 3000, gainDb: 1.5, q: 1.0 },
-        { type: "highshelf", freq: 10000, gainDb: 0.8, q: 0.7 },
-      ]);
-      compressStereo(pcm, {
-        thresholdDb: -16,
-        ratio: 2.8,
-        attackMs: 12,
-        releaseMs: 100,
-        makeupDb: 2.5,
-      });
+      // Role-specific tone + dynamics (not one chain for all vocals)
+      applyRoleEq(pcm, role);
+      applyRoleDynamics(pcm, role);
 
-      const type = String(v.taskType || v.type || v.role || "lead").toLowerCase();
-      levelMatchToBeat(pcm, beatRms, type);
-      const fader = roleGain(type);
-      headroomForFader(pcm, fader, 0.95);
+      levelMatchToBeat(pcm, beatRms, role);
+      const fader = roleGainLinear(role);
+      headroomForFader(pcm, fader, role === "lead" ? 0.95 : 0.88);
 
-      // —— AP SPACE: performance → space decision → integrate into arrangement ——
+      // Stereo image by role — lead center; doubles/harmonies/adlibs/BGVs placed
+      const pan = DEFAULT_ROLE_PAN[role] ?? 0;
+      const width = DEFAULT_ROLE_WIDTH[role] ?? 0.1;
+      try {
+        applyWidth(pcm, width, pan);
+      } catch {
+        /* width optional */
+      }
+
+      // —— AP SPACE: performance + role → character (present / intimate / wide) ——
       let spaceNotes: string[] = [];
       let spaceCharacter = "present";
       let duckDbLayer = 2.0;
@@ -291,7 +437,7 @@ export async function runFastArrangement(opts: {
         const perf = analyzePerformance(pcm);
         const space = decideVocalSpace({
           performance: perf,
-          roleType: type,
+          roleType: role,
           sectionLabel: v.sectionLabel || null,
           genre: opts.genre ?? null,
           bpm: opts.bpm ?? null,
@@ -302,32 +448,37 @@ export async function runFastArrangement(opts: {
         spaceNotes = space.notes;
         spaceCharacter = space.character;
         duckDbLayer = space.duckDb;
+        // Support roles duck the beat less than lead (avoid pumping on stacks)
+        if (role !== "lead") duckDbLayer = Math.min(duckDbLayer, 2.5);
       } catch {
         spaceNotes = ["space_skipped"];
       }
 
       const startMs = Math.max(0, Number(v.startMs) || 0);
       const peakPreMix = Math.max(peakOf(pcm.left), peakOf(pcm.right));
-      layers.push({ pcm, startMs, gain: fader, type, duckDb: duckDbLayer });
-      if ((type || "").includes("lead") && duckDbLayer) duckDb = duckDbLayer;
+      layers.push({ pcm, startMs, gain: fader, type, role, pan, duckDb: duckDbLayer });
+      if (role === "lead" && duckDbLayer) duckDb = duckDbLayer;
       layerDiag.push({
         label,
         type,
+        role,
         startMs,
         durationMs: vocalNorm.durationMs,
         bytes: raw.length,
         rmsAfterClean: Number(rmsAfterClean.toFixed(5)),
         peakPreMix: Number(peakPreMix.toFixed(4)),
-        fader,
+        fader: Number(fader.toFixed(3)),
+        pan,
+        width,
         spaceCharacter,
         spaceNotes: spaceNotes.slice(0, 8),
         intoBusPeak: Number((peakPreMix * fader).toFixed(4)),
       });
-      console.info("[fast-produce-stopgap] layer", JSON.stringify(layerDiag[layerDiag.length - 1]));
+      console.info("[fast-produce] layer", JSON.stringify(layerDiag[layerDiag.length - 1]));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       skipReasons.push(`${label}: ${msg}`);
-      console.warn("[fast-produce-stopgap] skip layer", label, msg);
+      console.warn("[fast-produce] skip layer", label, msg);
     }
   }
 
@@ -351,7 +502,7 @@ export async function runFastArrangement(opts: {
   }
 
   // --- Phase 1: Vocal Arrangement Mind (section map + automation) ---
-  const leadLayer = layers.find((L) => (L.type || "").includes("lead")) || layers[0]!;
+  const leadLayer = layers.find((L) => L.role === "lead") || layers[0]!;
   let arrangement: ArrangementPlan | null = null;
   try {
     arrangement = buildArrangementPlan({
@@ -361,13 +512,19 @@ export async function runFastArrangement(opts: {
       durationMs: Math.round((totalSamples / sampleRate) * 1000),
     });
     for (const L of layers) {
-      const role = (L.type || "lead").toLowerCase();
+      // Automation depth by role — lead rides sections fully; supports less
       const roleScale =
-        role.includes("lead") ? 1 :
-        role.includes("double") ? 0.55 :
-        role.includes("harm") ? 0.45 :
-        role.includes("adlib") ? 0.4 :
-        role.includes("choir") ? 0.35 : 0.5;
+        L.role === "lead"
+          ? 1
+          : L.role === "double"
+            ? 0.55
+            : L.role.startsWith("harmony")
+              ? 0.42
+              : L.role === "adlib"
+                ? 0.38
+                : L.role === "background"
+                  ? 0.32
+                  : 0.5;
       applySectionAutomation(L.pcm, arrangement, {
         roleScale,
         layerStartMs: L.startMs,
@@ -529,10 +686,13 @@ export async function runFastArrangement(opts: {
       ceilingDb: CEILING_DB,
     },
     layers: layers.map((L) => ({
-      role: L.type,
+      role: L.role,
+      type: L.type,
+      pan: L.pan,
       startMs: L.startMs,
       samples: L.pcm.left.length,
       duckDb: L.duckDb,
+      gain: Number(L.gain.toFixed(3)),
     })),
     vocalStructure: arrangement
       ? {
