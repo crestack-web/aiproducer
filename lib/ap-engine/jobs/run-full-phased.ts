@@ -421,6 +421,7 @@ export async function runFullProduceWithCheckpoints(opts: {
           );
         },
         genre: genre || null,
+          productionDirection: productionDirection || null,
       });
       if (!fast.masterWav?.length || !fast.mixWav?.length) {
         throw new Error("Fast arrangement returned empty mix/master audio");
@@ -476,6 +477,7 @@ export async function runFullProduceWithCheckpoints(opts: {
             );
           },
           genre: genre || null,
+          productionDirection: productionDirection || null,
         });
         if (!fast.masterWav?.length || !fast.mixWav?.length) {
           throw new Error(msg || "Fast arrangement returned empty mix/master audio");

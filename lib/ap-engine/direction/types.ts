@@ -61,6 +61,11 @@ export type ProductionDirection = {
     genre?: string;
     mood?: string;
   };
+  /**
+   * Explicit vibe chip — preferred over inferring from character alone.
+   * intimate_warm | punchy_forward | ethereal_dreamy | raw_soulful | polished_pop
+   */
+  vibe?: string;
   scope?: {
     sections?: string[];
     roles?: string[];

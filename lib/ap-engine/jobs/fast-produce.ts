@@ -34,6 +34,7 @@ import {
 } from "@/lib/ap-engine/master/loudness";
 import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
 import { resolveMasterContext } from "@/lib/ap-engine/master/context";
+import { resolveVibeDeltas } from "@/lib/ap-engine/vibe";
 import type { MasterDecision } from "@/lib/ap-engine/types";
 import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "@/lib/ap-engine/space";
 import {
@@ -428,6 +429,7 @@ export async function runFastArrangement(opts: {
   onStage?: (stage: string) => Promise<void>;
   genre?: string | null;
   bpm?: number | null;
+  productionDirection?: import("../direction/types").ProductionDirection | null;
 }): Promise<{
   /** @deprecated same as masterWav — kept for older callers */
   wav: Buffer;
@@ -455,6 +457,7 @@ export async function runFastArrangement(opts: {
   }
 
   const beatRms = Math.max(rmsOf(beat.left), rmsOf(beat.right), 1e-6);
+  const vibeDeltas = resolveVibeDeltas(opts.productionDirection || null);
   const beatPeak = Math.max(peakOf(beat.left), peakOf(beat.right));
   const sampleRate = beat.sampleRate;
   let totalSamples = beat.left.length;
@@ -506,6 +509,14 @@ export async function runFastArrangement(opts: {
       // Role-specific tone + dynamics (not one chain for all vocals)
       applyRoleEq(pcm, role);
       applyRoleDynamics(pcm, role);
+      // Vibe chip → lead tone (presence / air / mud)
+      if (role === "lead" && vibeDeltas) {
+        applyEqStereo(pcm, [
+          { type: "peak", freq: 280, gainDb: vibeDeltas.leadMudCutDb * 0.5, q: 0.85 },
+          { type: "peak", freq: 3200, gainDb: vibeDeltas.leadPresenceBoostDb * 0.45, q: 1.0 },
+          { type: "highshelf", freq: 11000, gainDb: vibeDeltas.leadAirShelfDb * 0.5, q: 0.7 },
+        ]);
+      }
 
       levelMatchToBeat(pcm, beatRms, role);
       const fader = roleGainLinear(role);
@@ -706,8 +717,8 @@ export async function runFastArrangement(opts: {
   // Milder than before: high-energy vocal peaks must not trigger aggressive bus pumping
   compressStereo(mix, {
     thresholdDb: -14,
-    ratio: 1.45,
-    attackMs: 28,
+    ratio: Math.max(1.2, Math.min(2.2, vibeDeltas.busCompressionRatio)),
+    attackMs: Math.max(10, Math.min(60, vibeDeltas.busAttackMs)),
     releaseMs: 180,
     makeupDb: 0.6,
   });
@@ -727,9 +738,23 @@ export async function runFastArrangement(opts: {
   // done in mix; master unifies beat+vocals without harsh limiting pump.
   const masterCtx = resolveMasterContext({
     genre: opts.genre ?? null,
-    vocalSit: "forward",
+    vocalSit: vibeDeltas.polishAxis < 0.4 ? "blend" : "forward",
     platform: "both",
+    mood:
+      vibeDeltas.vibeKey === "intimate_warm" || vibeDeltas.vibeKey === "raw_soulful"
+        ? "spacious"
+        : vibeDeltas.vibeKey === "ethereal_dreamy"
+          ? "spacious"
+          : vibeDeltas.vibeKey === "polished_pop" || vibeDeltas.vibeKey === "punchy_forward"
+            ? "loud"
+            : "balanced",
+    targetLufsHint: undefined,
   });
+  // Vibe LUFS nudge on top of genre/mood base
+  masterCtx.targetLufs = Math.max(
+    -14.5,
+    Math.min(-9, masterCtx.targetLufs + (vibeDeltas.targetLufsNudge || 0))
+  );
   const CEILING_DB = -1.0;
   const masterDecision: MasterDecision = {
     eq: [],
