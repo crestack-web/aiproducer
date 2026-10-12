@@ -837,6 +837,8 @@ export function ProducerView({
   const [produceProgress, setProduceProgress] = useState(0);
   const [produceJobStatus, setProduceJobStatus] = useState<string | null>(null);
   const [produceJobId, setProduceJobId] = useState<string | null>(null);
+  /** Sync with produceJobId — poll must not race setState and latch onto a previous job */
+  const produceJobIdRef = useRef<string | null>(null);
   const [masterUrl, setMasterUrl] = useState<string | null>(null);
   /** Job id that owns the currently shown master — avoid stale “ready” after re-produce */
   const [masterJobId, setMasterJobId] = useState<string | null>(null);
@@ -3445,9 +3447,10 @@ export function ProducerView({
     try {
       // Advance the job on the server (status route is read-only; worker may be offline).
       // GET /api/jobs/:id runs tickProduceJob for queued/processing PRODUCE_SONG.
-      if (produceJobId) {
+      const pollJobId = produceJobIdRef.current || produceJobId;
+      if (pollJobId) {
         try {
-          const jr = await fetch(`/api/jobs/${produceJobId}`);
+          const jr = await fetch(`/api/jobs/${pollJobId}`);
           const jj = await jr.json().catch(() => ({}));
           if (jr.ok) {
             const stGate = String(jj.status || "").toLowerCase();
@@ -3549,14 +3552,14 @@ export function ProducerView({
         error?: string;
         output_data?: Record<string, unknown>;
       }[];
-      // Strict tracking: while produceJobId is set, only that job can finish the run.
-      // Falling back to any PRODUCE_SONG (or project_status=completed) made "Produce again"
-      // complete in seconds with the previous master.
+      // Strict tracking via REF (not React state) so Produce again cannot race and
+      // complete against a previous job before setProduceJobId commits.
+      const activeJobId = produceJobIdRef.current || produceJobId;
       const tracked =
-        produceJobId ? jobs.find((j) => j.id === produceJobId) : undefined;
+        activeJobId ? jobs.find((j) => j.id === activeJobId) : undefined;
       const trackedStatus = String(tracked?.status || "").toLowerCase();
 
-      if (produceJobId && tracked && trackedStatus === "failed") {
+      if (activeJobId && tracked && trackedStatus === "failed") {
         setProduceError(humanProduceError(tracked.error, tracked.stage));
         setProduceUi("failed");
         setProduceProgress(100);
@@ -3564,15 +3567,17 @@ export function ProducerView({
       }
 
       let produceJob = tracked;
-      if (!produceJob && !produceJobId) {
-        // Resume path only (no active job id yet): prefer in-flight, else newest
-        produceJob =
-          jobs.find(
-            (j) =>
-              j.type === "PRODUCE_SONG" &&
-              ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
-          ) || jobs.find((j) => j.type === "PRODUCE_SONG");
-        if (produceJob?.id) setProduceJobId(String(produceJob.id));
+      if (!produceJob && !activeJobId) {
+        // Resume path only (no active job id yet): prefer in-flight, never a completed old master
+        produceJob = jobs.find(
+          (j) =>
+            j.type === "PRODUCE_SONG" &&
+            ["queued", "processing", "running"].includes(String(j.status || "").toLowerCase())
+        );
+        if (produceJob?.id) {
+          produceJobIdRef.current = String(produceJob.id);
+          setProduceJobId(String(produceJob.id));
+        }
       }
 
       const stGate2 = String(produceJob?.status || "").toLowerCase();
@@ -3610,6 +3615,14 @@ export function ProducerView({
       // Complete only when THIS job is completed AND it looks like a real new finish
       // (not a stale completed row or project still pointing at the previous master).
       if (jobStatus === "complete" || jobStatus === "completed") {
+        // Must be the job we started — never adopt another completed PRODUCE_SONG
+        if (activeJobId && produceJob?.id && String(produceJob.id) !== String(activeJobId)) {
+          return "pending";
+        }
+        if (!activeJobId) {
+          // No intentional produce session — do not auto-complete from history
+          return "pending";
+        }
         const out = (produceJob?.output_data || {}) as Record<string, unknown>;
         // Worker writes master_storage_path (R2 key); legacy keys kept for older jobs
         const jobHasMaster = Boolean(
@@ -3626,20 +3639,23 @@ export function ProducerView({
           return Number.isFinite(n) ? n : 0;
         })();
         const started = produceStartedAtRef.current || 0;
-        // Allow small clock skew; require finish after this Produce click when we have a start time
-        const finishedAfterStart = !started || !completedAtMs || completedAtMs >= started - 15_000;
-        if (!jobHasMaster && !finishedAfterStart) {
+        // Require finish after this Produce click (when timestamps exist)
+        if (started && completedAtMs && completedAtMs < started - 5_000) {
+          // Stale completed row still in list — wait for the new job
           return "pending";
         }
-        if (!jobHasMaster && (st.master_url || masterReady) && started && completedAtMs && completedAtMs < started - 15_000) {
-          // Old master still on project; this job has not written output yet
+        if (!jobHasMaster) {
+          // Job marked complete but no master written yet — keep polling
           return "pending";
         }
         // Job is complete on the server — never stay stuck on Arrange@80%
         // just because signed URL resolution lags a poll cycle.
+        // Prefer THIS job's output; only fall back to project master after job has master paths
         let url =
-          (typeof out.master_url === "string" && out.master_url) ||
-          (st.master_url ? String(st.master_url) : null);
+          (typeof out.master_url === "string" && out.master_url) || null;
+        if (!url && jobHasMaster && st.master_url) {
+          url = String(st.master_url);
+        }
         if (!url) {
           const alt = st.master?.url || st.audio_url;
           if (alt) url = String(alt);
@@ -3819,8 +3835,10 @@ export function ProducerView({
   }
 
   async function cancelProduce(reason: "user" | "timeout" = "user") {
-    const jobId = produceJobId;
+    const jobId = produceJobIdRef.current || produceJobId;
     clearProducePoll();
+    produceJobIdRef.current = null;
+    setProduceJobId(null);
     setProduceUi("failed");
     setProduceError(
       reason === "timeout"
@@ -3896,6 +3914,7 @@ export function ProducerView({
     // Fresh produce: stop polling the previous job and clear its id
     clearProducePoll();
     produceActiveRef.current = false;
+    produceJobIdRef.current = null;
     setProduceJobId(null);
     setProduceJobStatus("queued");
     setProduceProgress(0);
@@ -3939,7 +3958,9 @@ export function ProducerView({
         );
       }
       // Always wait for THIS job — never short-circuit on a prior master_url.
+      // Set ref BEFORE scheduleProducePoll so the first poll cannot match an old completed job.
       produceStartedAtRef.current = Date.now();
+      produceJobIdRef.current = String(jid);
       setProduceJobId(String(jid));
       // Job exists but worker has not claimed yet — never show arrange progress here
       setProduceJobStatus("queued");

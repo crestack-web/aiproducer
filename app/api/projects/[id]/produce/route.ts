@@ -59,13 +59,34 @@ export async function POST(req: Request, ctx: Ctx) {
       );
     }
 
+    // Force Produce must never return a prior completed/deduped job as "success"
+    const deduped = Boolean((result as { deduped?: boolean }).deduped);
+    const st = String(result.status || "").toLowerCase();
+    if (force && (deduped || st === "complete" || st === "completed")) {
+      console.error("[produce] force enqueue returned non-fresh job", {
+        projectId,
+        jobId: result.job_id,
+        status: result.status,
+        deduped,
+      });
+      return NextResponse.json(
+        {
+          error:
+            "Could not start a fresh produce job (previous run was returned). Tap Produce again.",
+          canProduce: true,
+          deduped: true,
+        },
+        { status: 409 }
+      );
+    }
+
     console.info(
       "[produce] enqueued",
       JSON.stringify({
         projectId,
         jobId: result.job_id,
         status: result.status,
-        deduped: Boolean((result as { deduped?: boolean }).deduped),
+        deduped,
         mode: getPipelineMode(),
       })
     );
@@ -76,14 +97,9 @@ export async function POST(req: Request, ctx: Ctx) {
         job_id: result.job_id,
         status: result.status,
         stage: (result as { stage?: string }).stage || result.status || "queued",
-        deduped: Boolean((result as { deduped?: boolean }).deduped),
+        deduped: false,
         mode: getPipelineMode(),
-        message:
-          result.status === "queued" || result.status === "processing"
-            ? "Production started — waiting for the studio engine"
-            : result.status === "complete"
-              ? "Already produced"
-              : "Produce enqueued",
+        message: "Production started — waiting for the studio engine",
         canProduce: true,
       },
       { status: 202 }
