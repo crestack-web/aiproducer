@@ -47,23 +47,52 @@ export const DEFAULT_LAYER_LINEAR_GAIN: Record<LayerRole, number> = {
 };
 
 export function normalizeLayerRole(type: string | null | undefined): LayerRole {
-  const t = asStr(type).toLowerCase();
-  if (t.includes("lead") || t === "main") return "lead";
-  if (t.includes("double") || t.includes("doubler")) return "double";
-  if (t.includes("harmony") && (t.includes("2") || t.includes("low") || t.includes("second"))) {
+  const t = asStr(type).toLowerCase().replace(/-/g, "_");
+  // AP plan types (toDbTaskType) + Console labels — same hierarchy as produce mix
+  if (t.includes("lead") || t === "main" || t.includes("emotional_take") || t === "spoken") {
+    return "lead";
+  }
+  if (t.includes("double") || t.includes("doubler") || t.includes("dub")) return "double";
+  if (
+    t.includes("harmony") &&
+    (t.includes("2") || t.includes("low") || t.includes("second") || t === "low_harmony")
+  ) {
     return "harmony2";
   }
-  if (t.includes("harmony") || t.includes("high_harmony") || t.includes("low_harmony")) {
+  if (
+    t.includes("harmony") ||
+    t.includes("high_harmony") ||
+    t.includes("low_harmony") ||
+    t.includes("harm")
+  ) {
     return "harmony";
   }
-  if (t.includes("adlib") || t.includes("ad-lib") || t.includes("ad_lib")) return "adlib";
-  if (t.includes("background") || t.includes("bgv") || t.includes("ooh") || t.includes("ahh")) {
+  if (
+    t.includes("adlib") ||
+    t.includes("ad_lib") ||
+    t.includes("call_response") ||
+    t.includes("call") ||
+    t.includes("response") ||
+    t.includes("chant") ||
+    t.includes("riff")
+  ) {
+    return "adlib";
+  }
+  if (
+    t.includes("background") ||
+    t.includes("bgv") ||
+    t.includes("ooh") ||
+    t.includes("ahh") ||
+    t.includes("hum") ||
+    t.includes("texture") ||
+    t.includes("whisper") ||
+    t.includes("sustain") ||
+    t.includes("choir") ||
+    t.includes("stack") ||
+    t.includes("pad")
+  ) {
     return "background";
   }
-  if (t.includes("hum") || t.includes("texture") || t.includes("whisper") || t.includes("chant")) {
-    return "background";
-  }
-  if (t.includes("call") || t.includes("response")) return "adlib";
   return "other";
 }
 

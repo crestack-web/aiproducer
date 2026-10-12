@@ -58,27 +58,39 @@ export const ROLE_PRIORITY: Record<VocalRole, number> = {
   outro: 8,
 };
 
+/**
+ * Map recording_tasks.type (and titles) → mix hierarchy.
+ * Covers AP-generated plan types (toDbTaskType lowercases ProductionTaskType):
+ *   lead, double, high_harmony, low_harmony, background, adlib, hum, texture,
+ *   whisper, call_response, chant, sustain, intro_vocal, outro_vocal, …
+ * plus Console uploads / choir stack labels.
+ */
 export function resolveVocalRole(taskType: string | null | undefined, sectionLabel?: string | null): VocalRole {
-  const t = asStr(taskType).toLowerCase();
+  const t = asStr(taskType).toLowerCase().replace(/-/g, "_");
   const sec = asStr(sectionLabel).toLowerCase();
+  const blob = `${t} ${sec}`;
 
-  if (t.includes("intro") || (sec.includes("intro") && t.includes("lead") === false && t.includes("ad"))) {
-    if (t.includes("intro")) return "intro";
-  }
-  if (t.includes("outro")) return "outro";
+  // Intro / outro plan types (intro_vocal, outro_vocal)
+  if (t === "intro_vocal" || (t.includes("intro") && !t.includes("lead"))) return "intro";
+  if (t === "outro_vocal" || (t.includes("outro") && !t.includes("lead"))) return "outro";
 
+  // Doubles
   if (t.includes("double") || t.includes("doubler") || t.includes("dub")) return "double";
+
+  // Adlibs / call-response / chants
   if (
     t.includes("adlib") ||
-    t.includes("ad-lib") ||
     t.includes("ad_lib") ||
+    t.includes("call_response") ||
     t.includes("call") ||
     t.includes("response") ||
-    t.includes("riff")
+    t.includes("riff") ||
+    t.includes("chant")
   ) {
     return "adlib";
   }
-  // Generated choir / stack layers and explicit BGVs sit behind the lead
+
+  // Background / texture family (plan: BACKGROUND, HUM, TEXTURE, WHISPER, SUSTAIN)
   if (
     t.includes("background") ||
     t.includes("bgv") ||
@@ -86,6 +98,8 @@ export function resolveVocalRole(taskType: string | null | undefined, sectionLab
     t.includes("ahh") ||
     t.includes("hum") ||
     t.includes("texture") ||
+    t.includes("whisper") ||
+    t.includes("sustain") ||
     t.includes("choir") ||
     t.includes("stack") ||
     t.includes("pad")
@@ -93,7 +107,7 @@ export function resolveVocalRole(taskType: string | null | undefined, sectionLab
     return "background";
   }
 
-  // Harmonies: high / low / mid (also "harm", "hype", title strings)
+  // Harmonies — high_harmony / low_harmony / harmony
   if (t.includes("harmony") || t.includes("harm") || t === "hype") {
     if (t.includes("high") || t.includes("top") || t.includes("upper")) return "harmony_high";
     if (t.includes("low") || t.includes("bottom") || t.includes("bass") || t.includes("2") || t.includes("second")) {
@@ -104,17 +118,41 @@ export function resolveVocalRole(taskType: string | null | undefined, sectionLab
     return "harmony_mid";
   }
 
-  if (t.includes("lead") || t === "main" || t.includes("melody") || normalizeLayerRole(taskType) === "lead") {
+  // Lead / main / emotional take
+  if (
+    t.includes("lead") ||
+    t === "main" ||
+    t.includes("melody") ||
+    t.includes("emotional_take") ||
+    t === "spoken" ||
+    normalizeLayerRole(taskType) === "lead"
+  ) {
     return "lead";
   }
 
   // Title / section cues when type is generic ("custom", "vocal", "upload")
-  if (sec.includes("double") || sec.includes("dub")) return "double";
-  if (sec.includes("adlib") || sec.includes("ad-lib")) return "adlib";
-  if (sec.includes("harmon") || sec.includes("bgv") || sec.includes("choir")) {
-    if (sec.includes("high") || sec.includes("top")) return "harmony_high";
-    if (sec.includes("low") || sec.includes("bottom")) return "harmony_low";
-    if (sec.includes("background") || sec.includes("choir") || sec.includes("bgv")) return "background";
+  if (blob.includes("double") || blob.includes("dub")) return "double";
+  if (blob.includes("adlib") || blob.includes("ad_lib") || blob.includes("call")) return "adlib";
+  if (
+    blob.includes("harmon") ||
+    blob.includes("bgv") ||
+    blob.includes("choir") ||
+    blob.includes("backing") ||
+    blob.includes("whisper") ||
+    blob.includes("hum")
+  ) {
+    if (blob.includes("high") || blob.includes("top")) return "harmony_high";
+    if (blob.includes("low") || blob.includes("bottom")) return "harmony_low";
+    if (
+      blob.includes("background") ||
+      blob.includes("choir") ||
+      blob.includes("bgv") ||
+      blob.includes("backing") ||
+      blob.includes("whisper") ||
+      blob.includes("hum")
+    ) {
+      return "background";
+    }
     return "harmony_mid";
   }
   if (sec.includes("outro") && !t.includes("lead")) return "outro";
