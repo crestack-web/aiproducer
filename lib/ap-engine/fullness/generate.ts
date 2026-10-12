@@ -398,13 +398,13 @@ export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
 /** Gain budget — stacks support the lead; slightly quieter = more natural blend. */
 const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
-  double: [-11, -8],
-  choir_light: [-14, -11],
-  choir_full: [-15, -12],
-  chorus_lift: [-13, -10],
+  double: [-12, -9],
+  choir_light: [-16, -13],
+  choir_full: [-17, -14],
+  chorus_lift: [-15, -12],
 };
 /** Power-sum of generated layers must stay this far under the lead (dB). */
-const MAX_STACK_SUM_DB_UNDER_LEAD = -6;
+const MAX_STACK_SUM_DB_UNDER_LEAD = -8;
 const MAX_CONCURRENT_LAYERS = 5;
 
 function sumGainsDb(gs: number[]): number {

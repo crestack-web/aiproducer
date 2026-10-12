@@ -60,12 +60,27 @@ export { resolveVocalRole, resolveSectionKind, type VocalRole } from "./roles";
 export { buildDecisionMap, applyPhraseFaderRides, phraseInfluenceForLayer } from "./producer-mind";
 export type { DecisionMap, PhraseDecision, SectionDecision } from "./producer-mind";
 
+/** Console Track FX — applied in preview and in the produced master. */
+export type TrackFxInput = {
+  gainDb?: number;
+  pan?: number;
+  eqLowDb?: number;
+  eqMidDb?: number;
+  eqHighDb?: number;
+  compress?: number;
+  reverb?: number;
+  delay?: number;
+  saturation?: number;
+};
+
 export type ApVocalLayerInput = {
   buffer: Buffer;
   pathHint?: string;
   taskType?: string | null;
   sectionLabel?: string | null;
   startMs?: number | null;
+  trackFx?: TrackFxInput | null;
+  taskId?: string;
 };
 
 export type ApArrangementInput = {

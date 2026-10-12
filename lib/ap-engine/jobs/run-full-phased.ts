@@ -140,6 +140,8 @@ export async function runFullProduceWithCheckpoints(opts: {
             taskType: v.taskType,
             startMs: Math.max(0, Number(v.startMs) || 0),
             pathHint: v.pathHint,
+            trackFx: v.trackFx || null,
+            taskId: v.taskId,
             noiseFloorBeforeDb,
             noiseFloorAfterDb,
             restoreConfidence,
@@ -232,6 +234,8 @@ export async function runFullProduceWithCheckpoints(opts: {
           taskType: layer.taskType,
           sectionLabel: layer.sectionLabel,
           startMs: layer.startMs,
+          trackFx: (layer as { trackFx?: unknown }).trackFx || null,
+          taskId: (layer as { taskId?: string }).taskId,
         });
       } catch (e) {
         console.warn("[ap-tick] load restored layer failed", layer.index, e);
@@ -401,6 +405,8 @@ export async function runFullProduceWithCheckpoints(opts: {
           startMs: v.startMs ?? undefined,
           type: v.taskType,
           role: v.taskType,
+          trackFx: v.trackFx || null,
+          taskId: v.taskId,
         })),
         onStage: async (s) => {
           const hint =
@@ -460,6 +466,8 @@ export async function runFullProduceWithCheckpoints(opts: {
             startMs: v.startMs ?? undefined,
             type: v.taskType,
             role: v.taskType,
+            trackFx: v.trackFx || null,
+            taskId: v.taskId,
           })),
           onStage: async (s) => {
             await reportWithProgress(

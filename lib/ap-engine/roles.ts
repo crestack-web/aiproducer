@@ -194,7 +194,7 @@ export const DEFAULT_ROLE_GAIN_DB: Record<VocalRole, number> = {
   harmony_mid: -8,
   harmony_low: -9,
   adlib: -6.5,
-  background: -11,
+  background: -13.5,
   intro: -4,
   outro: -3,
 };

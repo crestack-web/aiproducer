@@ -42,7 +42,12 @@ type TaskRow = {
   active?: boolean | null;
   selected_in_plan?: boolean | null;
   status?: string | null;
-  metadata?: { section_label?: string; section_id?: string } | null;
+  track_fx?: Record<string, number> | null;
+  metadata?: {
+    section_label?: string;
+    section_id?: string;
+    track_fx?: Record<string, number>;
+  } | null;
 };
 
 export type PlacementLog = {
@@ -86,8 +91,9 @@ export async function collectVocalsForProduce(
       : null;
 
   const taskSelects = [
-    "id, type, title, start_ms, end_ms, status, active, selected_in_plan, section_id, metadata",
-    "id, type, title, start_ms, end_ms, status, active, selected_in_plan, metadata",
+    "id, type, title, start_ms, end_ms, status, active, selected_in_plan, section_id, track_fx, metadata",
+    "id, type, title, start_ms, end_ms, status, active, selected_in_plan, track_fx, metadata",
+    "id, type, title, start_ms, end_ms, status, track_fx, metadata",
     "id, type, title, start_ms, end_ms, status, metadata",
     "id, type, title, start_ms, end_ms, status",
   ];
@@ -314,12 +320,31 @@ export async function collectVocalsForProduce(
 
     diagnostics.push(`comp task=${tid} ${compNote} candidates=${loaded.length}`);
 
+    const fxRaw =
+      (task.track_fx && typeof task.track_fx === "object" ? task.track_fx : null) ||
+      (task.metadata?.track_fx && typeof task.metadata.track_fx === "object"
+        ? task.metadata.track_fx
+        : null);
     vocals.push({
       buffer: chosen.buffer,
       pathHint: chosen.path,
       taskType: task.type,
       sectionLabel,
       startMs,
+      taskId: task.id,
+      trackFx: fxRaw
+        ? {
+            gainDb: Number(fxRaw.gainDb) || 0,
+            pan: Number(fxRaw.pan) || 0,
+            eqLowDb: Number(fxRaw.eqLowDb) || 0,
+            eqMidDb: Number(fxRaw.eqMidDb) || 0,
+            eqHighDb: Number(fxRaw.eqHighDb) || 0,
+            compress: Number(fxRaw.compress) || 0,
+            reverb: Number(fxRaw.reverb) || 0,
+            delay: Number(fxRaw.delay) || 0,
+            saturation: Number(fxRaw.saturation) || 0,
+          }
+        : null,
     });
     placementLog.push({
       taskId: task.id,

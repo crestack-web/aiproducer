@@ -50,6 +50,85 @@ import {
   type VocalRole,
 } from "@/lib/ap-engine/roles";
 import { applyWidth } from "@/lib/ap-engine/mix/width";
+import { addDelayStereo, addReverbStereo, saturateInPlace } from "@/lib/ap-engine/dsp";
+
+export type FastTrackFx = {
+  gainDb?: number;
+  pan?: number;
+  eqLowDb?: number;
+  eqMidDb?: number;
+  eqHighDb?: number;
+  compress?: number;
+  reverb?: number;
+  delay?: number;
+  saturation?: number;
+};
+
+/** Apply Console Track FX on top of role processing (matches producer-view intent). */
+function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined): void {
+  if (!fx) return;
+  const has =
+    (fx.gainDb && Math.abs(fx.gainDb) > 0.05) ||
+    (fx.eqLowDb && Math.abs(fx.eqLowDb) > 0.05) ||
+    (fx.eqMidDb && Math.abs(fx.eqMidDb) > 0.05) ||
+    (fx.eqHighDb && Math.abs(fx.eqHighDb) > 0.05) ||
+    (fx.compress && fx.compress > 0.02) ||
+    (fx.reverb && fx.reverb > 0.02) ||
+    (fx.delay && fx.delay > 0.02) ||
+    (fx.saturation && fx.saturation > 0.02) ||
+    (fx.pan && Math.abs(fx.pan) > 0.02);
+  if (!has) return;
+
+  const bands: { type: "lowshelf" | "peak" | "highshelf"; freq: number; gainDb: number; q: number }[] =
+    [];
+  if (fx.eqLowDb && Math.abs(fx.eqLowDb) > 0.05) {
+    bands.push({ type: "lowshelf", freq: 200, gainDb: Math.max(-12, Math.min(12, fx.eqLowDb)), q: 0.7 });
+  }
+  if (fx.eqMidDb && Math.abs(fx.eqMidDb) > 0.05) {
+    bands.push({ type: "peak", freq: 1200, gainDb: Math.max(-12, Math.min(12, fx.eqMidDb)), q: 0.9 });
+  }
+  if (fx.eqHighDb && Math.abs(fx.eqHighDb) > 0.05) {
+    bands.push({
+      type: "highshelf",
+      freq: 6000,
+      gainDb: Math.max(-12, Math.min(12, fx.eqHighDb)),
+      q: 0.7,
+    });
+  }
+  if (bands.length) applyEqStereo(pcm, bands);
+
+  if (fx.compress && fx.compress > 0.02) {
+    const amt = Math.max(0, Math.min(1, fx.compress));
+    compressStereo(pcm, {
+      thresholdDb: -18 - amt * 8,
+      ratio: 1.5 + amt * 3.5,
+      attackMs: 12,
+      releaseMs: 90,
+      makeupDb: amt * 2.5,
+    });
+  }
+
+  if (fx.saturation && fx.saturation > 0.02) {
+    const amt = Math.max(0, Math.min(1, fx.saturation)) * 0.35;
+    saturateInPlace(pcm.left, amt);
+    saturateInPlace(pcm.right, amt);
+  }
+
+  if (fx.reverb && fx.reverb > 0.02) {
+    addReverbStereo(pcm, Math.max(0, Math.min(0.55, fx.reverb * 0.4)));
+  }
+  if (fx.delay && fx.delay > 0.02) {
+    addDelayStereo(pcm, Math.max(0, Math.min(0.45, fx.delay * 0.35)));
+  }
+
+  if (fx.gainDb && Math.abs(fx.gainDb) > 0.05) {
+    applyGainStereo(pcm, dbToGain(Math.max(-12, Math.min(12, fx.gainDb))));
+  }
+
+  if (fx.pan && Math.abs(fx.pan) > 0.02) {
+    applyWidth(pcm, 0.05, Math.max(-1, Math.min(1, fx.pan)));
+  }
+}
 
 export type FastVocalLayer = {
   buffer?: Buffer;
@@ -61,6 +140,8 @@ export type FastVocalLayer = {
   role?: string | null;
   taskId?: string;
   sectionLabel?: string | null;
+  /** Console Track FX — affects produced master, not only live preview */
+  trackFx?: FastTrackFx | null;
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
@@ -413,6 +494,13 @@ export async function runFastArrangement(opts: {
       const type = role; // keep string field for diagnostics / arrangement
 
       lightCleanVocal(pcm);
+      // Choir / background: tighter gate so room noise isn't amplified into the master
+      if (role === "background" || role.startsWith("harmony")) {
+        gateInPlace(pcm.left, pcm.sampleRate, -38);
+        gateInPlace(pcm.right, pcm.sampleRate, -38);
+        highPassInPlace(pcm.left, pcm.sampleRate, role === "background" ? 160 : 120);
+        highPassInPlace(pcm.right, pcm.sampleRate, role === "background" ? 160 : 120);
+      }
       const rmsAfterClean = Math.max(rmsOf(pcm.left), rmsOf(pcm.right));
 
       // Role-specific tone + dynamics (not one chain for all vocals)
@@ -456,6 +544,9 @@ export async function runFastArrangement(opts: {
       } catch {
         spaceNotes = ["space_skipped"];
       }
+
+      // Console Track FX (user sliders) — after role chain so artist intent wins on top
+      applyConsoleTrackFx(pcm, v.trackFx || null);
 
       const startMs = Math.max(0, Number(v.startMs) || 0);
       const peakPreMix = Math.max(peakOf(pcm.left), peakOf(pcm.right));
@@ -573,9 +664,16 @@ export async function runFastArrangement(opts: {
   for (const L of layers) {
     const start = Math.min(totalSamples - 1, Math.floor((L.startMs / 1000) * sampleRate));
     const len = Math.min(L.pcm.left.length, totalSamples - start);
+    // Lead drives ducking; choir/background barely so the mix doesn't pump ("ducky")
+    const weight =
+      L.role === "lead" ? 0.55 :
+      L.role === "double" ? 0.2 :
+      L.role === "adlib" ? 0.15 :
+      L.role === "background" ? 0.06 :
+      L.role.startsWith("harmony") ? 0.1 : 0.2;
     for (let i = 0; i < len; i++) {
       const a = Math.abs(L.pcm.left[i] || 0) + Math.abs(L.pcm.right[i] || 0);
-      vocalEnv[start + i] = Math.max(vocalEnv[start + i] || 0, a * 0.5);
+      vocalEnv[start + i] = Math.max(vocalEnv[start + i] || 0, a * weight);
     }
   }
   // Smooth envelope
