@@ -11,6 +11,9 @@ export type ApRestoredLayerMeta = {
   taskType?: string | null;
   startMs: number;
   pathHint?: string;
+  /** Console Track FX — carried through restore so produce applies artist settings */
+  trackFx?: Record<string, number> | null;
+  taskId?: string | null;
   noiseFloorBeforeDb?: number;
   noiseFloorAfterDb?: number;
   restoreConfidence?: string;

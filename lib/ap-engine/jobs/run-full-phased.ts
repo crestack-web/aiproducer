@@ -234,8 +234,8 @@ export async function runFullProduceWithCheckpoints(opts: {
           taskType: layer.taskType,
           sectionLabel: layer.sectionLabel,
           startMs: layer.startMs,
-          trackFx: (layer as { trackFx?: unknown }).trackFx || null,
-          taskId: (layer as { taskId?: string }).taskId,
+          trackFx: layer.trackFx || null,
+          taskId: layer.taskId || undefined,
         });
       } catch (e) {
         console.warn("[ap-tick] load restored layer failed", layer.index, e);
