@@ -34,7 +34,7 @@ import {
 } from "@/lib/ap-engine/master/loudness";
 import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
 import { resolveMasterContext } from "@/lib/ap-engine/master/context";
-import { resolveVibeDeltas } from "@/lib/ap-engine/vibe";
+import { resolveVibeDeltas, applyVibeSectionRide } from "@/lib/ap-engine/vibe";
 import type { MasterDecision } from "@/lib/ap-engine/types";
 import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "@/lib/ap-engine/space";
 import {
@@ -559,6 +559,19 @@ export async function runFastArrangement(opts: {
       // Console Track FX (user sliders) — after role chain so artist intent wins on top
       applyConsoleTrackFx(pcm, v.trackFx || null);
 
+      // Vibe + section dynamic riding (verse intimate / chorus open)
+      let sectionRideNotes: string[] = [];
+      try {
+        const ride = applyVibeSectionRide(pcm, {
+          sectionLabel: v.sectionLabel || null,
+          role,
+          vibe: vibeDeltas,
+        });
+        sectionRideNotes = ride.notes;
+      } catch {
+        sectionRideNotes = ["section_ride_skipped"];
+      }
+
       const startMs = Math.max(0, Number(v.startMs) || 0);
       const peakPreMix = Math.max(peakOf(pcm.left), peakOf(pcm.right));
       layers.push({ pcm, startMs, gain: fader, type, role, pan, duckDb: duckDbLayer });
@@ -577,6 +590,7 @@ export async function runFastArrangement(opts: {
         width,
         spaceCharacter,
         spaceNotes: spaceNotes.slice(0, 8),
+        sectionRide: sectionRideNotes.slice(0, 6),
         intoBusPeak: Number((peakPreMix * fader).toFixed(4)),
       });
       console.info("[fast-produce] layer", JSON.stringify(layerDiag[layerDiag.length - 1]));
@@ -630,8 +644,19 @@ export async function runFastArrangement(opts: {
                 : L.role === "background"
                   ? 0.32
                   : 0.5;
+      // Scale section automation depth by vibe (raw = gentler rides, polished = bolder)
+      const vibeRideScale =
+        vibeDeltas.vibeKey === "raw_soulful"
+          ? 0.55
+          : vibeDeltas.vibeKey === "intimate_warm"
+            ? 0.75
+            : vibeDeltas.vibeKey === "ethereal_dreamy"
+              ? 1.15
+              : vibeDeltas.vibeKey === "polished_pop" || vibeDeltas.vibeKey === "punchy_forward"
+                ? 1.1
+                : 1.0;
       applySectionAutomation(L.pcm, arrangement, {
-        roleScale,
+        roleScale: roleScale * vibeRideScale,
         layerStartMs: L.startMs,
       });
     }

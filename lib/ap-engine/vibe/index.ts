@@ -11,3 +11,9 @@ export {
   vibeToDirectionPatch,
   type ResolvedVibe,
 } from "./resolveVibeContext";
+
+export {
+  applyVibeSectionRide,
+  classifySectionLabel,
+  type SectionKind,
+} from "./sectionRide";
