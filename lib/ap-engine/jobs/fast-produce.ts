@@ -32,6 +32,9 @@ import {
   truePeakLimit,
   estimateLoudnessProxyDb,
 } from "@/lib/ap-engine/master/loudness";
+import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
+import { resolveMasterContext } from "@/lib/ap-engine/master/context";
+import type { MasterDecision } from "@/lib/ap-engine/types";
 import { analyzePerformance, decideVocalSpace, applyVocalSpace } from "@/lib/ap-engine/space";
 import {
   buildArrangementPlan,
@@ -61,7 +64,7 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-8";
+export const FAST_ENGINE_VERSION = "ap-fast-space-9";
 
 /**
  * Post level-match fader from role hierarchy (linear).
@@ -600,18 +603,19 @@ export async function runFastArrangement(opts: {
     }
   }
 
-  // --- MIX bus (pre-master): glue only, preserve headroom for loudness stage ---
+  // --- MIX bus (pre-master): light glue only — preserve headroom; avoid pumping on vocal peaks ---
   const peakBeforeGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
+  // Milder than before: high-energy vocal peaks must not trigger aggressive bus pumping
   compressStereo(mix, {
-    thresholdDb: -16,
-    ratio: 1.8,
-    attackMs: 12,
-    releaseMs: 140,
-    makeupDb: 1.2,
+    thresholdDb: -14,
+    ratio: 1.45,
+    attackMs: 28,
+    releaseMs: 180,
+    makeupDb: 0.6,
   });
   const peakAfterGlue = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
-  if (peakAfterGlue > dbToGain(-0.5)) {
-    limitStereo(mix, -0.5);
+  if (peakAfterGlue > dbToGain(-1.0)) {
+    limitStereo(mix, -1.0);
   }
   const mixPeak = Math.max(peakOf(mix.left), peakOf(mix.right), 1e-9);
   const mixRmsProxyDb = estimateLoudnessProxyDb(mix);
@@ -620,33 +624,102 @@ export async function runFastArrangement(opts: {
   await report("mixing"); // bus glue done — keep UI moving past 80%
   await report("mastering");
 
-  // --- MASTER: clone mix, then tonal polish + streaming loudness + true-peak ---
-  const master = cloneStereo(mix);
-  // Subtle polish EQ (master only)
-  // Vocal presence + air so the master doesn't read as a quiet instrumental bed.
-  applyEqStereo(master, [
-    { type: "peak", freq: 120, gainDb: -0.8, q: 0.7 },
-    { type: "peak", freq: 2500, gainDb: 1.4, q: 0.9 },
-    { type: "peak", freq: 4500, gainDb: 0.9, q: 1.1 },
-    { type: "highshelf", freq: 11000, gainDb: 1.0, q: 0.7 },
-  ]);
-
-  // Competitive streaming master (pre-platform-normalization feel).
-  const TARGET_LUFS = -10.5;
+  // --- MASTER: vocal-centric agent (diagnostics + adaptive EQ + glue + loudness + true-peak) ---
+  // Specialist directives: protect lead 1–3 kHz presence, keep stacks wider/lower already
+  // done in mix; master unifies beat+vocals without harsh limiting pump.
+  const masterCtx = resolveMasterContext({
+    genre: opts.genre ?? null,
+    vocalSit: "forward",
+    platform: "both",
+  });
   const CEILING_DB = -1.0;
-  const proxyBeforeDb = estimateLoudnessProxyDb(master);
-  const loudness = normalizeToStreamingTarget(master, TARGET_LUFS, CEILING_DB, 0.35);
+  const masterDecision: MasterDecision = {
+    eq: [],
+    compressor: null,
+    limiterCeilingDb: CEILING_DB,
+    targetLufs: masterCtx.targetLufs,
+    makeupDb: 0,
+    truePeakMarginDb: 0.35,
+  };
+
+  let master: PcmStereo;
+  let proxyBeforeDb = estimateLoudnessProxyDb(mix);
+  let proxyAfterDb = proxyBeforeDb;
+  let loudness: {
+    beforeDb: number;
+    afterDb: number;
+    targetDb: number;
+    passes: number;
+    totalGainDb: number;
+  } = {
+    beforeDb: proxyBeforeDb,
+    afterDb: proxyBeforeDb,
+    targetDb: masterCtx.targetLufs + 3.2,
+    passes: 0,
+    totalGainDb: 0,
+  };
+  let masterSummary: string | null = null;
+  let masterSteps: string[] = [];
+  let TARGET_LUFS = masterCtx.targetLufs;
+
+  try {
+    const agent = runMasteringAgent(mix, masterDecision, {
+      genre: opts.genre ?? null,
+      vocalSit: "forward",
+      platform: "both",
+      bpm: opts.bpm ?? null,
+    });
+    master = agent.pcm;
+    TARGET_LUFS = agent.context.targetLufs;
+    proxyBeforeDb = agent.before.integratedDb;
+    proxyAfterDb = agent.after.integratedDb;
+    loudness = {
+      beforeDb: agent.before.integratedDb,
+      afterDb: agent.after.integratedDb,
+      targetDb: TARGET_LUFS,
+      passes: 1,
+      totalGainDb: agent.after.integratedDb - agent.before.integratedDb,
+    };
+    masterSummary = agent.summary;
+    masterSteps = agent.steps.slice(0, 12);
+  } catch (masterErr) {
+    console.warn(
+      "[fast-produce] master agent failed — fallback chain",
+      masterErr instanceof Error ? masterErr.message : masterErr
+    );
+    master = cloneStereo(mix);
+    // Fallback: HPF rumble, protect presence, soft air, streaming loudness, -1 dBTP
+    highPassInPlace(master.left, master.sampleRate, 28);
+    highPassInPlace(master.right, master.sampleRate, 28);
+    applyEqStereo(master, [
+      { type: "peak", freq: 180, gainDb: -1.0, q: 0.85 },
+      { type: "peak", freq: 2800, gainDb: 1.2, q: 1.0 },
+      { type: "peak", freq: 3800, gainDb: -0.8, q: 1.2 },
+      { type: "highshelf", freq: 11000, gainDb: 0.8, q: 0.7 },
+    ]);
+    loudness = normalizeToStreamingTarget(master, TARGET_LUFS, CEILING_DB, 0.35);
+    truePeakLimit(master, CEILING_DB, 0.35);
+    proxyBeforeDb = loudness.beforeDb;
+    proxyAfterDb = loudness.afterDb;
+    masterSteps = ["fallback_eq_loudness"];
+  }
+
+  // Strict true-peak ceiling (−1.0 dBTP) for AAC/MP3 inter-sample safety
   truePeakLimit(master, CEILING_DB, 0.35);
-  const proxyAfterDb = estimateLoudnessProxyDb(master);
   const masterPeak = Math.max(peakOf(master.left), peakOf(master.right), 1e-9);
-  const masterTruePeakDbApprox = 20 * Math.log10(masterPeak + 1e-12);
+  if (masterPeak > dbToGain(-0.8)) {
+    truePeakLimit(master, -1.2, 0.2);
+  }
+  const masterTruePeakDbApprox = 20 * Math.log10(
+    Math.max(peakOf(master.left), peakOf(master.right), 1e-12)
+  );
 
   // Clamp any numerical overshoot before encode
   for (let i = 0; i < master.left.length; i++) {
-    if (master.left[i] > 1) master.left[i] = 1;
-    if (master.left[i] < -1) master.left[i] = -1;
-    if (master.right[i] > 1) master.right[i] = 1;
-    if (master.right[i] < -1) master.right[i] = -1;
+    if (master.left[i]! > 1) master.left[i] = 1;
+    if (master.left[i]! < -1) master.left[i] = -1;
+    if (master.right[i]! > 1) master.right[i] = 1;
+    if (master.right[i]! < -1) master.right[i] = -1;
   }
 
   const masterWav = encodeStereoWav(master);
@@ -661,8 +734,12 @@ export async function runFastArrangement(opts: {
     duckDb,
     spaceCharacter,
     spaceNotes,
+    masterAgent: masterSummary
+      ? { summary: masterSummary, steps: masterSteps }
+      : { summary: null, steps: masterSteps },
     loudness: {
       targetLufs: TARGET_LUFS,
+      ceilingDbTp: CEILING_DB,
       proxyBeforeDb: Math.round(proxyBeforeDb * 10) / 10,
       proxyAfterDb: Math.round(proxyAfterDb * 10) / 10,
       totalGainDb: Math.round(loudness.totalGainDb * 100) / 100,
