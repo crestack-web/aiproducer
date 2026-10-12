@@ -22,7 +22,8 @@ import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PwaInstallButton } from "@/components/pwa-install";
-import { ProductTour, useProductTour } from "@/components/product-tour"
+import { ProductTour, useProductTour } from "@/components/product-tour";
+import { AppUsageAnalytics } from "@/components/product-analytics";
 import { ArtistAvatar } from "@/components/artist-avatar";
 import {
   IconBell,
@@ -868,6 +869,7 @@ export function AppShell({
           </div>
         </header>
 
+        <AppUsageAnalytics />
         {children}
       </main>
 

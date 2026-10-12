@@ -4,12 +4,14 @@ import { RotatingHeadline } from "@/components/rotating-headline";
 import { WelcomeCreateHook } from "@/components/welcome-create-hook";
 import { WelcomeMusicRail } from "@/components/welcome-music-rail";
 import { WelcomeProductDemo } from "@/components/welcome-product-demo";
+import { WelcomeAnalytics } from "@/components/product-analytics";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
 export default function WelcomePage() {
   return (
     <>
+      <WelcomeAnalytics />
       <style>{css}</style>
       <div className="ambient" aria-hidden />
             <header className="header">

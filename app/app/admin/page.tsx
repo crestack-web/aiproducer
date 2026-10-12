@@ -51,8 +51,6 @@ function StatCard({
 
 export default function AdminDashboardPage() {
   const { colors: C } = useTheme();
-  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
-  const [emailTestMsg, setEmailTestMsg] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -379,86 +377,126 @@ export default function AdminDashboardPage() {
               />
             </div>
             <p style={{ fontSize: 12, color: muted, maxWidth: 640 }}>{metrics.churn.note}</p>
+
+            <h2 style={{ fontSize: 15, fontWeight: 800, color: text, margin: "28px 0 12px" }}>
+              Visits & usage
+            </h2>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                gap: 12,
+                marginBottom: 8,
+              }}
+            >
+              <StatCard
+                label="Welcome views (7d)"
+                value={metrics.visits?.welcomeViews7d ?? 0}
+                sub={`${metrics.visits?.uniqueWelcomeSessions7d ?? 0} unique sessions`}
+                colors={palette}
+              />
+              <StatCard
+                label="Welcome views (30d)"
+                value={metrics.visits?.welcomeViews30d ?? 0}
+                colors={palette}
+              />
+              <StatCard
+                label="App views (7d)"
+                value={metrics.visits?.appViews7d ?? 0}
+                sub={`${metrics.visits?.uniqueAppUsers7d ?? 0} unique users`}
+                colors={palette}
+              />
+              <StatCard
+                label="App views (30d)"
+                value={metrics.visits?.appViews30d ?? 0}
+                colors={palette}
+              />
+            </div>
+            <p style={{ fontSize: 12, color: muted, maxWidth: 640, marginBottom: 28 }}>
+              {metrics.visits?.note ||
+                "Welcome page and in-app route views. Apply product_events migration if counts stay at 0."}
+            </p>
+
+            <h2 style={{ fontSize: 15, fontWeight: 800, color: text, margin: "0 0 8px" }}>
+              Artists (email + onboarding)
+            </h2>
+            <p style={{ fontSize: 13, color: muted, margin: "0 0 12px", maxWidth: 640 }}>
+              Every user by email with their onboarding answers so you can see who they are and how
+              far they got.
+            </p>
+            <div
+              style={{
+                borderRadius: 14,
+                border: `1px solid ${border}`,
+                overflow: "hidden",
+                marginBottom: 28,
+              }}
+            >
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: muted, textAlign: "left", background: surface }}>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Email</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Name</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Role</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Genre</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Experience</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Onboarded</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Projects</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600 }}>Last active</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(metrics.userDirectory || []).length === 0 ? (
+                      <tr>
+                        <td colSpan={8} style={{ padding: "14px 12px", color: muted }}>
+                          No profiles yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      (metrics.userDirectory || []).map((u) => (
+                        <tr key={u.id} style={{ borderTop: `1px solid ${border}` }}>
+                          <td
+                            style={{
+                              padding: "10px 12px",
+                              color: text,
+                              fontWeight: 600,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {u.email}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: text }}>
+                            {u.displayName || "—"}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: muted }}>{u.role || "—"}</td>
+                          <td style={{ padding: "10px 12px", color: muted }}>{u.genre || "—"}</td>
+                          <td style={{ padding: "10px 12px", color: muted }}>
+                            {u.experienceLevel || "—"}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: muted, whiteSpace: "nowrap" }}>
+                            {u.onboardedAt
+                              ? new Date(u.onboardedAt).toLocaleDateString()
+                              : "No"}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: text }}>{u.projectCount}</td>
+                          <td style={{ padding: "10px 12px", color: muted, whiteSpace: "nowrap" }}>
+                            {u.lastProjectAt
+                              ? new Date(u.lastProjectAt).toLocaleDateString()
+                              : u.lastSignInAt
+                                ? new Date(u.lastSignInAt).toLocaleDateString()
+                                : "—"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </>
         ) : null}
       </div>
-    
-            <div
-              style={{
-                marginTop: 28,
-                padding: 18,
-                borderRadius: 16,
-                border: `1px solid ${border}`,
-                background: surface,
-              }}
-            >
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: text, margin: "0 0 10px" }}>
-                Email & system
-              </h2>
-              <p style={{ fontSize: 13, color: muted, margin: "0 0 12px", lineHeight: 1.5 }}>
-                Signup verification and password reset are sent via Resend (not Supabase Auth mail).
-                Set <code style={{ color: brass }}>RESEND_API_KEY</code> and a verified{" "}
-                <code style={{ color: brass }}>RESEND_FROM_EMAIL</code> on Vercel.
-              </p>
-              {health && (
-                <ul style={{ margin: "0 0 14px", paddingLeft: 18, color: muted, fontSize: 13, lineHeight: 1.6 }}>
-                  <li>
-                    Resend:{" "}
-                    <strong style={{ color: text }}>
-                      {(health as { email?: { resendConfigured?: boolean } }).email?.resendConfigured
-                        ? "configured"
-                        : "missing API key"}
-                    </strong>
-                  </li>
-                  <li>
-                    From:{" "}
-                    <strong style={{ color: text }}>
-                      {String((health as { email?: { from?: string } }).email?.from || "—")}
-                    </strong>
-                  </li>
-                  <li>
-                    Produce execution:{" "}
-                    <strong style={{ color: text }}>
-                      {String((health as { produce?: { execution?: string } }).produce?.execution || "—")}
-                    </strong>
-                  </li>
-                </ul>
-              )}
-              <button
-                type="button"
-                onClick={async () => {
-                  setEmailTestMsg(null);
-                  try {
-                    const r = await fetch("/api/admin/test-email", { method: "POST" });
-                    const j = await r.json().catch(() => ({}));
-                    if (!r.ok) {
-                      setEmailTestMsg(j.error || "Test email failed");
-                      return;
-                    }
-                    setEmailTestMsg(`Sent test verification email to ${(j as { to?: string }).to || "you"}.`);
-                  } catch {
-                    setEmailTestMsg("Test email failed");
-                  }
-                }}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: `1px solid ${brass}`,
-                  background: brass,
-                  color: "#1a1208",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                Send test verification email (Resend)
-              </button>
-              {emailTestMsg && (
-                <p style={{ margin: "10px 0 0", fontSize: 13, color: muted }}>{emailTestMsg}</p>
-              )}
-            </div>
-
     </AppShell>
   );
 }
