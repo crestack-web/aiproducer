@@ -185,29 +185,34 @@ export function resolveSectionKind(label: string | null | undefined, type?: stri
   return "other";
 }
 
-/** Relative gain targets vs lead (dB). Genre may adjust. */
-/** Relative level vs lead — supporting layers sit clearly under. */
+/**
+ * Relative level vs lead — supporting layers sit clearly under.
+ * Choir / background protection: stacks must never compete with the lead.
+ */
 export const DEFAULT_ROLE_GAIN_DB: Record<VocalRole, number> = {
   lead: 0,
   double: -5.5,
-  harmony_high: -8.5,
-  harmony_mid: -8,
-  harmony_low: -9,
+  harmony_high: -9.5,
+  harmony_mid: -9,
+  harmony_low: -10,
   adlib: -6.5,
-  background: -13.5,
+  background: -15,
   intro: -4,
   outro: -3,
 };
 
-/** 0 = mono center (lead), higher = wider support. */
+/**
+ * 0 = mono center (lead), higher = wider support.
+ * Choir protection: keep background width moderate to avoid phase-y mono collapse.
+ */
 export const DEFAULT_ROLE_WIDTH: Record<VocalRole, number> = {
   lead: 0.02,
   double: 0.32,
-  harmony_high: 0.62,
-  harmony_mid: 0.52,
-  harmony_low: 0.48,
-  adlib: 0.58,
-  background: 0.72,
+  harmony_high: 0.55,
+  harmony_mid: 0.48,
+  harmony_low: 0.45,
+  adlib: 0.55,
+  background: 0.52,
   intro: 0.4,
   outro: 0.5,
 };

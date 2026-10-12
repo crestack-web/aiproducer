@@ -32,32 +32,69 @@ export function processVocalChainDetailed(
   role?: VocalRole
 ): VocalChainResult {
   const out = cloneStereo(pcm);
-  applyEqStereo(out, decision.eq);
-  compressStereo(out, decision.compressor);
+  const r = role || "lead";
+  const isChoirProtect =
+    r === "background" || r.startsWith("harmony") || r === "double";
 
-  // Adaptive de-ess replaces fixed-amount deEssInPlace
-  let deessQc: SmartDeessQC | null = null;
-  try {
-    const de = smartDeess({
-      pcm: out,
-      role: role || "lead",
-      amount: decision.deEsserAmount,
+  applyEqStereo(out, decision.eq);
+
+  // Choir protect: ultra-gentle dynamics already on decision; still clamp ratio/attack
+  if (isChoirProtect && decision.compressor) {
+    compressStereo(out, {
+      ...decision.compressor,
+      ratio: Math.min(decision.compressor.ratio, r === "background" ? 1.45 : 1.8),
+      attackMs: Math.max(decision.compressor.attackMs, r === "background" ? 55 : 45),
+      makeupDb: Math.min(decision.compressor.makeupDb, r === "background" ? 0.35 : 0.8),
     });
-    if (de.qc.applied) {
-      out.left.set(de.pcm.left);
-      out.right.set(de.pcm.right);
-    }
-    deessQc = de.qc;
-  } catch {
-    deessQc = null;
+  } else {
+    compressStereo(out, decision.compressor);
   }
 
-  saturateInPlace(out.left, decision.saturation);
-  saturateInPlace(out.right, decision.saturation);
+  // Adaptive de-ess — skip / near-zero on choir so breath & texture survive
+  let deessQc: SmartDeessQC | null = null;
+  const deessAmount =
+    r === "background"
+      ? 0
+      : r.startsWith("harmony")
+        ? Math.min(0.06, decision.deEsserAmount * 0.25)
+        : r === "double"
+          ? Math.min(0.12, decision.deEsserAmount * 0.45)
+          : decision.deEsserAmount;
+  if (deessAmount >= 0.05) {
+    try {
+      const de = smartDeess({
+        pcm: out,
+        role: r,
+        amount: deessAmount,
+      });
+      if (de.qc.applied) {
+        out.left.set(de.pcm.left);
+        out.right.set(de.pcm.right);
+      }
+      deessQc = de.qc;
+    } catch {
+      deessQc = null;
+    }
+  } else {
+    deessQc = {
+      sibilanceRatio: 0,
+      events: 0,
+      meanDuck: 0,
+      maxDuck: 0,
+      applied: false,
+      skippedReason: "choir_protect_no_deess",
+    };
+  }
+
+  // No saturation on stacks — keeps organic, non-distorted tone
+  if (!isChoirProtect) {
+    saturateInPlace(out.left, decision.saturation);
+    saturateInPlace(out.right, decision.saturation);
+  }
   applyGainStereo(out, dbToGain(decision.gainDb));
 
-  // Parallel density on lead — expensive presence without killing dynamics
-  if (role === "lead" || !role) {
+  // Parallel density on lead only — expensive presence without killing dynamics
+  if (r === "lead") {
     try {
       const dens = parallelVocalDensity(out, 0.26);
       out.left.set(dens.left);

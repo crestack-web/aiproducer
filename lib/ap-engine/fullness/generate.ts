@@ -258,8 +258,8 @@ function generateUnisonVoice(
   spectralTint(v, opts.brightness ?? (Math.random() * 0.7 - 0.45));
   v = humanizeVoice(v, { gainDepth: 0.04 + Math.random() * 0.025 });
   applyGainStereo(v, opts.gainLinear);
-  // Milder width — heavy stereoize made stacks sound synthetic
-  applyWidth(v, 0.28 + Math.random() * 0.18, opts.pan);
+  // Choir protect: mild width only — aggressive widening causes phase-y mono collapse
+  applyWidth(v, 0.22 + Math.random() * 0.14, opts.pan);
   return v;
 }
 
@@ -278,13 +278,14 @@ function intervalRatio(interval: HarmonyInterval, minorPrefer: boolean): number 
 
 /**
  * Soft high-shelf tuck after pitch shift (mutates + returns).
+ * Choir protect: slightly stronger default soften so stacks stay warm, not metallic.
  * @param amount 0–1 low-pass blend; lower = more natural, higher = duller
  */
-function softenHarmonic(pcm: PcmStereo, amount = 0.3): PcmStereo {
+function softenHarmonic(pcm: PcmStereo, amount = 0.38): PcmStereo {
   let prevL = 0;
   let prevR = 0;
-  const mix = Math.max(0.15, Math.min(0.55, amount));
-  const a = 0.22;
+  const mix = Math.max(0.2, Math.min(0.58, amount));
+  const a = 0.24;
   for (let i = 0; i < pcm.left.length; i++) {
     const l = pcm.left[i] || 0;
     const r = pcm.right[i] || 0;
@@ -295,7 +296,7 @@ function softenHarmonic(pcm: PcmStereo, amount = 0.3): PcmStereo {
     prevL = lpL;
     prevR = lpR;
   }
-  applyGainStereo(pcm, 0.88);
+  applyGainStereo(pcm, 0.85);
   return pcm;
 }
 
@@ -342,16 +343,16 @@ export function generateHarmony(opts: {
   h = softenHarmonic(h);
   h = humanizeVoice(h, { centsPeak: 4 + Math.random() * 3, gainDepth: 0.035 });
   // Harmony sits further back and softer — less "synth choir"
-  applyGainStereo(h, 0.38);
-  applyWidth(h, 0.55, opts.interval === "perfect5th" ? -0.45 : 0.5);
+  applyGainStereo(h, 0.32);
+  applyWidth(h, 0.42, opts.interval === "perfect5th" ? -0.4 : 0.42);
   return {
     kind: "harmony",
     pcm: h,
     startMs: opts.startMs,
     role: opts.interval === "perfect5th" ? "harmony_low" : "harmony_high",
     section: opts.section,
-    gainDb: -11,
-    pan: opts.interval === "perfect5th" ? -0.4 : 0.45,
+    gainDb: -12.5,
+    pan: opts.interval === "perfect5th" ? -0.38 : 0.4,
   };
 }
 
@@ -396,15 +397,15 @@ export function generateAdlibEcho(opts: {
 
 export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
-/** Gain budget — stacks support the lead; slightly quieter = more natural blend. */
+/** Gain budget — stacks support the lead; quieter = natural choir, not competing. */
 const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
-  double: [-12, -9],
-  choir_light: [-16, -13],
-  choir_full: [-17, -14],
-  chorus_lift: [-15, -12],
+  double: [-13, -10],
+  choir_light: [-18, -15],
+  choir_full: [-19, -16],
+  chorus_lift: [-17, -14],
 };
 /** Power-sum of generated layers must stay this far under the lead (dB). */
-const MAX_STACK_SUM_DB_UNDER_LEAD = -8;
+const MAX_STACK_SUM_DB_UNDER_LEAD = -10;
 const MAX_CONCURRENT_LAYERS = 5;
 
 function sumGainsDb(gs: number[]): number {
@@ -518,63 +519,63 @@ export function generateStack(opts: {
   pushUnison(
     mode === "double" ? "Double L" : "Choir L",
     "double",
-    12 + Math.random() * 14,
-    -4 - Math.random() * 5, // was up to -14¢; smaller = less robot
-    -0.48 - Math.random() * 0.12,
-    mode === "double" ? -6.5 : -7.5,
-    -0.15 - Math.random() * 0.25 // slightly warmer
+    14 + Math.random() * 16,
+    -3 - Math.random() * 4, // small cents = less robot
+    -0.42 - Math.random() * 0.1,
+    mode === "double" ? -8 : -9.5,
+    -0.2 - Math.random() * 0.25 // warmer
   );
   pushUnison(
     mode === "double" ? "Double R" : "Choir R",
     "double",
-    18 + Math.random() * 16,
-    3 + Math.random() * 5,
-    0.48 + Math.random() * 0.12,
-    mode === "double" ? -7 : -8,
-    0.05 + Math.random() * 0.2
+    20 + Math.random() * 18,
+    2 + Math.random() * 4,
+    0.42 + Math.random() * 0.1,
+    mode === "double" ? -8.5 : -10,
+    0.0 + Math.random() * 0.15
   );
 
   if (mode === "double") {
     // fall through to gain budget
   } else if (mode === "choir_light" || mode === "chorus_lift") {
-    // Soft center body — further back, darker, later
+    // Soft center body — further back, darker, later (true background level)
     pushUnison(
       "Choir center",
       "background",
-      28 + Math.random() * 18,
-      (Math.random() * 2 - 1) * 4,
-      (Math.random() * 2 - 1) * 0.12,
-      -10.5,
-      -0.35 - Math.random() * 0.2
+      30 + Math.random() * 20,
+      (Math.random() * 2 - 1) * 3,
+      (Math.random() * 2 - 1) * 0.1,
+      -13.5,
+      -0.4 - Math.random() * 0.2
     );
   } else {
     // choir_full: 5-voice cluster — wider timing, still micro-detune only
     pushUnison(
       "Choir center",
-      "double",
-      22 + Math.random() * 14,
+      "background",
+      24 + Math.random() * 16,
       (Math.random() * 2 - 1) * 3,
       (Math.random() * 2 - 1) * 0.08,
-      -9.5,
-      -0.2
+      -12.5,
+      -0.25
     );
     pushUnison(
       "Choir wide L",
       "background",
-      34 + Math.random() * 20,
-      -6 - Math.random() * 4,
-      -0.68 - Math.random() * 0.1,
-      -11.5,
-      -0.4
+      36 + Math.random() * 22,
+      -5 - Math.random() * 3,
+      -0.55 - Math.random() * 0.1,
+      -14.5,
+      -0.45
     );
     pushUnison(
       "Choir wide R",
       "background",
-      38 + Math.random() * 22,
-      5 + Math.random() * 4,
-      0.68 + Math.random() * 0.1,
-      -11.5,
-      0.15
+      40 + Math.random() * 24,
+      4 + Math.random() * 3,
+      0.55 + Math.random() * 0.1,
+      -14.5,
+      0.1
     );
   }
 

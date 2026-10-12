@@ -111,9 +111,13 @@ export function decideLayer(
   const sec = sectionAdjust(ctx.section, profile, ctx.role);
 
   let highPassHz = 80 + treatment.highPassHzOffset;
-  // Support layers: more HPF so they don't fight the lead's body
-  if (ctx.role !== "lead") {
-    highPassHz += ctx.role === "background" || ctx.role.startsWith("harmony") ? 35 : 20;
+  // Choir & harmony protection: higher HPF (120–150 Hz) clears cumulative mud
+  if (ctx.role === "background") {
+    highPassHz = Math.max(highPassHz, 145) + 10;
+  } else if (ctx.role.startsWith("harmony")) {
+    highPassHz = Math.max(highPassHz, 125) + 8;
+  } else if (ctx.role !== "lead") {
+    highPassHz += 20;
   }
   if (v.bands.low > 0.42) {
     highPassHz += 12;
@@ -137,8 +141,16 @@ export function decideLayer(
     eq.push({ type: "lowshelf", freq: 200, gainDb: treatment.warmthDb * 0.55, q: 0.7 });
   }
 
-  const presence = treatment.presenceDb * (ctx.role === "lead" ? 1.25 : ctx.role === "double" ? 0.55 : 0.35);
-  eq.push({ type: "peak", freq: ctx.role === "harmony_low" ? 2200 : 3200, gainDb: presence * 0.72, q: 1.05 });
+  // Lead owns 1–4 kHz presence; support stays modest so stacks don't sound metallic
+  const presence =
+    treatment.presenceDb *
+    (ctx.role === "lead" ? 1.25 : ctx.role === "double" ? 0.45 : ctx.role === "background" ? 0.12 : 0.28);
+  eq.push({
+    type: "peak",
+    freq: ctx.role === "harmony_low" ? 2200 : ctx.role === "background" ? 2800 : 3200,
+    gainDb: presence * 0.72,
+    q: 1.05,
+  });
   if (ctx.role === "lead") {
     eq.push({ type: "peak", freq: 5500, gainDb: Math.min(2.2, presence * 0.4), q: 1.15 });
   }
@@ -150,8 +162,15 @@ export function decideLayer(
   } else if (ctx.role === "lead") {
     eq.push({ type: "highshelf", freq: 11000, gainDb: 1.2, q: 0.7 });
     notes.push("lead_air");
-  } else if (ctx.role === "harmony_high" || ctx.role === "adlib") {
-    eq.push({ type: "highshelf", freq: 9000, gainDb: 1.0, q: 0.7 });
+  } else if (ctx.role === "background") {
+    // Flat/modest air — avoid fizzy metallic choir tops
+    eq.push({ type: "highshelf", freq: 7500, gainDb: -1.8, q: 0.7 });
+    notes.push("choir_soft_air");
+  } else if (ctx.role.startsWith("harmony")) {
+    eq.push({ type: "highshelf", freq: 8500, gainDb: -0.6, q: 0.7 });
+    notes.push("harmony_soft_air");
+  } else if (ctx.role === "adlib") {
+    eq.push({ type: "highshelf", freq: 9000, gainDb: 0.8, q: 0.7 });
   }
 
   // Per-voice character EQ (recording-production engineer, not a flat preset)
@@ -194,7 +213,19 @@ export function decideLayer(
     thresholdDb = -16;
     notes.push("preserve_dynamics");
   }
-  if (v.crest != null && v.crest > 6) {
+  // Choir & Harmony Protection: gentle 1.5–2:1, slow attack so stacks breathe
+  if (ctx.role === "background") {
+    ratio = 1.35;
+    thresholdDb = -24;
+    notes.push("choir_protect_comp");
+  } else if (ctx.role.startsWith("harmony")) {
+    ratio = Math.min(1.6, Math.max(1.3, ratio * 0.45));
+    thresholdDb = -21;
+    notes.push("harmony_protect_comp");
+  } else if (ctx.role === "double") {
+    ratio = Math.min(2.2, ratio * 0.7);
+  }
+  if (v.crest != null && v.crest > 6 && ctx.role === "lead") {
     ratio = Math.min(5, ratio + 0.5);
     notes.push("dynamic_performance");
   }
@@ -208,24 +239,38 @@ export function decideLayer(
     gainDb = Math.max(-14, Math.min(16, toward + roleGain));
   }
 
-  let deEsserAmount = ctx.role === "lead" ? 0.3 : ctx.role === "double" ? 0.22 : 0.15;
-  if (v.bands.high > 0.36) deEsserAmount += ctx.role === "lead" ? 0.12 : 0.06;
+  // Choir protect: no aggressive de-ess — stacked S/T consonants get dull/digital fast
+  let deEsserAmount =
+    ctx.role === "lead"
+      ? 0.3
+      : ctx.role === "double"
+        ? 0.1
+        : ctx.role === "background"
+          ? 0
+          : ctx.role.startsWith("harmony")
+            ? 0.05
+            : 0.12;
+  if (v.bands.high > 0.36 && ctx.role === "lead") deEsserAmount += 0.12;
 
-  let saturation = ctx.role === "lead" ? 0.14 : ctx.role === "adlib" ? 0.16 : 0.06;
-  if (profile.id === "hiphop" || profile.id === "trap") saturation += ctx.role === "lead" ? 0.05 : 0.02;
+  let saturation =
+    ctx.role === "lead" ? 0.14 : ctx.role === "adlib" ? 0.16 : ctx.role === "background" ? 0 : 0.03;
+  if (profile.id === "hiphop" || profile.id === "trap") saturation += ctx.role === "lead" ? 0.05 : 0;
 
   // Backgrounds: darker, more ambient, never competing presence
   if (ctx.role === "background") {
-    notes.push("bg_atmosphere");
+    notes.push("bg_atmosphere", "choir_protect");
   }
   if (ctx.role === "double") {
     notes.push("double_size");
   }
   if (ctx.role.startsWith("harmony")) {
-    notes.push("harmony_depth");
+    notes.push("harmony_depth", "harmony_protect");
   }
 
-  const width = Math.min(0.85, treatment.width * sec.widthMul);
+  // Phase-safe width: support stacks moderate (avoid comb when mono-summed)
+  let width = Math.min(0.85, treatment.width * sec.widthMul);
+  if (ctx.role === "background") width = Math.min(width, 0.55);
+  else if (ctx.role.startsWith("harmony")) width = Math.min(width, 0.58);
   // Floor a little wet so voice shares space with the beat (anti-freestyle isolation)
   const reverbSend = Math.min(0.42, Math.max(0.08, treatment.reverb * sec.reverbMul));
   const delaySend = Math.min(0.28, Math.max(0.04, treatment.delay * sec.delayMul));
@@ -233,6 +278,28 @@ export function decideLayer(
   // Ad-libs in sparse sections get more delay character
   if (ctx.role === "adlib" && v.silenceRatio > 0.35) {
     notes.push("adlib_space");
+  }
+
+  // Choir protect: slow attack (40–60 ms), gentle makeup — natural ebb/flow
+  let attackMs = 12;
+  let releaseMs = 90;
+  let makeupDb = 2;
+  if (ctx.role === "background") {
+    attackMs = 50;
+    releaseMs = 180;
+    makeupDb = 0.4;
+  } else if (ctx.role.startsWith("harmony")) {
+    attackMs = 45;
+    releaseMs = 150;
+    makeupDb = 0.8;
+  } else if (ctx.role === "double") {
+    attackMs = 22;
+    releaseMs = 110;
+    makeupDb = 1.2;
+  } else if (ctx.role !== "lead") {
+    attackMs = 18;
+    releaseMs = 100;
+    makeupDb = 1.2;
   }
 
   const base: LayerDecision = {
@@ -248,9 +315,9 @@ export function decideLayer(
       compressor: {
         thresholdDb,
         ratio,
-        attackMs: ctx.role === "lead" ? 12 : 8,
-        releaseMs: ctx.role === "lead" ? 90 : 70,
-        makeupDb: ctx.role === "lead" ? 2 : 1.5,
+        attackMs,
+        releaseMs,
+        makeupDb,
       },
       deEsserAmount,
       saturation,

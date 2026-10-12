@@ -81,9 +81,22 @@ export function smartDeess(opts: {
     return { pcm: out, qc };
   }
 
-  // Role: lead gets more protection; backgrounds less critical
-  const roleMul = role === "lead" ? 1.1 : role === "double" ? 0.95 : role === "adlib" ? 0.7 : 0.85;
+  // Role: lead gets protection; choir/harmony nearly off (preserve breath & texture)
+  const roleMul =
+    role === "lead"
+      ? 1.1
+      : role === "double"
+        ? 0.55
+        : role === "adlib"
+          ? 0.7
+          : role === "background" || (typeof role === "string" && role.startsWith("harmony"))
+            ? 0.2
+            : 0.5;
   const sens = amount * roleMul;
+  if (sens < 0.06) {
+    qc.skippedReason = "choir_protect_minimal_deess";
+    return { pcm: out, qc };
+  }
 
   // Threshold from distribution of sibilance envelope
   const hop = Math.max(1, Math.floor(sr * 0.002));

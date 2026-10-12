@@ -32,44 +32,51 @@ function strengthForProfile(p: CorrectionProfile): number {
   }
 }
 
+/**
+ * Pitch correction strength by role.
+ * Choir/harmony/background MUST stay near zero — human drift is the organic mass.
+ * Heavy auto-tune on stacks causes phasey comb-filter / "Cher" robot tone.
+ */
 function roleStrengthMul(role: VocalRole): number {
   switch (role) {
     case "lead":
       return 1;
     case "double":
-      return 1.25;
+      return 0.35; // light tighten only; doubles still need some human lag
     case "harmony_high":
     case "harmony_mid":
     case "harmony_low":
-      return 1.3;
+      return 0.08; // effectively off — preserve micro-drift
     case "background":
-      return 1.2;
+      return 0; // full bypass
     case "adlib":
-      return 0.75;
+      return 0.55;
     case "intro":
     case "outro":
-      return 0.6;
+      return 0.4;
     default:
       return 1;
   }
 }
 
+/**
+ * Timing quantize by role — choir relies on micro-timing variation for size.
+ */
 function roleTiming(role: VocalRole): number {
   switch (role) {
     case "lead":
       return 0.15;
     case "double":
-      return 0.55;
+      return 0.12;
     case "harmony_high":
     case "harmony_mid":
     case "harmony_low":
-      return 0.5;
     case "background":
-      return 0.45;
+      return 0; // never grid-lock stacks
     case "adlib":
-      return 0.2;
-    default:
       return 0.1;
+    default:
+      return 0.05;
   }
 }
 
@@ -120,22 +127,72 @@ export function decideVocalPolish(opts: {
     };
   }
 
-  let strength = strengthForProfile(profile) * roleStrengthMul(role);
+  const roleMul = roleStrengthMul(role);
+  // Choir / background / harmony: hard-disable pitch+timing polish
+  if (roleMul < 0.05 || role === "background") {
+    notes.push("choir_protect_no_pitch", "organic_drift");
+    return {
+      enabled: false,
+      correctionProfile: "natural",
+      correctionStrength: 0,
+      preserveSlides: true,
+      preserveVibrato: true,
+      timingTightness: 0,
+      formantPreservation: true,
+      confidenceThreshold: 0.55,
+      maxCorrectionCents: 0,
+      keyMidiRoot: analysis.keyMidiRoot,
+      scale: analysis.scale,
+      notes,
+    };
+  }
+
+  let strength = strengthForProfile(profile) * roleMul;
   if (g.preserveDynamics > 0.65 && role === "lead") {
     strength *= 0.75;
     notes.push("preserve_dynamics");
   }
-  strength = Math.max(0.15, Math.min(0.95, strength));
+  if (role.startsWith("harmony") || role === "double") {
+    strength = Math.min(strength, 0.28);
+    notes.push("stack_light_pitch");
+  }
+  strength = Math.max(0, Math.min(0.95, strength));
+  if (strength < 0.12) {
+    notes.push("pitch_disabled_low_strength");
+    return {
+      enabled: false,
+      correctionProfile: profile,
+      correctionStrength: 0,
+      preserveSlides: true,
+      preserveVibrato: true,
+      timingTightness: 0,
+      formantPreservation: true,
+      confidenceThreshold: 0.55,
+      maxCorrectionCents: 0,
+      keyMidiRoot: analysis.keyMidiRoot,
+      scale: analysis.scale,
+      notes,
+    };
+  }
+
   const maxCents =
-    profile === "natural" ? 45 : profile === "polished" ? 70 : profile === "tight" ? 100 : 120;
+    role.startsWith("harmony") || role === "double"
+      ? 18
+      : profile === "natural"
+        ? 45
+        : profile === "polished"
+          ? 70
+          : profile === "tight"
+            ? 100
+            : 120;
 
   return {
     enabled: true,
     correctionProfile: profile,
     correctionStrength: strength,
-    preserveSlides: profile !== "creative",
+    preserveSlides: true,
     preserveVibrato: true,
-    timingTightness: roleTiming(role) * (profile === "tight" ? 1.15 : 1),
+    timingTightness: roleTiming(role) * (profile === "tight" ? 1.05 : 1),
     formantPreservation: true,
     confidenceThreshold: role === "adlib" ? 0.5 : 0.4,
     maxCorrectionCents: maxCents,

@@ -190,19 +190,19 @@ function applyRoleEq(pcm: PcmStereo, role: VocalRole): void {
       break;
     case "harmony_high":
       applyEqStereo(pcm, [
-        { type: "highpass", freq: 140, q: 0.7 },
+        { type: "highpass", freq: 135, q: 0.7 },
         { type: "peak", freq: 400, gainDb: -1.5, q: 0.8 },
-        { type: "peak", freq: 4500, gainDb: 1.0, q: 1.1 },
-        { type: "highshelf", freq: 11000, gainDb: 0.6, q: 0.7 },
+        { type: "peak", freq: 4500, gainDb: 0.5, q: 1.1 },
+        { type: "highshelf", freq: 9000, gainDb: -0.4, q: 0.7 },
       ]);
       break;
     case "harmony_mid":
     case "harmony_low":
       applyEqStereo(pcm, [
-        { type: "highpass", freq: 120, q: 0.7 },
-        { type: "peak", freq: 350, gainDb: -1.0, q: 0.85 },
-        { type: "peak", freq: 2800, gainDb: 0.4, q: 1.0 },
-        { type: "highshelf", freq: 8000, gainDb: -1.2, q: 0.7 },
+        { type: "highpass", freq: 125, q: 0.7 },
+        { type: "peak", freq: 350, gainDb: -1.2, q: 0.85 },
+        { type: "peak", freq: 2800, gainDb: 0.2, q: 1.0 },
+        { type: "highshelf", freq: 8000, gainDb: -1.5, q: 0.7 },
       ]);
       break;
     case "adlib":
@@ -213,11 +213,12 @@ function applyRoleEq(pcm: PcmStereo, role: VocalRole): void {
       ]);
       break;
     case "background":
+      // Choir protect: HPF 150 Hz, cut presence band, soft/flat air (warm not fizzy)
       applyEqStereo(pcm, [
         { type: "highpass", freq: 150, q: 0.7 },
-        { type: "peak", freq: 500, gainDb: -2.0, q: 0.8 },
-        { type: "peak", freq: 2200, gainDb: -0.8, q: 1.0 },
-        { type: "highshelf", freq: 7000, gainDb: -2.5, q: 0.7 },
+        { type: "peak", freq: 500, gainDb: -2.2, q: 0.8 },
+        { type: "peak", freq: 2200, gainDb: -1.2, q: 1.0 },
+        { type: "highshelf", freq: 7500, gainDb: -2.8, q: 0.7 },
       ]);
       break;
     case "intro":
@@ -236,7 +237,11 @@ function applyRoleEq(pcm: PcmStereo, role: VocalRole): void {
   }
 }
 
-/** Role-specific dynamics — lead more controlled; supports lighter glue. */
+/**
+ * Role-specific dynamics — Choir & Harmony Protection Policy:
+ * support/harmony bus uses 1.5–2:1 with slow attack (40–60 ms) so stacks
+ * keep natural ebb/flow instead of pumping or sounding robotic.
+ */
 function applyRoleDynamics(pcm: PcmStereo, role: VocalRole): void {
   switch (role) {
     case "lead":
@@ -251,10 +256,10 @@ function applyRoleDynamics(pcm: PcmStereo, role: VocalRole): void {
     case "double":
       compressStereo(pcm, {
         thresholdDb: -18,
-        ratio: 2.4,
-        attackMs: 14,
-        releaseMs: 110,
-        makeupDb: 1.5,
+        ratio: 2.2,
+        attackMs: 28,
+        releaseMs: 120,
+        makeupDb: 1.2,
       });
       break;
     case "harmony_high":
@@ -262,37 +267,38 @@ function applyRoleDynamics(pcm: PcmStereo, role: VocalRole): void {
     case "harmony_low":
       compressStereo(pcm, {
         thresholdDb: -20,
-        ratio: 2.0,
-        attackMs: 18,
-        releaseMs: 140,
-        makeupDb: 1.0,
+        ratio: 1.8,
+        attackMs: 48,
+        releaseMs: 160,
+        makeupDb: 0.7,
       });
       break;
     case "adlib":
       compressStereo(pcm, {
         thresholdDb: -18,
-        ratio: 2.6,
-        attackMs: 8,
-        releaseMs: 80,
-        makeupDb: 1.8,
+        ratio: 2.4,
+        attackMs: 12,
+        releaseMs: 90,
+        makeupDb: 1.5,
       });
       break;
     case "background":
+      // Ultra-gentle glue (1.35:1, 60 ms+) — natural swells breathe, no pump
       compressStereo(pcm, {
-        thresholdDb: -22,
-        ratio: 1.8,
-        attackMs: 25,
-        releaseMs: 180,
-        makeupDb: 0.6,
+        thresholdDb: -24,
+        ratio: 1.35,
+        attackMs: 60,
+        releaseMs: 220,
+        makeupDb: 0.25,
       });
       break;
     default:
       compressStereo(pcm, {
         thresholdDb: -18,
-        ratio: 2.4,
-        attackMs: 12,
-        releaseMs: 100,
-        makeupDb: 1.5,
+        ratio: 2.2,
+        attackMs: 20,
+        releaseMs: 110,
+        makeupDb: 1.2,
       });
   }
 }
@@ -522,9 +528,12 @@ export async function runFastArrangement(opts: {
       const fader = roleGainLinear(role);
       headroomForFader(pcm, fader, role === "lead" ? 0.95 : 0.88);
 
-      // Stereo image by role — lead center; doubles/harmonies/adlibs/BGVs placed
+      // Stereo image by role — lead center; supports use natural pan, not synthetic width
+      // (M-S wideners on choir → hollow/phasey robot tone)
       const pan = DEFAULT_ROLE_PAN[role] ?? 0;
-      const width = DEFAULT_ROLE_WIDTH[role] ?? 0.1;
+      const isStack =
+        role === "background" || role.startsWith("harmony") || role === "double";
+      const width = isStack ? 0.08 : DEFAULT_ROLE_WIDTH[role] ?? 0.1;
       try {
         applyWidth(pcm, width, pan);
       } catch {

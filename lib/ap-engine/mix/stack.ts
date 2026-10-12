@@ -80,7 +80,7 @@ export function processAndPlaceLayerDetailed(
     editQc = null;
   }
 
-  // Choir/double bus: do not run lead-style presence/saturation (distortion fix)
+  // Choir & Harmony Protection: do not run lead-style presence/saturation
   const roleKey = String(role || "").toLowerCase();
   const isLeadRole = roleKey === "lead" || roleKey === "main" || roleKey === "";
   // Generated choir / double / harmony stacks: light path only.
@@ -90,15 +90,22 @@ export function processAndPlaceLayerDetailed(
     /double|harmony|background|choir|adlib|ad-lib|stack/.test(roleKey);
   if (!isLeadRole && layer.decision?.vocal) {
     const vocal = { ...layer.decision.vocal };
-    // Choir/double bus: body + width only — less presence/sat/compression than lead
-    if (typeof vocal.saturation === "number") vocal.saturation = Math.min(vocal.saturation, 0.05);
-    if (typeof vocal.deEsserAmount === "number") vocal.deEsserAmount = Math.min(vocal.deEsserAmount, 0.25);
-    if (typeof vocal.gainDb === "number" && vocal.gainDb > 0) vocal.gainDb = Math.min(vocal.gainDb, 1.5);
+    // Body + width only — gentle comp (1.5–2:1, slow attack) preserves expression
+    if (typeof vocal.saturation === "number") vocal.saturation = Math.min(vocal.saturation, 0.04);
+    if (typeof vocal.deEsserAmount === "number") vocal.deEsserAmount = Math.min(vocal.deEsserAmount, 0.2);
+    if (typeof vocal.gainDb === "number" && vocal.gainDb > 0) vocal.gainDb = Math.min(vocal.gainDb, 1.0);
     if (vocal.compressor && typeof vocal.compressor.ratio === "number") {
+      const isBg = /background|choir/.test(roleKey);
       vocal.compressor = {
         ...vocal.compressor,
-        ratio: Math.min(vocal.compressor.ratio, 1.8),
+        ratio: Math.min(vocal.compressor.ratio, isBg ? 1.6 : 1.9),
+        attackMs: Math.max(vocal.compressor.attackMs ?? 20, isBg ? 50 : 40),
+        releaseMs: Math.max(vocal.compressor.releaseMs ?? 100, 150),
+        makeupDb: Math.min(vocal.compressor.makeupDb ?? 1, isBg ? 0.4 : 0.9),
       };
+    }
+    if (typeof vocal.highPassHz === "number") {
+      vocal.highPassHz = Math.max(vocal.highPassHz, /background|choir/.test(roleKey) ? 145 : 120);
     }
     layer = { ...layer, decision: { ...layer.decision, vocal } };
   }
@@ -259,15 +266,22 @@ export function processAndPlaceLayerDetailed(
   const processed = cloneStereo(v);
 
   // 6. Stereo image by role
+  // Choir protect: natural pan only — synthetic M/S width causes hollow/robotic phase
   let pan = 0;
-  if (role === "double") pan = -0.18;
-  else if (role === "harmony_high") pan = 0.42;
+  if (role === "double") pan = -0.22;
+  else if (role === "harmony_high") pan = 0.38;
   else if (role === "harmony_mid") pan = 0.22;
-  else if (role === "harmony_low") pan = -0.38;
+  else if (role === "harmony_low") pan = -0.35;
   else if (role === "adlib") pan = 0.28;
-  else if (role === "background") pan = -0.15;
+  else if (role === "background") pan = -0.18;
   else if (role === "intro" || role === "outro") pan = 0.1;
-  applyWidth(v, layer.decision.width, pan);
+
+  if (isStackSupport) {
+    // Pan-only placement (width ≈ 0) — no pseudo-doubler on stacks
+    applyWidth(v, 0.08, pan);
+  } else {
+    applyWidth(v, layer.decision.width, pan);
+  }
 
   const placed = placeOnTimeline(v, beatLengthPcm, layer.startMs);
   return {
