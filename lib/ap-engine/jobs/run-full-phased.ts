@@ -576,6 +576,21 @@ export async function runFullProduceWithCheckpoints(opts: {
       if (result.masterMp3?.length) {
         mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
         uploads.push(uploadBuffer(mp3Path, asBuf(result.masterMp3), "audio/mpeg"));
+      } else if (result.masterWav?.length) {
+        // Fast path often has WAV only — encode MP3 so Download MP3 never hits a missing R2 key
+        try {
+          const { wavBufferToMp3 } = await import("@/lib/ap-engine/render/export-wav-mp3");
+          const mp3Buf = await wavBufferToMp3(asBuf(result.masterWav));
+          if (mp3Buf?.length) {
+            mp3Path = productionMasterPath(userId, projectId, jobId, "mp3");
+            uploads.push(uploadBuffer(mp3Path, mp3Buf, "audio/mpeg"));
+          }
+        } catch (mp3Err) {
+          console.warn(
+            "[ap-tick] mp3 encode skipped",
+            mp3Err instanceof Error ? mp3Err.message : mp3Err
+          );
+        }
       }
       await Promise.all(uploads);
     } catch (upErr) {

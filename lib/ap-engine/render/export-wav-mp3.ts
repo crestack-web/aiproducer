@@ -11,32 +11,50 @@ export function exportWav(pcm: PcmStereo): Buffer {
   return encodeStereoWav(pcm);
 }
 
-export async function exportMp3(pcm: PcmStereo): Promise<Buffer | null> {
+/**
+ * Convert an existing WAV buffer to 320k MP3 via ffmpeg (libmp3lame).
+ * Used by download-on-demand and produce export when PCM is not in memory.
+ */
+export async function wavBufferToMp3(wav: Buffer): Promise<Buffer | null> {
+  if (!wav?.length) return null;
   const bin = await resolveFfmpegBin();
-  if (!bin) return null;
-  const wav = exportWav(pcm);
+  if (!bin) {
+    console.warn("[exportMp3] no ffmpeg binary — cannot encode MP3");
+    return null;
+  }
   const id = randomBytes(6).toString("hex");
   const inPath = join(tmpdir(), `ap-out-${id}.wav`);
   const outPath = join(tmpdir(), `ap-out-${id}.mp3`);
   try {
     await writeFile(inPath, wav);
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(bin, ["-y", "-i", inPath, "-codec:a", "libmp3lame", "-b:a", "320k", outPath], {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
+      const proc = spawn(
+        bin,
+        ["-y", "-i", inPath, "-codec:a", "libmp3lame", "-b:a", "320k", "-ar", "44100", outPath],
+        { stdio: ["ignore", "ignore", "pipe"] }
+      );
       let err = "";
       proc.stderr?.on("data", (d) => {
         err += String(d);
       });
       proc.on("error", reject);
-      proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(err.slice(-300) || `ffmpeg ${code}`))));
+      proc.on("close", (code) =>
+        code === 0 ? resolve() : reject(new Error(err.slice(-400) || `ffmpeg ${code}`))
+      );
     });
     const { readFile } = await import("fs/promises");
-    return await readFile(outPath);
-  } catch {
+    const mp3 = await readFile(outPath);
+    return mp3.length > 0 ? mp3 : null;
+  } catch (e) {
+    console.warn("[exportMp3] encode failed", e instanceof Error ? e.message : e);
     return null;
   } finally {
     await unlink(inPath).catch(() => undefined);
     await unlink(outPath).catch(() => undefined);
   }
+}
+
+export async function exportMp3(pcm: PcmStereo): Promise<Buffer | null> {
+  const wav = exportWav(pcm);
+  return wavBufferToMp3(wav);
 }

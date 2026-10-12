@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { assertCommercialDownloadAccess } from "@/lib/entitlements";
 import { createServiceClient } from "@/lib/supabase/service";
-import { isStoragePath, resolveAudioUrl } from "@/lib/storage";
+import { isStoragePath, resolveAudioUrl, downloadStorageObject, uploadBuffer } from "@/lib/storage";
 import { recordSongDownloadForBeatUnlock } from "@/lib/music-generation/beat-quota";
+import { wavBufferToMp3 } from "@/lib/ap-engine/render/export-wav-mp3";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -171,48 +172,69 @@ export async function GET(req: Request, ctx: Ctx) {
     }
   }
 
-  // Prefer MP3 path when requested
+  // Prefer stored MP3; otherwise convert master WAV → MP3 on the fly (ffmpeg) so Download MP3 works
+  let onDemandMp3: Buffer | null = null;
   if (format === "mp3") {
     const mp3Path = meta.master_mp3_path;
     if (mp3Path && isStoragePath(mp3Path) && !mp3Path.startsWith("mock://")) {
-      audioPath = mp3Path;
-      source = `${source}+mp3`;
+      const signed = await resolveAudioUrl(mp3Path, 60);
+      if (signed) {
+        audioPath = mp3Path;
+        source = `${source}+mp3`;
+      }
     } else if (audioPath && audioPath.toLowerCase().endsWith(".mp3")) {
-      // already mp3
-    } else {
-      // Try sibling .mp3 next to wav master
-      if (audioPath && isStoragePath(audioPath)) {
-        const candidate = audioPath.replace(/\.wav$/i, ".mp3");
-        if (candidate !== audioPath) {
-          const signed = await resolveAudioUrl(candidate, 60);
-          if (signed) {
-            audioPath = candidate;
-            source = `${source}+mp3_sibling`;
+      // already mp3 path
+    } else if (audioPath && isStoragePath(audioPath)) {
+      const candidate = audioPath.replace(/\.wav$/i, ".mp3");
+      if (candidate !== audioPath) {
+        const signed = await resolveAudioUrl(candidate, 60);
+        if (signed) {
+          audioPath = candidate;
+          source = `${source}+mp3_sibling`;
+        }
+      }
+      // Still no MP3 object — encode from WAV master
+      if (!audioPath.toLowerCase().endsWith(".mp3") && audioPath.toLowerCase().endsWith(".wav")) {
+        try {
+          const wavBuf = await downloadStorageObject(audioPath);
+          onDemandMp3 = await wavBufferToMp3(wavBuf);
+          if (onDemandMp3?.length) {
+            source = `${source}+mp3_transcode`;
+            // Cache next to master so subsequent downloads hit R2
+            const cachePath = audioPath.replace(/\.wav$/i, ".mp3");
+            if (cachePath !== audioPath) {
+              void uploadBuffer(cachePath, onDemandMp3, "audio/mpeg").catch((e) =>
+                console.warn("[download] mp3 cache upload failed", e)
+              );
+            }
           } else {
             return NextResponse.json(
               {
-                error: "MP3 not available yet for this song. Download WAV instead.",
+                error:
+                  "MP3 encode failed on the server (ffmpeg). Download WAV instead, or try again shortly.",
                 available: ["wav"],
                 source,
               },
-              { status: 404 }
+              { status: 503 }
             );
           }
-        } else {
+        } catch (e) {
+          console.error("[download] mp3 transcode failed", e);
           return NextResponse.json(
             {
-              error: "MP3 not available yet for this song. Download WAV instead.",
+              error: "Could not build MP3 from master. Download WAV instead.",
               available: ["wav"],
               source,
+              message: e instanceof Error ? e.message : String(e),
             },
-            { status: 404 }
+            { status: 502 }
           );
         }
       }
     }
   }
 
-  if (!audioPath || audioPath.startsWith("mock://")) {
+  if ((!audioPath || audioPath.startsWith("mock://")) && !onDemandMp3) {
     return NextResponse.json(
       {
         error: "No mastered audio yet. Finish recording, then produce the song.",
@@ -230,20 +252,34 @@ export async function GET(req: Request, ctx: Ctx) {
     console.warn("[download] beat unlock record failed", e);
   }
 
-  const downloadUrl = await resolveAudioUrl(audioPath, 3600);
+  const ext =
+    format === "mp3" || onDemandMp3 || (audioPath && audioPath.toLowerCase().endsWith(".mp3"))
+      ? "mp3"
+      : "wav";
+  const filename = safeFilename(project.title || "studio-song", kind, ext, version?.version);
+
+  // On-demand MP3: stream from our origin (never send the user to a missing R2 object)
+  if (onDemandMp3?.length) {
+    const headers = new Headers();
+    headers.set("Content-Type", "audio/mpeg");
+    headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+    headers.set("Cache-Control", "private, no-store");
+    headers.set("Content-Length", String(onDemandMp3.length));
+    headers.set("X-AP-Download-Source", source);
+    return new NextResponse(new Uint8Array(onDemandMp3), { status: 200, headers });
+  }
+
+  const downloadUrl = await resolveAudioUrl(audioPath!, 3600);
   if (!downloadUrl) {
     return NextResponse.json(
       {
         error: "Audio is not downloadable yet (missing storage object).",
-        path: isStoragePath(audioPath) ? audioPath : undefined,
+        path: isStoragePath(audioPath!) ? audioPath : undefined,
         source,
       },
       { status: 404 }
     );
   }
-
-  const ext = format === "mp3" ? "mp3" : audioPath.toLowerCase().endsWith(".mp3") ? "mp3" : "wav";
-  const filename = safeFilename(project.title || "studio-song", kind, ext, version?.version);
 
   if (wantRedirect) {
     const res = NextResponse.redirect(downloadUrl, 302);
@@ -251,19 +287,18 @@ export async function GET(req: Request, ctx: Ctx) {
     return res;
   }
 
-  // Stream through our origin so the browser gets audio/wav + attachment
-  // (opening the raw R2 signed URL often shows binary as text).
+  // Stream through our origin so the browser gets correct Content-Type + attachment
+  // (opening the raw R2 signed URL often fails CORS or shows binary as text).
   if (wantProxy) {
     try {
       const upstream = await fetch(downloadUrl);
       if (!upstream.ok || !upstream.body) {
         return NextResponse.json(
-          { error: "Could not fetch master from storage", status: upstream.status },
+          { error: "Could not fetch master from Cloudflare R2 storage", status: upstream.status },
           { status: 502 }
         );
       }
-      const contentType =
-        ext === "mp3" ? "audio/mpeg" : "audio/wav";
+      const contentType = ext === "mp3" ? "audio/mpeg" : "audio/wav";
       const headers = new Headers();
       headers.set("Content-Type", contentType);
       headers.set("Content-Disposition", `attachment; filename="${filename}"`);
@@ -274,7 +309,10 @@ export async function GET(req: Request, ctx: Ctx) {
     } catch (e) {
       console.error("[download] proxy failed", e);
       return NextResponse.json(
-        { error: "Proxy download failed", message: e instanceof Error ? e.message : String(e) },
+        {
+          error: "Proxy download from storage failed",
+          message: e instanceof Error ? e.message : String(e),
+        },
         { status: 502 }
       );
     }
@@ -289,8 +327,6 @@ export async function GET(req: Request, ctx: Ctx) {
     source,
     expires_in: 3600,
     project_status: project.status,
-    available_formats: meta.master_mp3_path || audioPath.toLowerCase().endsWith(".mp3")
-      ? ["wav", "mp3"]
-      : ["wav"],
+    available_formats: ["wav", "mp3"],
   });
 }
