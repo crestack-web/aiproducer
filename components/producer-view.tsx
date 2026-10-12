@@ -3492,12 +3492,14 @@ export function ProducerView({
               } else if (prev.at > 0) {
                 const idleMs = Date.now() - prev.at;
                 // Queued too long → worker never claimed
-                if (stNow === "queued" && idleMs > 60_000) {
+                if (stNow === "queued" && idleMs > 90_000) {
+                  // Do not clear ref mid-poll chain incorrectly; fail this run explicitly
+                  produceJobIdRef.current = null;
                   setProduceJobId(null);
                   setProduceUi("failed");
                   setProduceStage("failed");
                   setProduceError(
-                    "Production never started — the studio engine did not pick up this job. Tap Produce again. If it keeps happening, the worker may be offline."
+                    "Production never started — the studio engine did not pick up this job. Tap Produce again. If it keeps happening, check the Railway worker."
                   );
                   setProduceProgress(0);
                   return "failed";
@@ -3507,6 +3509,7 @@ export function ProducerView({
                   (stNow === "processing" || stNow === "running") &&
                   idleMs > 4 * 60_000
                 ) {
+                  produceJobIdRef.current = null;
                   setProduceJobId(null);
                   setProduceUi("failed");
                   setProduceStage("failed");
@@ -3639,33 +3642,47 @@ export function ProducerView({
           return Number.isFinite(n) ? n : 0;
         })();
         const started = produceStartedAtRef.current || 0;
-        // Require finish after this Produce click (when timestamps exist)
-        if (started && completedAtMs && completedAtMs < started - 5_000) {
-          // Stale completed row still in list — wait for the new job
-          return "pending";
+        // Must have finished AFTER this Produce click (strict — no 5%→100% on old master)
+        if (started) {
+          if (!completedAtMs) {
+            // Complete without completed_at is suspicious; keep waiting one more cycle
+            return "pending";
+          }
+          if (completedAtMs < started - 2_000) {
+            return "pending";
+          }
         }
         if (!jobHasMaster) {
-          // Job marked complete but no master written yet — keep polling
           return "pending";
         }
-        // Job is complete on the server — never stay stuck on Arrange@80%
-        // just because signed URL resolution lags a poll cycle.
-        // Prefer THIS job's output; only fall back to project master after job has master paths
+        // Prefer THIS job's signed master — avoid project-level previous master
         let url =
-          (typeof out.master_url === "string" && out.master_url) || null;
-        if (!url && jobHasMaster && st.master_url) {
-          url = String(st.master_url);
-        }
-        if (!url) {
-          const alt = st.master?.url || st.audio_url;
-          if (alt) url = String(alt);
-        }
+          (typeof out.master_url === "string" && out.master_url.startsWith("http")
+            ? out.master_url
+            : null) || null;
         if (!url) {
           try {
+            // Resolve via status API with job context if possible
             url = await resolveMasterPlayUrl();
           } catch {
             url = null;
           }
+        }
+        // Only use project master_url if it changed after we started produce
+        if (!url && st.master_url) {
+          const masterCreated = st.master?.created_at
+            ? Date.parse(String(st.master.created_at))
+            : 0;
+          if (!started || !masterCreated || masterCreated >= started - 2_000) {
+            url = String(st.master_url);
+          }
+        }
+        if (!url) {
+          // Job finished with storage path but URL not ready — stay producing, not "complete" with old audio
+          setProduceStage(String(produceJob?.stage || "export"));
+          setProduceProgress(96);
+          setProduceUi("producing");
+          return "pending";
         }
         if (url) setMasterUrl(url);
         if (produceJob?.id) setMasterJobId(String(produceJob.id));
@@ -3673,13 +3690,6 @@ export function ProducerView({
         setProduceProgress(100);
         setProduceUi("complete");
         setProduceError(null);
-        // If we still lack a playable URL but the job is done, exit producing UI —
-        // user can refresh / open library; blocking at 80% is worse.
-        if (!jobHasMaster && !st.master_url && !masterReady && !url) {
-          setProduceError(
-            "Song finished on the server — refresh if playback does not appear yet."
-          );
-        }
         return "complete";
       }
 

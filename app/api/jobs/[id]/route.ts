@@ -9,7 +9,13 @@ type Ctx = { params: Promise<{ id: string }> };
 /** Full AP produce needs multi-minute ticks on Vercel (default limit kills mid-restore). */
 export const maxDuration = 300;
 
-/** GET /api/jobs/:id — also advances PRODUCE_SONG jobs while polling. */
+/**
+ * GET /api/jobs/:id — status + optional progress tick.
+ *
+ * - inline mode: always tick while queued/processing
+ * - worker mode: if job sits in queued > ~8s (worker lag/offline), Vercel advances
+ *   it so Produce again is not stuck at 5% forever or "completed" from a stale master
+ */
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const { user, supabase, error } = await requireUser();
@@ -35,15 +41,37 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Heavy produce runs on the dedicated worker (workers/production-worker.ts).
-  // Vercel poll must only read status — never burn the 300s function ceiling mid-arrange.
-  if (
-    job.type === "PRODUCE_SONG" &&
-    (job.status === "queued" || job.status === "processing") &&
-    getProduceExecutionMode() === "inline"
-  ) {
+  const mode = getProduceExecutionMode();
+  const st = String(job.status || "").toLowerCase();
+  const isProduce =
+    job.type === "PRODUCE_SONG" && (st === "queued" || st === "processing" || st === "running");
+
+  let shouldTick = false;
+  let maxWorkMs = 240_000;
+
+  if (isProduce) {
+    if (mode === "inline") {
+      shouldTick = true;
+      maxWorkMs = 240_000;
+    } else {
+      // Worker mode: only rescue jobs the worker has not claimed yet
+      const createdMs = job.created_at ? Date.parse(String(job.created_at)) : 0;
+      const ageMs = createdMs ? Date.now() - createdMs : 0;
+      if (st === "queued" && ageMs >= 8_000) {
+        shouldTick = true;
+        // Shorter tick on Vercel — keep moving stages; subsequent polls continue
+        maxWorkMs = 90_000;
+        console.info(
+          "[jobs/get] worker-mode safety tick (queued unclaimed)",
+          JSON.stringify({ jobId: id, ageMs, mode })
+        );
+      }
+    }
+  }
+
+  if (shouldTick) {
     try {
-      await tickProduceJob(job.id, { maxWorkMs: 240_000 });
+      await tickProduceJob(job.id, { maxWorkMs });
       const { data: refreshed } = await service.from("jobs").select("*").eq("id", id).maybeSingle();
       if (refreshed) job = refreshed;
     } catch (e) {
@@ -66,5 +94,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     created_at: job.created_at,
     started_at: job.started_at,
     completed_at: job.completed_at,
+    execution_mode: mode,
+    safety_tick: shouldTick,
   });
 }
