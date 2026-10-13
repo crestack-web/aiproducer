@@ -154,6 +154,32 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   plateReverb: 0,
 };
 
+/** Rebuild plugin rack chips from non-zero TrackFx values (after reload / presets). */
+export function rackFromFx(fx: TrackFx): string[] {
+  const out: string[] = [];
+  const n = (v: number) => Math.abs(Number(v) || 0);
+  if (n(fx.compress) > 0.02) out.push("compress");
+  if (n(fx.deEss) > 0.02) out.push("deess");
+  if (n(fx.gate) > 0.02) out.push("gate");
+  if (n(fx.limiter) > 0.02) out.push("limiter");
+  if (n(fx.saturation) > 0.02) out.push("sat");
+  if (n(fx.eqLowDb) > 0.05 || n(fx.eqMidDb) > 0.05 || n(fx.eqHighDb) > 0.05 || n(fx.air) > 0.02)
+    out.push("eq");
+  if ((Number(fx.highPassHz) || 0) > 25) out.push("hpf");
+  if ((Number(fx.lowPassHz) || 0) > 500) out.push("lpf");
+  if (n(fx.telephone) > 0.02) out.push("telephone");
+  if (n(fx.reverb) > 0.02) out.push("reverb");
+  if (n(fx.plateReverb) > 0.02) out.push("plate");
+  if (n(fx.delay) > 0.02) out.push("delay");
+  if (n(fx.slapDelay) > 0.02) out.push("slap");
+  if (n(fx.chorus) > 0.02) out.push("chorus");
+  if (n(fx.doubler) > 0.02) out.push("doubler");
+  if (n(fx.rotorMix) > 0.02) out.push("rotor");
+  if (n(fx.springMix) > 0.02) out.push("spring");
+  return out;
+}
+
+
 /** One audio region on a track (split clips share the same track). */
 export type ProducerClip = {
   id: string;
@@ -3037,6 +3063,21 @@ export function ProducerView({
       }
       return next;
     });
+    setFxRackById((prev) => {
+      const next = { ...prev };
+      for (const l of layersProp) {
+        if (next[l.id]?.length) continue;
+        const fx = l.trackFx
+          ? ({ ...DEFAULT_TRACK_FX, ...l.trackFx } as TrackFx)
+          : next[l.id]
+            ? undefined
+            : DEFAULT_TRACK_FX;
+        if (l.trackFx) {
+          next[l.id] = rackFromFx({ ...DEFAULT_TRACK_FX, ...l.trackFx } as TrackFx);
+        }
+      }
+      return next;
+    });
     setColorById((prev) => {
       const next = { ...prev };
       for (const l of layersProp) {
@@ -3476,28 +3517,15 @@ export function ProducerView({
       const src = ctx.createBufferSource();
       src.buffer = buf;
 
-      // Clean path when no FX: gain → pan only (fixes robotic beat/vocals with empty rack)
-      const neutral = isTrackFxNeutral(fx as unknown as Record<string, number>);
-      if (neutral || (tr.kind === "beat" && neutral)) {
-        const g = ctx.createGain();
-        const panNode = ctx.createStereoPanner();
-        const gLin = on ? Math.pow(10, (Number(fx.gainDb) || 0) / 20) : 0;
-        g.gain.value = gLin;
-        panNode.pan.value = Math.max(-1, Math.min(1, Number(fx.pan) || 0));
-        src.connect(g);
-        g.connect(panNode);
-        panNode.connect(ctx.destination);
-        gainsRef.current.set(tr.id, g);
-        panNodesRef.current.set(tr.id, panNode);
-      } else {
-        const graph = createLiveTrackFxGraph(ctx);
-        graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
-        fxGraphRef.current.set(tr.id, graph);
-        gainsRef.current.set(tr.id, graph.gain);
-        panNodesRef.current.set(tr.id, graph.pan);
-        graph.output.connect(ctx.destination);
-        src.connect(graph.input);
-      }
+      // Always use the live FX graph so knob changes apply mid-playback.
+      // Graph is transparent when amounts are ~0 (no robotic color on clean tracks).
+      const graph = createLiveTrackFxGraph(ctx);
+      graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
+      fxGraphRef.current.set(tr.id, graph);
+      gainsRef.current.set(tr.id, graph.gain);
+      panNodesRef.current.set(tr.id, graph.pan);
+      graph.output.connect(ctx.destination);
+      src.connect(graph.input);
 
       // Vocals: offset by section start on the timeline
       if (tr.kind === "vocal") {
@@ -8112,6 +8140,15 @@ function TrackFxPanel({
   /** Effect currently open in its own modal */
   const [modalId, setModalId] = useState<string | null>(null);
 
+  // If chips were lost (reload) but FX values exist, show derived rack
+  const effectiveRack = rack.length > 0 ? rack : rackFromFx(fx);
+  React.useEffect(() => {
+    if (rack.length === 0 && effectiveRack.length > 0) {
+      onRackChange(effectiveRack);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fx]);
+
   type PluginDef = {
     id: string;
     label: string;
@@ -8159,7 +8196,9 @@ function TrackFxPanel({
   }
 
   function addPlugin(id: string) {
-    if (!rack.includes(id)) onRackChange([...rack, id]);
+    const base = rack.length > 0 ? rack : rackFromFx(fx);
+    if (!base.includes(id)) onRackChange([...base, id]);
+    else onRackChange(base);
     setAddOpen(false);
     setModalId(id);
   }
@@ -8267,8 +8306,18 @@ function TrackFxPanel({
             value={v}
             aria-label={label}
             onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
-            onMouseUp={() => onCommit({ ...fx, [key]: Number((fx as any)[key]) })}
-            onTouchEnd={() => onCommit({ ...fx, [key]: Number((fx as any)[key]) })}
+            onMouseUp={(e) => {
+              const val = parseFloat((e.target as HTMLInputElement).value);
+              const next = { ...fx, [key]: val } as TrackFx;
+              onChange(next);
+              onCommit(next);
+            }}
+            onTouchEnd={(e) => {
+              const val = parseFloat((e.target as HTMLInputElement).value);
+              const next = { ...fx, [key]: val } as TrackFx;
+              onChange(next);
+              onCommit(next);
+            }}
             style={{
               position: "absolute",
               width: dim,
@@ -8320,8 +8369,18 @@ function TrackFxPanel({
           step={step}
           value={v}
           onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
-          onMouseUp={() => onCommit(fx)}
-          onTouchEnd={() => onCommit(fx)}
+          onMouseUp={(e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            const next = { ...fx, [key]: val } as TrackFx;
+            onChange(next);
+            onCommit(next);
+          }}
+          onTouchEnd={(e) => {
+            const val = parseFloat((e.target as HTMLInputElement).value);
+            const next = { ...fx, [key]: val } as TrackFx;
+            onChange(next);
+            onCommit(next);
+          }}
           style={{ width: "100%", accentColor: brass }}
         />
       </label>
@@ -8708,7 +8767,7 @@ function TrackFxPanel({
 
       {/* Rack chips — tap opens that effect's modal */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        {rack.map((id) => {
+        {effectiveRack.map((id) => {
           const def = PLUGINS.find((p) => p.id === id);
           return (
             <button
@@ -8762,7 +8821,7 @@ function TrackFxPanel({
         </button>
       </div>
 
-      {rack.length === 0 && (
+      {effectiveRack.length === 0 && (
         <p style={{ margin: 0, fontSize: 12, color: muted, lineHeight: 1.45 }}>
           No effects yet. Add one to open its knob panel — clean playback until then.
         </p>
@@ -8993,7 +9052,7 @@ function TrackFxPanel({
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   {PLUGINS.filter((p) => p.group === g).map((p) => {
-                    const on = rack.includes(p.id);
+                    const on = effectiveRack.includes(p.id);
                     return (
                       <button
                         key={p.id}
