@@ -1,4 +1,5 @@
 import { findPresetByPhrase, applyFxPreset, FX_DEFAULTS } from "./fx-presets";
+import type { AutomationParamKey } from "./fx-automation";
 
 /**
  * Console DAW mindset — map plain language → local actions AP can execute
@@ -51,6 +52,22 @@ export type DawAction =
     }
   | { type: "fx_set"; trackId: string; patch: Record<string, number>; label: string }
   | { type: "fx_preset"; trackId: string; presetId: string; label: string }
+  | {
+      type: "automation_ramp";
+      trackId: string;
+      param: AutomationParamKey;
+      startMs: number;
+      endMs: number;
+      startValue: number;
+      endValue: number;
+      label: string;
+    }
+  | {
+      type: "automation_clear";
+      trackId: string;
+      param: AutomationParamKey;
+      label: string;
+    }
   | { type: "select"; trackId: string; label: string }
   | { type: "arm"; trackId: string; label: string }
   | { type: "play"; label: string }
@@ -575,6 +592,135 @@ export function parseConsoleCommands(opts: {
         },
         label: `Warm clear vocal on ${t.label}`,
       });
+    }
+  }
+
+
+
+  // —— Automation ramps (volume fades, reverb in, etc.) ——
+  {
+    const list = targets.length ? targets : defaultTarget ? [defaultTarget] : [];
+    const vocals = list.filter((x) => x.kind === "vocal");
+    const bpm = 120; // refined by producer-view if available via prompt context later
+    const songEnd = Math.max(
+      ...opts.sections.map((s) => s.endMs),
+      60_000
+    );
+
+    // Fade out over last N bars / end of song
+    if (/\bfade\s+(the\s+)?(lead\s+)?(vocal\s+)?out\b|\bfade\s+out\b/.test(p)) {
+      const barsM = p.match(/\blast\s+(\d+)\s+bars?\b/);
+      const bars = barsM ? Math.max(1, parseInt(barsM[1], 10)) : 4;
+      const dur = (bars * 4 * 60_000) / bpm;
+      const endMs = songEnd;
+      const startMs = Math.max(0, endMs - dur);
+      for (const tr of vocals.length ? vocals : list) {
+        if (tr.kind === "beat") continue;
+        actions.push({
+          type: "automation_ramp",
+          trackId: tr.id,
+          param: "gainDb",
+          startMs,
+          endMs,
+          startValue: 0,
+          endValue: -24,
+          label: `Fade out ${tr.label} over last ${bars} bars`,
+        });
+      }
+    }
+
+    // Fade in
+    if (/\bfade\s+(the\s+)?(lead\s+)?(vocal\s+)?in\b|\bfade\s+in\b/.test(p)) {
+      const barsM = p.match(/\bover\s+(\d+)\s+bars?\b/);
+      const bars = barsM ? Math.max(1, parseInt(barsM[1], 10)) : 2;
+      const dur = (bars * 4 * 60_000) / bpm;
+      for (const tr of vocals.length ? vocals : list) {
+        if (tr.kind === "beat") continue;
+        actions.push({
+          type: "automation_ramp",
+          trackId: tr.id,
+          param: "gainDb",
+          startMs: 0,
+          endMs: dur,
+          startValue: -18,
+          endValue: 0,
+          label: `Fade in ${tr.label}`,
+        });
+      }
+    }
+
+    // Increase reverb during chorus / section
+    if (/\b(increase|add|more)\s+(the\s+)?reverb\b/.test(p) || /\breverb\s+(in|up|during)\b/.test(p)) {
+      const chorus = opts.sections.find((s) => /chorus/i.test(s.label));
+      if (chorus) {
+        for (const tr of vocals.length ? vocals : list) {
+          if (tr.kind === "beat") continue;
+          actions.push({
+            type: "automation_ramp",
+            trackId: tr.id,
+            param: "reverb",
+            startMs: chorus.startMs,
+            endMs: Math.min(chorus.endMs, chorus.startMs + 2000),
+            startValue: 0.1,
+            endValue: 0.45,
+            label: `Reverb up on ${tr.label} in ${chorus.label}`,
+          });
+        }
+      }
+    }
+
+    // Filter open (muffled → open)
+    if (/\bfilter\s+sweep\b|\bopen\s+(it\s+)?up\b|\bmuffled.*open\b/.test(p)) {
+      const chorus = opts.sections.find((s) => /chorus/i.test(s.label));
+      const start = chorus ? Math.max(0, chorus.startMs - 3000) : 0;
+      const end = chorus ? chorus.startMs : 8000;
+      for (const tr of vocals.length ? vocals : list) {
+        if (tr.kind === "beat") continue;
+        actions.push({
+          type: "automation_ramp",
+          trackId: tr.id,
+          param: "lowPassHz",
+          startMs: start,
+          endMs: end,
+          startValue: 1200,
+          endValue: 16000,
+          label: `Filter open on ${tr.label}`,
+        });
+      }
+    }
+
+    // Wider in final chorus
+    if (/\bwider\b/.test(p) && /\b(final|last)\s+chorus\b/.test(p)) {
+      const choruses = opts.sections.filter((s) => /chorus/i.test(s.label));
+      const ch = choruses[choruses.length - 1];
+      if (ch) {
+        for (const tr of vocals.length ? vocals : list) {
+          if (tr.kind === "beat") continue;
+          actions.push({
+            type: "automation_ramp",
+            trackId: tr.id,
+            param: "width",
+            startMs: ch.startMs,
+            endMs: Math.min(ch.endMs, ch.startMs + 1500),
+            startValue: 0.15,
+            endValue: 0.65,
+            label: `Widen ${tr.label} in final chorus`,
+          });
+        }
+      }
+    }
+
+    // Remove / clear volume automation
+    if (/\b(remove|clear|delete)\s+(the\s+)?(volume\s+)?automation\b|\bdisable\s+volume\s+automation\b/.test(p)) {
+      for (const tr of vocals.length ? vocals : list) {
+        if (tr.kind === "beat") continue;
+        actions.push({
+          type: "automation_clear",
+          trackId: tr.id,
+          param: "gainDb",
+          label: `Clear volume automation on ${tr.label}`,
+        });
+      }
     }
   }
 

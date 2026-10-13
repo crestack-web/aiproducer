@@ -24,6 +24,7 @@ import { validateAudioBuffer } from "../ingestion/validate";
 import type { PlacementLog } from "./collect-vocals";
 import { isFullQualityProduce, produceWorkerTickBudgetMs } from "@/lib/produce/execution-mode";
 import { runFastArrangement } from "@/lib/ap-engine/jobs/fast-produce";
+import { parseFxAutomation } from "@/lib/ap-engine/fx-automation";
 
 type ReportFn = (stage: ApStage) => Promise<void>;
 type PatchFn = (stage: string, progress: number, extra?: Record<string, unknown>) => Promise<void>;
@@ -49,6 +50,24 @@ export async function runFullProduceWithCheckpoints(opts: {
   metaExtra?: Record<string, unknown>;
 }> {
   const { jobId, projectId, userId, beatPath, vocals, genre, productionDirection, placementLog, report, patch } = opts;
+
+  let fxAutomation = parseFxAutomation(null);
+  try {
+    const service = createServiceClient();
+    const { data: proj } = await service
+      .from("projects")
+      .select("metadata")
+      .eq("id", projectId)
+      .maybeSingle();
+    const meta =
+      proj?.metadata && typeof proj.metadata === "object"
+        ? (proj.metadata as Record<string, unknown>)
+        : {};
+    fxAutomation = parseFxAutomation(meta.fx_automation);
+  } catch {
+    /* empty automation */
+  }
+
   const supabase = createServiceClient();
   const mixPath = productionMixPath(userId, projectId, jobId, "wav");
   const masterPath = productionMasterPath(userId, projectId, jobId, "wav");
@@ -421,7 +440,8 @@ export async function runFullProduceWithCheckpoints(opts: {
           );
         },
         genre: genre || null,
-          productionDirection: productionDirection || null,
+        productionDirection: productionDirection || null,
+        fxAutomation,
       });
       if (!fast.masterWav?.length || !fast.mixWav?.length) {
         throw new Error("Fast arrangement returned empty mix/master audio");
@@ -478,6 +498,7 @@ export async function runFullProduceWithCheckpoints(opts: {
           },
           genre: genre || null,
           productionDirection: productionDirection || null,
+          fxAutomation,
         });
         if (!fast.masterWav?.length || !fast.mixWav?.length) {
           throw new Error(msg || "Fast arrangement returned empty mix/master audio");

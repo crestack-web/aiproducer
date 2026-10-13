@@ -53,6 +53,11 @@ import {
 } from "@/lib/ap-engine/roles";
 import { applyWidth } from "@/lib/ap-engine/mix/width";
 import { polishVocalLayer } from "@/lib/ap-engine/pitch";
+import {
+  parseFxAutomation,
+  sampleTrackAutomation,
+  type FxAutomationDoc,
+} from "@/lib/ap-engine/fx-automation";
 import { addDelayStereo, addReverbStereo, saturateInPlace } from "@/lib/ap-engine/dsp";
 
 export type FastTrackFx = {
@@ -198,6 +203,46 @@ function applySpringShimmer(
 }
 
 /** Apply Console Track FX on top of role processing (matches producer-view intent). */
+
+/** Offline automation: re-apply key params in ~50ms blocks along the timeline. */
+function applyFxAutomationToPcm(
+  pcm: PcmStereo,
+  doc: FxAutomationDoc,
+  trackId: string,
+  layerStartMs: number,
+  baseFx: FastTrackFx | null
+): void {
+  const sr = pcm.sampleRate;
+  const n = pcm.left.length;
+  const block = Math.max(64, Math.floor(sr * 0.05));
+  for (let i = 0; i < n; i += block) {
+    const timeMs = layerStartMs + (i / sr) * 1000;
+    const overlay = sampleTrackAutomation(doc, trackId, timeMs);
+    if (!Object.keys(overlay).length) continue;
+    const end = Math.min(n, i + block);
+    // Relative gain vs base gainDb
+    const baseG = Number(baseFx?.gainDb) || 0;
+    if (overlay.gainDb !== undefined) {
+      const deltaDb = overlay.gainDb - baseG;
+      const g = Math.pow(10, deltaDb / 20);
+      for (let j = i; j < end; j++) {
+        pcm.left[j] *= g;
+        pcm.right[j] *= g;
+      }
+    }
+    // Pan as L/R balance for this block
+    if (overlay.pan !== undefined) {
+      const pan = Math.max(-1, Math.min(1, overlay.pan));
+      const lG = pan <= 0 ? 1 : 1 - pan;
+      const rG = pan >= 0 ? 1 : 1 + pan;
+      for (let j = i; j < end; j++) {
+        pcm.left[j] *= lG;
+        pcm.right[j] *= rG;
+      }
+    }
+  }
+}
+
 function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined): void {
   if (!fx) return;
   const has =
@@ -702,6 +747,8 @@ export async function runFastArrangement(opts: {
   genre?: string | null;
   bpm?: number | null;
   productionDirection?: import("../direction/types").ProductionDirection | null;
+  /** Project-level FX automation (metadata.fx_automation) */
+  fxAutomation?: FxAutomationDoc | null;
 }): Promise<{
   /** @deprecated same as masterWav — kept for older callers */
   wav: Buffer;
@@ -885,6 +932,17 @@ export async function runFastArrangement(opts: {
 
       // Console Track FX (user sliders) — after role chain so artist intent wins on top
       applyConsoleTrackFx(pcm, v.trackFx || null);
+
+      // Timeline FX automation (gain + key sends sampled in blocks)
+      if (opts.fxAutomation && v.taskId) {
+        applyFxAutomationToPcm(
+          pcm,
+          opts.fxAutomation,
+          v.taskId,
+          Math.max(0, Number(v.startMs) || 0),
+          v.trackFx || null
+        );
+      }
 
       // Vibe + section dynamic riding (verse intimate / chorus open)
       let sectionRideNotes: string[] = [];

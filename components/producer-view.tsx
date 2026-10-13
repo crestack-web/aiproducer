@@ -35,6 +35,16 @@ import {
   trackFxToLiveParams,
   type LiveFxHandles,
 } from "@/lib/audio/live-track-fx";
+import {
+  parseFxAutomation,
+  sampleTrackAutomation,
+  applyLinearRamp,
+  clearLane,
+  barsToMs,
+  type FxAutomationDoc,
+  type AutomationParamKey,
+  AUTOMATION_PARAM_RANGE,
+} from "@/lib/ap-engine/fx-automation";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
@@ -879,6 +889,11 @@ export function ProducerView({
   }, []);
 
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
+  const [automationDoc, setAutomationDoc] = useState<FxAutomationDoc>({ version: 1, lanes: [] });
+  const automationDocRef = useRef<FxAutomationDoc>({ version: 1, lanes: [] });
+  useEffect(() => {
+    automationDocRef.current = automationDoc;
+  }, [automationDoc]);
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
@@ -1006,6 +1021,24 @@ export function ProducerView({
           void persistFx(action.trackId, next);
           return { ...prev, [action.trackId]: next };
         });
+        break;
+      }
+      case "automation_ramp": {
+        const next = applyLinearRamp(
+          automationDocRef.current,
+          action.trackId,
+          action.param,
+          action.startMs,
+          action.endMs,
+          action.startValue,
+          action.endValue
+        );
+        void persistAutomation(next);
+        break;
+      }
+      case "automation_clear": {
+        const next = clearLane(automationDocRef.current, action.trackId, action.param);
+        void persistAutomation(next);
         break;
       }
       case "select":
@@ -1343,6 +1376,45 @@ export function ProducerView({
       setEditMsg("Network error saving color");
     } finally {
       setSavingId(null);
+    }
+  }
+
+
+  // Load project-level FX automation
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`);
+        const j = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok) return;
+        const meta = j.project?.metadata || j.metadata || {};
+        const doc = parseFxAutomation(meta.fx_automation);
+        setAutomationDoc(doc);
+        automationDocRef.current = doc;
+      } catch {
+        /* keep empty */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+
+  async function persistAutomation(doc: FxAutomationDoc) {
+    setAutomationDoc(doc);
+    automationDocRef.current = doc;
+    if (!projectId) return;
+    try {
+      await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metadata: { fx_automation: doc } }),
+      });
+    } catch {
+      setEditMsg("Could not save automation");
     }
   }
 
@@ -3204,10 +3276,17 @@ export function ProducerView({
     return !muted[id];
   }
 
-  function applyGains() {
+  function applyGains(atMs?: number) {
+    const tMs =
+      typeof atMs === "number" && Number.isFinite(atMs)
+        ? atMs
+        : playheadMsRef.current;
+    const autoDoc = automationDocRef.current;
     for (const tr of tracks) {
       const on = isAudible(tr.id, tr.kind);
-      const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const base = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const overlay = sampleTrackAutomation(autoDoc, tr.id, tMs);
+      const fx = { ...base, ...overlay } as TrackFx;
       const graph = fxGraphRef.current.get(tr.id);
       if (graph) {
         graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
@@ -3314,6 +3393,12 @@ export function ProducerView({
     elapsed = Math.min(songEnd, Math.max(0, elapsed));
     // Visual only — offsetRef stays as the playback start anchor
     applyPlayheadVisual(elapsed, false);
+    // Drive live FX automation from audio clock (not React render)
+    try {
+      applyGains(elapsed);
+    } catch {
+      /* */
+    }
     const last = playheadStateThrottleRef.current;
     if (Math.abs(elapsed - last) >= 100) {
       playheadStateThrottleRef.current = elapsed;
