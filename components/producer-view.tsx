@@ -980,9 +980,8 @@ export function ProducerView({
             action.key === "eqHighDb"
           ) {
             nextVal = Math.max(-12, Math.min(12, nextVal));
-          } else if (action.key === "highPassHz" || action.key === "lowPassHz") {
-            nextVal = Math.max(0, Math.min(12000, nextVal));
           } else {
+            // 0–1 FX amounts (HPF/LPF use fx_set with absolute Hz, not delta keys)
             nextVal = Math.max(0, Math.min(1, nextVal));
           }
           const next = { ...cur, [action.key]: nextVal } as TrackFx;
