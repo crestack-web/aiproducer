@@ -72,6 +72,23 @@ export type TrackFx = {
   saturation: number;
   /** Stereo pan: -1 = full left, 0 = center, 1 = full right */
   pan: number;
+  /** Stereo width 0–1 (0 = mono-ish, 1 = wide) */
+  width: number;
+  /** High-shelf air 0–1 */
+  air: number;
+  // —— Rotor Glow (modulation / rotary-style movement) ——
+  rotorMix: number; // 0–1 wet
+  rotorSpeed: number; // 0–1
+  rotorDepth: number; // 0–1
+  rotorWarmth: number; // 0–1
+  /** 0 = slow, 1 = fast rotor */
+  rotorFast: number;
+  // —— Spring Shimmer (spring-style space) ——
+  springMix: number; // 0–1
+  springDelay: number; // 0–1 pre-delay feel
+  springTension: number; // 0–1 brighter/tighter springs
+  springDamp: number; // 0–1 high-frequency damp
+  springMod: number; // 0–1 modulation on the spring
 };
 
 export const DEFAULT_TRACK_FX: TrackFx = {
@@ -84,6 +101,18 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   delay: 0,
   saturation: 0,
   pan: 0,
+  width: 0,
+  air: 0,
+  rotorMix: 0,
+  rotorSpeed: 0.35,
+  rotorDepth: 0.45,
+  rotorWarmth: 0.4,
+  rotorFast: 0,
+  springMix: 0,
+  springDelay: 0.25,
+  springTension: 0.4,
+  springDamp: 0.35,
+  springMod: 0.2,
 };
 
 /** One audio region on a track (split clips share the same track). */
@@ -7975,6 +8004,107 @@ function TrackFxPanel({
   onChange: (fx: TrackFx) => void;
   onCommit: (fx: TrackFx) => void;
 }) {
+  const [tab, setTab] = useState<"mix" | "tone" | "space" | "creative">("mix");
+
+  function setKey<K extends keyof TrackFx>(key: K, value: TrackFx[K], commit = false) {
+    const next = { ...fx, [key]: value };
+    onChange(next);
+    if (commit) onCommit(next);
+  }
+
+  function knob(
+    key: keyof TrackFx,
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+    accent = brass
+  ) {
+    const v = Number(fx[key]);
+    const pct = max === min ? 0 : (v - min) / (max - min);
+    const deg = -135 + pct * 270;
+    return (
+      <label
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 6,
+          minWidth: 64,
+          flex: "1 1 64px",
+        }}
+      >
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            borderRadius: "50%",
+            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.08) ${pct * 270}deg, rgba(255,255,255,0.08) 270deg, transparent 270deg)`,
+            display: "grid",
+            placeItems: "center",
+            position: "relative",
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          }}
+        >
+          <div
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: "50%",
+              background: "rgba(18,16,14,0.95)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                width: 2,
+                height: 14,
+                marginLeft: -1,
+                marginTop: -14,
+                borderRadius: 1,
+                background: accent,
+                transformOrigin: "50% 100%",
+                transform: `rotate(${deg}deg)`,
+              }}
+            />
+          </div>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={v}
+            aria-label={label}
+            onChange={(e) => setKey(key, parseFloat(e.target.value) as TrackFx[typeof key])}
+            onPointerUp={(e) =>
+              setKey(key, parseFloat((e.target as HTMLInputElement).value) as TrackFx[typeof key], true)
+            }
+            onTouchEnd={(e) =>
+              setKey(key, parseFloat((e.target as HTMLInputElement).value) as TrackFx[typeof key], true)
+            }
+            style={{
+              position: "absolute",
+              inset: 0,
+              opacity: 0,
+              cursor: "pointer",
+              margin: 0,
+              width: "100%",
+              height: "100%",
+            }}
+          />
+        </div>
+        <span style={{ fontSize: 10, color: muted, fontWeight: 650, textAlign: "center" }}>{label}</span>
+        <span style={{ fontSize: 10, color: color, fontWeight: 700 }}>
+          {Number.isInteger(step) || step >= 1 ? Math.round(v) : v.toFixed(2)}
+        </span>
+      </label>
+    );
+  }
+
   function slider(
     key: keyof TrackFx,
     label: string,
@@ -7994,58 +8124,229 @@ function TrackFxPanel({
       >
         <span style={{ display: "flex", justifyContent: "space-between" }}>
           <span>{label}</span>
-          <span style={{ color }}>{Number(fx[key]).toFixed(1)}</span>
+          <span style={{ color }}>{Number(fx[key]).toFixed(2)}</span>
         </span>
         <input
           type="range"
           min={min}
           max={max}
           step={step}
-          value={fx[key]}
-          onChange={(e) => {
-            const next = { ...fx, [key]: parseFloat(e.target.value) };
-            onChange(next);
-          }}
-          onPointerUp={(e) => {
-            const v = parseFloat((e.target as HTMLInputElement).value);
-            onCommit({ ...fx, [key]: v });
-          }}
-          onTouchEnd={(e) => {
-            const v = parseFloat((e.target as HTMLInputElement).value);
-            onCommit({ ...fx, [key]: v });
-          }}
+          value={Number(fx[key])}
+          onChange={(e) => setKey(key, parseFloat(e.target.value) as TrackFx[typeof key])}
+          onPointerUp={(e) =>
+            setKey(key, parseFloat((e.target as HTMLInputElement).value) as TrackFx[typeof key], true)
+          }
+          onTouchEnd={(e) =>
+            setKey(key, parseFloat((e.target as HTMLInputElement).value) as TrackFx[typeof key], true)
+          }
           style={{ width: "100%", accentColor: brass }}
         />
       </label>
     );
   }
+
+  function pluginCard(
+    title: string,
+    dotColor: string,
+    children: React.ReactNode,
+    footer?: React.ReactNode
+  ) {
+    return (
+      <div
+        style={{
+          borderRadius: 14,
+          border: `1px solid ${border}`,
+          background: "rgba(0,0,0,0.28)",
+          padding: "12px 12px 14px",
+          marginBottom: 10,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: dotColor,
+                boxShadow: `0 0 8px ${dotColor}`,
+              }}
+            />
+            <span style={{ fontWeight: 750, fontSize: 13, color }}>{title}</span>
+          </div>
+          <span style={{ fontSize: 10, color: muted, fontWeight: 650 }}>Custom</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            justifyContent: "space-between",
+          }}
+        >
+          {children}
+        </div>
+        {footer}
+      </div>
+    );
+  }
+
+  const tabs: { id: typeof tab; label: string }[] = [
+    { id: "mix", label: "Mix" },
+    { id: "tone", label: "Tone" },
+    { id: "space", label: "Space" },
+    { id: "creative", label: "Effects" },
+  ];
+
   return (
     <div
       style={{
-        marginTop: 10,
-        padding: 10,
-        borderRadius: 12,
-        border: `1px solid ${border}`,
-        background: surface,
+        marginTop: 4,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        maxWidth: undefined as unknown as number,
+        gap: 10,
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div style={{ fontWeight: 700, fontSize: 11, letterSpacing: "0.06em", color: brass }}>
-        TRACK FX
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          overflowX: "auto",
+          paddingBottom: 2,
+        }}
+      >
+        {tabs.map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => setTab(tb.id)}
+            style={{
+              padding: "7px 12px",
+              borderRadius: 999,
+              border: `1px solid ${tab === tb.id ? brass : border}`,
+              background: tab === tb.id ? "rgba(231,169,97,0.18)" : "transparent",
+              color: tab === tb.id ? brass : muted,
+              fontWeight: 700,
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tb.label}
+          </button>
+        ))}
       </div>
-      {slider("gainDb", "Gain dB", -12, 12, 0.5)}
-      {slider("pan", "Pan L/R", -1, 1, 0.05)}
-      {slider("eqLowDb", "Low", -12, 12, 0.5)}
-      {slider("eqMidDb", "Mid", -12, 12, 0.5)}
-      {slider("eqHighDb", "High / air", -12, 12, 0.5)}
-      {slider("compress", "Compress", 0, 1, 0.05)}
-      {slider("reverb", "Reverb", 0, 1, 0.05)}
-      {slider("delay", "Delay", 0, 1, 0.05)}
-      {slider("saturation", "Saturation", 0, 1, 0.05)}
+
+      {tab === "mix" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {slider("gainDb", "Gain dB", -12, 12, 0.5)}
+          {slider("pan", "Pan L / R", -1, 1, 0.05)}
+          {slider("width", "Width", 0, 1, 0.05)}
+          {slider("compress", "Compress", 0, 1, 0.05)}
+          {slider("saturation", "Saturation", 0, 1, 0.05)}
+        </div>
+      )}
+
+      {tab === "tone" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {slider("eqLowDb", "Low", -12, 12, 0.5)}
+          {slider("eqMidDb", "Mid", -12, 12, 0.5)}
+          {slider("eqHighDb", "High", -12, 12, 0.5)}
+          {slider("air", "Air", 0, 1, 0.05)}
+        </div>
+      )}
+
+      {tab === "space" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {slider("reverb", "Room reverb", 0, 1, 0.05)}
+          {slider("delay", "Echo delay", 0, 1, 0.05)}
+        </div>
+      )}
+
+      {tab === "creative" && (
+        <div>
+          {pluginCard(
+            "Rotor Glow",
+            "#3DDC84",
+            <>
+              {knob("rotorSpeed", "Speed", 0, 1, 0.01, "#3DDC84")}
+              {knob("rotorDepth", "Depth", 0, 1, 0.01, "#3DDC84")}
+              {knob("rotorWarmth", "Warmth", 0, 1, 0.01, "#3DDC84")}
+              {knob("rotorMix", "Mix", 0, 1, 0.01, "#3DDC84")}
+            </>,
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 6,
+                marginTop: 12,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setKey("rotorFast", 0, true)}
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${fx.rotorFast < 0.5 ? brass : border}`,
+                  background: fx.rotorFast < 0.5 ? "rgba(61,220,132,0.2)" : "transparent",
+                  color: fx.rotorFast < 0.5 ? "#3DDC84" : muted,
+                  fontWeight: 700,
+                  fontSize: 11,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Slow
+              </button>
+              <button
+                type="button"
+                onClick={() => setKey("rotorFast", 1, true)}
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${fx.rotorFast >= 0.5 ? brass : border}`,
+                  background: fx.rotorFast >= 0.5 ? "rgba(61,220,132,0.25)" : "transparent",
+                  color: fx.rotorFast >= 0.5 ? "#3DDC84" : muted,
+                  fontWeight: 700,
+                  fontSize: 11,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Fast
+              </button>
+            </div>
+          )}
+
+          {pluginCard(
+            "Spring Shimmer",
+            "#FF8A3D",
+            <>
+              {knob("springDelay", "Delay", 0, 1, 0.01, "#FF8A3D")}
+              {knob("springTension", "Tension", 0, 1, 0.01, "#FF8A3D")}
+              {knob("springMix", "Mix", 0, 1, 0.01, "#FF8A3D")}
+              {knob("springDamp", "Damp", 0, 1, 0.01, "#FF8A3D")}
+              {knob("springMod", "Mod", 0, 1, 0.01, "#FF8A3D")}
+            </>
+          )}
+
+          <p style={{ margin: "4px 0 0", fontSize: 11, lineHeight: 1.4, color: muted }}>
+            Creative effects are saved on the track and applied when you Produce — shape the vocal
+            before the final mix.
+          </p>
+        </div>
+      )}
+
       <button
         type="button"
         onClick={() => {
@@ -8053,7 +8354,7 @@ function TrackFxPanel({
           onCommit(DEFAULT_TRACK_FX);
         }}
         style={{
-          marginTop: 4,
+          marginTop: 2,
           padding: "8px",
           borderRadius: 8,
           border: `1px solid ${border}`,
@@ -8064,7 +8365,7 @@ function TrackFxPanel({
           fontFamily: "inherit",
         }}
       >
-        Reset FX
+        Reset all FX
       </button>
     </div>
   );

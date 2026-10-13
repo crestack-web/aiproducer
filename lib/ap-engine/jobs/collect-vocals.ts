@@ -365,6 +365,18 @@ export async function collectVocalsForProduce(
             reverb: Number(fxRaw.reverb) || 0,
             delay: Number(fxRaw.delay) || 0,
             saturation: Number(fxRaw.saturation) || 0,
+            width: Number(fxRaw.width) || 0,
+            air: Number(fxRaw.air) || 0,
+            rotorMix: Number(fxRaw.rotorMix) || 0,
+            rotorSpeed: Number(fxRaw.rotorSpeed) || 0,
+            rotorDepth: Number(fxRaw.rotorDepth) || 0,
+            rotorWarmth: Number(fxRaw.rotorWarmth) || 0,
+            rotorFast: Number(fxRaw.rotorFast) || 0,
+            springMix: Number(fxRaw.springMix) || 0,
+            springDelay: Number(fxRaw.springDelay) || 0,
+            springTension: Number(fxRaw.springTension) || 0,
+            springDamp: Number(fxRaw.springDamp) || 0,
+            springMod: Number(fxRaw.springMod) || 0,
           }
         : null,
     });

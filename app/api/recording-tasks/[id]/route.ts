@@ -16,7 +16,19 @@ const TrackFxSchema = z.object({
   delay: z.number().min(0).max(1).optional(),
   saturation: z.number().min(0).max(1).optional(),
   pan: z.number().min(-1).max(1).optional(),
-});
+  width: z.number().min(0).max(1).optional(),
+  air: z.number().min(0).max(1).optional(),
+  rotorMix: z.number().min(0).max(1).optional(),
+  rotorSpeed: z.number().min(0).max(1).optional(),
+  rotorDepth: z.number().min(0).max(1).optional(),
+  rotorWarmth: z.number().min(0).max(1).optional(),
+  rotorFast: z.number().min(0).max(1).optional(),
+  springMix: z.number().min(0).max(1).optional(),
+  springDelay: z.number().min(0).max(1).optional(),
+  springTension: z.number().min(0).max(1).optional(),
+  springDamp: z.number().min(0).max(1).optional(),
+  springMod: z.number().min(0).max(1).optional(),
+}).passthrough();
 
 const ConsoleClipSchema = z.object({
   id: z.string().min(1),
