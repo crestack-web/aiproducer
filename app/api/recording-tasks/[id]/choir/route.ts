@@ -7,6 +7,13 @@ import { encodeWavStereoFromMono } from "@/lib/audio/wav";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import { generateStack, type StackMode } from "@/lib/ap-engine/fullness";
 import { resolvePlacementStartMs } from "@/lib/audio/session-timeline";
+import { resolveChoirProvider } from "@/lib/choir";
+import type {
+  ChoirArrangement,
+  ChoirBalance,
+  ChoirStyle,
+  HarmonyIntensity,
+} from "@/lib/choir";
 
 /** Long vocals + multi-voice DSP need more than the default serverless window. */
 export const maxDuration = 300;
@@ -21,6 +28,22 @@ const BodySchema = z.object({
   intensity: z.enum(["light", "full"]).optional(),
   /** Optional explicit take (plugin-style: this audio is the choir source) */
   recording_id: z.string().uuid().optional(),
+  /** Product choir controls (AI path when provider configured) */
+  style: z
+    .enum([
+      "african_gospel",
+      "contemporary_gospel",
+      "worship",
+      "soul",
+      "pop",
+      "cinematic",
+    ])
+    .optional(),
+  arrangement: z.enum(["light", "medium", "full", "powerful"]).optional(),
+  balance: z.enum(["female", "male", "mixed"]).optional(),
+  harmony_intensity: z.enum(["subtle", "moderate", "rich"]).optional(),
+  /** Force local DSP even if AI key is set */
+  force_local: z.boolean().optional(),
 });
 
 /**
@@ -36,6 +59,11 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { id: taskId } = await ctx.params;
   let mode: StackMode = "choir_light";
+  let bodyStyle: string | undefined;
+  let bodyArrangement: string | undefined;
+  let bodyBalance: string | undefined;
+  let bodyHarmony: string | undefined;
+  let bodyForceLocal = false;
   let recordingIdHint: string | null = null;
   /** Client-decoded WAV (browser can decode webm; Vercel often cannot) */
   let clientWav: Buffer | null = null;
@@ -51,6 +79,16 @@ export async function POST(req: Request, ctx: Ctx) {
       } else if (intensityRaw === "light") mode = "choir_light";
       else if (intensityRaw === "full") mode = "choir_full";
       if (typeof rid === "string" && rid.length > 8) recordingIdHint = rid;
+      const st = form.get("style");
+      const ar = form.get("arrangement");
+      const ba = form.get("balance");
+      const hi = form.get("harmony_intensity");
+      const fl = form.get("force_local");
+      if (typeof st === "string") bodyStyle = st;
+      if (typeof ar === "string") bodyArrangement = ar;
+      if (typeof ba === "string") bodyBalance = ba;
+      if (typeof hi === "string") bodyHarmony = hi;
+      bodyForceLocal = fl === "true" || fl === "1";
       const file = form.get("file");
       if (file && typeof file === "object" && "arrayBuffer" in file) {
         const ab = await (file as File).arrayBuffer();
@@ -64,6 +102,11 @@ export async function POST(req: Request, ctx: Ctx) {
         else if (parsed.data.intensity === "light") mode = "choir_light";
         else if (parsed.data.intensity === "full") mode = "choir_full";
         if (parsed.data.recording_id) recordingIdHint = parsed.data.recording_id;
+        bodyStyle = parsed.data.style;
+        bodyArrangement = parsed.data.arrangement;
+        bodyBalance = parsed.data.balance;
+        bodyHarmony = parsed.data.harmony_intensity;
+        bodyForceLocal = Boolean(parsed.data.force_local);
       }
     }
   } catch {
@@ -476,26 +519,136 @@ export async function POST(req: Request, ctx: Ctx) {
       ? sourcePlaceEnd
       : startMs + Math.max(sourceDurationMs, 1000);
 
-  let voices: ReturnType<typeof generateStack> = [];
+  // Map legacy mode → arrangement when arrangement not provided
+  const arrangementFromMode = (): ChoirArrangement => {
+    if (mode === "double") return "light";
+    if (mode === "choir_light" || mode === "chorus_lift") return "medium";
+    return "full";
+  };
+
+  const choirStyle: ChoirStyle = (bodyStyle as ChoirStyle) || "pop";
+  const choirArrangement: ChoirArrangement =
+    (bodyArrangement as ChoirArrangement) || arrangementFromMode();
+  const choirBalance: ChoirBalance = (bodyBalance as ChoirBalance) || "mixed";
+  const choirHarmony: HarmonyIntensity =
+    (bodyHarmony as HarmonyIntensity) || "moderate";
+
+  type UnifiedVoice = {
+    role: string;
+    label: string;
+    gainDb: number;
+    pan: number;
+    pcm: typeof leadPcm;
+    mode: StackMode;
+    provider?: string;
+    isAi?: boolean;
+  };
+
+  let voices: UnifiedVoice[] = [];
+  let providerId = "local_stack";
+  let isAiGenerated = false;
+  const providerWarnings: string[] = [];
+
   try {
-    voices = generateStack({
-      lead: leadPcm,
-      mode,
-      startMs: sourcePlaceStart,
-    });
+    const provider = bodyForceLocal
+      ? null
+      : resolveChoirProvider();
+    if (provider && provider.id !== "local_stack" && provider.isConfigured()) {
+      const result = await provider.generate({
+        sourceAudio: raw,
+        sourceFileName: pathHint?.endsWith(".wav") ? "lead.wav" : "lead.wav",
+        style: choirStyle,
+        arrangement: choirArrangement,
+        balance: choirBalance,
+        harmonyIntensity: choirHarmony,
+      });
+      providerId = result.provider;
+      isAiGenerated = result.isAiGenerated;
+      providerWarnings.push(...result.warnings);
+      for (const part of result.parts) {
+        try {
+          const decoded = await normalizeToInternalPcm(part.audio, part.label);
+          voices.push({
+            role:
+              part.role === "double"
+                ? "double"
+                : part.role === "soprano" || part.role === "alto"
+                  ? "background"
+                  : "background",
+            label: part.label,
+            gainDb: part.gainDb,
+            pan: part.pan,
+            pcm: decoded.pcm,
+            mode,
+            provider: result.provider,
+            isAi: true,
+          });
+        } catch (decErr) {
+          console.error("[choir] decode AI part", part.label, decErr);
+          providerWarnings.push(`Could not decode ${part.label}`);
+        }
+      }
+    }
+
+    // Fallback or force-local: DSP stack
+    if (!voices.length) {
+      const local = generateStack({
+        lead: leadPcm,
+        mode,
+        startMs: sourcePlaceStart,
+      });
+      voices = local.map((v) => ({
+        role: v.role,
+        label: v.label,
+        gainDb: v.gainDb,
+        pan: v.pan,
+        pcm: v.pcm,
+        mode: v.mode,
+        provider: "local_stack",
+        isAi: false,
+      }));
+      providerId = "local_stack";
+      isAiGenerated = false;
+      if (!bodyForceLocal) {
+        providerWarnings.push(
+          "AI choir provider unavailable — used local DSP stack. Configure KITS_API_KEY for multi-voice AI generation."
+        );
+      }
+    }
   } catch (genErr) {
-    console.error("[choir] generateStack failed", genErr);
-    return NextResponse.json(
-      {
-        error: "Could not build choir",
-        detail: genErr instanceof Error ? genErr.message : String(genErr),
-      },
-      { status: 500 }
-    );
+    console.error("[choir] generate failed", genErr);
+    // Last-resort local stack
+    try {
+      const local = generateStack({
+        lead: leadPcm,
+        mode,
+        startMs: sourcePlaceStart,
+      });
+      voices = local.map((v) => ({
+        role: v.role,
+        label: v.label,
+        gainDb: v.gainDb,
+        pan: v.pan,
+        pcm: v.pcm,
+        mode: v.mode,
+        provider: "local_stack",
+        isAi: false,
+      }));
+      providerWarnings.push(
+        genErr instanceof Error ? genErr.message : String(genErr)
+      );
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Could not build choir",
+          detail: genErr instanceof Error ? genErr.message : String(genErr),
+        },
+        { status: 500 }
+      );
+    }
   }
 
   if (!voices.length) {
-
     return NextResponse.json(
       {
         error: "Could not generate choir voices",
@@ -648,7 +801,9 @@ export async function POST(req: Request, ctx: Ctx) {
       project_id: task.project_id,
       type,
       title,
-      instruction: `AP choir layer generated from ${(task.title as string) || "lead"} — still your voice.`,
+      instruction: isAiGenerated
+        ? `AI choir part (${providerId}) supporting ${(task.title as string) || "lead"}`
+        : `AP choir layer generated from ${(task.title as string) || "lead"} — still your voice.`,
       status: "completed",
       required: false,
       recommendation: "optional",
@@ -662,7 +817,11 @@ export async function POST(req: Request, ctx: Ctx) {
         choir_source_recording_id: rec?.id ?? null,
         choir_role: v.role,
         stack_mode: mode,
-        generated_by: "ap_choir",
+        generated_by: isAiGenerated ? `ap_choir_${providerId}` : "ap_choir",
+        choir_provider: providerId,
+        choir_ai: isAiGenerated,
+        choir_style: choirStyle,
+        choir_arrangement: choirArrangement,
         placement_start_ms: startMs,
         section_label:
           (task.section_label as string) ||
