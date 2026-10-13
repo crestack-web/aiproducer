@@ -2809,6 +2809,27 @@ export function ProducerView({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ status: "completed" }),
           }).catch(() => null);
+
+          // Instant local peaks from the uploaded file (don't wait on R2 CORS decode)
+          try {
+            const ctx = getCtx();
+            if (ctx && file) {
+              const ab = await file.arrayBuffer();
+              const audioBuf = await ctx.decodeAudioData(ab.slice(0));
+              const localKey = audioUrl || `local-upload-${task.id}`;
+              bufferCache.set(localKey, audioBuf);
+              if (audioUrl) bufferCache.set(audioUrl, audioBuf);
+              peaksForUrl(localKey, audioBuf, 2048);
+              const hi = peaksForUrl(localKey, audioBuf, 512);
+              setPeaksById((prev) => ({ ...prev, [task.id]: hi }));
+              setDurationById((prev) => ({
+                ...prev,
+                [task.id]: Math.round(audioBuf.duration * 1000),
+              }));
+            }
+          } catch (peakErr) {
+            console.warn("[console] local upload peak decode failed", peakErr);
+          }
         }
       }
 
@@ -3020,10 +3041,21 @@ export function ProducerView({
             next[part.id] = null;
             continue;
           }
+          // Same-origin fallback: R2 signed URLs often fail CORS in the browser.
+          // Beats → /beat/download; vocals → /recording-tasks/:taskId/audio
+          // Always use the track (task) id for the proxy — clip id may be recordingId.
+          const vocalProxy =
+            tr.kind === "vocal" && tr.id
+              ? `/api/recording-tasks/${tr.id}/audio`
+              : null;
+          const beatProxy =
+            tr.kind === "beat" && projectId
+              ? `/api/projects/${projectId}/beat/download`
+              : null;
           const buf = await fetchDecode(
             ctx,
             part.url,
-            tr.kind === "beat" && projectId ? `/api/projects/${projectId}/beat/download` : null
+            vocalProxy || beatProxy
           );
           if (cancelled) return;
           if (buf) {

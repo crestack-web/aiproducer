@@ -14,7 +14,7 @@ import type {
   MusicJobStatus,
   MusicProviderName,
 } from "./types";
-import { MusicGenerationError, publicErrorMessage } from "./types";
+import { MusicGenerationError, publicErrorMessage, sanitizeClientErrorMessage, publicBeatLimitMessage } from "./types";
 import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC, isPaidBeatSubscriber } from "./beat-quota";
 
 export function getMusicGenerationMode(): "mock" | "provider" {
@@ -643,7 +643,7 @@ export async function tickMusicGenerationJob(jobId: string) {
       .update({
         status: "FAILED",
         error_type: err.errorType,
-        error_message: err.message || publicErrorMessage(err.errorType),
+        error_message: publicErrorMessage(err.errorType),
         progress: 100,
         completed_at: new Date().toISOString(),
       })
@@ -691,4 +691,4 @@ export async function getMusicGenerationJob(jobId: string, userId: string) {
   };
 }
 
-export { publicErrorMessage, MusicGenerationError };
+export { publicErrorMessage, sanitizeClientErrorMessage, publicBeatLimitMessage, MusicGenerationError };

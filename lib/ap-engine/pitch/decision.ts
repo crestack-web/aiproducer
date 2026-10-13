@@ -20,15 +20,15 @@ function profileForGenre(genre?: string | null): CorrectionProfile {
 function strengthForProfile(p: CorrectionProfile): number {
   switch (p) {
     case "natural":
-      return 0.35;
+      return 0.48; // still human, but not "raw unprocessed"
     case "polished":
-      return 0.55;
+      return 0.68;
     case "tight":
-      return 0.75;
+      return 0.82;
     case "creative":
-      return 0.85;
+      return 0.9;
     default:
-      return 0.55;
+      return 0.62;
   }
 }
 
@@ -65,7 +65,7 @@ function roleStrengthMul(role: VocalRole): number {
 function roleTiming(role: VocalRole): number {
   switch (role) {
     case "lead":
-      return 0.15;
+      return 0.28;
     case "double":
       return 0.12;
     case "harmony_high":
@@ -178,13 +178,21 @@ export function decideVocalPolish(opts: {
   const maxCents =
     role.startsWith("harmony") || role === "double"
       ? 18
-      : profile === "natural"
-        ? 45
-        : profile === "polished"
-          ? 70
-          : profile === "tight"
-            ? 100
-            : 120;
+      : role === "lead"
+        ? profile === "natural"
+          ? 55
+          : profile === "polished"
+            ? 85
+            : profile === "tight"
+              ? 110
+              : 130
+        : profile === "natural"
+          ? 45
+          : profile === "polished"
+            ? 70
+            : profile === "tight"
+              ? 100
+              : 120;
 
   return {
     enabled: true,
@@ -256,12 +264,12 @@ export function decideNoteCorrections(
     }
 
     if (note.isSlide && polish.preserveSlides) {
-      const soft = Math.max(-25, Math.min(25, cents * 0.35 * polish.correctionStrength));
+      const soft = Math.max(-25, Math.min(25, cents * 0.55 * polish.correctionStrength));
       return {
         noteIndex: i,
         targetMidiNote: target,
         correctionCents: soft,
-        correctionStrength: polish.correctionStrength * 0.35,
+        correctionStrength: polish.correctionStrength * 0.55,
         preserveVibrato: true,
         preserveSlide: true,
         confidence: note.confidence,

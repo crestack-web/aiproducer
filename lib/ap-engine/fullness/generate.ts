@@ -399,13 +399,14 @@ export type StackMode = "double" | "choir_light" | "choir_full" | "chorus_lift";
 
 /** Gain budget — stacks support the lead; quieter = natural choir, not competing. */
 const LAYER_GAIN_RANGE_DB: Record<StackMode, [number, number]> = {
-  double: [-13, -10],
-  choir_light: [-18, -15],
-  choir_full: [-19, -16],
-  chorus_lift: [-17, -14],
+  double: [-14, -11],
+  // Console-preview can be louder via UI faders; Produce bakes these in — keep bed quiet
+  choir_light: [-22, -18],
+  choir_full: [-23, -19],
+  chorus_lift: [-21, -17],
 };
 /** Power-sum of generated layers must stay this far under the lead (dB). */
-const MAX_STACK_SUM_DB_UNDER_LEAD = -10;
+const MAX_STACK_SUM_DB_UNDER_LEAD = -14;
 const MAX_CONCURRENT_LAYERS = 5;
 
 function sumGainsDb(gs: number[]): number {

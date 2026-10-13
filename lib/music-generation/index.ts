@@ -8,6 +8,7 @@ export {
   getMusicGenerationMode,
   getMusicProvider,
   publicErrorMessage,
+  sanitizeClientErrorMessage,
   MusicGenerationError,
 } from "./service";
 export {

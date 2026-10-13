@@ -191,12 +191,14 @@ export function resolveSectionKind(label: string | null | undefined, type?: stri
  */
 export const DEFAULT_ROLE_GAIN_DB: Record<VocalRole, number> = {
   lead: 0,
-  double: -5.5,
-  harmony_high: -9.5,
-  harmony_mid: -9,
-  harmony_low: -10,
-  adlib: -6.5,
-  background: -15,
+  double: -7.5,
+  // Generated / stacked harmonies: bed only — never near lead
+  harmony_high: -14,
+  harmony_mid: -13.5,
+  harmony_low: -14.5,
+  adlib: -8,
+  // True background / Stack choir: almost unnoticeable unless you listen for it
+  background: -20,
   intro: -4,
   outro: -3,
 };

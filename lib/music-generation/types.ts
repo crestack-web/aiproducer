@@ -149,26 +149,30 @@ export class MusicGenerationError extends Error {
   }
 }
 
+/**
+ * User-facing music errors — never name third-party vendors (ElevenLabs, Mureka, etc.).
+ * Internal MusicGenerationError.message may still include provider detail for server logs.
+ */
 export function publicErrorMessage(errorType: MusicErrorType): string {
   switch (errorType) {
     case "BILLING_REQUIRED":
-      return "Music generation is temporarily unavailable because the configured AI music provider has no available generation credit.";
+      return "Music generation is temporarily unavailable. Please try again later.";
     case "AUTHENTICATION_ERROR":
-      return "Music generation could not authenticate with ElevenLabs. Check ELEVENLABS_API_KEY and that Music API is enabled on your ElevenLabs plan.";
+      return "Music generation is temporarily unavailable. Please try again later.";
     case "RATE_LIMITED":
       return "Music generation is busy right now. Please try again in a moment.";
     case "MODEL_UNAVAILABLE":
-      return "The music generation model is temporarily unavailable.";
+      return "Music generation is temporarily unavailable. Please try again later.";
     case "INVALID_INPUT":
       return "Invalid music generation request.";
     case "TIMEOUT":
       return "Music generation timed out. Please try again.";
     case "DOWNLOAD_ERROR":
-      return "Generated audio could not be retrieved.";
+      return "Generated audio could not be retrieved. Please try again.";
     case "AUDIO_VALIDATION_ERROR":
-      return "Generated audio failed validation.";
+      return "Generated audio failed validation. Please try again.";
     case "NOT_CONFIGURED":
-      return "Music generation is not configured.";
+      return "Music generation is not available right now.";
     case "LIMIT_EXCEEDED":
       return "Daily music generation limit reached. Try again tomorrow.";
     case "UNAUTHORIZED":
@@ -178,4 +182,58 @@ export function publicErrorMessage(errorType: MusicErrorType): string {
     default:
       return "Music generation failed. Please try again.";
   }
+}
+
+/** Strip vendor / infrastructure names from any string before showing to users. */
+
+/** User-facing copy for beat quota limit codes (no vendor names). */
+export function publicBeatLimitMessage(
+  code: string | undefined,
+  opts?: { freeMaxSec?: number; estimatedCostUsd?: number }
+): string {
+  const maxSec = opts?.freeMaxSec ?? 90;
+  const cost =
+    typeof opts?.estimatedCostUsd === "number"
+      ? `≈ $${opts.estimatedCostUsd.toFixed(2)}`
+      : null;
+  switch (code) {
+    case "FREE_DURATION_EXCEEDED":
+      return (
+        `Free beats are limited to ${maxSec}s. Choose ${maxSec}s or shorter, or continue with a paid beat` +
+        (cost ? ` (${cost}).` : ".")
+      );
+    case "FREE_COUNT_EXCEEDED":
+    case "SEQUENTIAL_FREE_BLOCKED":
+      return (
+        "You've used your free beats. Finish a song, subscribe, or continue with a paid beat" +
+        (cost ? ` (${cost}).` : ".")
+      );
+    case "BEAT_GEN_IN_FLIGHT":
+      return "A beat is already generating. Wait for it to finish, then try again.";
+    case "PER_SONG_BEAT_GEN_LIMIT":
+      return "This song already has the maximum number of generated beats. Upload a beat or start a new song.";
+    case "PAID_SECONDS_EXCEEDED":
+      return "Your monthly beat budget is used up. Upgrade your plan or try again next month.";
+    default:
+      return publicErrorMessage("LIMIT_EXCEEDED");
+  }
+}
+
+export function sanitizeClientErrorMessage(raw: string | null | undefined, fallback?: string): string {
+  const fb = fallback || "Something went wrong. Please try again.";
+  if (!raw || typeof raw !== "string") return fb;
+  let s = raw.trim();
+  if (!s) return fb;
+  // Known third-party / infra tokens — never show in the product UI
+  const banned =
+    /\b(elevenlabs?|mureka|replicate|openai|anthropic|stability|suno|udio|roex|cloudflare|vercel|supabase|r2|s3|aws)\b/gi;
+  if (banned.test(s)) {
+    // Prefer typed public message patterns if recognizable
+    if (/rate\s*limit/i.test(s)) return publicErrorMessage("RATE_LIMITED");
+    if (/auth|api\s*key|401|403|permission/i.test(s)) return publicErrorMessage("AUTHENTICATION_ERROR");
+    if (/credit|billing|quota|payment/i.test(s)) return publicErrorMessage("BILLING_REQUIRED");
+    if (/timeout|timed\s*out/i.test(s)) return publicErrorMessage("TIMEOUT");
+    return fb;
+  }
+  return s;
 }

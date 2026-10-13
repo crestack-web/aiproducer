@@ -247,8 +247,25 @@ export async function collectVocalsForProduce(
     });
     const candidates = sorted.slice(0, 3);
 
-    const taskMeta = (task.metadata || {}) as { section_label?: string };
-    const sectionLabel = taskMeta.section_label || task.title || task.type || null;
+    const taskMeta = (task.metadata || {}) as {
+      section_label?: string;
+      generated_by?: string;
+      choir_role?: string;
+      stack_mode?: string;
+      choir_source_task_id?: string;
+    };
+    // Stack/choir layers: force background typing so Produce never level-matches them like lead/harmony
+    const isChoirLayer =
+      taskMeta.generated_by === "ap_choir" ||
+      Boolean(taskMeta.choir_source_task_id) ||
+      Boolean(taskMeta.stack_mode) ||
+      /choir|ooh|ahh|bgv|backing/i.test(String(task.title || ""));
+    const sectionLabel =
+      taskMeta.section_label ||
+      task.title ||
+      (isChoirLayer ? "Choir background" : null) ||
+      task.type ||
+      null;
 
     type Cand = { rec: RecRow; path: string; pcm: Awaited<ReturnType<typeof normalizeToInternalPcm>>["pcm"]; buffer: Buffer };
     const loaded: Cand[] = [];
@@ -328,7 +345,12 @@ export async function collectVocalsForProduce(
     vocals.push({
       buffer: chosen.buffer,
       pathHint: chosen.path,
-      taskType: task.type,
+      // Existing stacks may still be type=harmony from older mapTaskType — coerce to background
+      taskType: isChoirLayer
+        ? taskMeta.choir_role === "double"
+          ? "double"
+          : "background"
+        : task.type,
       sectionLabel,
       startMs,
       taskId: task.id,

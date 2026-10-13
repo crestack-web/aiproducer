@@ -44,11 +44,13 @@ export async function synthesizeSpeech(
   });
 
   if (!res.ok) {
-    throw new Error(`ElevenLabs TTS failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    const body = (await res.text()).slice(0, 300);
+    console.error("[tts] provider failed", res.status, body);
+    throw new Error("Guide audio could not be generated. Please try again.");
   }
 
   const buffer = Buffer.from(await res.arrayBuffer());
-  if (buffer.length < 200) throw new Error("ElevenLabs TTS returned empty audio");
+  if (buffer.length < 200) throw new Error("Guide audio was empty. Please try again.");
   return { buffer, contentType: "audio/mpeg" };
 }
 

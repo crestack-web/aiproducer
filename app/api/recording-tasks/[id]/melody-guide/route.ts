@@ -168,7 +168,7 @@ export async function POST(_req: Request, ctx: Ctx) {
       fallback: "speech_synthesis",
       start_ms: row.start_ms ?? 0,
       end_ms: row.end_ms ?? null,
-      error: e instanceof Error ? e.message : "Guide generation failed",
+      error: "Guide generation failed. Please try again.",
     });
   }
 }

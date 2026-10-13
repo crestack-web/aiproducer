@@ -10,7 +10,7 @@ function buildCorrectionRatio(
   ratio.fill(1);
   for (let n = 0; n < notes.length; n++) {
     const d = decisions[n];
-    if (!d || d.skip || Math.abs(d.correctionCents) < 3) continue;
+    if (!d || d.skip || Math.abs(d.correctionCents) < 1.5) continue;
     const note = notes[n];
     const start = Math.max(0, Math.floor(note.startTime * sampleRate));
     const end = Math.min(length, Math.floor(note.endTime * sampleRate));

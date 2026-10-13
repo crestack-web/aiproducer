@@ -25,7 +25,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const { id: projectId } = await ctx.params;
     if (!isMurekaConfigured()) {
       return NextResponse.json(
-        { error: "Build Around My Vocal is not available yet (Mureka not configured)." },
+        { error: "This feature is not available right now." },
         { status: 503 }
       );
     }
@@ -144,13 +144,13 @@ export async function POST(req: Request, ctx: Ctx) {
   } catch (e) {
     if (e instanceof MusicGenerationError) {
       return NextResponse.json(
-        { error: publicErrorMessage(e.errorType), errorType: e.errorType, details: e.details },
+        { error: publicErrorMessage(e.errorType), errorType: e.errorType },
         { status: e.errorType === "UNAUTHORIZED" ? 401 : 502 }
       );
     }
     console.error("[build-around-vocal]", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Build around vocal failed" },
+      { error: "Could not build around vocal. Please try again." },
       { status: 500 }
     );
   }

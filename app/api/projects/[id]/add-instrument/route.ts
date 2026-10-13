@@ -32,7 +32,7 @@ export async function POST(req: Request, ctx: Ctx) {
     const { id: projectId } = await ctx.params;
     if (!isMurekaConfigured()) {
       return NextResponse.json(
-        { error: "Add Instrument is not available yet (Mureka not configured)." },
+        { error: "This feature is not available right now." },
         { status: 503 }
       );
     }
@@ -115,13 +115,13 @@ export async function POST(req: Request, ctx: Ctx) {
   } catch (e) {
     if (e instanceof MusicGenerationError) {
       return NextResponse.json(
-        { error: publicErrorMessage(e.errorType), errorType: e.errorType, details: e.details },
+        { error: publicErrorMessage(e.errorType), errorType: e.errorType },
         { status: e.errorType === "UNAUTHORIZED" ? 401 : 502 }
       );
     }
     console.error("[add-instrument]", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Add instrument failed" },
+      { error: "Could not add instrument. Please try again." },
       { status: 500 }
     );
   }

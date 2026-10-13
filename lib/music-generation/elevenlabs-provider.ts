@@ -148,7 +148,7 @@ function classifyHttpError(status: number, body: string, base: string): MusicGen
     );
   }
   if (status === 429) {
-    return new MusicGenerationError("RATE_LIMITED", "ElevenLabs rate limit exceeded. Try again shortly.", {
+    return new MusicGenerationError("RATE_LIMITED", "Music generation is busy right now. Please try again in a moment.", {
       provider: "elevenlabs",
       retryable: true,
       details: { httpStatus: status, base },

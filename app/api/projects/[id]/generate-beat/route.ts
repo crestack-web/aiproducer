@@ -8,6 +8,7 @@ import {
   tickMusicGenerationJob,
   MusicGenerationError,
   publicErrorMessage,
+  publicBeatLimitMessage,
 } from "@/lib/music-generation/service";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -138,11 +139,10 @@ export async function POST(req: Request, ctx: Ctx) {
     if (job.status === "FAILED") {
       return NextResponse.json(
         {
-          error: job.error || publicErrorMessage((job.errorType as never) || "PROVIDER_ERROR"),
+          error: publicErrorMessage((job.errorType as never) || "PROVIDER_ERROR"),
           errorType: job.errorType,
           job_id: job.jobId,
           status: job.status,
-          provider: job.provider,
         },
         {
           status:
@@ -161,7 +161,6 @@ export async function POST(req: Request, ctx: Ctx) {
         job_id: job.jobId,
         status: "processing",
         beat: null,
-        provider: job.provider,
         music_job: job,
         message: "Beat is still generating. Open the project to wait for it.",
       });
@@ -176,7 +175,6 @@ export async function POST(req: Request, ctx: Ctx) {
         duration_ms: job.result.durationMs,
         status: "ready",
       },
-      provider: job.provider,
       music_job: job,
     });
   } catch (e) {
@@ -192,18 +190,64 @@ export async function POST(req: Request, ctx: Ctx) {
     }
 
     if (e instanceof MusicGenerationError) {
+      const details = (e.details || {}) as Record<string, unknown>;
+      const limitCode =
+        typeof details.code === "string" ? details.code : undefined;
+      // Safe client fields only — no provider / key material
+      const publicDetails =
+        e.errorType === "LIMIT_EXCEEDED"
+          ? {
+              code: limitCode || "BEAT_GEN_LIMIT",
+              estimatedCostUsd:
+                typeof details.estimatedCostUsd === "number"
+                  ? details.estimatedCostUsd
+                  : undefined,
+              canBillable: details.canBillable === true,
+              canSubscribe: details.canSubscribe === true,
+              freeMaxDurationSec:
+                typeof details.freeMaxDurationSec === "number"
+                  ? details.freeMaxDurationSec
+                  : undefined,
+              requestedSec:
+                typeof details.requestedSec === "number"
+                  ? details.requestedSec
+                  : undefined,
+              upgradePath:
+                typeof details.upgradePath === "string"
+                  ? details.upgradePath
+                  : undefined,
+            }
+          : undefined;
+      const errorText =
+        e.errorType === "LIMIT_EXCEEDED"
+          ? publicBeatLimitMessage(limitCode, {
+              freeMaxSec:
+                typeof details.freeMaxDurationSec === "number"
+                  ? details.freeMaxDurationSec
+                  : undefined,
+              estimatedCostUsd:
+                typeof details.estimatedCostUsd === "number"
+                  ? details.estimatedCostUsd
+                  : undefined,
+            })
+          : publicErrorMessage(e.errorType);
       return NextResponse.json(
         {
-          error: e.message || publicErrorMessage(e.errorType),
+          error: errorText,
           errorType: e.errorType,
-          code: e.errorType === "LIMIT_EXCEEDED" ? "BEAT_GEN_LIMIT" : undefined,
-          details: e.details || undefined,
+          code:
+            e.errorType === "LIMIT_EXCEEDED"
+              ? limitCode || "BEAT_GEN_LIMIT"
+              : e.errorType === "RATE_LIMITED"
+                ? "RATE_LIMITED"
+                : undefined,
+          details: publicDetails,
         },
         {
           status:
             e.errorType === "BILLING_REQUIRED"
               ? 503
-              : e.errorType === "LIMIT_EXCEEDED"
+              : e.errorType === "LIMIT_EXCEEDED" || e.errorType === "RATE_LIMITED"
                 ? 429
                 : e.errorType === "UNAUTHORIZED"
                   ? 403
@@ -215,6 +259,9 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     const msg = e instanceof Error ? e.message : "Beat generation failed";
     console.error("generate-beat", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      { error: "Beat generation failed. Please try again." },
+      { status: 500 }
+    );
   }
 }

@@ -525,11 +525,14 @@ function StudioPageInner() {
       if (beatMode === "upload" && !beatFile) throw new Error("Choose a beat file to upload");
 
       // Vague prompt + AI mode → ask for specificity instead of wasting a credit
-      if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC) {
-        // Soft client gate — server remains authoritative for free users
-        setError(
-          `Free beats are limited to ${Math.round(FREE_MAX_SEC / 60)} minutes (${FREE_MAX_SEC}s). Choose ${FREE_MAX_SEC}s or shorter, or upgrade for longer beats.`
-        );
+      if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC && !opts?.billable) {
+        // Longer than free allowance → open paid-beat purchase modal (not a dead-end error)
+        const cost = estimateStudioBeatCostUsd(beatDurationSec);
+        const msg =
+          `Free beats are limited to ${FREE_MAX_SEC}s. Choose ${FREE_MAX_SEC}s or shorter, or continue with a paid beat (≈ $${cost.toFixed(2)}).`;
+        setLimitMessage(msg);
+        setUpgradeModal({ message: msg, estimatedCostUsd: cost });
+        setError(null);
         setCreating(false);
         return;
       }
@@ -593,39 +596,51 @@ function StudioPageInner() {
         const beatJson = await beatRes.json().catch(() => ({}));
         if (!beatRes.ok) {
           const j = beatJson as Record<string, unknown>;
-          if (j.errorType === "LIMIT_EXCEEDED" || j.code === "BEAT_GEN_LIMIT") {
+          if (
+            j.errorType === "LIMIT_EXCEEDED" ||
+            j.code === "BEAT_GEN_LIMIT" ||
+            j.code === "FREE_DURATION_EXCEEDED" ||
+            j.code === "FREE_COUNT_EXCEEDED" ||
+            j.code === "SEQUENTIAL_FREE_BLOCKED"
+          ) {
             const details = (j.details || {}) as {
               code?: string;
               estimatedCostUsd?: number;
               canBillable?: boolean;
+              canSubscribe?: boolean;
               upgradePath?: string;
+              freeMaxDurationSec?: number;
             };
+            const limitCode =
+              (typeof details.code === "string" && details.code) ||
+              (typeof j.code === "string" ? j.code : undefined);
             const msg =
               typeof j.error === "string"
                 ? j.error
                 : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
             setLimitMessage(msg);
-            if (details.code === "PER_SONG_BEAT_GEN_LIMIT" || details.upgradePath === "upload_beat") {
-              setLimitMessage(msg);
+            if (limitCode === "PER_SONG_BEAT_GEN_LIMIT" || details.upgradePath === "upload_beat") {
               setBeatMode("upload");
               setError(msg);
-            } else if (details.code === "BEAT_GEN_IN_FLIGHT") {
-              setLimitMessage(msg);
+            } else if (limitCode === "BEAT_GEN_IN_FLIGHT") {
               setError(null);
             } else if (
-              details.code === "SEQUENTIAL_FREE_BLOCKED" ||
-              details.code === "FREE_COUNT_EXCEEDED" ||
+              limitCode === "FREE_DURATION_EXCEEDED" ||
+              limitCode === "SEQUENTIAL_FREE_BLOCKED" ||
+              limitCode === "FREE_COUNT_EXCEEDED" ||
               details.canBillable
             ) {
               const cost =
                 typeof details.estimatedCostUsd === "number"
                   ? details.estimatedCostUsd
                   : estimateStudioBeatCostUsd(beatDurationSec);
-              setLimitMessage(msg);
+              setError(null);
               setUpgradeModal({
                 message: msg,
                 estimatedCostUsd: cost,
               });
+            } else {
+              setError(msg);
             }
             throw new Error(msg);
           }
@@ -1971,7 +1986,7 @@ function StudioPageInner() {
               color: C.text,
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Free beat locked — paid path</div>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Unlock a longer beat</div>
             <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
               {upgradeModal.message}
             </p>

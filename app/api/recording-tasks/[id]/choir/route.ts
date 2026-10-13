@@ -508,12 +508,25 @@ export async function POST(req: Request, ctx: Ctx) {
   const created: { id: string; type: string; title: string }[] = [];
   const saveErrors: string[] = [];
 
+  /** Map stack voice roles to plan types the mixer understands.
+   * Critical: center/wide choir voices must be "background" — not harmony —
+   * so Produce keeps them under the lead instead of level-matching them up.
+   */
   const mapTaskType = (role: string): string => {
     const r = (role || "").toLowerCase();
     if (r.includes("double")) return "double";
     if (r.includes("adlib") || r.includes("ad-lib")) return "adlib";
-    if (r.includes("harmony") || r.includes("choir")) return "harmony";
-    return "harmony";
+    if (r.includes("background") || r.includes("choir") || r.includes("pad") || r.includes("ooh")) {
+      return "background";
+    }
+    if (r.includes("harmony_high") || (r.includes("harmony") && r.includes("high"))) {
+      return "high_harmony";
+    }
+    if (r.includes("harmony_low") || (r.includes("harmony") && r.includes("low"))) {
+      return "low_harmony";
+    }
+    if (r.includes("harmony")) return "background"; // generated stack harmonies sit as bed
+    return "background";
   };
 
   async function insertTask(base: Record<string, unknown>): Promise<{ id: string } | null> {

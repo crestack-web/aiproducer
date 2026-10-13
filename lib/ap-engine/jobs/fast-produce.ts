@@ -51,6 +51,7 @@ import {
   type VocalRole,
 } from "@/lib/ap-engine/roles";
 import { applyWidth } from "@/lib/ap-engine/mix/width";
+import { polishVocalLayer } from "@/lib/ap-engine/pitch";
 import { addDelayStereo, addReverbStereo, saturateInPlace } from "@/lib/ap-engine/dsp";
 
 export type FastTrackFx = {
@@ -163,6 +164,14 @@ function roleGainLinear(role: VocalRole): number {
 function layerRole(v: FastVocalLayer): VocalRole {
   const raw = v.taskType || v.type || v.role || "";
   const label = v.sectionLabel || null;
+  // Stack/choir layers: titles like "Choir center" / generated_by metadata path
+  const blob = `${raw} ${label || ""} ${v.pathHint || ""}`.toLowerCase();
+  if (
+    /choir|ooh|ahh|bgv|backing|stack|pad/.test(blob) &&
+    !/lead|main|melody/.test(blob)
+  ) {
+    return "background";
+  }
   return resolveVocalRole(raw, label);
 }
 
@@ -365,26 +374,56 @@ function duckBeatUnderVocalEnvelope(
  */
 function levelMatchToBeat(vocal: PcmStereo, beatRms: number, role: VocalRole): void {
   const vRms = Math.max(rmsOf(vocal.left), rmsOf(vocal.right), 1e-8);
+  // Lead sits above the beat. Support — especially Stack choir — must stay a quiet bed.
+  // Never pull background/harmony up toward lead energy (that made Console-good stacks
+  // attack the lead after Produce).
   const targetRatio =
     role === "lead"
       ? 1.65
       : role === "intro" || role === "outro"
-        ? 1.25
+        ? 1.2
         : role === "double"
-          ? 0.95
+          ? 0.72
           : role === "adlib"
-            ? 0.88
+            ? 0.65
             : role.startsWith("harmony")
-              ? 0.78
+              ? 0.32
               : role === "background"
-                ? 0.62
-                : 0.9;
-  const target = Math.max(beatRms * targetRatio, role === "lead" ? 0.045 : 0.03);
+                ? 0.18
+                : 0.55;
+  const floor =
+    role === "lead"
+      ? 0.045
+      : role === "background"
+        ? 0.008
+        : role.startsWith("harmony")
+          ? 0.012
+          : 0.02;
+  const target = Math.max(beatRms * targetRatio, floor);
   let g = target / vRms;
-  g = Math.min(role === "lead" ? 5.5 : 3.5, Math.max(0.55, g));
+  const maxG =
+    role === "lead"
+      ? 5.5
+      : role === "background"
+        ? 1.15
+        : role.startsWith("harmony")
+          ? 1.35
+          : role === "double"
+            ? 2.0
+            : 2.4;
+  const minG =
+    role === "background" || role.startsWith("harmony") ? 0.25 : 0.45;
+  g = Math.min(maxG, Math.max(minG, g));
   applyGainStereo(vocal, g);
   const pk = Math.max(peakOf(vocal.left), peakOf(vocal.right), 1e-6);
-  const peakCap = role === "lead" ? 0.92 : role === "background" ? 0.75 : 0.85;
+  const peakCap =
+    role === "lead"
+      ? 0.92
+      : role === "background"
+        ? 0.42
+        : role.startsWith("harmony")
+          ? 0.55
+          : 0.78;
   if (pk > peakCap) applyGainStereo(vocal, peakCap / pk);
 }
 
@@ -512,6 +551,58 @@ export async function runFastArrangement(opts: {
       }
       const rmsAfterClean = Math.max(rmsOf(pcm.left), rmsOf(pcm.right));
 
+      // Pitch polish / soft auto-tune — lead must not stay raw.
+      // Choir/harmony stay uncorrected (organic stack). Doubles/adlibs get light tighten.
+      let pitchNotes: string[] = [];
+      if (
+        role === "lead" ||
+        role === "double" ||
+        role === "adlib" ||
+        role === "intro" ||
+        role === "outro"
+      ) {
+        try {
+          const bias =
+            role === "lead"
+              ? 0.72
+              : role === "adlib"
+                ? 0.45
+                : 0.32;
+          const polished = polishVocalLayer({
+            pcm,
+            role,
+            genre: opts.genre ?? null,
+            correctionStrengthBias: bias,
+            forcePreserveVibrato: true,
+          });
+          if (polished.applied && polished.pcm) {
+            pcm.left = polished.pcm.left;
+            pcm.right = polished.pcm.right;
+            const dn = polished.decision?.notes;
+            pitchNotes = Array.isArray(dn) && dn.length
+              ? dn.slice(0, 8)
+              : [
+                  "pitch_applied",
+                  `notes_corrected:${polished.qc?.notesCorrected ?? 0}`,
+                ];
+          } else {
+            pitchNotes = [
+              "pitch_skipped",
+              ...(polished.decision?.notes?.slice(0, 4) || []),
+            ];
+          }
+        } catch (pe) {
+          pitchNotes = ["pitch_failed"];
+          console.warn(
+            "[fast-produce] pitch polish failed",
+            role,
+            pe instanceof Error ? pe.message : pe
+          );
+        }
+      } else {
+        pitchNotes = ["pitch_bypass_stack"];
+      }
+
       // Role-specific tone + dynamics (not one chain for all vocals)
       applyRoleEq(pcm, role);
       applyRoleDynamics(pcm, role);
@@ -600,6 +691,7 @@ export async function runFastArrangement(opts: {
         spaceCharacter,
         spaceNotes: spaceNotes.slice(0, 8),
         sectionRide: sectionRideNotes.slice(0, 6),
+        pitch: pitchNotes,
         intoBusPeak: Number((peakPreMix * fader).toFixed(4)),
       });
       console.info("[fast-produce] layer", JSON.stringify(layerDiag[layerDiag.length - 1]));
