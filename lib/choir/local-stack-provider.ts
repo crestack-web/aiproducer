@@ -11,6 +11,7 @@ import type {
   ChoirGenerateRequest,
   ChoirGenerateResult,
   ChoirProvider,
+  ChoirSectionRole,
 } from "./types";
 
 function arrangementToMode(
@@ -44,7 +45,7 @@ export class LocalStackChoirProvider implements ChoirProvider {
       }
       const wav = encodeWavStereoFromMono(mono, v.pcm.sampleRate || 44100);
       return {
-        role: (v.role === "double" ? "double" : "alto") as const,
+        role: (v.role === "double" ? "double" : "alto") as ChoirSectionRole,
         label: v.label,
         audio: wav,
         contentType: "audio/wav",
