@@ -71,6 +71,18 @@ export type TrackFxInput = {
   reverb?: number;
   delay?: number;
   saturation?: number;
+  width?: number;
+  air?: number;
+  rotorMix?: number;
+  rotorSpeed?: number;
+  rotorDepth?: number;
+  rotorWarmth?: number;
+  rotorFast?: number;
+  springMix?: number;
+  springDelay?: number;
+  springTension?: number;
+  springDamp?: number;
+  springMod?: number;
 };
 
 export type ApVocalLayerInput = {
