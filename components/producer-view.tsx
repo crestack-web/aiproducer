@@ -36,6 +36,7 @@ import {
   isTrackFxNeutral,
   type LiveFxHandles,
 } from "@/lib/audio/live-track-fx";
+import ApSessionsPanel from "@/components/ap-sessions-panel";
 import {
   parseFxAutomation,
   sampleTrackAutomation,
@@ -923,6 +924,7 @@ export function ProducerView({
     automationDocRef.current = automationDoc;
   }, [automationDoc]);
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [colorById, setColorById] = useState<Record<string, string>>({});
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -4835,6 +4837,30 @@ export function ProducerView({
         {projectId ? (
           <button
             type="button"
+            onClick={() => setSessionsOpen(true)}
+            title="AP Sessions — remote collaboration"
+            style={{
+              flexShrink: 0,
+              height: 36,
+              padding: "0 12px",
+              borderRadius: 999,
+              border: `1px solid ${border}`,
+              background: "rgba(0,0,0,0.35)",
+              color: brass,
+              fontWeight: 700,
+              fontSize: isNarrow ? 11 : 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sessions
+          </button>
+        ) : null}
+
+        {projectId ? (
+          <button
+            type="button"
             onClick={() => void startConsoleProduce()}
             disabled={produceUi === "producing" || produceUi === "starting"}
             title="Produce finished song with AP"
@@ -8109,6 +8135,16 @@ export function ProducerView({
           </div>
         </div>
       )}
+
+      {projectId ? (
+        <ApSessionsPanel
+          projectId={projectId}
+          open={sessionsOpen}
+          onClose={() => setSessionsOpen(false)}
+          transportPlaying={playing}
+          transportPositionMs={playheadMs}
+        />
+      ) : null}
     </div>
   );
 }
