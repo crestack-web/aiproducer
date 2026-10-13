@@ -30,6 +30,11 @@ import {
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
 import { applyFxPreset, FX_PRESETS } from "@/lib/ap-engine/fx-presets";
+import {
+  createLiveTrackFxGraph,
+  trackFxToLiveParams,
+  type LiveFxHandles,
+} from "@/lib/audio/live-track-fx";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
@@ -697,6 +702,7 @@ export function ProducerView({
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const gainsRef = useRef<Map<string, GainNode>>(new Map());
   const panNodesRef = useRef<Map<string, StereoPannerNode>>(new Map());
+  const fxGraphRef = useRef<Map<string, LiveFxHandles>>(new Map());
   const startedAtRef = useRef(0);
   const offsetRef = useRef(0);
   const rafRef = useRef(0);
@@ -3201,10 +3207,15 @@ export function ProducerView({
 
   function applyGains() {
     for (const tr of tracks) {
-      const g = gainsRef.current.get(tr.id);
-      if (!g) continue;
       const on = isAudible(tr.id, tr.kind);
       const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const graph = fxGraphRef.current.get(tr.id);
+      if (graph) {
+        graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
+        continue;
+      }
+      const g = gainsRef.current.get(tr.id);
+      if (!g) continue;
       const lin = Math.pow(10, (fx.gainDb || 0) / 20);
       g.gain.setTargetAtTime(on ? lin : 0, audioCtxRef.current?.currentTime || 0, 0.02);
       const panNode = panNodesRef.current.get(tr.id);
@@ -3234,6 +3245,14 @@ export function ProducerView({
       }
     }
     sourcesRef.current = [];
+    for (const g of fxGraphRef.current.values()) {
+      try {
+        g.dispose();
+      } catch {
+        /* */
+      }
+    }
+    fxGraphRef.current.clear();
     gainsRef.current.clear();
     panNodesRef.current.clear();
     // Stop HTMLAudio beat fallback (used when WebAudio decode fails)
@@ -3366,89 +3385,18 @@ export function ProducerView({
         continue;
       }
 
-      const gain = ctx.createGain();
       const on = isAudible(tr.id, tr.kind);
       const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
-      const gainLin = Math.pow(10, (fx.gainDb || 0) / 20);
-      gain.gain.value = on ? gainLin : 0;
-      gainsRef.current.set(tr.id, gain);
-
-      // Phase 4 FX chain: src → EQ → compress → sat (wave shape via gain) → delay/reverb mix → gain → dest
-      const low = ctx.createBiquadFilter();
-      low.type = "lowshelf";
-      low.frequency.value = 200;
-      low.gain.value = fx.eqLowDb || 0;
-      const mid = ctx.createBiquadFilter();
-      mid.type = "peaking";
-      mid.frequency.value = 1200;
-      mid.Q.value = 0.9;
-      mid.gain.value = fx.eqMidDb || 0;
-      const high = ctx.createBiquadFilter();
-      high.type = "highshelf";
-      high.frequency.value = 5000;
-      high.gain.value = fx.eqHighDb || 0;
-
-      const comp = ctx.createDynamicsCompressor();
-      const cAmt = fx.compress || 0;
-      comp.threshold.value = -10 - cAmt * 30;
-      comp.knee.value = 12;
-      comp.ratio.value = 1 + cAmt * 11;
-      comp.attack.value = 0.01;
-      comp.release.value = 0.2;
-
-      const dry = ctx.createGain();
-      dry.gain.value = 1;
-      const delay = ctx.createDelay(1.0);
-      delay.delayTime.value = 0.28;
-      const delayGain = ctx.createGain();
-      delayGain.gain.value = (fx.delay || 0) * 0.45;
-      const delayFb = ctx.createGain();
-      delayFb.gain.value = 0.25;
-
-      // Lightweight "reverb": multi-tap delays
-      const revGain = ctx.createGain();
-      revGain.gain.value = (fx.reverb || 0) * 0.35;
-      const rev1 = ctx.createDelay(1.0);
-      rev1.delayTime.value = 0.05;
-      const rev2 = ctx.createDelay(1.0);
-      rev2.delayTime.value = 0.12;
-      const rev3 = ctx.createDelay(1.0);
-      rev3.delayTime.value = 0.23;
-
-      const satGain = ctx.createGain();
-      // soft drive approximation via pre-gain into compressor
-      satGain.gain.value = 1 + (fx.saturation || 0) * 1.5;
+      const graph = createLiveTrackFxGraph(ctx);
+      graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
+      fxGraphRef.current.set(tr.id, graph);
+      gainsRef.current.set(tr.id, graph.gain);
+      panNodesRef.current.set(tr.id, graph.pan);
+      graph.output.connect(ctx.destination);
 
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(low);
-      low.connect(mid);
-      mid.connect(high);
-      high.connect(satGain);
-      satGain.connect(comp);
-      comp.connect(dry);
-      dry.connect(gain);
-
-      comp.connect(delay);
-      delay.connect(delayGain);
-      delay.connect(delayFb);
-      delayFb.connect(delay);
-      delayGain.connect(gain);
-
-      comp.connect(rev1);
-      rev1.connect(rev2);
-      rev2.connect(rev3);
-      rev1.connect(revGain);
-      rev2.connect(revGain);
-      rev3.connect(revGain);
-      revGain.connect(gain);
-
-      const panNode = ctx.createStereoPanner();
-      const panVal = Math.max(-1, Math.min(1, Number(fx.pan) || 0));
-      panNode.pan.value = panVal;
-      panNodesRef.current.set(tr.id, panNode);
-      gain.connect(panNode);
-      panNode.connect(ctx.destination);
+      src.connect(graph.input);
 
       // Vocals: offset by section start on the timeline
       if (tr.kind === "vocal") {
