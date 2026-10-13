@@ -1,56 +1,50 @@
 # AP Studio — AI Choir providers
 
-## Existing implementation (pre-upgrade)
+## Pipeline
 
-`POST /api/recording-tasks/:id/choir` used `generateStack` in `lib/ap-engine/fullness/generate.ts`:
+```
+Lead vocal (unchanged)
+  → Hybrid provider
+      → Unison / multi-timbre parts: ElevenLabs Speech-to-Speech (preferred)
+      → Interval harmony parts: Kits voice-conversion + pitchShift (preferred)
+      → Fallback: local generateStack (DSP, choir_ai: false)
+  → Separate Console tracks (background / double)
+```
 
-- Copies the **same** lead recording
-- Applies short delays, micro-cent detune, pan, spectral tint
-- **Not** new singers or musical interval harmonies from an AI model
+## Official endpoints used
 
-That is why stacks could sound phasey/robotic after Produce.
+| Provider | Endpoint | Purpose |
+|----------|----------|---------|
+| ElevenLabs | `POST /v1/speech-to-speech/{voice_id}` | Convert lead → different singer; timing/emotion preserved as model allows |
+| Kits AI | `POST /api/kits/v1/voice-conversions` + poll | Conversion + **pitchShift −24…24** for intervals |
+| Local | `generateStack` | Non-AI fallback |
 
-## Provider evaluation (verified)
-
-| Provider | Product capability | Public API for choir? | Notes |
-|----------|-------------------|----------------------|--------|
-| **Controlla Voice** | Choir Studio: SATB, presets, stems, pitch/timing variance | **No self-serve API** | Professional plan = “Apply for access” + webhooks. Best product reference; integrate when API credentials are issued. |
-| **Kits AI** | Harmony Generator + Layers **in product UI** | **Voice conversion API only** | Documented: `POST /voice-conversions` with `voiceModelId`, `pitchShift` (−24..24), poll job, download `outputFileUrl`. No separate “harmony generator” endpoint in public docs. |
-| **Soundverse** | Vocal layer / singing gen | Enterprise API | `POST /v1/vocal-layers` adds a layer and returns a **mixed** song, not separate choir stems. Less fit for timeline stems. |
-
-## Selected path
-
-1. **Primary (when configured):** Kits AI multi-job voice conversion → distinct voice models + optional `pitchShift` for harmony intervals → each part stored as its own Console track (`background` / `double`).
-2. **Fallback:** Local `generateStack` DSP (unchanged), clearly flagged `choir_provider: local_stack` and `choir_ai: false`.
-3. **Controlla:** Reserved provider id; enable when `CONTROLLA_API_KEY` + documented endpoints exist.
+ElevenLabs Music API is **not** used for choir (full-track generation, not aligned stems).
 
 ## Environment
 
 ```bash
-KITS_API_KEY=...                 # required for AI path
-KITS_VOICE_SOPRANO=123456        # royalty-free model ids from GET /voice-models
+# Already used for beats / TTS
+ELEVENLABS_API_KEY=sk_...
+
+# Choir-specific voice IDs (from ElevenLabs voice library)
+ELEVENLABS_CHOIR_VOICE_SOPRANO=...
+ELEVENLABS_CHOIR_VOICE_ALTO=...
+ELEVENLABS_CHOIR_VOICE_TENOR=...
+ELEVENLABS_CHOIR_VOICE_BASS=...
+ELEVENLABS_CHOIR_VOICE_SUPPORT=...   # optional
+ELEVENLABS_STS_MODEL=eleven_multilingual_sts_v2   # optional
+
+# Interval harmonies (recommended with EL)
+KITS_API_KEY=...
+KITS_VOICE_SOPRANO=...   # numeric model ids
 KITS_VOICE_ALTO=...
 KITS_VOICE_TENOR=...
 KITS_VOICE_BASS=...
-# optional aliases:
-# KITS_VOICE_FEMALE_1 / _2, KITS_VOICE_MALE_1 / _2
 ```
 
-Without `KITS_API_KEY`, Stack still works via local DSP and warns in the response.
+## Honest limitations
 
-## Request body (additions)
-
-```json
-{
-  "mode": "choir_full",
-  "style": "pop",
-  "arrangement": "full",
-  "balance": "mixed",
-  "harmony_intensity": "moderate",
-  "force_local": false
-}
-```
-
-## Success criterion
-
-AI path: additional parts are **converted performances** from different Kits voice models (not only delayed clones of the lead). Lead task is never overwritten.
+- EL STS alone → **same melody**, different timbres (real multi-singer doubles).
+- **Musical intervals** require Kits `pitchShift` (or a future Controlla choir API).
+- Without either key → local DSP stack, clearly flagged non-AI.
