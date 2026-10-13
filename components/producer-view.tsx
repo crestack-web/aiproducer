@@ -8302,19 +8302,245 @@ function TrackFxPanel({
   }
 
   function renderKnobs(id: string, accent: string) {
+    /** Compressor-style transfer curve from amount 0–1 */
+    function CompCurve({ amount }: { amount: number }) {
+      const a = Math.max(0, Math.min(1, amount));
+      const w = 280;
+      const h = 120;
+      const pts: string[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const x = i / 40;
+        // soft knee compression visualization
+        const thr = 0.55 - a * 0.25;
+        let y = x;
+        if (x > thr) {
+          const over = x - thr;
+          y = thr + over / (1 + a * 8);
+        }
+        pts.push(`${12 + x * (w - 24)},${h - 12 - y * (h - 24)}`);
+      }
+      return (
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
+          <defs>
+            <linearGradient id="compGrad" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0%" stopColor={accent} stopOpacity="0.15" />
+              <stop offset="100%" stopColor={accent} stopOpacity="0.5" />
+            </linearGradient>
+          </defs>
+          {[0.25, 0.5, 0.75].map((g) => (
+            <line
+              key={g}
+              x1={12}
+              y1={h - 12 - g * (h - 24)}
+              x2={w - 12}
+              y2={h - 12 - g * (h - 24)}
+              stroke="rgba(255,255,255,0.06)"
+              strokeWidth={1}
+            />
+          ))}
+          <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.12)" strokeDasharray="4 4" />
+          <polyline fill="none" stroke={accent} strokeWidth={2.5} strokeLinecap="round" points={pts.join(" ")} />
+          <circle
+            cx={12 + 0.7 * (w - 24)}
+            cy={h - 12 - (0.7 > 0.55 - a * 0.25 ? (0.55 - a * 0.25) + (0.7 - (0.55 - a * 0.25)) / (1 + a * 8) : 0.7) * (h - 24)}
+            r={5}
+            fill={accent}
+            stroke="#111"
+            strokeWidth={1}
+          />
+        </svg>
+      );
+    }
+
+    /** EQ magnitude response sketch from low/mid/high/air */
+    function EqCurve() {
+      const lo = Number(fx.eqLowDb) || 0;
+      const mid = Number(fx.eqMidDb) || 0;
+      const hi = Number(fx.eqHighDb) || 0;
+      const air = (Number(fx.air) || 0) * 5;
+      const w = 280;
+      const h = 120;
+      const pts: string[] = [];
+      for (let i = 0; i <= 48; i++) {
+        const t = i / 48;
+        // log-ish bands
+        let db = 0;
+        if (t < 0.25) db = lo * (1 - t / 0.25) + mid * (t / 0.25) * 0.3;
+        else if (t < 0.55) db = mid * (1 - Math.abs(t - 0.4) / 0.2);
+        else if (t < 0.8) db = hi * ((t - 0.55) / 0.25) + mid * 0.2;
+        else db = hi * 0.6 + air * ((t - 0.8) / 0.2);
+        const yNorm = 0.5 - db / 24;
+        pts.push(`${12 + t * (w - 24)},${12 + Math.max(8, Math.min(h - 8, yNorm * (h - 24)))}`);
+      }
+      return (
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
+          <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.12)" strokeWidth={1} />
+          {[0.2, 0.4, 0.6, 0.8].map((g) => (
+            <line key={g} x1={12 + g * (w - 24)} y1={12} x2={12 + g * (w - 24)} y2={h - 12} stroke="rgba(255,255,255,0.05)" />
+          ))}
+          <polyline fill="none" stroke={accent} strokeWidth={2.5} strokeLinecap="round" points={pts.join(" ")} />
+          {[0.12, 0.4, 0.72, 0.9].map((t, i) => {
+            const dbs = [lo, mid, hi, air];
+            const db = dbs[i];
+            const yNorm = 0.5 - db / 24;
+            return (
+              <circle
+                key={i}
+                cx={12 + t * (w - 24)}
+                cy={12 + Math.max(8, Math.min(h - 8, yNorm * (h - 24)))}
+                r={4.5}
+                fill={accent}
+                stroke="#111"
+                strokeWidth={1}
+              />
+            );
+          })}
+        </svg>
+      );
+    }
+
+    /** Simple waveform / space visualization for reverb-like effects */
+    function SpaceViz({ wet }: { wet: number }) {
+      const a = Math.max(0, Math.min(1, wet));
+      const bars = 24;
+      return (
+        <div
+          style={{
+            height: 72,
+            borderRadius: 10,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 3,
+            padding: "10px 12px",
+          }}
+        >
+          {Array.from({ length: bars }).map((_, i) => {
+            const decay = Math.exp(-i * (0.08 + (1 - a) * 0.15));
+            const h = 12 + decay * a * 48 + Math.sin(i * 0.7) * 4 * a;
+            return (
+              <div
+                key={i}
+                style={{
+                  flex: 1,
+                  height: h,
+                  borderRadius: 2,
+                  background: `linear-gradient(180deg, ${accent}, ${accent}55)`,
+                  opacity: 0.35 + decay * 0.65,
+                }}
+              />
+            );
+          })}
+        </div>
+      );
+    }
+
+    function DelayViz({ amount }: { amount: number }) {
+      const a = Math.max(0, Math.min(1, amount));
+      return (
+        <svg width="100%" viewBox="0 0 280 72" style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
+          {[0, 1, 2, 3].map((i) => {
+            const x = 24 + i * (40 + a * 28);
+            const op = 1 - i * 0.22;
+            return (
+              <g key={i} opacity={op}>
+                <rect x={x} y={20 + i * 4} width={28} height={32 - i * 4} rx={4} fill={accent} opacity={0.35 + a * 0.4} />
+              </g>
+            );
+          })}
+          <text x={14} y={64} fill="rgba(255,255,255,0.35)" fontSize={10}>
+            echoes
+          </text>
+        </svg>
+      );
+    }
+
+    function FilterViz({ mode, hz }: { mode: "hpf" | "lpf" | "tel"; hz: number }) {
+      const w = 280;
+      const h = 80;
+      const pts: string[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40;
+        let y = 0.85;
+        if (mode === "hpf") {
+          const cut = Math.min(1, hz / 300);
+          y = t < cut ? 0.15 + (t / Math.max(0.01, cut)) * 0.7 : 0.85;
+        } else if (mode === "lpf") {
+          const cut = Math.min(1, hz / 12000);
+          y = t > cut ? 0.85 - ((t - cut) / Math.max(0.01, 1 - cut)) * 0.7 : 0.85;
+        } else {
+          // telephone band
+          y = t > 0.25 && t < 0.65 ? 0.85 : 0.25;
+        }
+        pts.push(`${12 + t * (w - 24)},${h - 8 - y * (h - 16)}`);
+      }
+      return (
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
+          <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
+        </svg>
+      );
+    }
+
+    function SatViz({ amount }: { amount: number }) {
+      const a = Math.max(0, Math.min(1, amount));
+      const w = 280;
+      const h = 72;
+      const pts: string[] = [];
+      for (let i = 0; i <= 40; i++) {
+        const x = i / 40;
+        const xin = x * 2 - 1;
+        const k = 1 + a * 8;
+        const y = a < 0.02 ? xin : ((1 + k) * xin) / (1 + k * Math.abs(xin));
+        pts.push(`${12 + x * (w - 24)},${h / 2 - y * (h / 2 - 10)}`);
+      }
+      return (
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
+          <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.1)" />
+          <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
+        </svg>
+      );
+    }
+
+    const wrap = (viz: React.ReactNode, knobs: React.ReactNode) => (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%" }}>
+        {viz}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center" }}>{knobs}</div>
+      </div>
+    );
+
     switch (id) {
       case "compress":
-        return <>{knob("compress", "Amount", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <CompCurve amount={Number(fx.compress) || 0} />,
+          <>{knob("compress", "Amount", 0, 1, 0.01, accent)}</>
+        );
       case "deess":
-        return <>{knob("deEss", "HF atten", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <FilterViz mode="tel" hz={6500} />,
+          <>{knob("deEss", "HF atten", 0, 1, 0.01, accent)}</>
+        );
       case "gate":
-        return <>{knob("gate", "Amount", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <div style={{ height: 56, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", padding: "0 16px", gap: 8 }}>
+            {[0.2, 0.35, 0.15, 0.5, 0.1, 0.4].map((h, i) => (
+              <div key={i} style={{ flex: 1, height: `${h * 100 * (1 - (Number(fx.gate) || 0) * 0.5)}%`, minHeight: 4, borderRadius: 2, background: accent, opacity: 0.5 + (Number(fx.gate) || 0) * 0.4 }} />
+            ))}
+          </div>,
+          <>{knob("gate", "Amount", 0, 1, 0.01, accent)}</>
+        );
       case "limiter":
-        return <>{knob("limiter", "Limit", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <CompCurve amount={(Number(fx.limiter) || 0) * 0.9} />,
+          <>{knob("limiter", "Limit", 0, 1, 0.01, accent)}</>
+        );
       case "sat":
-        return <>{knob("saturation", "Drive", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <SatViz amount={Number(fx.saturation) || 0} />,
+          <>{knob("saturation", "Drive", 0, 1, 0.01, accent)}</>
+        );
       case "eq":
-        return (
+        return wrap(
+          <EqCurve />,
           <>
             {knob("eqLowDb", "Low", -12, 12, 0.5, accent)}
             {knob("eqMidDb", "Mid", -12, 12, 0.5, accent)}
@@ -8323,25 +8549,68 @@ function TrackFxPanel({
           </>
         );
       case "hpf":
-        return <>{knob("highPassHz", "Hz", 0, 300, 5, accent)}</>;
+        return wrap(
+          <FilterViz mode="hpf" hz={Number(fx.highPassHz) || 0} />,
+          <>{knob("highPassHz", "Hz", 0, 300, 5, accent)}</>
+        );
       case "lpf":
-        return <>{knob("lowPassHz", "Hz", 0, 12000, 100, accent)}</>;
+        return wrap(
+          <FilterViz mode="lpf" hz={Number(fx.lowPassHz) || 18000} />,
+          <>{knob("lowPassHz", "Hz", 0, 12000, 100, accent)}</>
+        );
       case "telephone":
-        return <>{knob("telephone", "Amount", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <FilterViz mode="tel" hz={0} />,
+          <>{knob("telephone", "Amount", 0, 1, 0.01, accent)}</>
+        );
       case "reverb":
-        return <>{knob("reverb", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <SpaceViz wet={Number(fx.reverb) || 0} />,
+          <>{knob("reverb", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "plate":
-        return <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <SpaceViz wet={Number(fx.plateReverb) || 0} />,
+          <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "delay":
-        return <>{knob("delay", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <DelayViz amount={Number(fx.delay) || 0} />,
+          <>{knob("delay", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "slap":
-        return <>{knob("slapDelay", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <DelayViz amount={Number(fx.slapDelay) || 0} />,
+          <>{knob("slapDelay", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "chorus":
-        return <>{knob("chorus", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <SpaceViz wet={(Number(fx.chorus) || 0) * 0.7} />,
+          <>{knob("chorus", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "doubler":
-        return <>{knob("doubler", "Mix", 0, 1, 0.01, accent)}</>;
+        return wrap(
+          <DelayViz amount={Number(fx.doubler) || 0} />,
+          <>{knob("doubler", "Mix", 0, 1, 0.01, accent)}</>
+        );
       case "rotor":
-        return (
+        return wrap(
+          <div style={{ height: 64, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                style={{
+                  width: 36 + i * 8,
+                  height: 36 + i * 8,
+                  borderRadius: "50%",
+                  border: `2px solid ${accent}`,
+                  opacity: 0.35 + (Number(fx.rotorMix) || 0) * 0.5,
+                  transform: `rotate(${(Number(fx.rotorSpeed) || 0) * 40 * (i + 1)}deg)`,
+                  boxShadow: `0 0 ${8 + (Number(fx.rotorDepth) || 0) * 12}px ${accent}55`,
+                }}
+              />
+            ))}
+          </div>,
           <>
             {knob("rotorSpeed", "Speed", 0, 1, 0.01, accent)}
             {knob("rotorDepth", "Depth", 0, 1, 0.01, accent)}
@@ -8350,7 +8619,8 @@ function TrackFxPanel({
           </>
         );
       case "spring":
-        return (
+        return wrap(
+          <SpaceViz wet={Number(fx.springMix) || 0} />,
           <>
             {knob("springDelay", "Delay", 0, 1, 0.01, accent)}
             {knob("springTension", "Tension", 0, 1, 0.01, accent)}
