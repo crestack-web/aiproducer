@@ -8187,51 +8187,59 @@ function TrackFxPanel({
     if (modalId === id) setModalId(null);
   }
 
-  /** Circular knob — matches Rotor Glow / Spring Shimmer style */
+  /** Pro dial — large Musicwarp-style ring + value */
   function knob(
     key: keyof TrackFx,
     label: string,
     min: number,
     max: number,
     step: number,
-    accent: string
+    accent: string,
+    size: "md" | "lg" = "md"
   ) {
     const v = Number(fx[key]) || 0;
     const pct = max === min ? 0 : Math.max(0, Math.min(1, (v - min) / (max - min)));
     const deg = -135 + pct * 270;
-    const display =
-      key.includes("Hz") ? String(Math.round(v)) : Number(v).toFixed(2);
+    const dim = size === "lg" ? 88 : 58;
+    const inner = size === "lg" ? 64 : 42;
+    const needle = size === "lg" ? 22 : 15;
+    const display = key.includes("Hz")
+      ? String(Math.round(v))
+      : key.includes("Db") || key === "gainDb"
+        ? `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}`
+        : Number(v).toFixed(2);
     return (
       <label
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 6,
-          minWidth: 72,
-          flex: "1 1 72px",
+          gap: size === "lg" ? 8 : 6,
+          minWidth: size === "lg" ? 100 : 72,
+          flex: size === "lg" ? "1 1 100px" : "1 1 72px",
         }}
       >
         <div
           style={{
-            width: 56,
-            height: 56,
+            width: dim,
+            height: dim,
             borderRadius: "50%",
-            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.08) ${pct * 270}deg, rgba(255,255,255,0.08) 270deg, transparent 270deg)`,
+            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.07) ${pct * 270}deg, rgba(255,255,255,0.07) 270deg, transparent 270deg)`,
             display: "grid",
             placeItems: "center",
-            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+            boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 8px 24px rgba(0,0,0,0.35), inset 0 0 20px ${accent}18`,
             position: "relative",
           }}
         >
           <div
             style={{
-              width: 40,
-              height: 40,
+              width: inner,
+              height: inner,
               borderRadius: "50%",
-              background: "rgba(18,16,14,0.95)",
+              background: "radial-gradient(circle at 35% 30%, #2a2826 0%, #12100e 70%)",
               border: "1px solid rgba(255,255,255,0.1)",
               position: "relative",
+              boxShadow: "inset 0 2px 8px rgba(0,0,0,0.5)",
             }}
           >
             <div
@@ -8239,14 +8247,15 @@ function TrackFxPanel({
                 position: "absolute",
                 left: "50%",
                 top: "50%",
-                width: 2,
-                height: 15,
-                marginLeft: -1,
-                marginTop: -15,
-                borderRadius: 1,
-                background: accent,
+                width: size === "lg" ? 3 : 2,
+                height: needle,
+                marginLeft: size === "lg" ? -1.5 : -1,
+                marginTop: -needle,
+                borderRadius: 2,
+                background: `linear-gradient(180deg, ${accent}, ${accent}99)`,
                 transformOrigin: "50% 100%",
                 transform: `rotate(${deg}deg)`,
+                boxShadow: `0 0 8px ${accent}88`,
               }}
             />
           </div>
@@ -8258,20 +8267,38 @@ function TrackFxPanel({
             value={v}
             aria-label={label}
             onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
-            onMouseUp={() => onCommit({ ...fx, [key]: Number(fx[key]) })}
-            onTouchEnd={() => onCommit({ ...fx, [key]: Number(fx[key]) })}
+            onMouseUp={() => onCommit({ ...fx, [key]: Number((fx as any)[key]) })}
+            onTouchEnd={() => onCommit({ ...fx, [key]: Number((fx as any)[key]) })}
             style={{
               position: "absolute",
-              width: 56,
-              height: 56,
+              width: dim,
+              height: dim,
               opacity: 0,
               cursor: "pointer",
               margin: 0,
             }}
           />
         </div>
-        <span style={{ fontSize: 11, color: muted, fontWeight: 600 }}>{label}</span>
-        <span style={{ fontSize: 11, color: accent, fontVariantNumeric: "tabular-nums" }}>{display}</span>
+        <span
+          style={{
+            fontSize: size === "lg" ? 12 : 11,
+            color: muted,
+            fontWeight: 650,
+            letterSpacing: "0.02em",
+          }}
+        >
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: size === "lg" ? 15 : 12,
+            color: accent,
+            fontWeight: 700,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {display}
+        </span>
       </label>
     );
   }
@@ -8502,9 +8529,32 @@ function TrackFxPanel({
     }
 
     const wrap = (viz: React.ReactNode, knobs: React.ReactNode) => (
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%" }}>
-        {viz}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center" }}>{knobs}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+        <div
+          style={{
+            borderRadius: 14,
+            border: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(0,0,0,0.4)",
+            padding: 12,
+            overflow: "hidden",
+          }}
+        >
+          {viz}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 16,
+            justifyContent: "center",
+            padding: "8px 4px 4px",
+            borderRadius: 14,
+            border: "1px solid rgba(255,255,255,0.06)",
+            background: "rgba(0,0,0,0.28)",
+          }}
+        >
+          {knobs}
+        </div>
       </div>
     );
 
@@ -8512,12 +8562,12 @@ function TrackFxPanel({
       case "compress":
         return wrap(
           <CompCurve amount={Number(fx.compress) || 0} />,
-          <>{knob("compress", "Amount", 0, 1, 0.01, accent)}</>
+          <>{knob("compress", "Amount", 0, 1, 0.01, accent, "lg")}</>
         );
       case "deess":
         return wrap(
           <FilterViz mode="tel" hz={6500} />,
-          <>{knob("deEss", "HF atten", 0, 1, 0.01, accent)}</>
+          <>{knob("deEss", "HF atten", 0, 1, 0.01, accent, "lg")}</>
         );
       case "gate":
         return wrap(
@@ -8526,17 +8576,17 @@ function TrackFxPanel({
               <div key={i} style={{ flex: 1, height: `${h * 100 * (1 - (Number(fx.gate) || 0) * 0.5)}%`, minHeight: 4, borderRadius: 2, background: accent, opacity: 0.5 + (Number(fx.gate) || 0) * 0.4 }} />
             ))}
           </div>,
-          <>{knob("gate", "Amount", 0, 1, 0.01, accent)}</>
+          <>{knob("gate", "Amount", 0, 1, 0.01, accent, "lg")}</>
         );
       case "limiter":
         return wrap(
           <CompCurve amount={(Number(fx.limiter) || 0) * 0.9} />,
-          <>{knob("limiter", "Limit", 0, 1, 0.01, accent)}</>
+          <>{knob("limiter", "Limit", 0, 1, 0.01, accent, "lg")}</>
         );
       case "sat":
         return wrap(
           <SatViz amount={Number(fx.saturation) || 0} />,
-          <>{knob("saturation", "Drive", 0, 1, 0.01, accent)}</>
+          <>{knob("saturation", "Drive", 0, 1, 0.01, accent, "lg")}</>
         );
       case "eq":
         return wrap(
@@ -8561,22 +8611,22 @@ function TrackFxPanel({
       case "telephone":
         return wrap(
           <FilterViz mode="tel" hz={0} />,
-          <>{knob("telephone", "Amount", 0, 1, 0.01, accent)}</>
+          <>{knob("telephone", "Amount", 0, 1, 0.01, accent, "lg")}</>
         );
       case "reverb":
         return wrap(
           <SpaceViz wet={Number(fx.reverb) || 0} />,
-          <>{knob("reverb", "Mix", 0, 1, 0.01, accent)}</>
+          <>{knob("reverb", "Mix", 0, 1, 0.01, accent, "lg")}</>
         );
       case "plate":
         return wrap(
           <SpaceViz wet={Number(fx.plateReverb) || 0} />,
-          <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent)}</>
+          <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent, "lg")}</>
         );
       case "delay":
         return wrap(
           <DelayViz amount={Number(fx.delay) || 0} />,
-          <>{knob("delay", "Mix", 0, 1, 0.01, accent)}</>
+          <>{knob("delay", "Mix", 0, 1, 0.01, accent, "lg")}</>
         );
       case "slap":
         return wrap(
@@ -8586,12 +8636,12 @@ function TrackFxPanel({
       case "chorus":
         return wrap(
           <SpaceViz wet={(Number(fx.chorus) || 0) * 0.7} />,
-          <>{knob("chorus", "Mix", 0, 1, 0.01, accent)}</>
+          <>{knob("chorus", "Mix", 0, 1, 0.01, accent, "lg")}</>
         );
       case "doubler":
         return wrap(
           <DelayViz amount={Number(fx.doubler) || 0} />,
-          <>{knob("doubler", "Mix", 0, 1, 0.01, accent)}</>
+          <>{knob("doubler", "Mix", 0, 1, 0.01, accent, "lg")}</>
         );
       case "rotor":
         return wrap(
@@ -8725,9 +8775,10 @@ function TrackFxPanel({
             position: "fixed",
             inset: 0,
             zIndex: 90,
-            background: "rgba(0,0,0,0.72)",
+            background: "rgba(0,0,0,0.78)",
+            backdropFilter: "blur(6px)",
             display: "flex",
-            alignItems: "flex-end",
+            alignItems: "center",
             justifyContent: "center",
             padding: 12,
           }}
@@ -8739,28 +8790,54 @@ function TrackFxPanel({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(420px, 100%)",
-              maxHeight: "85vh",
+              width: "min(520px, 100%)",
+              maxHeight: "88vh",
               overflow: "auto",
-              borderRadius: 18,
+              borderRadius: 20,
               border: `1px solid ${border}`,
-              background: "rgba(22,20,18,0.98)",
-              padding: "16px 14px 20px",
-              boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+              background: "linear-gradient(165deg, #1c1a18 0%, #12100e 100%)",
+              padding: 0,
+              boxShadow: `0 28px 90px rgba(0,0,0,0.65), 0 0 0 1px ${modalDef.accent}22`,
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {/* Title bar */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "14px 16px",
+                borderBottom: `1px solid ${border}`,
+                background: "rgba(0,0,0,0.25)",
+                borderRadius: "20px 20px 0 0",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span
                   style={{
-                    width: 8,
-                    height: 8,
+                    width: 10,
+                    height: 10,
                     borderRadius: "50%",
                     background: modalDef.accent,
+                    boxShadow: `0 0 12px ${modalDef.accent}`,
                   }}
                 />
-                <span style={{ fontWeight: 800, fontSize: 16, color: "#F5F0E8" }}>{modalDef.label}</span>
-                <span style={{ fontSize: 11, color: muted, marginLeft: 4 }}>Custom</span>
+                <span style={{ fontWeight: 800, fontSize: 17, color: "#F5F0E8", letterSpacing: "-0.01em" }}>
+                  {modalDef.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: muted,
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    border: `1px solid ${border}`,
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  CUSTOM
+                </span>
               </div>
               <button
                 type="button"
@@ -8769,10 +8846,13 @@ function TrackFxPanel({
                   setModalId(null);
                 }}
                 style={{
-                  border: "none",
-                  background: "transparent",
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  border: `1px solid ${border}`,
+                  background: "rgba(0,0,0,0.35)",
                   color: muted,
-                  fontSize: 22,
+                  fontSize: 18,
                   cursor: "pointer",
                   lineHeight: 1,
                 }}
@@ -8781,15 +8861,7 @@ function TrackFxPanel({
               </button>
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 12,
-                justifyContent: "center",
-                padding: "8px 0 12px",
-              }}
-            >
+            <div style={{ padding: "16px 16px 20px" }}>
               {renderKnobs(modalDef.id, modalDef.accent)}
             </div>
 
