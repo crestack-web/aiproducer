@@ -8109,42 +8109,45 @@ function TrackFxPanel({
   onRackChange: (rack: string[]) => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  /** Effect currently open in its own modal */
+  const [modalId, setModalId] = useState<string | null>(null);
 
   type PluginDef = {
     id: string;
     label: string;
     group: "dynamics" | "tone" | "space" | "creative";
-    /** Keys zeroed when removed */
+    accent: string;
     keys: (keyof TrackFx)[];
   };
 
   const PLUGINS: PluginDef[] = [
-    { id: "compress", label: "Compressor", group: "dynamics", keys: ["compress"] },
-    { id: "deess", label: "De-esser", group: "dynamics", keys: ["deEss"] },
-    { id: "gate", label: "Noise gate", group: "dynamics", keys: ["gate"] },
-    { id: "limiter", label: "Soft limiter", group: "dynamics", keys: ["limiter"] },
-    { id: "sat", label: "Saturation", group: "dynamics", keys: ["saturation"] },
-    { id: "eq", label: "EQ", group: "tone", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"] },
-    { id: "hpf", label: "High-pass", group: "tone", keys: ["highPassHz"] },
-    { id: "lpf", label: "Low-pass", group: "tone", keys: ["lowPassHz"] },
-    { id: "telephone", label: "Telephone", group: "tone", keys: ["telephone"] },
-    { id: "reverb", label: "Room reverb", group: "space", keys: ["reverb"] },
-    { id: "plate", label: "Plate-style", group: "space", keys: ["plateReverb"] },
-    { id: "delay", label: "Echo delay", group: "space", keys: ["delay"] },
-    { id: "slap", label: "Slapback", group: "space", keys: ["slapDelay"] },
-    { id: "chorus", label: "Chorus", group: "space", keys: ["chorus"] },
-    { id: "doubler", label: "Vocal doubler", group: "space", keys: ["doubler"] },
+    { id: "compress", label: "Compressor", group: "dynamics", accent: "#60A5FA", keys: ["compress"] },
+    { id: "deess", label: "De-esser", group: "dynamics", accent: "#A78BFA", keys: ["deEss"] },
+    { id: "gate", label: "Noise gate", group: "dynamics", accent: "#94A3B8", keys: ["gate"] },
+    { id: "limiter", label: "Soft limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"] },
+    { id: "sat", label: "Saturation", group: "dynamics", accent: "#FBBF24", keys: ["saturation"] },
+    { id: "eq", label: "EQ", group: "tone", accent: "#38BDF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"] },
+    { id: "hpf", label: "High-pass", group: "tone", accent: "#2DD4BF", keys: ["highPassHz"] },
+    { id: "lpf", label: "Low-pass", group: "tone", accent: "#34D399", keys: ["lowPassHz"] },
+    { id: "telephone", label: "Telephone", group: "tone", accent: "#C084FC", keys: ["telephone"] },
+    { id: "reverb", label: "Room reverb", group: "space", accent: "#818CF8", keys: ["reverb"] },
+    { id: "plate", label: "Plate-style", group: "space", accent: "#E879F9", keys: ["plateReverb"] },
+    { id: "delay", label: "Echo delay", group: "space", accent: "#22D3EE", keys: ["delay"] },
+    { id: "slap", label: "Slapback", group: "space", accent: "#F472B6", keys: ["slapDelay"] },
+    { id: "chorus", label: "Chorus", group: "space", accent: "#A3E635", keys: ["chorus"] },
+    { id: "doubler", label: "Vocal doubler", group: "space", accent: "#4ADE80", keys: ["doubler"] },
     {
       id: "rotor",
       label: "Rotor Glow",
       group: "creative",
+      accent: "#4ADE80",
       keys: ["rotorMix", "rotorSpeed", "rotorDepth", "rotorWarmth", "rotorFast"],
     },
     {
       id: "spring",
       label: "Spring Shimmer",
       group: "creative",
+      accent: "#FF8A3D",
       keys: ["springMix", "springDelay", "springTension", "springDamp", "springMod"],
     },
   ];
@@ -8156,15 +8159,9 @@ function TrackFxPanel({
   }
 
   function addPlugin(id: string) {
-    if (rack.includes(id)) {
-      setActiveId(id);
-      setAddOpen(false);
-      return;
-    }
-    const nextRack = [...rack, id];
-    onRackChange(nextRack);
-    setActiveId(id);
+    if (!rack.includes(id)) onRackChange([...rack, id]);
     setAddOpen(false);
+    setModalId(id);
   }
 
   function removePlugin(id: string) {
@@ -8186,19 +8183,107 @@ function TrackFxPanel({
     }
     onChange(nextFx);
     onCommit(nextFx);
-    const nextRack = rack.filter((x) => x !== id);
-    onRackChange(nextRack);
-    if (activeId === id) setActiveId(nextRack[0] || null);
+    onRackChange(rack.filter((x) => x !== id));
+    if (modalId === id) setModalId(null);
   }
 
-  function slider(key: keyof TrackFx, label: string, min: number, max: number, step: number) {
-    const v = Number(fx[key]);
+  /** Circular knob — matches Rotor Glow / Spring Shimmer style */
+  function knob(
+    key: keyof TrackFx,
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+    accent: string
+  ) {
+    const v = Number(fx[key]) || 0;
+    const pct = max === min ? 0 : Math.max(0, Math.min(1, (v - min) / (max - min)));
+    const deg = -135 + pct * 270;
+    const display =
+      key.includes("Hz") ? String(Math.round(v)) : Number(v).toFixed(2);
+    return (
+      <label
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 6,
+          minWidth: 72,
+          flex: "1 1 72px",
+        }}
+      >
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.08) ${pct * 270}deg, rgba(255,255,255,0.08) 270deg, transparent 270deg)`,
+            display: "grid",
+            placeItems: "center",
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              background: "rgba(18,16,14,0.95)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                width: 2,
+                height: 15,
+                marginLeft: -1,
+                marginTop: -15,
+                borderRadius: 1,
+                background: accent,
+                transformOrigin: "50% 100%",
+                transform: `rotate(${deg}deg)`,
+              }}
+            />
+          </div>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={v}
+            aria-label={label}
+            onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
+            onMouseUp={() => onCommit({ ...fx, [key]: Number(fx[key]) })}
+            onTouchEnd={() => onCommit({ ...fx, [key]: Number(fx[key]) })}
+            style={{
+              position: "absolute",
+              width: 56,
+              height: 56,
+              opacity: 0,
+              cursor: "pointer",
+              margin: 0,
+            }}
+          />
+        </div>
+        <span style={{ fontSize: 11, color: muted, fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: 11, color: accent, fontVariantNumeric: "tabular-nums" }}>{display}</span>
+      </label>
+    );
+  }
+
+  function levelSlider(key: keyof TrackFx, label: string, min: number, max: number, step: number) {
+    const v = Number(fx[key]) || 0;
     return (
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: muted }}>
           <span>{label}</span>
           <span style={{ color: brass, fontVariantNumeric: "tabular-nums" }}>
-            {key.includes("Hz") ? Math.round(v) : Number(v).toFixed(2)}
+            {Number(v).toFixed(2)}
           </span>
         </div>
         <input
@@ -8216,69 +8301,62 @@ function TrackFxPanel({
     );
   }
 
-  function renderEditor(id: string) {
+  function renderKnobs(id: string, accent: string) {
     switch (id) {
       case "compress":
-        return slider("compress", "Amount", 0, 1, 0.05);
+        return <>{knob("compress", "Amount", 0, 1, 0.01, accent)}</>;
       case "deess":
-        return slider("deEss", "HF atten", 0, 1, 0.05);
+        return <>{knob("deEss", "HF atten", 0, 1, 0.01, accent)}</>;
       case "gate":
-        return (
-          <>
-            {slider("gate", "Amount (Produce only)", 0, 1, 0.05)}
-          </>
-        );
+        return <>{knob("gate", "Amount", 0, 1, 0.01, accent)}</>;
       case "limiter":
-        return slider("limiter", "Soft limit", 0, 1, 0.05);
+        return <>{knob("limiter", "Limit", 0, 1, 0.01, accent)}</>;
       case "sat":
-        return slider("saturation", "Drive", 0, 1, 0.05);
+        return <>{knob("saturation", "Drive", 0, 1, 0.01, accent)}</>;
       case "eq":
         return (
           <>
-            {slider("eqLowDb", "Low", -12, 12, 0.5)}
-            {slider("eqMidDb", "Mid", -12, 12, 0.5)}
-            {slider("eqHighDb", "High", -12, 12, 0.5)}
-            {slider("air", "Air", 0, 1, 0.05)}
+            {knob("eqLowDb", "Low", -12, 12, 0.5, accent)}
+            {knob("eqMidDb", "Mid", -12, 12, 0.5, accent)}
+            {knob("eqHighDb", "High", -12, 12, 0.5, accent)}
+            {knob("air", "Air", 0, 1, 0.01, accent)}
           </>
         );
       case "hpf":
-        return slider("highPassHz", "Cutoff Hz", 0, 300, 5);
+        return <>{knob("highPassHz", "Hz", 0, 300, 5, accent)}</>;
       case "lpf":
-        return slider("lowPassHz", "Cutoff Hz", 0, 12000, 100);
+        return <>{knob("lowPassHz", "Hz", 0, 12000, 100, accent)}</>;
       case "telephone":
-        return slider("telephone", "Amount", 0, 1, 0.05);
+        return <>{knob("telephone", "Amount", 0, 1, 0.01, accent)}</>;
       case "reverb":
-        return slider("reverb", "Mix", 0, 1, 0.05);
+        return <>{knob("reverb", "Mix", 0, 1, 0.01, accent)}</>;
       case "plate":
-        return slider("plateReverb", "Mix", 0, 1, 0.05);
+        return <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent)}</>;
       case "delay":
-        return slider("delay", "Mix", 0, 1, 0.05);
+        return <>{knob("delay", "Mix", 0, 1, 0.01, accent)}</>;
       case "slap":
-        return slider("slapDelay", "Mix", 0, 1, 0.05);
+        return <>{knob("slapDelay", "Mix", 0, 1, 0.01, accent)}</>;
       case "chorus":
-        return slider("chorus", "Mix", 0, 1, 0.05);
+        return <>{knob("chorus", "Mix", 0, 1, 0.01, accent)}</>;
       case "doubler":
-        return slider("doubler", "Mix", 0, 1, 0.05);
+        return <>{knob("doubler", "Mix", 0, 1, 0.01, accent)}</>;
       case "rotor":
         return (
           <>
-            {slider("rotorMix", "Mix", 0, 1, 0.05)}
-            {slider("rotorSpeed", "Speed", 0, 1, 0.05)}
-            {slider("rotorDepth", "Depth", 0, 1, 0.05)}
-            {slider("rotorWarmth", "Warmth", 0, 1, 0.05)}
-            {slider("rotorFast", "Slow → Fast", 0, 1, 0.05)}
-            <p style={{ margin: 0, fontSize: 10, color: muted }}>Applied on Produce</p>
+            {knob("rotorSpeed", "Speed", 0, 1, 0.01, accent)}
+            {knob("rotorDepth", "Depth", 0, 1, 0.01, accent)}
+            {knob("rotorWarmth", "Warmth", 0, 1, 0.01, accent)}
+            {knob("rotorMix", "Mix", 0, 1, 0.01, accent)}
           </>
         );
       case "spring":
         return (
           <>
-            {slider("springMix", "Mix", 0, 1, 0.05)}
-            {slider("springDelay", "Delay", 0, 1, 0.05)}
-            {slider("springTension", "Tension", 0, 1, 0.05)}
-            {slider("springDamp", "Damp", 0, 1, 0.05)}
-            {slider("springMod", "Mod", 0, 1, 0.05)}
-            <p style={{ margin: 0, fontSize: 10, color: muted }}>Applied on Produce</p>
+            {knob("springDelay", "Delay", 0, 1, 0.01, accent)}
+            {knob("springTension", "Tension", 0, 1, 0.01, accent)}
+            {knob("springMix", "Mix", 0, 1, 0.01, accent)}
+            {knob("springDamp", "Damp", 0, 1, 0.01, accent)}
+            {knob("springMod", "Mod", 0, 1, 0.01, accent)}
           </>
         );
       default:
@@ -8286,11 +8364,11 @@ function TrackFxPanel({
     }
   }
 
-  const active = activeId && rack.includes(activeId) ? activeId : rack[0] || null;
+  const modalDef = modalId ? PLUGINS.find((p) => p.id === modalId) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Always-on level */}
+      {/* Level always visible */}
       <div
         style={{
           padding: 10,
@@ -8302,36 +8380,45 @@ function TrackFxPanel({
           gap: 8,
         }}
       >
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: brass }}>
-          LEVEL
-        </div>
-        {slider("gainDb", "Gain dB", -12, 12, 0.5)}
-        {slider("pan", "Pan L / R", -1, 1, 0.05)}
-        {slider("width", "Width", 0, 1, 0.05)}
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: brass }}>LEVEL</div>
+        {levelSlider("gainDb", "Gain dB", -12, 12, 0.5)}
+        {levelSlider("pan", "Pan L / R", -1, 1, 0.05)}
+        {levelSlider("width", "Width", 0, 1, 0.05)}
       </div>
 
-      {/* Active plugin chips */}
+      {/* Rack chips — tap opens that effect's modal */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         {rack.map((id) => {
           const def = PLUGINS.find((p) => p.id === id);
-          const on = active === id;
           return (
             <button
               key={id}
               type="button"
-              onClick={() => setActiveId(id)}
+              onClick={() => setModalId(id)}
               style={{
-                padding: "6px 10px",
+                padding: "8px 12px",
                 borderRadius: 10,
-                border: `1px solid ${on ? brass : border}`,
-                background: on ? "rgba(231,169,97,0.15)" : "rgba(0,0,0,0.3)",
-                color: on ? brass : muted,
-                fontSize: 11,
+                border: `1px solid ${def?.accent || border}`,
+                background: "rgba(0,0,0,0.35)",
+                color: "#F5F0E8",
+                fontSize: 12,
                 fontWeight: 650,
                 cursor: "pointer",
                 fontFamily: "inherit",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
               }}
             >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: def?.accent || brass,
+                  display: "inline-block",
+                }}
+              />
               {def?.label || id}
             </button>
           );
@@ -8340,7 +8427,7 @@ function TrackFxPanel({
           type="button"
           onClick={() => setAddOpen(true)}
           style={{
-            padding: "6px 12px",
+            padding: "8px 12px",
             borderRadius: 10,
             border: `1px dashed ${border}`,
             background: "transparent",
@@ -8355,53 +8442,168 @@ function TrackFxPanel({
         </button>
       </div>
 
-      {/* Editor for selected effect only */}
-      {active ? (
+      {rack.length === 0 && (
+        <p style={{ margin: 0, fontSize: 12, color: muted, lineHeight: 1.45 }}>
+          No effects yet. Add one to open its knob panel — clean playback until then.
+        </p>
+      )}
+
+      {/* Per-effect modal with circular knobs */}
+      {modalDef && (
         <div
           style={{
-            padding: 12,
-            borderRadius: 14,
-            border: `1px solid ${border}`,
-            background: "rgba(0,0,0,0.35)",
+            position: "fixed",
+            inset: 0,
+            zIndex: 90,
+            background: "rgba(0,0,0,0.72)",
             display: "flex",
-            flexDirection: "column",
-            gap: 10,
+            alignItems: "flex-end",
+            justifyContent: "center",
+            padding: 12,
+          }}
+          onClick={() => {
+            onCommit(fx);
+            setModalId(null);
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#F5F0E8" }}>
-              {PLUGINS.find((p) => p.id === active)?.label || active}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(420px, 100%)",
+              maxHeight: "85vh",
+              overflow: "auto",
+              borderRadius: 18,
+              border: `1px solid ${border}`,
+              background: "rgba(22,20,18,0.98)",
+              padding: "16px 14px 20px",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: modalDef.accent,
+                  }}
+                />
+                <span style={{ fontWeight: 800, fontSize: 16, color: "#F5F0E8" }}>{modalDef.label}</span>
+                <span style={{ fontSize: 11, color: muted, marginLeft: 4 }}>Custom</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onCommit(fx);
+                  setModalId(null);
+                }}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: muted,
+                  fontSize: 22,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
             </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 12,
+                justifyContent: "center",
+                padding: "8px 0 12px",
+              }}
+            >
+              {renderKnobs(modalDef.id, modalDef.accent)}
+            </div>
+
+            {modalDef.id === "rotor" && (
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKey("rotorFast", 0, true);
+                  }}
+                  style={{
+                    padding: "8px 18px",
+                    borderRadius: 10,
+                    border: `1px solid ${(fx.rotorFast || 0) < 0.5 ? modalDef.accent : border}`,
+                    background: (fx.rotorFast || 0) < 0.5 ? "rgba(74,222,128,0.15)" : "transparent",
+                    color: (fx.rotorFast || 0) < 0.5 ? modalDef.accent : muted,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Slow
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setKey("rotorFast", 1, true);
+                  }}
+                  style={{
+                    padding: "8px 18px",
+                    borderRadius: 10,
+                    border: `1px solid ${(fx.rotorFast || 0) >= 0.5 ? modalDef.accent : border}`,
+                    background: (fx.rotorFast || 0) >= 0.5 ? "rgba(74,222,128,0.15)" : "transparent",
+                    color: (fx.rotorFast || 0) >= 0.5 ? modalDef.accent : muted,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Fast
+                </button>
+              </div>
+            )}
+
+            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate") && (
+              <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, textAlign: "center" }}>
+                {modalDef.id === "gate"
+                  ? "Noise gate applies on Produce"
+                  : "Creative effect applies on Produce"}
+              </p>
+            )}
+
             <button
               type="button"
-              onClick={() => removePlugin(active)}
+              onClick={() => removePlugin(modalDef.id)}
               style={{
-                border: "none",
+                marginTop: 16,
+                width: "100%",
+                padding: "10px",
+                borderRadius: 10,
+                border: `1px solid ${border}`,
                 background: "transparent",
                 color: muted,
-                fontSize: 12,
+                fontSize: 13,
+                fontWeight: 650,
                 cursor: "pointer",
                 fontFamily: "inherit",
               }}
             >
-              Remove
+              Remove effect
             </button>
           </div>
-          {renderEditor(active)}
         </div>
-      ) : (
-        <p style={{ margin: 0, fontSize: 12, color: muted, lineHeight: 1.45 }}>
-          No effects on this track. Playback stays clean until you add one.
-        </p>
       )}
 
-      {/* Add effect modal — Suno-style picker */}
+      {/* Add effect picker */}
       {addOpen && (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 80,
+            zIndex: 85,
             background: "rgba(0,0,0,0.65)",
             display: "flex",
             alignItems: "center",
@@ -8457,19 +8659,30 @@ function TrackFxPanel({
                         onClick={() => addPlugin(p.id)}
                         style={{
                           textAlign: "left",
-                          padding: "12px 12px",
+                          padding: "12px",
                           borderRadius: 12,
-                          border: `1px solid ${on ? brass : border}`,
-                          background: on ? "rgba(231,169,97,0.12)" : "rgba(0,0,0,0.35)",
+                          border: `1px solid ${on ? p.accent : border}`,
+                          background: on ? `${p.accent}22` : "rgba(0,0,0,0.35)",
                           color: "#E8E2D6",
                           cursor: "pointer",
                           fontFamily: "inherit",
                           fontSize: 13,
                           fontWeight: 650,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
                         }}
                       >
+                        <span
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: "50%",
+                            background: p.accent,
+                            flexShrink: 0,
+                          }}
+                        />
                         {p.label}
-                        {on ? " · on" : ""}
                       </button>
                     );
                   })}
@@ -8493,13 +8706,28 @@ function TrackFxPanel({
                 const next = applyFxPreset(fx as never, pr.id) as TrackFx;
                 onChange(next);
                 onCommit(next);
-                // Enable plugins that presets use
-                const need = ["eq", "compress", "reverb", "sat", "deess", "plate", "delay", "doubler", "chorus", "hpf"];
-                const nextRack = Array.from(new Set([...rack, ...need.filter((id) => {
-                  const def = PLUGINS.find((p) => p.id === id);
-                  if (!def) return false;
-                  return def.keys.some((k) => Math.abs(Number((next as any)[k]) || 0) > 0.02);
-                })]));
+                const need = [
+                  "eq",
+                  "compress",
+                  "reverb",
+                  "sat",
+                  "deess",
+                  "plate",
+                  "delay",
+                  "doubler",
+                  "chorus",
+                  "hpf",
+                ];
+                const nextRack = Array.from(
+                  new Set([
+                    ...rack,
+                    ...need.filter((id) => {
+                      const def = PLUGINS.find((p) => p.id === id);
+                      if (!def) return false;
+                      return def.keys.some((k) => Math.abs(Number((next as any)[k]) || 0) > 0.02);
+                    }),
+                  ])
+                );
                 onRackChange(nextRack);
               }}
               style={{
@@ -8526,7 +8754,7 @@ function TrackFxPanel({
           onChange(DEFAULT_TRACK_FX);
           onCommit(DEFAULT_TRACK_FX);
           onRackChange([]);
-          setActiveId(null);
+          setModalId(null);
         }}
         style={{
           marginTop: 2,
