@@ -8245,12 +8245,12 @@ function TrackFxPanel({
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {slider("gainDb", "Gain dB", -12, 12, 0.5)}
           {slider("pan", "Pan L / R", -1, 1, 0.05)}
-          {slider("width", "Width", 0, 1, 0.05)}
+          {slider("width", "Width (stereo proxy)", 0, 1, 0.05)}
           {slider("compress", "Compress", 0, 1, 0.05)}
-          {slider("deEss", "De-esser", 0, 1, 0.05)}
-          {slider("gate", "Noise gate", 0, 1, 0.05)}
-          {slider("limiter", "Limiter", 0, 1, 0.05)}
-          {slider("saturation", "Saturation", 0, 1, 0.05)}
+          {slider("deEss", "HF atten (static de-ess)", 0, 1, 0.05)}
+          {slider("gate", "Noise gate (Produce only)", 0, 1, 0.05)}
+          {slider("limiter", "Soft limiter", 0, 1, 0.05)}
+          {slider("saturation", "Saturation (drive)", 0, 1, 0.05)}
         </div>
       )}
 
@@ -8269,7 +8269,7 @@ function TrackFxPanel({
       {tab === "space" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {slider("reverb", "Room reverb", 0, 1, 0.05)}
-          {slider("plateReverb", "Plate reverb", 0, 1, 0.05)}
+          {slider("plateReverb", "Plate-style space", 0, 1, 0.05)}
           {slider("delay", "Echo delay", 0, 1, 0.05)}
           {slider("slapDelay", "Slapback delay", 0, 1, 0.05)}
           {slider("chorus", "Chorus", 0, 1, 0.05)}
@@ -8346,8 +8346,8 @@ function TrackFxPanel({
           )}
 
           <p style={{ margin: "4px 0 0", fontSize: 11, lineHeight: 1.4, color: muted }}>
-            Creative effects are saved on the track and applied when you Produce — shape the vocal
-            before the final mix.
+            Rotor Glow & Spring Shimmer process on Produce only (not in live monitor).
+            Other Mix/Tone/Space FX update live while playing when the graph is active.
           </p>
         </div>
       )}
