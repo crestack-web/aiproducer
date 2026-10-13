@@ -91,12 +91,14 @@ function clamp(n: number, a: number, b: number) {
 /** Soft-clip waveshaper curve for genuine nonlinear saturation */
 function makeSatCurve(amount: number): Float32Array<ArrayBuffer> {
   const n = 256;
-  // Explicit ArrayBuffer so TS DOM lib accepts WaveShaperNode.curve assignment
   const curve = new Float32Array(new ArrayBuffer(n * 4));
-  const k = 1 + amount * 12;
+  const a = Math.max(0, Math.min(1, amount));
+  const k = a * 12;
   for (let i = 0; i < n; i++) {
     const x = (i * 2) / (n - 1) - 1;
-    curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
+    // Linear when off — critical so clean tracks are not distorted
+    if (a < 0.02) curve[i] = x;
+    else curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
   }
   return curve;
 }
@@ -155,14 +157,14 @@ export function createLiveTrackFxGraph(
 
   // Soft peak control (not look-ahead brickwall)
   const softLim = ctx.createWaveShaper();
-  softLim.curve = makeSatCurve(0.35);
-  softLim.oversample = "2x";
+  softLim.curve = makeSatCurve(0);
+  softLim.oversample = "none";
   const limComp = ctx.createDynamicsCompressor();
   limComp.threshold.value = 0;
-  limComp.ratio.value = 12;
+  limComp.ratio.value = 1;
   limComp.attack.value = 0.002;
   limComp.release.value = 0.08;
-  limComp.knee.value = 3;
+  limComp.knee.value = 0;
 
   const dry = ctx.createGain();
   dry.gain.value = 1;
@@ -172,7 +174,7 @@ export function createLiveTrackFxGraph(
   const delayGain = ctx.createGain();
   delayGain.gain.value = 0;
   const delayFb = ctx.createGain();
-  delayFb.gain.value = 0.2;
+  delayFb.gain.value = 0;
 
   const slap = ctx.createDelay(0.2);
   slap.delayTime.value = 0.075;
@@ -355,10 +357,18 @@ export function createLiveTrackFxGraph(
     satPost.gain.setTargetAtTime(1 / (1 + satAmt * 0.55), now, ramp);
 
     const cAmt = clamp(safe(fx.compress), 0, 1);
-    comp.threshold.setTargetAtTime(-12 - cAmt * 28, now, ramp);
-    comp.ratio.setTargetAtTime(1 + cAmt * 10, now, ramp);
+    if (cAmt > 0.02) {
+      comp.threshold.setTargetAtTime(-12 - cAmt * 28, now, ramp);
+      comp.ratio.setTargetAtTime(1 + cAmt * 10, now, ramp);
+      comp.knee.setTargetAtTime(10, now, ramp);
+    } else {
+      comp.threshold.setTargetAtTime(0, now, ramp);
+      comp.ratio.setTargetAtTime(1, now, ramp);
+      comp.knee.setTargetAtTime(0, now, ramp);
+    }
 
     delayGain.gain.setTargetAtTime(clamp(safe(fx.delay), 0, 1) * 0.42, now, ramp);
+    delayFb.gain.setTargetAtTime(clamp(safe(fx.delay), 0, 1) > 0.02 ? 0.2 : 0, now, ramp);
     slapGain.gain.setTargetAtTime(
       clamp(safe(fx.slapDelay), 0, 1) * 0.32,
       now,
@@ -383,10 +393,10 @@ export function createLiveTrackFxGraph(
     const lim = clamp(safe(fx.limiter), 0, 1);
     limComp.threshold.setTargetAtTime(lim > 0.05 ? -2 - lim * 8 : 0, now, ramp);
 
-    // Width proxy: push L/R gains apart (not M/S encoding)
+    // Width proxy — neutral at 0 (no phantom gain)
     const w = clamp(safe(fx.width), 0, 1);
-    widthL.gain.setTargetAtTime(1 + w * 0.25, now, ramp);
-    widthR.gain.setTargetAtTime(1 + w * 0.25, now, ramp);
+    widthL.gain.setTargetAtTime(1 + w * 0.12, now, ramp);
+    widthR.gain.setTargetAtTime(1 + w * 0.12, now, ramp);
 
     const gLin = audible
       ? Math.pow(10, clamp(safe(fx.gainDb), -12, 12) / 20)
@@ -450,4 +460,19 @@ export function trackFxToLiveParams(fx: Record<string, number>): LiveFxParams {
     limiter: n("limiter"),
     gate: n("gate"),
   };
+}
+
+
+/** True when no creative FX engaged — raw take + gain/pan only */
+export function isTrackFxNeutral(fx: Record<string, number>): boolean {
+  const keys = [
+    "eqLowDb", "eqMidDb", "eqHighDb", "air", "compress", "saturation",
+    "reverb", "delay", "plateReverb", "slapDelay", "deEss", "chorus",
+    "doubler", "limiter", "telephone", "highPassHz", "lowPassHz",
+    "rotorMix", "springMix",
+  ];
+  for (const k of keys) {
+    if (Math.abs(Number(fx[k]) || 0) > 0.02) return false;
+  }
+  return true;
 }
