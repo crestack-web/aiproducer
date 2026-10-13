@@ -9,8 +9,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ProducerView,
+  DEFAULT_TRACK_FX,
   type ProducerLayer,
   type ProducerSection,
+  type TrackFx,
 } from "@/components/producer-view";
 
 type TaskRow = {
@@ -196,7 +198,8 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               clips,
               color: colorRaw,
               trackFx: tfRaw
-                ? {
+                ? ({
+                    ...DEFAULT_TRACK_FX,
                     gainDb: Number(tfRaw.gainDb) || 0,
                     eqLowDb: Number(tfRaw.eqLowDb) || 0,
                     eqMidDb: Number(tfRaw.eqMidDb) || 0,
@@ -206,7 +209,40 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
                     delay: Number(tfRaw.delay) || 0,
                     saturation: Number(tfRaw.saturation) || 0,
                     pan: Number(tfRaw.pan) || 0,
-                  }
+                    width: Number(tfRaw.width) || 0,
+                    air: Number(tfRaw.air) || 0,
+                    rotorMix: Number(tfRaw.rotorMix) || 0,
+                    rotorSpeed:
+                      tfRaw.rotorSpeed != null
+                        ? Number(tfRaw.rotorSpeed)
+                        : DEFAULT_TRACK_FX.rotorSpeed,
+                    rotorDepth:
+                      tfRaw.rotorDepth != null
+                        ? Number(tfRaw.rotorDepth)
+                        : DEFAULT_TRACK_FX.rotorDepth,
+                    rotorWarmth:
+                      tfRaw.rotorWarmth != null
+                        ? Number(tfRaw.rotorWarmth)
+                        : DEFAULT_TRACK_FX.rotorWarmth,
+                    rotorFast: Number(tfRaw.rotorFast) || 0,
+                    springMix: Number(tfRaw.springMix) || 0,
+                    springDelay:
+                      tfRaw.springDelay != null
+                        ? Number(tfRaw.springDelay)
+                        : DEFAULT_TRACK_FX.springDelay,
+                    springTension:
+                      tfRaw.springTension != null
+                        ? Number(tfRaw.springTension)
+                        : DEFAULT_TRACK_FX.springTension,
+                    springDamp:
+                      tfRaw.springDamp != null
+                        ? Number(tfRaw.springDamp)
+                        : DEFAULT_TRACK_FX.springDamp,
+                    springMod:
+                      tfRaw.springMod != null
+                        ? Number(tfRaw.springMod)
+                        : DEFAULT_TRACK_FX.springMod,
+                  } satisfies TrackFx)
                 : null,
             };
           });
