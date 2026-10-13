@@ -29,6 +29,7 @@ import {
   AP_SUGGESTIONS,
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
+import { applyFxPreset, FX_PRESETS } from "@/lib/ap-engine/fx-presets";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
@@ -89,6 +90,18 @@ export type TrackFx = {
   springTension: number; // 0–1 brighter/tighter springs
   springDamp: number; // 0–1 high-frequency damp
   springMod: number; // 0–1 modulation on the spring
+  // —— Pro dynamics / cleanup ——
+  deEss: number; // 0–1
+  gate: number; // 0–1 threshold intensity
+  highPassHz: number; // 0 = off, else Hz
+  lowPassHz: number; // 0 = off, else Hz
+  limiter: number; // 0–1
+  // —— Modulation / character ——
+  chorus: number; // 0–1
+  telephone: number; // 0–1 band-limit
+  doubler: number; // 0–1 tight double feel
+  slapDelay: number; // 0–1 short slap
+  plateReverb: number; // 0–1 denser plate-style send
 };
 
 export const DEFAULT_TRACK_FX: TrackFx = {
@@ -113,6 +126,16 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   springTension: 0.4,
   springDamp: 0.35,
   springMod: 0.2,
+  deEss: 0,
+  gate: 0,
+  highPassHz: 0,
+  lowPassHz: 0,
+  limiter: 0,
+  chorus: 0,
+  telephone: 0,
+  doubler: 0,
+  slapDelay: 0,
+  plateReverb: 0,
 };
 
 /** One audio region on a track (split clips share the same track). */
@@ -943,14 +966,38 @@ export function ProducerView({
       case "fx": {
         setFxById((prev) => {
           const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
-          const raw = Number(cur[action.key]) || 0;
+          const raw = Number((cur as Record<string, number>)[action.key]) || 0;
           let nextVal = raw + action.delta;
-          if (action.key === "eqLowDb" || action.key === "eqMidDb" || action.key === "eqHighDb") {
+          if (
+            action.key === "eqLowDb" ||
+            action.key === "eqMidDb" ||
+            action.key === "eqHighDb"
+          ) {
             nextVal = Math.max(-12, Math.min(12, nextVal));
+          } else if (action.key === "highPassHz" || action.key === "lowPassHz") {
+            nextVal = Math.max(0, Math.min(12000, nextVal));
           } else {
             nextVal = Math.max(0, Math.min(1, nextVal));
           }
-          const next = { ...cur, [action.key]: nextVal };
+          const next = { ...cur, [action.key]: nextVal } as TrackFx;
+          void persistFx(action.trackId, next);
+          return { ...prev, [action.trackId]: next };
+        });
+        break;
+      }
+      case "fx_set": {
+        setFxById((prev) => {
+          const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
+          const next = { ...cur, ...action.patch } as TrackFx;
+          void persistFx(action.trackId, next);
+          return { ...prev, [action.trackId]: next };
+        });
+        break;
+      }
+      case "fx_preset": {
+        setFxById((prev) => {
+          const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
+          const next = applyFxPreset(cur as never, action.presetId) as TrackFx;
           void persistFx(action.trackId, next);
           return { ...prev, [action.trackId]: next };
         });
@@ -8252,23 +8299,33 @@ function TrackFxPanel({
           {slider("pan", "Pan L / R", -1, 1, 0.05)}
           {slider("width", "Width", 0, 1, 0.05)}
           {slider("compress", "Compress", 0, 1, 0.05)}
+          {slider("deEss", "De-esser", 0, 1, 0.05)}
+          {slider("gate", "Noise gate", 0, 1, 0.05)}
+          {slider("limiter", "Limiter", 0, 1, 0.05)}
           {slider("saturation", "Saturation", 0, 1, 0.05)}
         </div>
       )}
 
       {tab === "tone" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {slider("highPassHz", "High-pass Hz", 0, 300, 5)}
+          {slider("lowPassHz", "Low-pass Hz", 0, 12000, 100)}
           {slider("eqLowDb", "Low", -12, 12, 0.5)}
           {slider("eqMidDb", "Mid", -12, 12, 0.5)}
           {slider("eqHighDb", "High", -12, 12, 0.5)}
           {slider("air", "Air", 0, 1, 0.05)}
+          {slider("telephone", "Telephone", 0, 1, 0.05)}
         </div>
       )}
 
       {tab === "space" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {slider("reverb", "Room reverb", 0, 1, 0.05)}
+          {slider("plateReverb", "Plate reverb", 0, 1, 0.05)}
           {slider("delay", "Echo delay", 0, 1, 0.05)}
+          {slider("slapDelay", "Slapback delay", 0, 1, 0.05)}
+          {slider("chorus", "Chorus", 0, 1, 0.05)}
+          {slider("doubler", "Vocal doubler", 0, 1, 0.05)}
         </div>
       )}
 
@@ -8346,6 +8403,38 @@ function TrackFxPanel({
           </p>
         </div>
       )}
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", color: brass, marginBottom: 6 }}>
+          PRESETS
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {FX_PRESETS.map((pr) => (
+            <button
+              key={pr.id}
+              type="button"
+              onClick={() => {
+                const next = applyFxPreset(fx as never, pr.id) as TrackFx;
+                onChange(next);
+                onCommit(next);
+              }}
+              style={{
+                padding: "5px 10px",
+                borderRadius: 8,
+                border: `1px solid ${border}`,
+                background: "rgba(0,0,0,0.25)",
+                color: muted,
+                fontSize: 11,
+                fontWeight: 650,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {pr.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <button
         type="button"

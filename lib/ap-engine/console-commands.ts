@@ -1,3 +1,5 @@
+import { findPresetByPhrase, applyFxPreset, FX_DEFAULTS } from "./fx-presets";
+
 /**
  * Console DAW mindset — map plain language → local actions AP can execute
  * instantly in the Console (mute/solo/pan/gain/fx/transport/selection).
@@ -23,7 +25,32 @@ export type DawAction =
   | { type: "solo"; trackId: string | null; label: string }
   | { type: "pan"; trackId: string; value: number; label: string }
   | { type: "gain"; trackId: string; deltaDb: number; label: string }
-  | { type: "fx"; trackId: string; key: "reverb" | "delay" | "compress" | "saturation" | "eqLowDb" | "eqMidDb" | "eqHighDb"; delta: number; label: string }
+  | {
+      type: "fx";
+      trackId: string;
+      key:
+        | "reverb"
+        | "delay"
+        | "compress"
+        | "saturation"
+        | "eqLowDb"
+        | "eqMidDb"
+        | "eqHighDb"
+        | "width"
+        | "air"
+        | "deEss"
+        | "gate"
+        | "chorus"
+        | "doubler"
+        | "plateReverb"
+        | "slapDelay"
+        | "rotorMix"
+        | "springMix";
+      delta: number;
+      label: string;
+    }
+  | { type: "fx_set"; trackId: string; patch: Record<string, number>; label: string }
+  | { type: "fx_preset"; trackId: string; presetId: string; label: string }
   | { type: "select"; trackId: string; label: string }
   | { type: "arm"; trackId: string; label: string }
   | { type: "play"; label: string }
@@ -371,6 +398,182 @@ export function parseConsoleCommands(opts: {
         key: "saturation",
         delta: 0.15,
         label: `More saturation on ${t.label}`,
+      });
+    }
+  }
+
+
+
+  // —— Professional vocal language → multi-param patches ——
+  if (/\b(clearer|clarity|less muddy|clean(er)?\s+up)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx_set",
+        trackId: t.id,
+        patch: { highPassHz: 100, eqMidDb: 0.8, air: 0.25, deEss: 0.2 },
+        label: `Clearer vocal on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(harsh|sibilan|de-?ess|less bright|too bright|lispy)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "deEss",
+        delta: 0.25,
+        label: `De-ess ${t.label}`,
+      });
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "eqHighDb",
+        delta: -1,
+        label: `Tame highs on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(wider|more width|stereo wider|spread)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "width",
+        delta: 0.2,
+        label: `Widen ${t.label}`,
+      });
+    }
+  }
+  if (/\b(narrower|mono|centered|center the|keep (the )?lead centered)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx_set",
+        trackId: t.id,
+        patch: { width: 0.05, pan: 0 },
+        label: `Center ${t.label}`,
+      });
+    }
+  }
+  if (/\b(plate reverb|subtle plate|add plate)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      const amt = /\bsubtle|light|soft\b/.test(p) ? 0.18 : 0.3;
+      actions.push({
+        type: "fx_set",
+        trackId: t.id,
+        patch: { plateReverb: amt, reverb: Math.min(0.2, amt * 0.5) },
+        label: `Plate reverb on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(slap(back)? delay|short delay)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "slapDelay",
+        delta: 0.25,
+        label: `Slap delay on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(double|doubler|thicken vocal)\b/.test(p) && !/\bchoir\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "doubler",
+        delta: 0.25,
+        label: `Vocal doubler on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(chorus effect|add chorus)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "chorus",
+        delta: 0.22,
+        label: `Chorus on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(gate|noise gate|cut noise|less noise)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx",
+        trackId: t.id,
+        key: "gate",
+        delta: 0.3,
+        label: `Gate ${t.label}`,
+      });
+    }
+  }
+  if (/\b(spacious|more spacious|bigger room)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx_set",
+        trackId: t.id,
+        patch: { reverb: 0.28, plateReverb: 0.15, width: 0.25 },
+        label: `More space on ${t.label}`,
+      });
+    }
+  }
+  if (/\b(professional|pro vocal|radio ready|mix ready)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx_preset",
+        trackId: t.id,
+        presetId: "clean_studio",
+        label: `Pro vocal chain on ${t.label}`,
+      });
+    }
+  }
+
+  // Named presets from phrase
+  {
+    const preset = findPresetByPhrase(p);
+    if (preset) {
+      for (const t of fxTargets) {
+        if (t.kind === "beat") continue;
+        actions.push({
+          type: "fx_preset",
+          trackId: t.id,
+          presetId: preset.id,
+          label: `Apply “${preset.label}” on ${t.label}`,
+        });
+      }
+    }
+  }
+
+  // Compound: warmer + clearer + spacious
+  if (/\bwarmer\b/.test(p) && /\b(clearer|clarity)\b/.test(p)) {
+    for (const t of fxTargets) {
+      if (t.kind === "beat") continue;
+      actions.push({
+        type: "fx_set",
+        trackId: t.id,
+        patch: {
+          eqLowDb: 1.5,
+          saturation: 0.22,
+          highPassHz: 90,
+          air: 0.2,
+          deEss: 0.2,
+          plateReverb: /\breverb|space\b/.test(p) ? 0.2 : 0.12,
+          width: /\bwid/.test(p) ? 0.22 : 0.1,
+        },
+        label: `Warm clear vocal on ${t.label}`,
       });
     }
   }

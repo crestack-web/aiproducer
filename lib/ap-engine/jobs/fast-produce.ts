@@ -24,6 +24,7 @@ import {
   applyEqStereo,
   highPassInPlace,
   gateInPlace,
+  deEssInPlace,
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import type { PcmStereo } from "@/lib/ap-engine/types";
@@ -76,6 +77,16 @@ export type FastTrackFx = {
   springTension?: number;
   springDamp?: number;
   springMod?: number;
+  deEss?: number;
+  gate?: number;
+  highPassHz?: number;
+  lowPassHz?: number;
+  limiter?: number;
+  chorus?: number;
+  telephone?: number;
+  doubler?: number;
+  slapDelay?: number;
+  plateReverb?: number;
 };
 
 /** Light rotary / chorus motion for Rotor Glow (offline PCM). */
@@ -202,7 +213,16 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     (fx.width && fx.width > 0.02) ||
     (fx.air && fx.air > 0.02) ||
     (fx.rotorMix && fx.rotorMix > 0.02) ||
-    (fx.springMix && fx.springMix > 0.02);
+    (fx.springMix && fx.springMix > 0.02) ||
+    (fx.deEss && fx.deEss > 0.02) ||
+    (fx.gate && fx.gate > 0.02) ||
+    (fx.highPassHz && fx.highPassHz > 20) ||
+    (fx.chorus && fx.chorus > 0.02) ||
+    (fx.doubler && fx.doubler > 0.02) ||
+    (fx.plateReverb && fx.plateReverb > 0.02) ||
+    (fx.slapDelay && fx.slapDelay > 0.02) ||
+    (fx.telephone && fx.telephone > 0.02) ||
+    (fx.limiter && fx.limiter > 0.02);
   if (!has) return;
 
   const bands: { type: "lowshelf" | "peak" | "highshelf"; freq: number; gainDb: number; q: number }[] =
@@ -230,6 +250,31 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     });
   }
   if (bands.length) applyEqStereo(pcm, bands);
+
+  if (fx.highPassHz && fx.highPassHz > 20) {
+    highPassInPlace(pcm.left, pcm.sampleRate, Math.min(400, fx.highPassHz));
+    highPassInPlace(pcm.right, pcm.sampleRate, Math.min(400, fx.highPassHz));
+  }
+  if (fx.lowPassHz && fx.lowPassHz > 500) {
+    applyEqStereo(pcm, [
+      { type: "lowpass", freq: Math.min(16000, fx.lowPassHz), gainDb: 0, q: 0.7 },
+    ]);
+  }
+  if (fx.telephone && fx.telephone > 0.02) {
+    const a = Math.min(1, fx.telephone);
+    highPassInPlace(pcm.left, pcm.sampleRate, 400 + a * 400);
+    highPassInPlace(pcm.right, pcm.sampleRate, 400 + a * 400);
+    applyEqStereo(pcm, [{ type: "highshelf", freq: 2800, gainDb: -8 * a, q: 0.7 }]);
+  }
+  if (fx.gate && fx.gate > 0.02) {
+    const thr = -48 + fx.gate * 18;
+    gateInPlace(pcm.left, pcm.sampleRate, thr);
+    gateInPlace(pcm.right, pcm.sampleRate, thr);
+  }
+  if (fx.deEss && fx.deEss > 0.02) {
+    deEssInPlace(pcm.left, pcm.sampleRate, fx.deEss);
+    deEssInPlace(pcm.right, pcm.sampleRate, fx.deEss);
+  }
 
   if (fx.compress && fx.compress > 0.02) {
     const amt = Math.max(0, Math.min(1, fx.compress));
@@ -273,6 +318,34 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
   }
   if (fx.delay && fx.delay > 0.02) {
     addDelayStereo(pcm, Math.max(0, Math.min(0.45, fx.delay * 0.35)));
+  }
+  if (fx.slapDelay && fx.slapDelay > 0.02) {
+    addDelayStereo(pcm, Math.max(0, Math.min(0.35, fx.slapDelay * 0.28)), 75);
+  }
+  if (fx.plateReverb && fx.plateReverb > 0.02) {
+    addReverbStereo(pcm, Math.max(0, Math.min(0.5, fx.plateReverb * 0.42)));
+  }
+  if (fx.chorus && fx.chorus > 0.02) {
+    applyRotorGlow(pcm, {
+      mix: fx.chorus * 0.55,
+      speed: 0.4,
+      depth: 0.35,
+      warmth: 0.25,
+      fast: 0,
+    });
+  }
+  if (fx.doubler && fx.doubler > 0.02) {
+    applyRotorGlow(pcm, {
+      mix: fx.doubler * 0.4,
+      speed: 0.15,
+      depth: 0.5,
+      warmth: 0.2,
+      fast: 0,
+    });
+    applyWidth(pcm, Math.min(0.7, 0.25 + fx.doubler * 0.4), 0);
+  }
+  if (fx.limiter && fx.limiter > 0.02) {
+    limitStereo(pcm, -1.2 - (1 - fx.limiter) * 2);
   }
 
   if (fx.gainDb && Math.abs(fx.gainDb) > 0.05) {

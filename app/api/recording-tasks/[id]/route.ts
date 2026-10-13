@@ -28,6 +28,16 @@ const TrackFxSchema = z.object({
   springTension: z.number().min(0).max(1).optional(),
   springDamp: z.number().min(0).max(1).optional(),
   springMod: z.number().min(0).max(1).optional(),
+  deEss: z.number().min(0).max(1).optional(),
+  gate: z.number().min(0).max(1).optional(),
+  highPassHz: z.number().min(0).max(12000).optional(),
+  lowPassHz: z.number().min(0).max(20000).optional(),
+  limiter: z.number().min(0).max(1).optional(),
+  chorus: z.number().min(0).max(1).optional(),
+  telephone: z.number().min(0).max(1).optional(),
+  doubler: z.number().min(0).max(1).optional(),
+  slapDelay: z.number().min(0).max(1).optional(),
+  plateReverb: z.number().min(0).max(1).optional(),
 }).passthrough();
 
 const ConsoleClipSchema = z.object({

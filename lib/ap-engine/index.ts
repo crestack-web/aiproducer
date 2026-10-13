@@ -83,6 +83,16 @@ export type TrackFxInput = {
   springTension?: number;
   springDamp?: number;
   springMod?: number;
+  deEss?: number;
+  gate?: number;
+  highPassHz?: number;
+  lowPassHz?: number;
+  limiter?: number;
+  chorus?: number;
+  telephone?: number;
+  doubler?: number;
+  slapDelay?: number;
+  plateReverb?: number;
 };
 
 export type ApVocalLayerInput = {

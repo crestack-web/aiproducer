@@ -377,6 +377,16 @@ export async function collectVocalsForProduce(
             springTension: Number(fxRaw.springTension) || 0,
             springDamp: Number(fxRaw.springDamp) || 0,
             springMod: Number(fxRaw.springMod) || 0,
+            deEss: Number(fxRaw.deEss) || 0,
+            gate: Number(fxRaw.gate) || 0,
+            highPassHz: Number(fxRaw.highPassHz) || 0,
+            lowPassHz: Number(fxRaw.lowPassHz) || 0,
+            limiter: Number(fxRaw.limiter) || 0,
+            chorus: Number(fxRaw.chorus) || 0,
+            telephone: Number(fxRaw.telephone) || 0,
+            doubler: Number(fxRaw.doubler) || 0,
+            slapDelay: Number(fxRaw.slapDelay) || 0,
+            plateReverb: Number(fxRaw.plateReverb) || 0,
           }
         : null,
     });
