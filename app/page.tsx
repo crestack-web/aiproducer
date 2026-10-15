@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { RotatingHeadline } from "@/components/rotating-headline";
 import { WelcomeCreateHook } from "@/components/welcome-create-hook";
 import { WelcomeMusicRail } from "@/components/welcome-music-rail";
@@ -39,9 +38,6 @@ export default function WelcomePage() {
             <a href="#value">Why Studio</a>
             <a href="#faq">FAQ</a>
             <a href="#pricing">Pricing</a>
-            <span className="theme-slot" aria-label="Theme">
-              <ThemeToggle compact />
-            </span>
             <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
             <Link href={START_HREF} className="primary">Start creating</Link>
           </nav>

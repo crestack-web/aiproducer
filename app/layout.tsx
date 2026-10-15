@@ -43,13 +43,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="icon" href={STUDIO_LOGO_URL} type="image/png" />
         <link rel="apple-touch-icon" href={STUDIO_LOGO_URL} />
         <link rel="manifest" href="/manifest.webmanifest" />
-        <meta name="theme-color" content="#050508" media="(prefers-color-scheme: dark)" />
-        <meta name="theme-color" content="#F7F1E8" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#050508" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="AP Studio" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var p=localStorage.getItem('studio-theme');var t=p;if(p==='system'||(p!=='light'&&p!=='dark')){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;if(t==='light'){document.documentElement.style.background='#F7F1E8'}else{document.documentElement.style.background='#050508'}}catch(e){}})();`,
+            __html: `(function(){try{document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.colorScheme='dark';document.documentElement.style.background='#050508';localStorage.setItem('studio-theme','dark')}catch(e){}})();`,
           }}
         />
       </head>

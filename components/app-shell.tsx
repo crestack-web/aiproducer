@@ -20,7 +20,6 @@ import {
 } from "react";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { useTheme } from "@/lib/theme";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { PwaInstallButton } from "@/components/pwa-install";
 import { ProductTour, useProductTour } from "@/components/product-tour";
 import { AppUsageAnalytics } from "@/components/product-analytics";
@@ -555,8 +554,7 @@ export function AppShell({
           {!sidebarCollapsed && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <PwaInstallButton compact />
-              <ThemeToggle compact />
-              <button
+                            <button
                 type="button"
                 onClick={toggleSidebar}
                 aria-label="Collapse sidebar"
@@ -846,8 +844,7 @@ export function AppShell({
             >
               <IconBell size={17} color={C.text} />
             </HeaderIconButton>
-            <ThemeToggle compact />
-            <button
+                        <button
               type="button"
               onClick={() => go("profile", "/app?tab=profile")}
               aria-label="Profile"
