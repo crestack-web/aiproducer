@@ -943,6 +943,13 @@ export function ProducerView({
   }, [automationDoc]);
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  /** Right-click / long-press context menu on track or clip */
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    trackId: string;
+    clipId?: string | null;
+  } | null>(null);
   const [colorById, setColorById] = useState<Record<string, string>>({});
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -1845,6 +1852,28 @@ export function ProducerView({
     if (!window.confirm("Remove this layer from the plan? The recorded take stays saved.")) return;
     const ok = await persistLayer(id, { status: "skipped" });
     if (ok) setLayers((prev) => prev.filter((l) => l.id !== id));
+  }
+
+  function openTrackContextMenu(
+    e: React.MouseEvent | React.PointerEvent,
+    trackId: string,
+    clipId?: string | null
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedTrackId(trackId);
+    if (trackId !== "beat") setArmedTrackId(trackId);
+    if (clipId) setSelectedClipId(clipId);
+    const pad = 8;
+    const menuW = 220;
+    const menuH = 320;
+    const x = Math.min(e.clientX, (typeof window !== "undefined" ? window.innerWidth : 400) - menuW - pad);
+    const y = Math.min(e.clientY, (typeof window !== "undefined" ? window.innerHeight : 600) - menuH - pad);
+    setCtxMenu({ x: Math.max(pad, x), y: Math.max(pad, y), trackId, clipId: clipId || null });
+  }
+
+  function closeCtxMenu() {
+    setCtxMenu(null);
   }
 
 
@@ -5538,6 +5567,7 @@ export function ProducerView({
             return (
               <div
                 key={`h-${tr.id}`}
+                onContextMenu={(e) => openTrackContextMenu(e, tr.id)}
                 style={{
                   height: rowH,
                   minHeight: rowH,
@@ -6264,6 +6294,7 @@ export function ProducerView({
                         ? "rgba(255,255,255,0.035)"
                         : "transparent",
                   }}
+                  onContextMenu={(e) => openTrackContextMenu(e, tr.id)}
                   onClick={(e) => {
                     // Empty lane / background — place playhead like a DAW
                     seekFromClientX(e.clientX);
@@ -6301,9 +6332,13 @@ export function ProducerView({
                           ? `1px dashed ${brass}`
                           : undefined,
                     }}
+                    onContextMenu={(e) =>
+                      openTrackContextMenu(e, tr.id, primaryClip?.id || null)
+                    }
                     onPointerDown={
                       tr.kind === "vocal"
                         ? (e) => {
+                            // Long-press alternative is contextmenu event on most browsers
                             setSelectedTrackId(tr.id);
                             setArmedTrackId(tr.id);
                             if (isTakeEditing && takeDurationMs > 0) {
@@ -6496,6 +6531,7 @@ export function ProducerView({
                               touchAction: "none",
                               opacity: dimmed ? 0.4 : 1,
                             }}
+                            onContextMenu={(e) => openTrackContextMenu(e, tr.id, clip.id)}
                             onPointerDown={(e) => {
                               e.stopPropagation();
                               setSelectedTrackId(tr.id);
@@ -8160,6 +8196,166 @@ export function ProducerView({
           </div>
         </div>
       )}
+
+
+      {ctxMenu && (() => {
+        const tr = tracks.find((x) => x.id === ctxMenu.trackId);
+        const isBeat = ctxMenu.trackId === "beat" || tr?.kind === "beat";
+        const isMuted = Boolean(muted[ctxMenu.trackId]);
+        const isSolo = soloId === ctxMenu.trackId;
+        const item = (
+          label: string,
+          onClick: () => void,
+          opts?: { danger?: boolean; disabled?: boolean; shortcut?: string }
+        ) => (
+          <button
+            key={label}
+            type="button"
+            disabled={opts?.disabled}
+            onClick={() => {
+              if (opts?.disabled) return;
+              onClick();
+              closeCtxMenu();
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              width: "100%",
+              padding: "10px 14px",
+              border: "none",
+              background: "transparent",
+              color: opts?.disabled
+                ? faint
+                : opts?.danger
+                  ? "#F87171"
+                  : text,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: opts?.disabled ? "default" : "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
+              opacity: opts?.disabled ? 0.45 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!opts?.disabled)
+                (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.06)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+            }}
+          >
+            <span>{label}</span>
+            {opts?.shortcut ? (
+              <span style={{ color: faint, fontSize: 11, fontWeight: 500 }}>{opts.shortcut}</span>
+            ) : null}
+          </button>
+        );
+        return (
+          <>
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: 200 }}
+              onClick={closeCtxMenu}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                closeCtxMenu();
+              }}
+            />
+            <div
+              role="menu"
+              style={{
+                position: "fixed",
+                left: ctxMenu.x,
+                top: ctxMenu.y,
+                zIndex: 201,
+                minWidth: 210,
+                maxWidth: 260,
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: "rgba(22,20,18,0.98)",
+                boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+                padding: "6px 0",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "8px 14px 6px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: mutedText,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {(tr?.sectionLabel || tr?.label || "Track").toString().slice(0, 28)}
+              </div>
+              {!isBeat &&
+                item("Split at playhead", () => {
+                  setSelectedTrackId(ctxMenu.trackId);
+                  void splitSelectedAtPlayhead();
+                }, { shortcut: "⌘E" })}
+              {!isBeat &&
+                item("Edit take…", () => {
+                  void beginTakeEdit(ctxMenu.trackId, tr?.url);
+                })}
+              {!isBeat &&
+                item("Track FX", () => {
+                  setFxOpenId(ctxMenu.trackId);
+                })}
+              {!isBeat &&
+                item("Clip color", () => {
+                  setColorPickerId(ctxMenu.trackId);
+                  setExpandedId(ctxMenu.trackId);
+                  setSidebarCollapsed(false);
+                })}
+              <div style={{ height: 1, background: border, margin: "4px 0" }} />
+              {item(
+                isMuted ? "Unmute" : "Mute",
+                () =>
+                  setMuted((prev) => ({
+                    ...prev,
+                    [ctxMenu.trackId]: !prev[ctxMenu.trackId],
+                  })),
+                { shortcut: "M" }
+              )}
+              {item(
+                isSolo ? "Unsolo" : "Solo",
+                () => setSoloId(isSolo ? null : ctxMenu.trackId),
+                { shortcut: "S" }
+              )}
+              {!isBeat &&
+                item("Arm for record", () => {
+                  setArmedTrackId(ctxMenu.trackId);
+                  setSelectedTrackId(ctxMenu.trackId);
+                })}
+              {tr?.url
+                ? item("Download audio", () => {
+                    const a = document.createElement("a");
+                    a.href = tr.url!;
+                    a.download = `${(tr.sectionLabel || tr.label || "take").toString()}.wav`;
+                    a.target = "_blank";
+                    a.rel = "noopener";
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                  })
+                : null}
+              {!isBeat ? (
+                <div style={{ height: 1, background: border, margin: "4px 0" }} />
+              ) : null}
+              {!isBeat &&
+                item(
+                  "Remove from plan",
+                  () => {
+                    void deleteLayer(ctxMenu.trackId);
+                  },
+                  { danger: true }
+                )}
+            </div>
+          </>
+        );
+      })()}
 
       {projectId ? (
         <ApSessionsPanel
