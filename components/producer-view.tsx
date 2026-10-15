@@ -4705,19 +4705,23 @@ export function ProducerView({
           paddingTop: "max(8px, env(safe-area-inset-top))",
         }}
       >
-      {/* Row 1 — tools */}
+      {/* Row 1 — tools (fixed height; scroll horizontally — never shrink controls) */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: isNarrow ? 6 : 10,
-          padding: isNarrow ? "6px 10px 6px" : "8px 12px",
-          minHeight: isNarrow ? 48 : 56,
+          gap: isNarrow ? 6 : 8,
+          padding: isNarrow ? "0 10px" : "0 12px",
+          height: isNarrow ? 52 : 56,
+          minHeight: isNarrow ? 52 : 56,
+          maxHeight: isNarrow ? 52 : 56,
           flexWrap: "nowrap",
-          overflowX: isNarrow ? "auto" : "visible",
+          overflowX: "auto",
+          overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
-          // Keep toolbar controls at intrinsic size while the row scrolls
           scrollbarWidth: "none",
+          msOverflowStyle: "none",
+          boxSizing: "border-box",
         }}
       >
         <a
@@ -4884,15 +4888,15 @@ export function ProducerView({
           </button>
         </div>
 
-        {projectId ? (
+        {projectId && !isNarrow ? (
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: 6,
-              maxWidth: isNarrow ? 140 : 280,
+              maxWidth: 220,
               overflowX: "auto",
-              flexShrink: 1,
+              flexShrink: 0,
               scrollbarWidth: "none",
             }}
             title="Song vibe — shapes how AP mixes and masters"
@@ -4940,6 +4944,8 @@ export function ProducerView({
             style={{
               flexShrink: 0,
               height: 36,
+              minHeight: 36,
+              maxHeight: 36,
               padding: "0 12px",
               borderRadius: 999,
               border: `1px solid ${border}`,
@@ -4948,6 +4954,8 @@ export function ProducerView({
               fontWeight: 700,
               fontSize: isNarrow ? 11 : 12,
               cursor: "pointer",
+              boxSizing: "border-box",
+              whiteSpace: "nowrap",
               fontFamily: "inherit",
               whiteSpace: "nowrap",
             }}
@@ -4965,9 +4973,12 @@ export function ProducerView({
             style={{
               flexShrink: 0,
               height: 36,
+              minHeight: 36,
+              maxHeight: 36,
               padding: "0 14px",
               borderRadius: 999,
               border: "none",
+              boxSizing: "border-box",
               background:
                 produceUi === "producing"
                   ? "rgba(255,255,255,0.1)"
@@ -5007,12 +5018,14 @@ export function ProducerView({
           disabled={isConsoleRecording}
           style={{
             ...iconBtn(border, surface, text),
-            width: isNarrow ? 36 : 40,
-            height: isNarrow ? 36 : 40,
-            minWidth: isNarrow ? 36 : 40,
-            minHeight: isNarrow ? 36 : 40,
+            width: 36,
+            height: 36,
+            minWidth: 36,
+            minHeight: 36,
+            maxHeight: 36,
             flexShrink: 0,
             borderRadius: 999,
+            boxSizing: "border-box",
             border: audioSetupOpen ? `1px solid ${brass}` : `1px solid ${border}`,
             color: audioSetupOpen ? brass : mutedText,
             fontSize: 14,
@@ -5029,12 +5042,14 @@ export function ProducerView({
           onClick={() => void toggleConsoleRecord()}
           style={{
             ...iconBtn(border, surface, text),
-            width: isNarrow ? 40 : 44,
-            height: isNarrow ? 40 : 44,
-            minWidth: isNarrow ? 40 : 44,
-            minHeight: isNarrow ? 40 : 44,
+            width: 36,
+            height: 36,
+            minWidth: 36,
+            minHeight: 36,
+            maxHeight: 36,
             flexShrink: 0,
             borderRadius: 999,
+            boxSizing: "border-box",
             color: "#F07167",
             boxShadow: isConsoleRecording ? "0 0 0 3px rgba(240,113,103,0.35)" : undefined,
             background: isConsoleRecording ? "rgba(240,113,103,0.2)" : undefined,
@@ -5089,7 +5104,7 @@ export function ProducerView({
         <button
           type="button"
           onClick={togglePlay}
-          style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 16, cursor: "pointer", flexShrink: 0 }}
+          style={{ width: 44, height: 36, width: 36, minWidth: 36, minHeight: 36, maxHeight: 36, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 14, cursor: "pointer", flexShrink: 0, boxSizing: "border-box", padding: 0 }}
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? "❚❚" : "▶"}
@@ -9561,24 +9576,26 @@ function TrackFxPanel({
 
 function iconBtn(border: string, surface: string, text: string): React.CSSProperties {
   return {
-    width: 40,
-    height: 40,
-    minWidth: 40,
-    minHeight: 40,
+    width: 36,
+    height: 36,
+    minWidth: 36,
+    minHeight: 36,
+    maxHeight: 36,
     flexShrink: 0,
-    borderRadius: 12,
+    borderRadius: 10,
     border: `1px solid ${border}`,
     background: surface,
     color: text,
     fontWeight: 700,
     cursor: "pointer",
     fontFamily: "inherit",
-    fontSize: 16,
+    fontSize: 15,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     lineHeight: 1,
     boxSizing: "border-box",
+    padding: 0,
   };
 }
 
