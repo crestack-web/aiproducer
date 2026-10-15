@@ -1009,6 +1009,8 @@ export function ProducerView({
 
   const [savingId, setSavingId] = useState<string | null>(null);
   const [stackMenuId, setStackMenuId] = useState<string | null>(null);
+  /** Suno-style ⋮ overflow menu on track header */
+  const [trackMenuId, setTrackMenuId] = useState<string | null>(null);
   const dragRef = useRef<{
     id: string;
     mode: "move" | "trim-start" | "trim-end";
@@ -4445,6 +4447,26 @@ export function ProducerView({
     });
   }
 
+  function setGain(trackId: string, value: number, commit = false) {
+    if (!trackId) return;
+    const gainDb = Math.max(-12, Math.min(12, Math.round(value * 10) / 10));
+    setFxById((prev) => {
+      const cur = prev[trackId] || { ...DEFAULT_TRACK_FX };
+      const next = { ...cur, gainDb };
+      if (commit && next.gainDb !== cur.gainDb) {
+        pushConsoleHistory({
+          kind: "fx",
+          label: "Gain",
+          id: trackId,
+          before: { ...cur },
+          after: { ...next },
+        });
+        void persistFx(trackId, next);
+      }
+      return { ...prev, [trackId]: next };
+    });
+  }
+
   // Console keyboard shortcuts (ignore when typing in inputs)
   useEffect(() => {
     function isTypingTarget(el: EventTarget | null): boolean {
@@ -4583,7 +4605,7 @@ export function ProducerView({
   const brass = C.brass || "#E7A961";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
-  const sidebarW = sidebarCollapsed ? (isNarrow ? 44 : 56) : isNarrow ? 156 : 220;
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 44 : 56) : isNarrow ? 168 : 200;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -5895,294 +5917,253 @@ export function ProducerView({
                 <div
                   style={{
                     display: "flex",
-                    gap: 6,
-                    marginTop: isExpanded ? 2 : 0,
-                    flexWrap: "wrap",
                     alignItems: "center",
-                    maxWidth: "100%",
+                    gap: 4,
+                    marginTop: 2,
+                    width: "100%",
+                    minWidth: 0,
                     flexShrink: 0,
                   }}
                 >
+                  {/* Volume — primary Suno-style control */}
+                  <input
+                    type="range"
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    value={fxById[tr.id]?.gainDb ?? 0}
+                    aria-label={`Volume ${tr.label}`}
+                    title={`Gain ${(fxById[tr.id]?.gainDb ?? 0) >= 0 ? "+" : ""}${(fxById[tr.id]?.gainDb ?? 0).toFixed(1)} dB`}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, parseFloat(e.target.value), false);
+                    }}
+                    onPointerUp={(e) => {
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, parseFloat((e.target as HTMLInputElement).value), true);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, 0, true);
+                    }}
+                    style={{
+                      flex: 1,
+                      minWidth: 48,
+                      maxWidth: 96,
+                      height: 16,
+                      margin: 0,
+                      accentColor: brass,
+                      cursor: "pointer",
+                    }}
+                  />
                   <button
                     type="button"
                     title={isMuted ? "Unmute" : "Mute"}
-                    onClick={() => setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }))}
-                    style={{ ...miniChip(border, brass, isMuted, text), fontSize: 11 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }));
+                    }}
+                    style={{ ...miniChip(border, brass, isMuted, text, true), fontSize: 10 }}
                   >
-                    {isMuted ? "🔇" : "🔊"}
+                    M
                   </button>
                   <button
                     type="button"
                     title="Solo"
-                    onClick={() => setSoloId(soloId === tr.id ? null : tr.id)}
-                    style={miniChip(border, brass, isSolo, text, isNarrow)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSoloId(soloId === tr.id ? null : tr.id);
+                    }}
+                    style={miniChip(border, brass, isSolo, text, true)}
                   >
                     S
                   </button>
-                  {isExpanded && tr.url && tr.id !== "beat" && takeEditId !== tr.id ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void beginTakeEdit(tr.id, tr.url);
-                        }}
-                        style={{
-                          ...miniChip(border, brass, false, text),
-                          padding: "0 8px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          width: "auto",
-                        }}
-                        title="Edit take — delete, keep, or retake a region"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        disabled={takeEditBusy}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedTrackId(tr.id);
-                          void splitSelectedAtPlayhead();
-                        }}
-                        style={{
-                          ...miniChip(border, brass, false, text),
-                          padding: 0,
-                          width: 28,
-                          height: 28,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                        title="Split clip at playhead (same track)"
-                        aria-label="Split clip at playhead"
-                      >
-                        <ScissorsIcon size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={takeEditBusy || tempoBpm == null}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedTrackId(tr.id);
-                          void quantizeSelectedToBeat(1);
-                        }}
-                        style={{
-                          ...miniChip(border, brass, false, text),
-                          padding: "0 8px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          width: "auto",
-                          opacity: tempoBpm == null ? 0.45 : 1,
-                        }}
-                        title={tempoBpm == null ? "Needs project BPM" : "Snap clip start to nearest beat"}
-                      >
-                        Snap
-                      </button>
-                      <button
-                        type="button"
-                        disabled={takeEditBusy || tempoBpm == null}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedTrackId(tr.id);
-                          void correctSelectedToBeat();
-                        }}
-                        style={{
-                          ...miniChip(border, brass, false, text),
-                          padding: "0 8px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          width: "auto",
-                          opacity: tempoBpm == null ? 0.45 : 1,
-                        }}
-                        title={tempoBpm == null ? "Needs project BPM" : "Pull vocal onto the beat (onset → nearest beat)"}
-                      >
-                        On beat
-                      </button>
-                    </>
-                  ) : null}
-                  {!isExpanded && tr.kind === "vocal" && (
+                  {/* ⋮ overflow — Edit, Split, FX, Stack, Color, etc. */}
+                  <div style={{ position: "relative", flexShrink: 0 }}>
                     <button
                       type="button"
-                      title="Stack / choir from this vocal"
-                      disabled={savingId === tr.id}
+                      title="More track actions"
+                      aria-label="More track actions"
+                      aria-expanded={trackMenuId === tr.id}
                       onClick={(e) => {
                         e.stopPropagation();
-                        e.preventDefault();
-                        setExpandedId(tr.id);
                         setSelectedTrackId(tr.id);
+                        setTrackMenuId((cur) => (cur === tr.id ? null : tr.id));
+                        setStackMenuId(null);
                         setColorPickerId(null);
-                        setFxOpenId(null);
-                        setStackMenuId(tr.id);
                       }}
                       style={{
-                        ...miniChip(border, brass, stackMenuId === tr.id, text),
-                        fontSize: 9,
-                        width: "auto",
-                        padding: "0 6px",
-                        minWidth: 28,
+                        ...miniChip(border, brass, trackMenuId === tr.id, text, true),
+                        width: 24,
+                        fontSize: 14,
+                        letterSpacing: 0.02,
+                        lineHeight: 1,
                       }}
                     >
-                      Stack
+                      ⋮
                     </button>
-                  )}
-                  {isExpanded ? (
-                    <>
-                  <div
-                    title="Pan — drag, double-click to center (L/[ · ]/Shift+R)"
-                    onClick={(e) => e.stopPropagation()}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 3,
-                      flex: "1 1 72px",
-                      minWidth: 72,
-                      maxWidth: 120,
-                      padding: "0 2px",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: (fxById[tr.id]?.pan ?? 0) < -0.05 ? brass : faint,
-                        letterSpacing: "0.02em",
-                        userSelect: "none",
-                      }}
-                    >
-                      L
-                    </span>
-                    <input
-                      type="range"
-                      min={-1}
-                      max={1}
-                      step={0.01}
-                      value={fxById[tr.id]?.pan ?? 0}
-                      aria-label={`Pan ${tr.label}`}
-                      onChange={(e) => {
-                        setSelectedTrackId(tr.id);
-                        setPan(tr.id, parseFloat(e.target.value), false);
-                      }}
-                      onPointerUp={(e) => {
-                        setSelectedTrackId(tr.id);
-                        setPan(tr.id, parseFloat((e.target as HTMLInputElement).value), true);
-                      }}
-                      onDoubleClick={() => {
-                        setSelectedTrackId(tr.id);
-                        setPan(tr.id, 0, true);
-                      }}
-                      style={{
-                        flex: 1,
-                        minWidth: 40,
-                        height: 18,
-                        margin: 0,
-                        accentColor: brass,
-                        cursor: "pointer",
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 800,
-                        color: (fxById[tr.id]?.pan ?? 0) > 0.05 ? brass : faint,
-                        letterSpacing: "0.02em",
-                        userSelect: "none",
-                      }}
-                    >
-                      R
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    title="Effects"
-                    onClick={() => {
-                      setSelectedTrackId(tr.id);
-                      setFxOpenId(tr.id);
-                    }}
-                    style={miniChip(border, brass, fxOpenId === tr.id, text)}
-                  >
-                    FX
-                  </button>
-                  {tr.kind === "vocal" && (
-                    <>
-                      <button
-                        type="button"
-                        title="Color"
-                        onClick={() =>
-                          setColorPickerId(colorPickerId === tr.id ? null : tr.id)
-                        }
+                    {trackMenuId === tr.id ? (
+                      <div
+                        role="menu"
+                        onClick={(e) => e.stopPropagation()}
                         style={{
-                          width: 22,
-                          height: 20,
-                          borderRadius: 5,
+                          position: "absolute",
+                          left: 0,
+                          top: "100%",
+                          marginTop: 4,
+                          zIndex: 40,
+                          minWidth: 168,
+                          maxWidth: 200,
+                          padding: "6px 0",
+                          borderRadius: 10,
                           border: `1px solid ${border}`,
-                          background: tr.color,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      />
-                      <button
-                        type="button"
-                        title="Duplicate track"
-                        disabled={savingId === tr.id}
-                        onClick={() => void duplicateLayer(tr.id)}
-                        style={miniChip(border, brass, false, text)}
-                      >
-                        ⧉
-                      </button>
-                      <button
-                        type="button"
-                        title="Stack / choir from this vocal"
-                        disabled={savingId === tr.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          // Expand so controls + menu are visible (menu was clipped at 128px before)
-                          setExpandedId(tr.id);
-                          setSelectedTrackId(tr.id);
-                          setColorPickerId(null);
-                          setFxOpenId(null);
-                          setStackMenuId(stackMenuId === tr.id ? null : tr.id);
-                        }}
-                        style={{
-                          ...miniChip(border, brass, stackMenuId === tr.id, text),
-                          fontSize: 9,
-                          width: "auto",
-                          padding: "0 6px",
-                          minWidth: 28,
+                          background: "rgba(18,16,14,0.98)",
+                          boxShadow: "0 12px 32px rgba(0,0,0,0.55)",
                         }}
                       >
-                        Stack
-                      </button>
-                      <button
-                        type="button"
-                        title="Remove"
-                        onClick={() => void deleteLayer(tr.id)}
-                        style={miniChip(border, "#E8756A", false, text)}
-                      >
-                        ×
-                      </button>
-                    </>
-                  )}
-                    </>
-                  ) : null}
+                        {tr.kind === "vocal" && tr.url ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              void beginTakeEdit(tr.id, tr.url);
+                            }}
+                            style={menuItemStyle(text)}
+                          >
+                            Edit take
+                          </button>
+                        ) : null}
+                        {tr.kind === "vocal" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={takeEditBusy}
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              setSelectedTrackId(tr.id);
+                              void splitSelectedAtPlayhead();
+                            }}
+                            style={menuItemStyle(text)}
+                          >
+                            Split at playhead
+                          </button>
+                        ) : null}
+                        {tr.kind === "vocal" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={takeEditBusy || tempoBpm == null}
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              setSelectedTrackId(tr.id);
+                              void quantizeSelectedToBeat(1);
+                            }}
+                            style={menuItemStyle(text, tempoBpm == null)}
+                          >
+                            Snap to beat
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setTrackMenuId(null);
+                            setSelectedTrackId(tr.id);
+                            setFxOpenId(tr.id);
+                          }}
+                          style={menuItemStyle(text)}
+                        >
+                          Track FX
+                        </button>
+                        {tr.kind === "vocal" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              setExpandedId(tr.id);
+                              setStackMenuId(tr.id);
+                            }}
+                            style={menuItemStyle(text)}
+                          >
+                            Stack / Choir
+                          </button>
+                        ) : null}
+                        {tr.kind === "vocal" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              setColorPickerId(tr.id);
+                              setExpandedId(tr.id);
+                            }}
+                            style={menuItemStyle(text)}
+                          >
+                            Clip color
+                          </button>
+                        ) : null}
+                        {tr.kind === "vocal" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              beginRenameTrack(tr);
+                            }}
+                            style={menuItemStyle(text)}
+                          >
+                            Rename
+                          </button>
+                        ) : null}
+                        {/* Pan mini row */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "8px 12px",
+                            borderTop: `1px solid ${border}`,
+                            marginTop: 4,
+                          }}
+                        >
+                          <span style={{ fontSize: 10, color: faint, fontWeight: 700 }}>Pan</span>
+                          <input
+                            type="range"
+                            min={-1}
+                            max={1}
+                            step={0.01}
+                            value={fxById[tr.id]?.pan ?? 0}
+                            onChange={(e) => setPan(tr.id, parseFloat(e.target.value), false)}
+                            onPointerUp={(e) =>
+                              setPan(tr.id, parseFloat((e.target as HTMLInputElement).value), true)
+                            }
+                            style={{ flex: 1, height: 16, accentColor: brass }}
+                          />
+                        </div>
+                        {tr.kind === "vocal" && tr.id !== "beat" ? (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setTrackMenuId(null);
+                              void deleteLayer(tr.id);
+                            }}
+                            style={{ ...menuItemStyle("#F87171"), borderTop: `1px solid ${border}` }}
+                          >
+                            Remove track
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-                ) : (
-                  <div
-                    style={{
-                      marginTop: 4,
-                      width: 10,
-                      height: 10,
-                      borderRadius: 3,
-                      background: tr.color,
-                      marginLeft: "auto",
-                      marginRight: "auto",
-                    }}
-                    title={tr.label}
-                  />
-                )}
-                {colorPickerId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
+                ) : null}
+
+                {colorPickerId === tr.id && !sidebarCollapsed && (
                   <div
                     style={{
                       marginTop: 6,
@@ -6210,7 +6191,7 @@ export function ProducerView({
                   </div>
                 )}
 
-                {stackMenuId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
+                                {stackMenuId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
                   <div
                     role="menu"
                     aria-label="Stack and choir options"
@@ -9572,6 +9553,24 @@ function TrackFxPanel({
       </button>
     </div>
   );
+}
+
+
+function menuItemStyle(color: string, disabled?: boolean): React.CSSProperties {
+  return {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    padding: "9px 12px",
+    border: "none",
+    background: "transparent",
+    color,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: disabled ? "default" : "pointer",
+    fontFamily: "inherit",
+    opacity: disabled ? 0.4 : 1,
+  };
 }
 
 function iconBtn(border: string, surface: string, text: string): React.CSSProperties {
