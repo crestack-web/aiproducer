@@ -780,6 +780,9 @@ export function ProducerView({
   pxPerSecRef.current = pxPerSec;
   const [loopOn, setLoopOn] = useState(false);
   const loopOnRef = useRef(false);
+  /** Active loop region (ms). When null, loop wraps the whole session. */
+  const loopRangeRef = useRef<{ startMs: number; endMs: number } | null>(null);
+  const [loopRange, setLoopRange] = useState<{ startMs: number; endMs: number } | null>(null);
 
   // —— Take edit (non-destructive; original recording stays on server) ——
   const [takeEditId, setTakeEditId] = useState<string | null>(null);
@@ -3441,6 +3444,46 @@ export function ProducerView({
     loopOnRef.current = loopOn;
   }, [loopOn]);
 
+  // Resolve loop region from selected track / clip (or full song when none)
+  useEffect(() => {
+    if (!loopOn) {
+      loopRangeRef.current = null;
+      setLoopRange(null);
+      return;
+    }
+    const tid = selectedTrackId || armedTrackId;
+    let start = 0;
+    let end = Math.max(totalMs || 0, 1);
+    let scoped = false;
+    if (tid) {
+      const tr = tracks.find((x) => x.id === tid);
+      if (tr) {
+        if (tr.kind === "vocal" && selectedClipId && tr.clips?.length) {
+          const clip = tr.clips.find((c) => c.id === selectedClipId);
+          if (clip) {
+            start = Math.max(0, clip.startMs);
+            end = Math.max(start + 200, clip.endMs);
+            scoped = true;
+          }
+        }
+        if (!scoped) {
+          start = Math.max(0, tr.startMs);
+          end = Math.max(start + 200, tr.endMs || totalMs);
+          // Beat defaults to full song unless user selected a narrow span
+          if (tr.kind === "beat") {
+            start = 0;
+            end = Math.max(totalMs || 0, 1);
+          } else {
+            scoped = true;
+          }
+        }
+      }
+    }
+    const region = { startMs: start, endMs: end };
+    loopRangeRef.current = region;
+    setLoopRange(scoped || loopOn ? region : null);
+  }, [loopOn, selectedTrackId, armedTrackId, selectedClipId, tracks, totalMs]);
+
   // Keep needle aligned when zoom changes (transform is in px)
   useEffect(() => {
     pxPerSecRef.current = pxPerSec;
@@ -3514,15 +3557,23 @@ export function ProducerView({
       /* ignore */
     }
 
-    if (elapsed >= totalMs - 1) {
-      if (loopOnRef.current && totalMs > 0) {
-        void startPlayback(0);
-        return;
+    {
+      const region = loopOnRef.current ? loopRangeRef.current : null;
+      const loopEnd = region ? region.endMs : totalMs;
+      const loopStart = region ? region.startMs : 0;
+      // Entered past loop end (or song end)
+      if (elapsed >= loopEnd - 1) {
+        if (loopOnRef.current && loopEnd > loopStart + 50) {
+          void startPlayback(loopStart);
+          return;
+        }
+        if (elapsed >= totalMs - 1) {
+          playingRef.current = false;
+          setPlaying(false);
+          stopSources();
+          return;
+        }
       }
-      playingRef.current = false;
-      setPlaying(false);
-      stopSources();
-      return;
     }
     rafRef.current = requestAnimationFrame(tickPlayhead);
   }
@@ -5096,15 +5147,73 @@ export function ProducerView({
         </button>
         <button
           type="button"
-          onClick={() => setLoopOn((v) => !v)}
+          onClick={() => {
+            setLoopOn((v) => {
+              const next = !v;
+              if (next) {
+                // Prefer selected/armed track as the loop target
+                const tid = selectedTrackId || armedTrackId;
+                const tr = tid ? tracks.find((x) => x.id === tid) : null;
+                if (tr && tr.kind === "vocal") {
+                  let s = tr.startMs;
+                  let e = tr.endMs;
+                  if (selectedClipId && tr.clips?.length) {
+                    const clip = tr.clips.find((c) => c.id === selectedClipId);
+                    if (clip) {
+                      s = clip.startMs;
+                      e = clip.endMs;
+                    }
+                  }
+                  const region = {
+                    startMs: Math.max(0, s),
+                    endMs: Math.max(s + 200, e),
+                  };
+                  loopRangeRef.current = region;
+                  setLoopRange(region);
+                  // Jump into the loop if playhead is outside
+                  const ph = playheadMsRef.current;
+                  if (ph < region.startMs - 20 || ph > region.endMs + 20) {
+                    setPlayheadMs(region.startMs);
+                    playheadMsRef.current = region.startMs;
+                    if (playingRef.current) {
+                      void startPlayback(region.startMs);
+                    }
+                  }
+                } else {
+                  // No vocal selected — loop full session
+                  const region = { startMs: 0, endMs: Math.max(totalMs || 0, 1) };
+                  loopRangeRef.current = region;
+                  setLoopRange(region);
+                }
+              } else {
+                loopRangeRef.current = null;
+                setLoopRange(null);
+              }
+              return next;
+            });
+          }}
           style={{
             ...iconBtn(border, surface, text),
             color: loopOn ? brass : text,
             borderColor: loopOn ? brass : border,
             background: loopOn ? "rgba(231,169,97,0.15)" : surface,
           }}
-          aria-label={loopOn ? "Loop on" : "Loop off"}
-          title={loopOn ? "Loop on — click to disable" : "Loop session"}
+          aria-label={
+            loopOn
+              ? loopRange && selectedTrackId
+                ? "Track loop on"
+                : "Session loop on"
+              : "Loop off"
+          }
+          title={
+            loopOn
+              ? loopRange
+                ? `Looping ${formatMs(loopRange.startMs)}–${formatMs(loopRange.endMs)} — click to disable`
+                : "Loop on — click to disable"
+              : selectedTrackId && selectedTrackId !== "beat"
+                ? "Loop selected track"
+                : "Loop full session (select a track to loop that part)"
+          }
           aria-pressed={loopOn}
         >
           <LoopIcon />
@@ -6671,6 +6780,24 @@ export function ProducerView({
                 </div>
               );
             })}
+            {/* Loop region highlight (selected track or session) */}
+            {loopOn && loopRange ? (
+              <div
+                aria-hidden
+                style={{
+                  position: "absolute",
+                  top: TRACK_RULER_H,
+                  bottom: 0,
+                  left: msToX(loopRange.startMs),
+                  width: Math.max(2, msToX(loopRange.endMs) - msToX(loopRange.startMs)),
+                  background: "rgba(231,169,97,0.08)",
+                  borderLeft: `1px solid ${brass}`,
+                  borderRight: `1px solid ${brass}`,
+                  pointerEvents: "none",
+                  zIndex: 4,
+                }}
+              />
+            ) : null}
             {/* Single full-height playhead — one line through ruler + every track */}
             <div
               ref={playheadElRef}
