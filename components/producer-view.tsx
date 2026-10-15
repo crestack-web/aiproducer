@@ -5125,7 +5125,7 @@ export function ProducerView({
         <button
           type="button"
           onClick={togglePlay}
-          style={{ width: 44, height: 36, width: 36, minWidth: 36, minHeight: 36, maxHeight: 36, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 14, cursor: "pointer", flexShrink: 0, boxSizing: "border-box", padding: 0 }}
+          style={{ width: 36, height: 36, minWidth: 36, minHeight: 36, maxHeight: 36, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 14, cursor: "pointer", flexShrink: 0, boxSizing: "border-box", padding: 0 }}
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? "❚❚" : "▶"}
