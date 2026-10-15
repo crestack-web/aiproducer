@@ -14,7 +14,13 @@ export default function WelcomePage() {
       <WelcomeAnalytics />
       <style>{css}</style>
       <div className="ambient" aria-hidden />
-            <header className="header">
+      <div className="beta-banner" role="status">
+        <span className="beta-pill">Beta</span>
+        <span className="beta-copy">
+          AP Studio is in beta — features may change, and we&apos;d love your feedback while we ship.
+        </span>
+      </div>
+      <header className="header">
         <div className="header-inner">
           <Link href="/" className="logo">
             <img
@@ -652,6 +658,40 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
   .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
+  .beta-banner{
+    position:relative;
+    z-index:30;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    flex-wrap:wrap;
+    padding:9px 16px;
+    background:linear-gradient(90deg, rgba(231,169,97,.16), rgba(123,235,212,.1));
+    border-bottom:1px solid rgba(231,169,97,.28);
+    color:var(--text);
+    font-size:13px;
+    line-height:1.35;
+    text-align:center;
+  }
+  .beta-pill{
+    display:inline-flex;
+    align-items:center;
+    padding:2px 8px;
+    border-radius:999px;
+    background:var(--brass);
+    color:#1a1208;
+    font-size:10px;
+    font-weight:800;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+  .beta-copy{color:var(--muted);font-weight:500}
+  html[data-theme="light"] .beta-banner{
+    background:linear-gradient(90deg, rgba(231,169,97,.22), rgba(123,235,212,.12));
+    border-bottom-color:rgba(231,169,97,.35);
+  }
+  html[data-theme="light"] .beta-copy{color:var(--muted)}
   .header{
     position:relative;z-index:30;width:100%;
     box-sizing:border-box;
