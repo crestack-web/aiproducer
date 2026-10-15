@@ -19,12 +19,12 @@ export default function WelcomePage() {
           <Link href="/" className="logo">
             <img
               src="/logo.svg"
-              alt="Studio"
+              alt="AP Studio"
               width={28}
               height={28}
               className="logo-img"
             />
-            Studio
+            AP Studio
           </Link>
           <nav className="nav desktop-nav">
             <a href="#workspace">Workspace</a>
@@ -44,7 +44,6 @@ export default function WelcomePage() {
 
 <div className="wrap">
 <section className="hero">
-          <div className="eyebrow"><span /> AI Music Producer</div>
           <h1>
             <RotatingHeadline />
             <br />

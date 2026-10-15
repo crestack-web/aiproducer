@@ -545,12 +545,12 @@ export function AppShell({
           <div style={{ ...brand, gap: 8 }}>
             <img
               src={STUDIO_LOGO_URL}
-              alt="Studio"
+              alt="AP Studio"
               width={sidebarCollapsed ? 28 : 22}
               height={sidebarCollapsed ? 28 : 22}
               style={{ borderRadius: 6, marginRight: sidebarCollapsed ? 0 : 8, verticalAlign: "middle", objectFit: "cover" }}
             />
-            {!sidebarCollapsed && <span>STUDIO</span>}
+            {!sidebarCollapsed && <span>AP Studio</span>}
           </div>
           {!sidebarCollapsed && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -796,13 +796,13 @@ export function AppShell({
                 style={{
                   fontFamily: "'IBM Plex Mono', monospace",
                   fontSize: 18,
-                  letterSpacing: 2.5,
+                  letterSpacing: 1.5,
                   color: C.brass,
                   fontWeight: 700,
                   lineHeight: 1,
                 }}
               >
-                STUDIO
+                AP Studio
               </span>
             </button>
           ) : (

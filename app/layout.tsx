@@ -5,14 +5,14 @@ import { ThemeProvider } from "@/lib/theme";
 import { PwaRegister } from "@/components/pwa-install";
 
 export const metadata: Metadata = {
-  title: "Studio — AI Music Producer",
+  title: "AP Studio",
   description:
     "Create a beat. Get guided through recording. Finish a real song with your voice.",
-  applicationName: "Studio",
+  applicationName: "AP Studio",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Studio",
+    title: "AP Studio",
     statusBarStyle: "black-translucent",
   },
   other: {
@@ -46,7 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="theme-color" content="#050508" media="(prefers-color-scheme: dark)" />
         <meta name="theme-color" content="#F7F1E8" media="(prefers-color-scheme: light)" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-title" content="Studio" />
+        <meta name="apple-mobile-web-app-title" content="AP Studio" />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var p=localStorage.getItem('studio-theme');var t=p;if(p==='system'||(p!=='light'&&p!=='dark')){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);document.documentElement.style.colorScheme=t;if(t==='light'){document.documentElement.style.background='#F7F1E8'}else{document.documentElement.style.background='#050508'}}catch(e){}})();`,
