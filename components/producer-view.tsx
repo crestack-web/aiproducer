@@ -8288,7 +8288,7 @@ export function ProducerView({
                   textTransform: "uppercase",
                 }}
               >
-                {(tr?.sectionLabel || tr?.label || "Track").toString().slice(0, 28)}
+                {(tr?.sub || tr?.label || "Track").toString().slice(0, 28)}
               </div>
               {!isBeat &&
                 item("Split at playhead", () => {
@@ -8333,7 +8333,7 @@ export function ProducerView({
                 ? item("Download audio", () => {
                     const a = document.createElement("a");
                     a.href = tr.url!;
-                    a.download = `${(tr.sectionLabel || tr.label || "take").toString()}.wav`;
+                    a.download = `${(tr.sub || tr.label || "take").toString()}.wav`;
                     a.target = "_blank";
                     a.rel = "noopener";
                     document.body.appendChild(a);
