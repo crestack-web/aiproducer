@@ -468,7 +468,7 @@ function trackRowHeight(opts: {
   }
   if (stackOpen) return Math.max(TRACK_ROW_H_EXPANDED + 140, 268);
   if (colorOpen && expanded) return Math.max(TRACK_ROW_H_EXPANDED + 36, 160);
-  if (expanded) return isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 56, 184) : TRACK_ROW_H_EXPANDED;
+  if (expanded) return isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 72, 196) : Math.max(TRACK_ROW_H_EXPANDED + 24, 136);
   return TRACK_ROW_H;
 }
 
@@ -1009,8 +1009,12 @@ export function ProducerView({
 
   const [savingId, setSavingId] = useState<string | null>(null);
   const [stackMenuId, setStackMenuId] = useState<string | null>(null);
-  /** Suno-style ⋮ overflow menu on track header */
-  const [trackMenuId, setTrackMenuId] = useState<string | null>(null);
+  /** Suno-style ⋮ overflow menu — fixed so it is not clipped by track rows */
+  const [trackMenu, setTrackMenu] = useState<{
+    trackId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const dragRef = useRef<{
     id: string;
     mode: "move" | "trim-start" | "trim-end";
@@ -5592,7 +5596,7 @@ export function ProducerView({
             flexGrow: 0,
             transition: "width 0.15s ease",
             overflowY: "auto",
-            overflowX: "hidden",
+            overflowX: trackMenu ? "visible" : "hidden",
             WebkitOverflowScrolling: "touch",
             borderRight: `1px solid ${border}`,
             background: bg,
@@ -5727,8 +5731,8 @@ export function ProducerView({
                       : isExpanded || stackOpen
                         ? "rgba(255,255,255,0.03)"
                         : "transparent",
-                  overflowX: "hidden", overflowY: isNarrow && isExpanded ? "auto" : stackOpen || colorOpen ? "visible" : "hidden",
-                  zIndex: stackOpen || colorOpen ? 8 : 1,
+                  overflow: "visible",
+                  zIndex: stackOpen || colorOpen || trackMenu?.trackId === tr.id ? 12 : 1,
                   position: "relative",
                   display: "flex",
                   flexDirection: "column",
@@ -5979,186 +5983,44 @@ export function ProducerView({
                   >
                     S
                   </button>
-                  {/* ⋮ overflow — Edit, Split, FX, Stack, Color, etc. */}
-                  <div style={{ position: "relative", flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="More track actions"
-                      aria-label="More track actions"
-                      aria-expanded={trackMenuId === tr.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedTrackId(tr.id);
-                        setTrackMenuId((cur) => (cur === tr.id ? null : tr.id));
-                        setStackMenuId(null);
-                        setColorPickerId(null);
-                      }}
-                      style={{
-                        ...miniChip(border, brass, trackMenuId === tr.id, text, true),
-                        width: 24,
-                        fontSize: 14,
-                        letterSpacing: 0.02,
-                        lineHeight: 1,
-                      }}
-                    >
-                      ⋮
-                    </button>
-                    {trackMenuId === tr.id ? (
-                      <div
-                        role="menu"
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          position: "absolute",
-                          left: 0,
-                          top: "100%",
-                          marginTop: 4,
-                          zIndex: 40,
-                          minWidth: 168,
-                          maxWidth: 200,
-                          padding: "6px 0",
-                          borderRadius: 10,
-                          border: `1px solid ${border}`,
-                          background: "rgba(18,16,14,0.98)",
-                          boxShadow: "0 12px 32px rgba(0,0,0,0.55)",
-                        }}
-                      >
-                        {tr.kind === "vocal" && tr.url ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              void beginTakeEdit(tr.id, tr.url);
-                            }}
-                            style={menuItemStyle(text)}
-                          >
-                            Edit take
-                          </button>
-                        ) : null}
-                        {tr.kind === "vocal" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={takeEditBusy}
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              setSelectedTrackId(tr.id);
-                              void splitSelectedAtPlayhead();
-                            }}
-                            style={menuItemStyle(text)}
-                          >
-                            Split at playhead
-                          </button>
-                        ) : null}
-                        {tr.kind === "vocal" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={takeEditBusy || tempoBpm == null}
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              setSelectedTrackId(tr.id);
-                              void quantizeSelectedToBeat(1);
-                            }}
-                            style={menuItemStyle(text, tempoBpm == null)}
-                          >
-                            Snap to beat
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setTrackMenuId(null);
-                            setSelectedTrackId(tr.id);
-                            setFxOpenId(tr.id);
-                          }}
-                          style={menuItemStyle(text)}
-                        >
-                          Track FX
-                        </button>
-                        {tr.kind === "vocal" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              setExpandedId(tr.id);
-                              setStackMenuId(tr.id);
-                            }}
-                            style={menuItemStyle(text)}
-                          >
-                            Stack / Choir
-                          </button>
-                        ) : null}
-                        {tr.kind === "vocal" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              setColorPickerId(tr.id);
-                              setExpandedId(tr.id);
-                            }}
-                            style={menuItemStyle(text)}
-                          >
-                            Clip color
-                          </button>
-                        ) : null}
-                        {tr.kind === "vocal" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              beginRenameTrack(tr);
-                            }}
-                            style={menuItemStyle(text)}
-                          >
-                            Rename
-                          </button>
-                        ) : null}
-                        {/* Pan mini row */}
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "8px 12px",
-                            borderTop: `1px solid ${border}`,
-                            marginTop: 4,
-                          }}
-                        >
-                          <span style={{ fontSize: 10, color: faint, fontWeight: 700 }}>Pan</span>
-                          <input
-                            type="range"
-                            min={-1}
-                            max={1}
-                            step={0.01}
-                            value={fxById[tr.id]?.pan ?? 0}
-                            onChange={(e) => setPan(tr.id, parseFloat(e.target.value), false)}
-                            onPointerUp={(e) =>
-                              setPan(tr.id, parseFloat((e.target as HTMLInputElement).value), true)
-                            }
-                            style={{ flex: 1, height: 16, accentColor: brass }}
-                          />
-                        </div>
-                        {tr.kind === "vocal" && tr.id !== "beat" ? (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setTrackMenuId(null);
-                              void deleteLayer(tr.id);
-                            }}
-                            style={{ ...menuItemStyle("#F87171"), borderTop: `1px solid ${border}` }}
-                          >
-                            Remove track
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
+                  {/* ⋮ overflow — opens fixed menu (not clipped by row) */}
+                  <button
+                    type="button"
+                    title="More track actions"
+                    aria-label="More track actions"
+                    aria-expanded={trackMenu?.trackId === tr.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedTrackId(tr.id);
+                      if (trackMenu?.trackId === tr.id) {
+                        setTrackMenu(null);
+                        return;
+                      }
+                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      const menuW = 200;
+                      const menuH = 360;
+                      const x = Math.min(
+                        r.left,
+                        (typeof window !== "undefined" ? window.innerWidth : 400) - menuW - 8
+                      );
+                      const y = Math.min(
+                        r.bottom + 4,
+                        (typeof window !== "undefined" ? window.innerHeight : 600) - menuH - 8
+                      );
+                      setTrackMenu({ trackId: tr.id, x: Math.max(8, x), y: Math.max(8, y) });
+                      setStackMenuId(null);
+                      setColorPickerId(null);
+                    }}
+                    style={{
+                      ...miniChip(border, brass, trackMenu?.trackId === tr.id, text, true),
+                      width: 24,
+                      fontSize: 14,
+                      letterSpacing: 0.02,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⋮
+                  </button>
                 </div>
                 ) : null}
 
@@ -8319,6 +8181,169 @@ export function ProducerView({
         </div>
       )}
 
+
+      
+      {trackMenu && (() => {
+        const tr = tracks.find((x) => x.id === trackMenu.trackId);
+        if (!tr) return null;
+        const close = () => setTrackMenu(null);
+        const item = (
+          label: string,
+          onClick: () => void,
+          opts?: { danger?: boolean; disabled?: boolean }
+        ) => (
+          <button
+            key={label}
+            type="button"
+            disabled={opts?.disabled}
+            onClick={() => {
+              if (opts?.disabled) return;
+              onClick();
+              close();
+            }}
+            style={menuItemStyle(opts?.danger ? "#F87171" : text, opts?.disabled)}
+          >
+            {label}
+          </button>
+        );
+        return (
+          <>
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: 210 }}
+              onClick={close}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                close();
+              }}
+            />
+            <div
+              role="menu"
+              style={{
+                position: "fixed",
+                left: trackMenu.x,
+                top: trackMenu.y,
+                zIndex: 211,
+                minWidth: 196,
+                maxWidth: 240,
+                maxHeight: "min(70vh, 420px)",
+                overflowY: "auto",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: "rgba(18,16,14,0.98)",
+                boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+                padding: "6px 0",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: "6px 12px 8px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: mutedText,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                {(tr.sub || tr.label || "Track").toString().slice(0, 24)}
+              </div>
+              {tr.kind === "vocal" && tr.url
+                ? item("Edit take", () => void beginTakeEdit(tr.id, tr.url))
+                : null}
+              {tr.kind === "vocal"
+                ? item("Split at playhead", () => {
+                    setSelectedTrackId(tr.id);
+                    void splitSelectedAtPlayhead();
+                  }, { disabled: takeEditBusy })
+                : null}
+              {tr.kind === "vocal"
+                ? item("Snap to beat", () => {
+                    setSelectedTrackId(tr.id);
+                    void quantizeSelectedToBeat(1);
+                  }, { disabled: takeEditBusy || tempoBpm == null })
+                : null}
+              {tr.kind === "vocal"
+                ? item("Duplicate track", () => void duplicateLayer(tr.id))
+                : null}
+              {item("Track FX", () => {
+                setSelectedTrackId(tr.id);
+                setFxOpenId(tr.id);
+              })}
+              {tr.kind === "vocal"
+                ? item("Stack / Choir", () => {
+                    setExpandedId(tr.id);
+                    setStackMenuId(tr.id);
+                  })
+                : null}
+              {tr.kind === "vocal"
+                ? item("Rename", () => beginRenameTrack(tr))
+                : null}
+              {tr.kind === "vocal" ? (
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    borderTop: `1px solid ${border}`,
+                    marginTop: 4,
+                  }}
+                >
+                  <div style={{ fontSize: 10, fontWeight: 700, color: faint, marginBottom: 6 }}>
+                    Color
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {TRACK_COLOR_PRESETS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        title="Set color"
+                        onClick={() => {
+                          void persistColor(tr.id, c);
+                          close();
+                        }}
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: 5,
+                          border:
+                            tr.color === c ? `2px solid ${text}` : `1px solid ${border}`,
+                          background: c,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderTop: `1px solid ${border}`,
+                }}
+              >
+                <span style={{ fontSize: 10, color: faint, fontWeight: 700 }}>Pan</span>
+                <input
+                  type="range"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  value={fxById[tr.id]?.pan ?? 0}
+                  onChange={(e) => setPan(tr.id, parseFloat(e.target.value), false)}
+                  onPointerUp={(e) =>
+                    setPan(tr.id, parseFloat((e.target as HTMLInputElement).value), true)
+                  }
+                  style={{ flex: 1, height: 16, accentColor: brass }}
+                />
+              </div>
+              {tr.kind === "vocal" && tr.id !== "beat"
+                ? item("Remove track", () => void deleteLayer(tr.id), { danger: true })
+                : null}
+            </div>
+          </>
+        );
+      })()}
 
       {ctxMenu && (() => {
         const tr = tracks.find((x) => x.id === ctxMenu.trackId);
