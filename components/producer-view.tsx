@@ -449,10 +449,28 @@ function roleColor(role: string) {
   return "#7BEBD4";
 }
 
-/** Locked heights so left rail rows and timeline lanes share one grid */
-const TRACK_RULER_H = 40;
-const TRACK_ROW_H = 72;
-const TRACK_ROW_H_EXPANDED = 128;
+/** Locked heights so left rail rows and timeline lanes share one grid (Suno-style). */
+const TRACK_RULER_H = 36;
+const TRACK_ROW_H = 64;
+const TRACK_ROW_H_EXPANDED = 112;
+
+/** Single source of truth for left header + timeline lane height — must stay in lockstep. */
+function trackRowHeight(opts: {
+  expanded: boolean;
+  stackOpen: boolean;
+  colorOpen: boolean;
+  takeEditing: boolean;
+  isNarrow: boolean;
+}): number {
+  const { expanded, stackOpen, colorOpen, takeEditing, isNarrow } = opts;
+  if (takeEditing) {
+    return Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160);
+  }
+  if (stackOpen) return Math.max(TRACK_ROW_H_EXPANDED + 140, 268);
+  if (colorOpen && expanded) return Math.max(TRACK_ROW_H_EXPANDED + 36, 160);
+  if (expanded) return isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 56, 184) : TRACK_ROW_H_EXPANDED;
+  return TRACK_ROW_H;
+}
 
 function formatMs(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -4485,7 +4503,7 @@ export function ProducerView({
   const brass = C.brass || "#E7A961";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
-  const sidebarW = sidebarCollapsed ? (isNarrow ? 48 : 64) : isNarrow ? 168 : 280;
+  const sidebarW = sidebarCollapsed ? (isNarrow ? 44 : 56) : isNarrow ? 156 : 220;
   const toggleSidebar = () => {
     setSidebarCollapsed((c) => {
       const next = !c;
@@ -5510,15 +5528,13 @@ export function ProducerView({
             const isTakeEditingSide = takeEditId === tr.id;
             const stackOpen = stackMenuId === tr.id;
             const colorOpen = colorPickerId === tr.id;
-            const rowH = isTakeEditingSide
-              ? Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160)
-              : stackOpen
-                ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
-              : colorOpen && isExpanded
-                ? Math.max(TRACK_ROW_H_EXPANDED + 36, 160)
-              : isExpanded
-                ? (isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 56, 184) : TRACK_ROW_H_EXPANDED)
-                : TRACK_ROW_H;
+            const rowH = trackRowHeight({
+              expanded: isExpanded,
+              stackOpen,
+              colorOpen,
+              takeEditing: isTakeEditingSide,
+              isNarrow,
+            });
             return (
               <div
                 key={`h-${tr.id}`}
@@ -5528,7 +5544,7 @@ export function ProducerView({
                   maxHeight: rowH,
                   boxSizing: "border-box",
                   borderBottom: `1px solid rgba(255,255,255,0.06)`,
-                  borderLeft: `3px solid ${tr.color}`,
+                  borderLeft: `2px solid ${tr.color}`,
                   padding: sidebarCollapsed ? "6px 4px" : isExpanded || stackOpen ? "8px 10px" : "6px 8px",
                   background:
                     selectedTrackId === tr.id || armedTrackId === tr.id
@@ -6121,6 +6137,15 @@ export function ProducerView({
               minWidth: timelineW,
               position: "relative",
               boxSizing: "border-box",
+              // Suno-style vertical grid: subtle column lines under clips
+              backgroundImage: `repeating-linear-gradient(
+                90deg,
+                transparent,
+                transparent calc(${pxPerSec}px - 1px),
+                rgba(255,255,255,0.045) calc(${pxPerSec}px - 1px),
+                rgba(255,255,255,0.045) ${pxPerSec}px
+              )`,
+              backgroundSize: `${pxPerSec}px 100%`,
             }}
           >
             <div
@@ -6210,20 +6235,18 @@ export function ProducerView({
                   ? `${tr.id}::${primaryClip.id}`
                   : tr.id;
               const clipW = Math.max(10, msToX(clipEndMs) - msToX(clipStartMs));
-              const rowH = isTakeEditing
-                ? Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160)
-                : stackOpen
-                  ? Math.max(TRACK_ROW_H_EXPANDED + 140, 268)
-                : colorOpen && expanded
-                  ? Math.max(TRACK_ROW_H_EXPANDED + 36, 160)
-                : expanded
-                  ? TRACK_ROW_H_EXPANDED
-                  : TRACK_ROW_H;
+              const rowH = trackRowHeight({
+                expanded,
+                stackOpen,
+                colorOpen,
+                takeEditing: isTakeEditing,
+                isNarrow,
+              });
               const clipH = isTakeEditing
                 ? Math.min(88, 96)
                 : expanded
-                  ? Math.min(96, rowH - 20)
-                  : Math.min(48, rowH - 16);
+                  ? Math.min(88, rowH - 20)
+                  : Math.min(44, rowH - 14);
               return (
                 <div
                   key={`tl-${tr.id}`}
@@ -6235,10 +6258,10 @@ export function ProducerView({
                     width: timelineW,
                     minWidth: timelineW,
                     boxSizing: "border-box",
-                    borderBottom: `1px solid rgba(255,255,255,0.06)`,
+                    borderBottom: `1px solid rgba(255,255,255,0.055)`,
                     background:
                       selectedTrackId === tr.id || isArmed
-                        ? "rgba(255,255,255,0.04)"
+                        ? "rgba(255,255,255,0.035)"
                         : "transparent",
                   }}
                   onClick={(e) => {
@@ -6256,10 +6279,11 @@ export function ProducerView({
                       width: clipW,
                       top: expanded ? 12 : 8,
                       height: clipH,
-                      borderRadius: 6,
+                      borderRadius: 10,
                       background: isLiveRec
-                        ? `linear-gradient(180deg, ${tr.color}cc, ${tr.color})`
-                        : tr.color,
+                        ? `linear-gradient(180deg, ${tr.color}ee, ${tr.color})`
+                        : `linear-gradient(180deg, ${tr.color}f2, ${tr.color}d9)`,
+                      border: `1px solid rgba(255,255,255,0.12)`,
                       boxShadow: isLiveRec
                         ? `0 0 0 2px #F07167, 0 0 16px ${tr.color}aa`
                         : isArmed
@@ -6460,8 +6484,9 @@ export function ProducerView({
                               width: cW,
                               top: expanded ? 12 : 8,
                               height: clipH,
-                              borderRadius: 6,
-                              background: tr.color,
+                              borderRadius: 10,
+                              background: `linear-gradient(180deg, ${tr.color}f2, ${tr.color}d9)`,
+                              border: `1px solid rgba(255,255,255,0.12)`,
                               boxShadow:
                                 selectedClipId === clip.id
                                   ? `0 0 0 2px #fff, 0 0 12px ${tr.color}88`
