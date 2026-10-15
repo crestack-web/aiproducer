@@ -4979,7 +4979,6 @@ export function ProducerView({
               boxSizing: "border-box",
               whiteSpace: "nowrap",
               fontFamily: "inherit",
-              whiteSpace: "nowrap",
             }}
           >
             Sessions
