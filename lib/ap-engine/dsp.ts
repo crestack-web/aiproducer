@@ -594,8 +594,9 @@ export function applyVoiceChangerStereo(
 
   if (Math.abs(semis) >= 0.05) {
     const shifted = pitchShiftStereo(wetL, wetR, sampleRate, semis);
-    wetL = shifted.left;
-    wetR = shifted.right;
+    // Copy into fresh ArrayBuffer-backed views (TS 5.x Float32Array generic)
+    wetL = new Float32Array(shifted.left);
+    wetR = new Float32Array(shifted.right);
   }
 
   // Character coloring
