@@ -463,12 +463,14 @@ function trackRowHeight(opts: {
   isNarrow: boolean;
 }): number {
   const { expanded, stackOpen, colorOpen, takeEditing, isNarrow } = opts;
+  // Keep rows tight: expanded only adds a little for name + volume (Suno-like).
+  // Never balloon the left rail past the timeline track card.
   if (takeEditing) {
-    return Math.max(TRACK_ROW_H_EXPANDED + (isNarrow ? 28 : 44), isNarrow ? 140 : 160);
+    return isNarrow ? 132 : 148;
   }
-  if (stackOpen) return Math.max(TRACK_ROW_H_EXPANDED + 140, 268);
-  if (colorOpen && expanded) return Math.max(TRACK_ROW_H_EXPANDED + 36, 160);
-  if (expanded) return isNarrow ? Math.max(TRACK_ROW_H_EXPANDED + 72, 196) : Math.max(TRACK_ROW_H_EXPANDED + 24, 136);
+  if (stackOpen) return Math.max(TRACK_ROW_H_EXPANDED + 120, 240);
+  if (colorOpen && expanded) return isNarrow ? 128 : 140;
+  if (expanded) return isNarrow ? 108 : 118;
   return TRACK_ROW_H;
 }
 
@@ -3548,16 +3550,19 @@ export function ProducerView({
       setPlayheadMs(elapsed);
     }
 
-    // DAW-style follow: keep playhead in view while playing (critical on mobile)
+    // DAW-style follow: keep playhead visible while playing (esp. mobile)
     try {
       const el = timelineScrollRef.current;
       if (el && el.clientWidth > 0) {
         const x = (elapsed / 1000) * pxPerSecRef.current;
-        const margin = Math.min(96, Math.max(48, el.clientWidth * 0.22));
         const viewL = el.scrollLeft;
-        const viewR = viewL + el.clientWidth;
-        if (x > viewR - margin || x < viewL + 24) {
-          const target = Math.max(0, x - el.clientWidth * 0.28);
+        const viewW = el.clientWidth;
+        const viewR = viewL + viewW;
+        // Keep playhead in the left third on mobile so it never drifts off-screen
+        const lead = Math.min(120, Math.max(56, viewW * (viewW < 520 ? 0.32 : 0.28)));
+        const rightPad = Math.min(80, Math.max(36, viewW * 0.18));
+        if (x > viewR - rightPad || x < viewL + 16) {
+          const target = Math.max(0, x - lead);
           el.scrollLeft = target;
         }
       }
@@ -4744,8 +4749,10 @@ export function ProducerView({
           minHeight: isNarrow ? 56 : 56,
           maxHeight: isNarrow ? 56 : 56,
           flexWrap: "nowrap",
-          overflowX: isNarrow ? "hidden" : "auto",
+          overflowX: "auto",
           overflowY: "hidden",
+          WebkitOverflowScrolling: "touch",
+          scrollbarWidth: "none",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
           msOverflowStyle: "none",
@@ -5948,13 +5955,16 @@ export function ProducerView({
                       : isExpanded || stackOpen
                         ? "rgba(255,255,255,0.03)"
                         : "transparent",
-                  overflow: "visible",
+                  overflow:
+                    stackOpen || colorOpen || trackMenu?.trackId === tr.id
+                      ? "visible"
+                      : "hidden",
                   zIndex: stackOpen || colorOpen || trackMenu?.trackId === tr.id ? 12 : 1,
                   position: "relative",
                   display: "flex",
                   flexDirection: "column",
-                  justifyContent: isExpanded ? "flex-start" : "center",
-                  gap: isNarrow ? (isExpanded ? 4 : 2) : isExpanded ? 6 : 4,
+                  justifyContent: "center",
+                  gap: isNarrow ? 3 : 4,
                   boxShadow:
                     armedTrackId === tr.id ? `inset 0 0 0 1px ${brass}` : undefined,
                   transition: "height 0.15s ease, background 0.15s ease",
@@ -6110,29 +6120,7 @@ export function ProducerView({
                     {tr.sub}
                   </div>
                 ) : null}
-                {!sidebarCollapsed && isExpanded && tr.kind === "vocal" && renamingTrackId !== tr.id ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      beginRenameTrack(tr);
-                    }}
-                    style={{
-                      alignSelf: "flex-start",
-                      marginLeft: isNarrow ? 0 : 20,
-                      padding: isNarrow ? "2px 6px" : "2px 8px",
-                      borderRadius: 999,
-                      border: `1px solid ${border}`,
-                      background: "transparent",
-                      color: brass,
-                      fontSize: isNarrow ? 9 : 10,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {isNarrow ? "✎ Name" : "Rename"}
-                  </button>
-                ) : null}
+                {/* rename: double-click title or ⋮ → Rename — keeps expander compact */}
                 {!sidebarCollapsed ? (
                 <div
                   style={{
@@ -6456,10 +6444,10 @@ export function ProducerView({
                 isNarrow,
               });
               const clipH = isTakeEditing
-                ? Math.min(88, 96)
+                ? Math.min(88, Math.max(48, rowH - 16))
                 : expanded
-                  ? Math.min(88, rowH - 20)
-                  : Math.min(44, rowH - 14);
+                  ? Math.min(72, Math.max(40, rowH - 16))
+                  : Math.min(44, Math.max(28, rowH - 14));
               return (
                 <div
                   key={`tl-${tr.id}`}
