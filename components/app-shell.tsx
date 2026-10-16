@@ -549,7 +549,26 @@ export function AppShell({
               height={sidebarCollapsed ? 28 : 22}
               style={{ borderRadius: 6, marginRight: sidebarCollapsed ? 0 : 8, verticalAlign: "middle", objectFit: "cover" }}
             />
-            {!sidebarCollapsed && <span>AP Studio</span>}
+            {!sidebarCollapsed && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                AP Studio
+                <span
+                  style={{
+                    padding: "2px 7px",
+                    borderRadius: 999,
+                    border: `1px solid ${C.border}`,
+                    background: mode === "light" ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.06)",
+                    color: C.textMuted,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.04,
+                    textTransform: "lowercase",
+                  }}
+                >
+                  beta
+                </span>
+              </span>
+            )}
           </div>
           {!sidebarCollapsed && (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -801,6 +820,24 @@ export function AppShell({
                 }}
               >
                 AP Studio
+              </span>
+              <span
+                style={{
+                  marginLeft: 2,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  border: `1px solid ${C.border}`,
+                  background: mode === "light" ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.06)",
+                  color: C.textMuted,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.04,
+                  textTransform: "lowercase",
+                  lineHeight: 1.2,
+                  flexShrink: 0,
+                }}
+              >
+                beta
               </span>
             </button>
           ) : (

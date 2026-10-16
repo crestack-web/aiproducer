@@ -47,6 +47,9 @@ type Project = {
   beat_source?: string | null;
   masters?: MasterVersion[];
   master_count?: number;
+  /** Square cover — from metadata.cover_url or generated gradient seed */
+  cover_url?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 type Tab = "home" | "library" | "profile";
 
@@ -228,7 +231,19 @@ function AppInner() {
       let list: Project[] = cached?.projects || [];
       if (res.ok) {
         const json = await res.json();
-        list = (json.projects || []).filter((p: Project) => p.status !== "draft");
+        list = (json.projects || [])
+          .filter((p: Project) => p.status !== "draft")
+          .map((p: Project) => {
+            const meta =
+              p.metadata && typeof p.metadata === "object"
+                ? (p.metadata as Record<string, unknown>)
+                : {};
+            const cover =
+              (typeof p.cover_url === "string" && p.cover_url) ||
+              (typeof meta.cover_url === "string" && meta.cover_url) ||
+              null;
+            return { ...p, cover_url: cover, metadata: meta };
+          });
         setProjects(list);
       }
       appListCache = {
@@ -260,6 +275,71 @@ function AppInner() {
     if (p.has_master) return true;
     const s = (p.status || "").toLowerCase();
     return s === "complete" || s === "completed" || s === "produced" || s === "done";
+  }
+
+  function projectCoverUrl(p: Project): string | null {
+    if (p.cover_url) return p.cover_url;
+    const meta = (p.metadata && typeof p.metadata === "object" ? p.metadata : {}) as Record<
+      string,
+      unknown
+    >;
+    const u = meta.cover_url;
+    return typeof u === "string" && u.length > 8 ? u : null;
+  }
+
+  /** Compress image to ~512px JPEG data URL for metadata.cover_url (no extra storage route). */
+  async function fileToCoverDataUrl(file: File): Promise<string> {
+    const bitmap = await createImageBitmap(file);
+    const max = 512;
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unavailable");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return canvas.toDataURL("image/jpeg", 0.82);
+  }
+
+  async function updateProjectCover(projectId: string, dataUrl: string) {
+    const res = await fetch(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ metadata: { cover_url: dataUrl } }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(typeof j.error === "string" ? j.error : "Could not save cover");
+    }
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              cover_url: dataUrl,
+              metadata: { ...(p.metadata || {}), cover_url: dataUrl },
+            }
+          : p
+      )
+    );
+    if (appListCache) {
+      appListCache = {
+        ...appListCache,
+        at: Date.now(),
+        projects: appListCache.projects.map((p) =>
+          p.id === projectId
+            ? {
+                ...p,
+                cover_url: dataUrl,
+                metadata: { ...(p.metadata || {}), cover_url: dataUrl },
+              }
+            : p
+        ),
+      };
+    }
   }
 
   function matchesLibraryQuery(p: Project, extra = "") {
@@ -674,42 +754,140 @@ function AppInner() {
     );
   }
 
-  function ProjectRow({ p, meta }: { p: Project; meta: string }) {
-    const isReady = isFinishedSong(p);
+  function ProjectCoverFallback({ seed }: { seed: string }) {
+    // Deterministic gradient from title/id (same idea as CoverArt)
+    let s = 0;
+    for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0;
+    const grads = [
+      ["#3A2E52", "#0B0A0F"],
+      ["#2E4A4A", "#0B0A0F"],
+      ["#4A2E3A", "#0B0A0F"],
+      ["#39422E", "#0B0A0F"],
+      ["#2E3A4A", "#0B0A0F"],
+      ["#4A3A2E", "#0B0A0F"],
+    ];
+    const [a, b] = grads[s % grads.length];
     return (
-      <div style={rowStyle}>
-        <Link
-          href={`/app/studio/${p.id}`}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            flex: 1,
-            minWidth: 0,
-            textDecoration: "none",
-            color: "inherit",
-          }}
-        >
-          <CoverArt seed={p.title || p.id} size={48} />
-          <div style={rowBody}>
-            <div style={rowTitle}>{p.title}</div>
-            <div style={rowMeta}>{meta}</div>
-          </div>
-        </Link>
-        <BeatMoreButton
-          active={projectMenu?.id === p.id}
-          onClick={() =>
-            setProjectMenu({
-              id: p.id,
-              title: p.title,
-              meta,
-              isReady,
-            })
-          }
-        />
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          background: `linear-gradient(145deg, ${a}, ${b})`,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <span style={{ fontSize: 36, opacity: 0.85 }} aria-hidden>
+          ♪
+        </span>
       </div>
     );
   }
+
+  function ProjectRow({ p, meta }: { p: Project; meta: string }) {
+    const isReady = isFinishedSong(p);
+    const cover = projectCoverUrl(p);
+    const relative =
+      p.updated_at
+        ? (() => {
+            try {
+              const d = new Date(p.updated_at);
+              const sec = Math.max(0, (Date.now() - d.getTime()) / 1000);
+              if (sec < 60) return "just now";
+              if (sec < 3600) return `${Math.floor(sec / 60)} min ago`;
+              if (sec < 86400) return `${Math.floor(sec / 3600)} hours ago`;
+              if (sec < 86400 * 7) return `${Math.floor(sec / 86400)} days ago`;
+              return d.toLocaleDateString();
+            } catch {
+              return meta;
+            }
+          })()
+        : meta;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+        <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
+          <Link
+            href={`/app/studio/${p.id}`}
+            style={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+              borderRadius: 16,
+              overflow: "hidden",
+              textDecoration: "none",
+              color: "inherit",
+              border: `1px solid ${C.border}`,
+              background: C.surface,
+              boxShadow: C.cardShadow || "0 8px 24px rgba(0,0,0,0.2)",
+            }}
+          >
+            {cover ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={cover}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              />
+            ) : (
+              <ProjectCoverFallback seed={p.id + (p.title || "")} />
+            )}
+          </Link>
+          <div
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 2,
+            }}
+          >
+            <BeatMoreButton
+              active={projectMenu?.id === p.id}
+              onClick={() =>
+                setProjectMenu({
+                  id: p.id,
+                  title: p.title,
+                  meta,
+                  isReady,
+                })
+              }
+            />
+          </div>
+        </div>
+        <div style={{ padding: "0 2px", minWidth: 0 }}>
+          <Link
+            href={`/app/studio/${p.id}`}
+            style={{
+              display: "block",
+              textDecoration: "none",
+              color: C.text,
+              fontWeight: 700,
+              fontSize: 15,
+              letterSpacing: -0.2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {p.title}
+          </Link>
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: 12,
+              color: C.textFaint,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {relative}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
 
   const activeNav = tab === "library" ? "library" : tab === "profile" ? "profile" : "home";
 
@@ -758,19 +936,29 @@ function AppInner() {
             >
               Recent projects
             </div>
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
+            <div
+              className="dash-project-grid"
+              style={{
+                marginTop: 14,
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 16,
+              }}
+            >
+              {loading && <p style={{ color: C.textMuted, gridColumn: "1 / -1" }}>Loading…</p>}
               {!loading && projects.length === 0 && (
-                <EmptyState
-                  scene="home"
-                  title="Nothing on the deck yet"
-                  description="Your first song starts in Studio — drop a beat, follow the plan, and hit record."
-                  action={
-                    <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
-                      Open Studio
-                    </button>
-                  }
-                />
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <EmptyState
+                    scene="home"
+                    title="Nothing on the deck yet"
+                    description="Your first song starts in Studio — drop a beat, follow the plan, and hit record."
+                    action={
+                      <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                        Open Studio
+                      </button>
+                    }
+                  />
+                </div>
               )}
               {projects.slice(0, 12).map((p) => (
                 <ProjectRow
@@ -1968,6 +2156,30 @@ function AppInner() {
                     icon: "console",
                     label: "Open Console",
                     onClick: () => router.push(`/app/console/${projectMenu.id}`),
+                  },
+                  {
+                    key: "cover",
+                    icon: "download",
+                    label: "Change cover art",
+                    onClick: () => {
+                      const id = projectMenu.id;
+                      const input = document.getElementById(
+                        "project-cover-file-input"
+                      ) as HTMLInputElement | null;
+                      if (!input) return;
+                      input.onchange = async () => {
+                        const file = input.files?.[0];
+                        input.value = "";
+                        if (!file || !file.type.startsWith("image/")) return;
+                        try {
+                          const dataUrl = await fileToCoverDataUrl(file);
+                          await updateProjectCover(id, dataUrl);
+                        } catch (e) {
+                          alert(e instanceof Error ? e.message : "Could not update cover");
+                        }
+                      };
+                      input.click();
+                    },
                   },
                   ...(projectMenu.isReady
                     ? [
