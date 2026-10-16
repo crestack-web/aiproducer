@@ -219,16 +219,190 @@ export function compressStereo(s: PcmStereo, p: CompressorParams): void {
 }
 
 /** Gentle noise gate / expander. */
-export function gateInPlace(buf: Float32Array, sampleRate: number, thresholdDb: number): void {
+export function gateInPlace(
+  buf: Float32Array,
+  sampleRate: number,
+  thresholdDb: number,
+  residual = 0.15
+): void {
   const thr = dbToGain(thresholdDb);
+  const floor = Math.max(0.02, Math.min(0.35, residual));
   const rel = Math.exp(-1 / (0.05 * sampleRate));
   let env = 0;
   for (let i = 0; i < buf.length; i++) {
     const x = buf[i] || 0;
     const a = Math.abs(x);
     env = a > env ? a : rel * env + (1 - rel) * a;
-    const open = env >= thr ? 1 : Math.max(0.15, env / (thr + 1e-9));
+    const open = env >= thr ? 1 : Math.max(floor, env / (thr + 1e-9));
     buf[i] = x * open;
+  }
+}
+
+/**
+ * Spectral noise reduction (Wiener-style STFT).
+ * Learns a noise profile from the quietest frames, then attenuates bins
+ * that look like that noise while leaving loud vocal energy mostly intact.
+ * amount 0–1 (0.35 ≈ moderate, 0.7+ ≈ aggressive traffic/room cleanup).
+ */
+export function spectralNoiseReduceInPlace(
+  buf: Float32Array,
+  sampleRate: number,
+  amount: number
+): void {
+  const a = Math.max(0, Math.min(1, amount));
+  if (a < 0.03 || buf.length < 2048) return;
+
+  const N = 2048;
+  const hop = 512;
+  const bins = N / 2;
+  const nFrames = Math.max(1, Math.floor((buf.length - N) / hop) + 1);
+
+  // Hann window
+  const win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / N));
+
+  // Simple real FFT via DFT on even/odd (Radix-2 iterative)
+  function fft(re: Float32Array, im: Float32Array) {
+    const n = re.length;
+    // bit reverse
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        const tr = re[i];
+        re[i] = re[j];
+        re[j] = tr;
+        const ti = im[i];
+        im[i] = im[j];
+        im[j] = ti;
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (-2 * Math.PI) / len;
+      const wlenRe = Math.cos(ang);
+      const wlenIm = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let wRe = 1;
+        let wIm = 0;
+        for (let j = 0; j < len / 2; j++) {
+          const uRe = re[i + j];
+          const uIm = im[i + j];
+          const vRe = re[i + j + len / 2] * wRe - im[i + j + len / 2] * wIm;
+          const vIm = re[i + j + len / 2] * wIm + im[i + j + len / 2] * wRe;
+          re[i + j] = uRe + vRe;
+          im[i + j] = uIm + vIm;
+          re[i + j + len / 2] = uRe - vRe;
+          im[i + j + len / 2] = uIm - vIm;
+          const nwRe = wRe * wlenRe - wIm * wlenIm;
+          wIm = wRe * wlenIm + wIm * wlenRe;
+          wRe = nwRe;
+        }
+      }
+    }
+  }
+  function ifft(re: Float32Array, im: Float32Array) {
+    for (let i = 0; i < re.length; i++) im[i] = -im[i];
+    fft(re, im);
+    const inv = 1 / re.length;
+    for (let i = 0; i < re.length; i++) {
+      re[i] *= inv;
+      im[i] = -im[i] * inv;
+    }
+  }
+
+  // Frame energy for noise-profile selection
+  const frameRms = new Float32Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
+    const off = f * hop;
+    let s = 0;
+    for (let i = 0; i < N; i++) {
+      const x = (buf[off + i] || 0) * win[i];
+      s += x * x;
+    }
+    frameRms[f] = Math.sqrt(s / N);
+  }
+  const sorted = Array.from(frameRms).sort((x, y) => x - y);
+  const quietCut = sorted[Math.max(0, Math.floor(nFrames * 0.12))] || 0;
+  // Prefer quiet frames, but keep at least a few
+  let quietCount = 0;
+  for (let f = 0; f < nFrames; f++) if (frameRms[f] <= quietCut * 1.15) quietCount++;
+  if (quietCount < 3) quietCount = Math.min(nFrames, Math.max(3, Math.floor(nFrames * 0.08)));
+
+  const noisePow = new Float32Array(bins + 1);
+  let noiseFrames = 0;
+  const re = new Float32Array(N);
+  const im = new Float32Array(N);
+  for (let f = 0; f < nFrames; f++) {
+    if (noiseFrames >= quietCount && frameRms[f] > quietCut * 1.15) continue;
+    if (frameRms[f] > quietCut * 1.15 && noiseFrames >= 3) continue;
+    const off = f * hop;
+    for (let i = 0; i < N; i++) {
+      re[i] = (buf[off + i] || 0) * win[i];
+      im[i] = 0;
+    }
+    fft(re, im);
+    for (let k = 0; k <= bins; k++) {
+      const pr = re[k] || 0;
+      const pi = im[k] || 0;
+      noisePow[k] += pr * pr + pi * pi;
+    }
+    noiseFrames++;
+    if (noiseFrames >= Math.max(quietCount, 8)) break;
+  }
+  if (noiseFrames < 1) return;
+  for (let k = 0; k <= bins; k++) noisePow[k] /= noiseFrames;
+
+  // Over-subtraction grows with amount; spectral floor prevents musical noise
+  const alpha = 1.2 + a * 2.8; // 1.2 … 4.0
+  const beta = 0.02 + (1 - a) * 0.08; // residual floor 0.02–0.1
+  // Protect low-mid speech formants slightly less aggressively
+  const out = new Float32Array(buf.length);
+  const norm = new Float32Array(buf.length);
+
+  for (let f = 0; f < nFrames; f++) {
+    const off = f * hop;
+    for (let i = 0; i < N; i++) {
+      re[i] = (buf[off + i] || 0) * win[i];
+      im[i] = 0;
+    }
+    fft(re, im);
+    for (let k = 0; k <= bins; k++) {
+      const pr = re[k] || 0;
+      const pi = im[k] || 0;
+      const p = pr * pr + pi * pi;
+      const np = noisePow[k] || 1e-20;
+      // Wiener-ish gain
+      let g = (p - alpha * np) / (p + 1e-20);
+      if (g < beta) g = beta;
+      if (g > 1) g = 1;
+      // Taper protection around 300–3500 Hz (speech) when signal >> noise
+      if (k > 0) {
+        const hz = (k * sampleRate) / N;
+        if (hz >= 300 && hz <= 3500 && p > np * 8) {
+          g = Math.max(g, 0.55 + 0.45 * (1 - a * 0.35));
+        }
+      }
+      // Blend with dry by amount so low settings stay gentle
+      g = 1 - a * (1 - g);
+      re[k] = pr * g;
+      im[k] = pi * g;
+      if (k > 0 && k < bins) {
+        re[N - k] = re[k];
+        im[N - k] = -im[k];
+      }
+    }
+    ifft(re, im);
+    for (let i = 0; i < N; i++) {
+      const idx = off + i;
+      if (idx >= buf.length) break;
+      out[idx] += (re[i] || 0) * win[i];
+      norm[idx] += win[i] * win[i];
+    }
+  }
+  for (let i = 0; i < buf.length; i++) {
+    const nrm = norm[i] || 1e-12;
+    buf[i] = out[i] / nrm;
   }
 }
 

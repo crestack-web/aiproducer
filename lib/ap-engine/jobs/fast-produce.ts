@@ -24,6 +24,7 @@ import {
   applyEqStereo,
   highPassInPlace,
   gateInPlace,
+  spectralNoiseReduceInPlace,
   deEssInPlace,
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
@@ -84,6 +85,7 @@ export type FastTrackFx = {
   springMod?: number;
   deEss?: number;
   gate?: number;
+  noiseReduce?: number;
   highPassHz?: number;
   lowPassHz?: number;
   limiter?: number;
@@ -261,6 +263,7 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     (fx.springMix && fx.springMix > 0.02) ||
     (fx.deEss && fx.deEss > 0.02) ||
     (fx.gate && fx.gate > 0.02) ||
+    (fx.noiseReduce && fx.noiseReduce > 0.02) ||
     (fx.highPassHz && fx.highPassHz > 20) ||
     (fx.chorus && fx.chorus > 0.02) ||
     (fx.doubler && fx.doubler > 0.02) ||
@@ -311,10 +314,17 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     highPassInPlace(pcm.right, pcm.sampleRate, 400 + a * 400);
     applyEqStereo(pcm, [{ type: "highshelf", freq: 2800, gainDb: -8 * a, q: 0.7 }]);
   }
+  // Spectral denoise first (stationary traffic/room under quieter speech)
+  if (fx.noiseReduce && fx.noiseReduce > 0.02) {
+    spectralNoiseReduceInPlace(pcm.left, pcm.sampleRate, fx.noiseReduce);
+    spectralNoiseReduceInPlace(pcm.right, pcm.sampleRate, fx.noiseReduce);
+  }
   if (fx.gate && fx.gate > 0.02) {
-    const thr = -48 + fx.gate * 18;
-    gateInPlace(pcm.left, pcm.sampleRate, thr);
-    gateInPlace(pcm.right, pcm.sampleRate, thr);
+    // Stronger residual floor drop as gate amount rises
+    const thr = -52 + fx.gate * 22;
+    const residual = Math.max(0.03, 0.18 - fx.gate * 0.12);
+    gateInPlace(pcm.left, pcm.sampleRate, thr, residual);
+    gateInPlace(pcm.right, pcm.sampleRate, thr, residual);
   }
   if (fx.deEss && fx.deEss > 0.02) {
     deEssInPlace(pcm.left, pcm.sampleRate, fx.deEss);

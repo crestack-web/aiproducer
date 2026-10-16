@@ -32,6 +32,7 @@ export type LiveFxParams = {
   limiter: number;
   /** Produce-only — ignored in live graph */
   gate: number;
+  noiseReduce: number;
 };
 
 export type LiveFxCapability =
@@ -63,6 +64,7 @@ export const LIVE_FX_CAPABILITY: Record<string, LiveFxCapability> = {
   limiter: "approximate", // soft-clip + compressor, not brick-wall look-ahead
   width: "approximate", // stereo balance proxy, not M/S
   gate: "produce_only",
+  noiseReduce: "produce_only",
   rotorMix: "produce_only",
   rotorSpeed: "produce_only",
   rotorDepth: "produce_only",
@@ -407,6 +409,7 @@ export function createLiveTrackFxGraph(
 
     // gate ignored in live — produce_only
     void fx.gate;
+    void fx.noiseReduce;
   }
 
   return {
@@ -459,6 +462,7 @@ export function trackFxToLiveParams(fx: Record<string, number>): LiveFxParams {
     doubler: n("doubler"),
     limiter: n("limiter"),
     gate: n("gate"),
+    noiseReduce: n("noiseReduce"),
   };
 }
 

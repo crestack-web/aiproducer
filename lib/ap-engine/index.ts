@@ -85,6 +85,7 @@ export type TrackFxInput = {
   springMod?: number;
   deEss?: number;
   gate?: number;
+  noiseReduce?: number;
   highPassHz?: number;
   lowPassHz?: number;
   limiter?: number;

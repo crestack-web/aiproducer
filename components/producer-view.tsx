@@ -110,6 +110,7 @@ export type TrackFx = {
   // —— Pro dynamics / cleanup ——
   deEss: number; // 0–1
   gate: number; // 0–1 threshold intensity
+  noiseReduce: number; // 0–1 spectral denoise strength
   highPassHz: number; // 0 = off, else Hz
   lowPassHz: number; // 0 = off, else Hz
   limiter: number; // 0–1
@@ -145,6 +146,7 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   springMod: 0.2,
   deEss: 0,
   gate: 0,
+  noiseReduce: 0,
   highPassHz: 0,
   lowPassHz: 0,
   limiter: 0,
@@ -162,6 +164,7 @@ export function rackFromFx(fx: TrackFx): string[] {
   if (n(fx.compress) > 0.02) out.push("compress");
   if (n(fx.deEss) > 0.02) out.push("deess");
   if (n(fx.gate) > 0.02) out.push("gate");
+  if (n(fx.noiseReduce) > 0.02) out.push("denoise");
   if (n(fx.limiter) > 0.02) out.push("limiter");
   if (n(fx.saturation) > 0.02) out.push("sat");
   if (n(fx.eqLowDb) > 0.05 || n(fx.eqMidDb) > 0.05 || n(fx.eqHighDb) > 0.05 || n(fx.air) > 0.02)
@@ -8912,6 +8915,7 @@ function TrackFxPanel({
     { id: "compress", label: "Compressor", group: "dynamics", accent: "#60A5FA", keys: ["compress"] },
     { id: "deess", label: "De-esser", group: "dynamics", accent: "#A78BFA", keys: ["deEss"] },
     { id: "gate", label: "Noise gate", group: "dynamics", accent: "#94A3B8", keys: ["gate"] },
+    { id: "denoise", label: "Noise remover", group: "dynamics", accent: "#67E8F9", keys: ["noiseReduce"] },
     { id: "limiter", label: "Soft limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"] },
     { id: "sat", label: "Saturation", group: "dynamics", accent: "#FBBF24", keys: ["saturation"] },
     { id: "eq", label: "EQ", group: "tone", accent: "#38BDF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"] },
@@ -8955,6 +8959,8 @@ function TrackFxPanel({
         return { deEss: 0.3 };
       case "gate":
         return { gate: 0.25 };
+      case "denoise":
+        return { noiseReduce: 0.55 };
       case "limiter":
         return { limiter: 0.25 };
       case "sat":
@@ -9446,6 +9452,18 @@ function TrackFxPanel({
           </div>,
           <>{knob("gate", "Amount", 0, 1, 0.01, accent, "lg")}</>
         );
+      case "denoise":
+        return wrap(
+          <div style={{ height: 56, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px", color: accent, fontSize: 12, fontWeight: 700 }}>
+            Spectral clean · {Math.round((Number(fx.noiseReduce) || 0) * 100)}%
+          </div>,
+          <>
+            {knob("noiseReduce", "Strength", 0, 1, 0.01, accent, "lg")}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
+              Removes stationary background (traffic, fans, room). Best on Produce. Try 0.5–0.75 for distant cars.
+            </div>
+          </>
+        );
       case "limiter":
         return wrap(
           <CompCurve amount={(Number(fx.limiter) || 0) * 0.9} />,
@@ -9776,9 +9794,11 @@ function TrackFxPanel({
               </div>
             )}
 
-            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate") && (
+            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise") && (
               <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, textAlign: "center" }}>
-                {modalDef.id === "gate"
+                {modalDef.id === "denoise"
+                  ? "Noise remover applies on Produce (spectral)"
+                  : modalDef.id === "gate"
                   ? "Noise gate applies on Produce"
                   : "Creative effect applies on Produce"}
               </p>

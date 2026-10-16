@@ -29,6 +29,7 @@ export type TrackFxShape = {
   springMod: number;
   deEss: number;
   gate: number;
+  noiseReduce: number;
   highPassHz: number;
   lowPassHz: number;
   limiter: number;
@@ -63,6 +64,7 @@ export const FX_DEFAULTS: TrackFxShape = {
   springMod: 0.2,
   deEss: 0,
   gate: 0,
+  noiseReduce: 0,
   highPassHz: 0,
   lowPassHz: 0,
   limiter: 0,

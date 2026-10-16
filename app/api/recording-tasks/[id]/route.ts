@@ -30,6 +30,7 @@ const TrackFxSchema = z.object({
   springMod: z.number().min(0).max(1).optional(),
   deEss: z.number().min(0).max(1).optional(),
   gate: z.number().min(0).max(1).optional(),
+  noiseReduce: z.number().min(0).max(1).optional(),
   highPassHz: z.number().min(0).max(12000).optional(),
   lowPassHz: z.number().min(0).max(20000).optional(),
   limiter: z.number().min(0).max(1).optional(),

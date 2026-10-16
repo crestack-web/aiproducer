@@ -379,6 +379,7 @@ export async function collectVocalsForProduce(
             springMod: Number(fxRaw.springMod) || 0,
             deEss: Number(fxRaw.deEss) || 0,
             gate: Number(fxRaw.gate) || 0,
+            noiseReduce: Number(fxRaw.noiseReduce) || 0,
             highPassHz: Number(fxRaw.highPassHz) || 0,
             lowPassHz: Number(fxRaw.lowPassHz) || 0,
             limiter: Number(fxRaw.limiter) || 0,
