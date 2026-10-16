@@ -6606,44 +6606,6 @@ export function ProducerView({
                     if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
                 >
-                  {/* Sticky track name on lane when side editor collapsed (Riffle-style) */}
-                  {sidebarCollapsed && (
-                    <div
-                      style={{
-                        position: "sticky",
-                        left: 0,
-                        zIndex: 4,
-                        float: "left",
-                        height: "100%",
-                        width: 22,
-                        marginRight: -22,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        pointerEvents: "none",
-                        background:
-                          "linear-gradient(90deg, rgba(11,10,15,0.92) 40%, transparent)",
-                      }}
-                    >
-                      <span
-                        style={{
-                          writingMode: "vertical-rl",
-                          transform: "rotate(180deg)",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          letterSpacing: 0.03,
-                          color: text,
-                          maxHeight: "90%",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          opacity: 0.92,
-                        }}
-                      >
-                        {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
-                      </span>
-                    </div>
-                  )}
                   <div
                     data-layer-id={tr.id}
                     style={{
@@ -6770,32 +6732,34 @@ export function ProducerView({
                         dimmed={dimmed}
                       />
                     )}
-                    {/* Track name on the colored lane (visible even when side editor is collapsed) */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 8,
-                        top: 0,
-                        bottom: 0,
-                        maxWidth: "72%",
-                        display: "flex",
-                        alignItems: "center",
-                        fontSize: clipH >= 40 ? 12 : 10,
-                        fontWeight: 800,
-                        letterSpacing: 0.01,
-                        color: "rgba(255,255,255,0.95)",
-                        textShadow:
-                          "0 1px 2px rgba(0,0,0,0.65), 0 0 8px rgba(0,0,0,0.35)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        pointerEvents: "none",
-                        zIndex: 2,
-                        paddingRight: 8,
-                      }}
-                    >
-                      {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
-                    </div>
+                    {/* Name on clip only when side editor is open (collapsed uses vertical rail name) */}
+                    {!sidebarCollapsed && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: 8,
+                          top: 0,
+                          bottom: 0,
+                          maxWidth: "72%",
+                          display: "flex",
+                          alignItems: "center",
+                          fontSize: clipH >= 40 ? 12 : 10,
+                          fontWeight: 800,
+                          letterSpacing: 0.01,
+                          color: "rgba(255,255,255,0.95)",
+                          textShadow:
+                            "0 1px 2px rgba(0,0,0,0.65), 0 0 8px rgba(0,0,0,0.35)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          pointerEvents: "none",
+                          zIndex: 2,
+                          paddingRight: 8,
+                        }}
+                      >
+                        {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
+                      </div>
+                    )}
                     {/* Region selection on the same recording waveform */}
                     {isTakeEditing && takeSel && takeDurationMs > 0 ? (
                       <div
