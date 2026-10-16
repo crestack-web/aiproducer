@@ -940,6 +940,39 @@ export function ProducerView({
   }, []);
 
   const [fxById, setFxById] = useState<Record<string, TrackFx>>({});
+  /** Always-current FX map for RAF / Web Audio (avoids stale closures). */
+  const fxByIdRef = useRef<Record<string, TrackFx>>({});
+  useEffect(() => {
+    fxByIdRef.current = fxById;
+  }, [fxById]);
+
+  // Restore beat volume / FX from project.metadata.beat_track_fx
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}`);
+        if (!res.ok || cancelled) return;
+        const j = await res.json();
+        const meta =
+          (j.project && j.project.metadata) ||
+          j.metadata ||
+          {};
+        const raw = meta.beat_track_fx;
+        if (!raw || typeof raw !== "object") return;
+        const fx = { ...DEFAULT_TRACK_FX, ...raw } as TrackFx;
+        if (cancelled) return;
+        fxByIdRef.current = { ...fxByIdRef.current, beat: fx };
+        setFxById((prev) => ({ ...prev, beat: fx }));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
   const [fxRackById, setFxRackById] = useState<Record<string, string[]>>({});
   const [automationDoc, setAutomationDoc] = useState<FxAutomationDoc>({ version: 1, lanes: [] });
   const automationDocRef = useRef<FxAutomationDoc>({ version: 1, lanes: [] });
@@ -1487,9 +1520,28 @@ export function ProducerView({
   }
 
   async function persistFx(id: string, fx: TrackFx) {
+    fxByIdRef.current = { ...fxByIdRef.current, [id]: fx };
     setFxById((prev) => ({ ...prev, [id]: fx }));
     setSavingId(id);
     try {
+      // Beat is not a recording_task — store on project.metadata.beat_track_fx
+      if (id === "beat") {
+        if (!projectId) {
+          setSavingId(null);
+          return;
+        }
+        const res = await fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ metadata: { beat_track_fx: fx } }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          setEditMsg(typeof j.error === "string" ? j.error : "Could not save beat volume");
+        }
+        setSavingId(null);
+        return;
+      }
       const res = await fetch(`/api/recording-tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -3389,7 +3441,7 @@ export function ProducerView({
     const autoDoc = automationDocRef.current;
     for (const tr of tracks) {
       const on = isAudible(tr.id, tr.kind);
-      const base = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const base = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
       const overlay = sampleTrackAutomation(autoDoc, tr.id, tMs);
       const fx = { ...base, ...overlay } as TrackFx;
       const graph = fxGraphRef.current.get(tr.id);
@@ -3626,7 +3678,7 @@ export function ProducerView({
       }
 
       const on = isAudible(tr.id, tr.kind);
-      const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+      const fx = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
       const src = ctx.createBufferSource();
       src.buffer = buf;
 
@@ -3678,7 +3730,11 @@ export function ProducerView({
         }
         const a = new Audio(beatTrack.url);
         a.currentTime = Math.max(0, startSec);
-        a.volume = 1;
+        {
+          const bfx = fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
+          const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
+          a.volume = Math.max(0, Math.min(1, lin));
+        }
         monitorAudioRef.current = a;
         void a.play().catch((e) => console.warn("[producer-view] beat HTMLAudio play", e));
       } catch (e) {
@@ -4458,13 +4514,58 @@ export function ProducerView({
     });
   }
 
+  /** Push gain into live Web Audio / HTMLAudio immediately (works mid-playback). */
+  function applyGainNow(trackId: string, gainDb: number, audible: boolean) {
+    const lin = Math.pow(10, gainDb / 20);
+    const ctx = audioCtxRef.current;
+    const t0 = ctx?.currentTime ?? 0;
+    const graph = fxGraphRef.current.get(trackId);
+    if (graph) {
+      try {
+        const fx = {
+          ...(fxByIdRef.current[trackId] || DEFAULT_TRACK_FX),
+          gainDb,
+        };
+        graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), audible);
+      } catch {
+        /* */
+      }
+      return;
+    }
+    const g = gainsRef.current.get(trackId);
+    if (g && ctx) {
+      try {
+        g.gain.setTargetAtTime(audible ? lin : 0, t0, 0.02);
+      } catch {
+        /* */
+      }
+    }
+    if (trackId === "beat" && monitorAudioRef.current) {
+      try {
+        monitorAudioRef.current.volume = audible ? Math.max(0, Math.min(1, lin)) : 0;
+      } catch {
+        /* */
+      }
+    }
+  }
+
   function setGain(trackId: string, value: number, commit = false) {
     if (!trackId) return;
     const gainDb = Math.max(-12, Math.min(12, Math.round(value * 10) / 10));
-    setFxById((prev) => {
-      const cur = prev[trackId] || { ...DEFAULT_TRACK_FX };
-      const next = { ...cur, gainDb };
-      if (commit && next.gainDb !== cur.gainDb) {
+    const cur = fxByIdRef.current[trackId] || { ...DEFAULT_TRACK_FX };
+    const next = { ...cur, gainDb };
+    fxByIdRef.current = { ...fxByIdRef.current, [trackId]: next };
+    let audible = true;
+    try {
+      const kind = tracks.find((x) => x.id === trackId)?.kind || "vocal";
+      audible = isAudible(trackId, kind);
+    } catch {
+      audible = true;
+    }
+    applyGainNow(trackId, gainDb, audible);
+    setFxById((prev) => ({ ...prev, [trackId]: next }));
+    if (commit) {
+      if (next.gainDb !== cur.gainDb) {
         pushConsoleHistory({
           kind: "fx",
           label: "Gain",
@@ -4472,10 +4573,9 @@ export function ProducerView({
           before: { ...cur },
           after: { ...next },
         });
-        void persistFx(trackId, next);
       }
-      return { ...prev, [trackId]: next };
-    });
+      void persistFx(trackId, next);
+    }
   }
 
   // Console keyboard shortcuts (ignore when typing in inputs)
@@ -6141,6 +6241,14 @@ export function ProducerView({
                     aria-label={`Volume ${tr.label}`}
                     title={`Gain ${(fxById[tr.id]?.gainDb ?? 0) >= 0 ? "+" : ""}${(fxById[tr.id]?.gainDb ?? 0).toFixed(1)} dB`}
                     onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setSelectedTrackId(tr.id);
+                    }}
+                    onInput={(e) => {
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, parseFloat((e.target as HTMLInputElement).value), false);
+                    }}
                     onChange={(e) => {
                       setSelectedTrackId(tr.id);
                       setGain(tr.id, parseFloat(e.target.value), false);
@@ -6148,6 +6256,15 @@ export function ProducerView({
                     onPointerUp={(e) => {
                       setSelectedTrackId(tr.id);
                       setGain(tr.id, parseFloat((e.target as HTMLInputElement).value), true);
+                    }}
+                    onMouseUp={(e) => {
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, parseFloat((e.target as HTMLInputElement).value), true);
+                    }}
+                    onTouchEnd={(e) => {
+                      const el = e.target as HTMLInputElement;
+                      setSelectedTrackId(tr.id);
+                      setGain(tr.id, parseFloat(el.value), true);
                     }}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
@@ -6157,11 +6274,12 @@ export function ProducerView({
                     style={{
                       flex: 1,
                       minWidth: 48,
-                      maxWidth: 96,
-                      height: 16,
+                      maxWidth: 110,
+                      height: 28,
                       margin: 0,
                       accentColor: brass,
                       cursor: "pointer",
+                      touchAction: "none",
                     }}
                   />
                   <button
