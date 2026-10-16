@@ -8599,10 +8599,68 @@ function TrackFxPanel({
     if (commit) onCommit(next);
   }
 
+  /** Sensible defaults so "Add effect" is audible and survives reload via track_fx. */
+  function defaultsForPlugin(id: string): Partial<TrackFx> {
+    switch (id) {
+      case "compress":
+        return { compress: 0.35 };
+      case "deess":
+        return { deEss: 0.3 };
+      case "gate":
+        return { gate: 0.25 };
+      case "limiter":
+        return { limiter: 0.25 };
+      case "sat":
+        return { saturation: 0.28 };
+      case "eq":
+        return { air: 0.2 };
+      case "hpf":
+        return { highPassHz: 80 };
+      case "lpf":
+        return { lowPassHz: 14000 };
+      case "telephone":
+        return { telephone: 0.45 };
+      case "reverb":
+        return { reverb: 0.28 };
+      case "plate":
+        return { plateReverb: 0.28 };
+      case "delay":
+        return { delay: 0.22 };
+      case "slap":
+        return { slapDelay: 0.25 };
+      case "chorus":
+        return { chorus: 0.28 };
+      case "doubler":
+        return { doubler: 0.3 };
+      case "rotor":
+        return {
+          rotorMix: 0.32,
+          rotorSpeed: 0.4,
+          rotorDepth: 0.45,
+          rotorWarmth: 0.4,
+          rotorFast: 0,
+        };
+      case "spring":
+        return {
+          springMix: 0.32,
+          springDelay: 0.25,
+          springTension: 0.4,
+          springDamp: 0.35,
+          springMod: 0.25,
+        };
+      default:
+        return {};
+    }
+  }
+
   function addPlugin(id: string) {
     const base = rack.length > 0 ? rack : rackFromFx(fx);
-    if (!base.includes(id)) onRackChange([...base, id]);
-    else onRackChange(base);
+    const nextRack = base.includes(id) ? base : [...base, id];
+    onRackChange(nextRack);
+    // Seed non-zero params so the effect is real (live + Produce + save)
+    const seeded = { ...fx, ...defaultsForPlugin(id) };
+    onChange(seeded);
+    onCommit(seeded);
     setAddOpen(false);
     setModalId(id);
   }
