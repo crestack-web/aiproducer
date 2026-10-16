@@ -4753,8 +4753,6 @@ export function ProducerView({
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
-          WebkitOverflowScrolling: "touch",
-          scrollbarWidth: "none",
           msOverflowStyle: "none",
           boxSizing: "border-box",
         }}
