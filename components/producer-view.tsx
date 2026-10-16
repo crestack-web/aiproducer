@@ -5009,7 +5009,6 @@ export function ProducerView({
               borderRadius: 999,
               border: "none",
               boxSizing: "border-box",
-              flexShrink: 0,
               background:
                 produceUi === "producing"
                   ? "rgba(255,255,255,0.1)"
