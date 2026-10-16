@@ -946,6 +946,8 @@ export function ProducerView({
   }, [automationDoc]);
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  /** Mobile header overflow — keeps transport row minimal */
+  const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
   /** Right-click / long-press context menu on track or clip */
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
@@ -4731,18 +4733,18 @@ export function ProducerView({
           paddingTop: "max(8px, env(safe-area-inset-top))",
         }}
       >
-      {/* Row 1 — tools (fixed height; scroll horizontally — never shrink controls) */}
+      {/* Row 1 — tools. Mobile: minimal transport (no horizontal button dump). */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: isNarrow ? 6 : 8,
-          padding: isNarrow ? "0 10px" : "0 12px",
-          height: isNarrow ? 52 : 56,
-          minHeight: isNarrow ? 52 : 56,
-          maxHeight: isNarrow ? 52 : 56,
+          gap: isNarrow ? 8 : 8,
+          padding: isNarrow ? "0 12px" : "0 12px",
+          height: isNarrow ? 56 : 56,
+          minHeight: isNarrow ? 56 : 56,
+          maxHeight: isNarrow ? 56 : 56,
           flexWrap: "nowrap",
-          overflowX: "auto",
+          overflowX: isNarrow ? "hidden" : "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
@@ -4866,9 +4868,11 @@ export function ProducerView({
           </div>
         )}
 
-        {/* Mobile: spacer so Produce sits toward the right */}
+        {/* Mobile: push transport to the right of logo */}
         {isNarrow && <div style={{ flex: 1, minWidth: 4 }} />}
 
+        {/* Undo/redo — desktop only (mobile: header ⋯ menu) */}
+        {!isNarrow && (
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <button
             type="button"
@@ -4913,6 +4917,7 @@ export function ProducerView({
             ↻
           </button>
         </div>
+        )}
 
         {projectId && !isNarrow ? (
           <div
@@ -4962,7 +4967,7 @@ export function ProducerView({
           </div>
         ) : null}
 
-        {projectId ? (
+        {projectId && !isNarrow ? (
           <button
             type="button"
             onClick={() => setSessionsOpen(true)}
@@ -5000,10 +5005,11 @@ export function ProducerView({
               height: 36,
               minHeight: 36,
               maxHeight: 36,
-              padding: "0 14px",
+              padding: isNarrow ? "0 12px" : "0 14px",
               borderRadius: 999,
               border: "none",
               boxSizing: "border-box",
+              flexShrink: 0,
               background:
                 produceUi === "producing"
                   ? "rgba(255,255,255,0.1)"
@@ -5036,6 +5042,7 @@ export function ProducerView({
           </button>
         ) : null}
 
+        {!isNarrow && (
         <button
           type="button"
           title="Audio interface / microphone"
@@ -5061,6 +5068,7 @@ export function ProducerView({
         >
           🎙
         </button>
+        )}
         <button
           type="button"
           title={isConsoleRecording ? "Stop recording" : "Record vocal into selected track (raw capture, same as Booth)"}
@@ -5129,7 +5137,24 @@ export function ProducerView({
         <button
           type="button"
           onClick={togglePlay}
-          style={{ width: 36, height: 36, minWidth: 36, minHeight: 36, maxHeight: 36, borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 14, cursor: "pointer", flexShrink: 0, boxSizing: "border-box", padding: 0 }}
+          style={{
+            width: isNarrow ? 44 : 36,
+            height: isNarrow ? 44 : 36,
+            minWidth: isNarrow ? 44 : 36,
+            minHeight: isNarrow ? 44 : 36,
+            maxHeight: isNarrow ? 44 : 36,
+            borderRadius: 999,
+            border: "none",
+            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+            color: "#1A1208",
+            fontWeight: 800,
+            fontSize: isNarrow ? 16 : 14,
+            cursor: "pointer",
+            flexShrink: 0,
+            boxSizing: "border-box",
+            padding: 0,
+            boxShadow: isNarrow ? `0 0 0 3px rgba(231,169,97,0.25)` : undefined,
+          }}
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? "❚❚" : "▶"}
@@ -5170,6 +5195,8 @@ export function ProducerView({
         </div>
         )}
 
+        {!isNarrow && (
+          <>
         <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)} aria-label="Zoom out" title="Zoom out">
           <ZoomIcon zoomIn={false} />
         </button>
@@ -5185,6 +5212,8 @@ export function ProducerView({
         >
           <FitViewIcon />
         </button>
+          </>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -5259,6 +5288,30 @@ export function ProducerView({
           <LoopIcon />
         </button>
 
+        {/* Mobile: one overflow control instead of a scrolling toolbar */}
+        {isNarrow && (
+          <button
+            type="button"
+            onClick={() => setHeaderMoreOpen((o) => !o)}
+            style={{
+              ...iconBtn(border, surface, text),
+              width: 36,
+              height: 36,
+              borderRadius: 999,
+              border: headerMoreOpen ? `1px solid ${brass}` : `1px solid ${border}`,
+              color: headerMoreOpen ? brass : text,
+              fontSize: 18,
+              fontWeight: 800,
+              letterSpacing: 0.04,
+            }}
+            aria-label="More tools"
+            aria-expanded={headerMoreOpen}
+            title="More"
+          >
+            ⋯
+          </button>
+        )}
+
         {!isNarrow && (
           <a
             href={libraryHref || "/app"}
@@ -5312,6 +5365,171 @@ export function ProducerView({
           </button>
         )}
       </div>
+
+
+      {/* Mobile overflow sheet — Sessions, undo, mic, zoom, etc. */}
+      {isNarrow && headerMoreOpen && (
+        <div
+          style={{
+            borderBottom: `1px solid ${border}`,
+            background: "rgba(12,10,14,0.98)",
+            padding: "10px 12px 12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              disabled={!undoEnabled}
+              onClick={() => consoleUndo()}
+              style={{ ...iconBtn(border, surface, text), opacity: undoEnabled ? 1 : 0.35 }}
+            >
+              ↺
+            </button>
+            <button
+              type="button"
+              disabled={!redoEnabled}
+              onClick={() => consoleRedo()}
+              style={{ ...iconBtn(border, surface, text), opacity: redoEnabled ? 1 : 0.35 }}
+            >
+              ↻
+            </button>
+            <button
+              type="button"
+              onClick={() => setPxPerSec((z) => Math.max(28, z - 12))}
+              style={iconBtn(border, surface, text)}
+              aria-label="Zoom out"
+            >
+              <ZoomIcon zoomIn={false} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setPxPerSec((z) => Math.min(140, z + 12))}
+              style={iconBtn(border, surface, text)}
+              aria-label="Zoom in"
+            >
+              <ZoomIcon zoomIn={true} />
+            </button>
+            <button
+              type="button"
+              onClick={() => fitTimelineToView()}
+              style={iconBtn(border, surface, text)}
+              aria-label="Fit"
+            >
+              <FitViewIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => setAudioSetupOpen((o) => !o)}
+              disabled={isConsoleRecording}
+              style={{
+                ...iconBtn(border, surface, text),
+                border: audioSetupOpen ? `1px solid ${brass}` : `1px solid ${border}`,
+                color: audioSetupOpen ? brass : text,
+              }}
+              aria-label="Mic"
+            >
+              🎙
+            </button>
+            {projectId ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderMoreOpen(false);
+                  setSessionsOpen(true);
+                }}
+                style={{
+                  height: 36,
+                  padding: "0 14px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: "rgba(0,0,0,0.35)",
+                  color: brass,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Sessions
+              </button>
+            ) : null}
+            {(boothHref || onClose) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderMoreOpen(false);
+                  if (boothHref) window.location.href = boothHref;
+                  else onClose?.();
+                }}
+                style={{
+                  height: 36,
+                  padding: "0 14px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: surface,
+                  color: text,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Booth
+              </button>
+            )}
+            <a
+              href={libraryHref || "/app"}
+              style={{
+                height: 36,
+                padding: "0 14px",
+                borderRadius: 999,
+                border: `1px solid ${border}`,
+                background: surface,
+                color: text,
+                fontWeight: 700,
+                fontSize: 12,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              Library
+            </a>
+          </div>
+          {projectId ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {VIBE_PROFILE_LIST.map((v) => {
+                const active =
+                  (productionDirection?.vibe as string | undefined) === v.vibeKey;
+                return (
+                  <button
+                    key={v.vibeKey}
+                    type="button"
+                    onClick={() => void selectVibe(v.vibeKey)}
+                    style={{
+                      height: 28,
+                      padding: "0 10px",
+                      borderRadius: 999,
+                      border: active ? `1px solid ${brass}` : `1px solid ${border}`,
+                      background: active ? "rgba(240,188,128,0.18)" : "rgba(255,255,255,0.04)",
+                      color: active ? brass : mutedText,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {v.displayName.split(" ")[0]}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Row 2 (mobile) — song name + edit dot */}
       {isNarrow && (
