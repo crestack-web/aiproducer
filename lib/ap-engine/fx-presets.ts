@@ -30,6 +30,9 @@ export type TrackFxShape = {
   deEss: number;
   gate: number;
   noiseReduce: number;
+  voiceChanger: number;
+  voicePitchSemis: number;
+  voiceCharacter: number;
   highPassHz: number;
   lowPassHz: number;
   limiter: number;
@@ -65,6 +68,9 @@ export const FX_DEFAULTS: TrackFxShape = {
   deEss: 0,
   gate: 0,
   noiseReduce: 0,
+  voiceChanger: 0,
+  voicePitchSemis: 0,
+  voiceCharacter: 0,
   highPassHz: 0,
   lowPassHz: 0,
   limiter: 0,

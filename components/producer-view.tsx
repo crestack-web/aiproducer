@@ -111,6 +111,9 @@ export type TrackFx = {
   deEss: number; // 0–1
   gate: number; // 0–1 threshold intensity
   noiseReduce: number; // 0–1 spectral denoise strength
+  voiceChanger: number; // 0–1 wet mix
+  voicePitchSemis: number; // -12…12
+  voiceCharacter: number; // 0 custom … 6 alien
   highPassHz: number; // 0 = off, else Hz
   lowPassHz: number; // 0 = off, else Hz
   limiter: number; // 0–1
@@ -147,6 +150,9 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   deEss: 0,
   gate: 0,
   noiseReduce: 0,
+  voiceChanger: 0,
+  voicePitchSemis: 0,
+  voiceCharacter: 0,
   highPassHz: 0,
   lowPassHz: 0,
   limiter: 0,
@@ -165,6 +171,7 @@ export function rackFromFx(fx: TrackFx): string[] {
   if (n(fx.deEss) > 0.02) out.push("deess");
   if (n(fx.gate) > 0.02) out.push("gate");
   if (n(fx.noiseReduce) > 0.02) out.push("denoise");
+  if (n(fx.voiceChanger) > 0.02) out.push("voice");
   if (n(fx.limiter) > 0.02) out.push("limiter");
   if (n(fx.saturation) > 0.02) out.push("sat");
   if (n(fx.eqLowDb) > 0.05 || n(fx.eqMidDb) > 0.05 || n(fx.eqHighDb) > 0.05 || n(fx.air) > 0.02)
@@ -8929,6 +8936,13 @@ function TrackFxPanel({
     { id: "chorus", label: "Chorus", group: "space", accent: "#A3E635", keys: ["chorus"] },
     { id: "doubler", label: "Vocal doubler", group: "space", accent: "#4ADE80", keys: ["doubler"] },
     {
+      id: "voice",
+      label: "Voice changer",
+      group: "creative",
+      accent: "#F472B6",
+      keys: ["voiceChanger", "voicePitchSemis", "voiceCharacter"],
+    },
+    {
       id: "rotor",
       label: "Rotor Glow",
       group: "creative",
@@ -8961,6 +8975,8 @@ function TrackFxPanel({
         return { gate: 0.25 };
       case "denoise":
         return { noiseReduce: 0.55 };
+      case "voice":
+        return { voiceChanger: 0.85, voicePitchSemis: 4, voiceCharacter: 1 };
       case "limiter":
         return { limiter: 0.25 };
       case "sat":
@@ -9464,6 +9480,57 @@ function TrackFxPanel({
             </div>
           </>
         );
+      case "voice": {
+        const chars: { id: number; label: string; pitch: number }[] = [
+          { id: 1, label: "Higher", pitch: 4 },
+          { id: 2, label: "Lower", pitch: -4 },
+          { id: 3, label: "Chipmunk", pitch: 7 },
+          { id: 4, label: "Deep", pitch: -6 },
+          { id: 5, label: "Robot", pitch: 0 },
+          { id: 6, label: "Alien", pitch: 5 },
+        ];
+        const cur = Math.round(Number(fx.voiceCharacter) || 0);
+        return wrap(
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {chars.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  const next = {
+                    ...fx,
+                    voiceCharacter: c.id,
+                    voicePitchSemis: c.pitch,
+                    voiceChanger: Math.max(Number(fx.voiceChanger) || 0, 0.85),
+                  };
+                  onChange(next);
+                  onCommit(next);
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: cur === c.id ? `1.5px solid ${accent}` : "1px solid rgba(255,255,255,0.12)",
+                  background: cur === c.id ? `${accent}33` : "rgba(0,0,0,0.35)",
+                  color: cur === c.id ? accent : "rgba(255,255,255,0.75)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>,
+          <>
+            {knob("voicePitchSemis", "Pitch", -12, 12, 1, accent, "lg")}
+            {knob("voiceChanger", "Mix", 0, 1, 0.01, accent, "lg")}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
+              Creative pitch + character. Applies on Produce. Pick a preset or set pitch manually.
+            </div>
+          </>
+        );
+      }
       case "limiter":
         return wrap(
           <CompCurve amount={(Number(fx.limiter) || 0) * 0.9} />,
@@ -9794,9 +9861,11 @@ function TrackFxPanel({
               </div>
             )}
 
-            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise") && (
+            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise" || modalDef.id === "voice") && (
               <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, textAlign: "center" }}>
-                {modalDef.id === "denoise"
+                {modalDef.id === "voice"
+                  ? "Voice changer applies on Produce"
+                  : modalDef.id === "denoise"
                   ? "Noise remover applies on Produce (spectral)"
                   : modalDef.id === "gate"
                   ? "Noise gate applies on Produce"

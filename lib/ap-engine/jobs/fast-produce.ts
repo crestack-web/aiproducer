@@ -25,6 +25,7 @@ import {
   highPassInPlace,
   gateInPlace,
   spectralNoiseReduceInPlace,
+  applyVoiceChangerStereo,
   deEssInPlace,
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
@@ -86,6 +87,9 @@ export type FastTrackFx = {
   deEss?: number;
   gate?: number;
   noiseReduce?: number;
+  voiceChanger?: number;
+  voicePitchSemis?: number;
+  voiceCharacter?: number;
   highPassHz?: number;
   lowPassHz?: number;
   limiter?: number;
@@ -264,6 +268,7 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     (fx.deEss && fx.deEss > 0.02) ||
     (fx.gate && fx.gate > 0.02) ||
     (fx.noiseReduce && fx.noiseReduce > 0.02) ||
+    (fx.voiceChanger && fx.voiceChanger > 0.02) ||
     (fx.highPassHz && fx.highPassHz > 20) ||
     (fx.chorus && fx.chorus > 0.02) ||
     (fx.doubler && fx.doubler > 0.02) ||
@@ -318,6 +323,13 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
   if (fx.noiseReduce && fx.noiseReduce > 0.02) {
     spectralNoiseReduceInPlace(pcm.left, pcm.sampleRate, fx.noiseReduce);
     spectralNoiseReduceInPlace(pcm.right, pcm.sampleRate, fx.noiseReduce);
+  }
+  if (fx.voiceChanger && fx.voiceChanger > 0.02) {
+    applyVoiceChangerStereo(pcm.left, pcm.right, pcm.sampleRate, {
+      mix: fx.voiceChanger,
+      pitchSemis: fx.voicePitchSemis ?? 0,
+      character: fx.voiceCharacter ?? 0,
+    });
   }
   if (fx.gate && fx.gate > 0.02) {
     // Stronger residual floor drop as gate amount rises

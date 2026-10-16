@@ -501,6 +501,141 @@ export function limitStereo(s: PcmStereo, ceilingDb: number): void {
   }
 }
 
+
+/**
+ * Grain OLA pitch shift for creative voice changing (wider range than polish).
+ * Keeps output length equal to input (may time-warp slightly at extreme ratios).
+ */
+export function pitchShiftStereo(
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate: number,
+  semitones: number
+): { left: Float32Array; right: Float32Array } {
+  const st = Math.max(-12, Math.min(12, semitones));
+  if (Math.abs(st) < 0.05) {
+    return { left: new Float32Array(left), right: new Float32Array(right) };
+  }
+  const ratio = Math.pow(2, st / 12);
+  const n = left.length;
+  const grainMs = 48;
+  const grain = Math.max(256, Math.floor((sampleRate * grainMs) / 1000));
+  const hop = Math.max(32, Math.floor(grain / 6));
+  const outL = new Float32Array(n);
+  const outR = new Float32Array(n);
+  const win = new Float32Array(grain);
+  for (let i = 0; i < grain; i++) {
+    win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / Math.max(1, grain - 1));
+  }
+  const norm = new Float32Array(n);
+
+  for (let outPos = 0; outPos < n; outPos += hop) {
+    const srcCenter = outPos / ratio;
+    const srcStart = srcCenter - grain / 2;
+    for (let i = 0; i < grain; i++) {
+      const oi = outPos - Math.floor(grain / 2) + i;
+      if (oi < 0 || oi >= n) continue;
+      const si = srcStart + i;
+      let sL = 0;
+      let sR = 0;
+      if (si >= 0 && si < n - 1) {
+        const i0 = Math.floor(si);
+        const f = si - i0;
+        const i1 = Math.min(n - 1, i0 + 1);
+        sL = (left[i0] || 0) * (1 - f) + (left[i1] || 0) * f;
+        sR = (right[i0] || 0) * (1 - f) + (right[i1] || 0) * f;
+      } else if (si >= 0 && si < n) {
+        sL = left[Math.floor(si)] || 0;
+        sR = right[Math.floor(si)] || 0;
+      }
+      const w = win[i];
+      outL[oi] += sL * w;
+      outR[oi] += sR * w;
+      norm[oi] += w;
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const g = norm[i] > 1e-6 ? 1 / norm[i] : 0;
+    outL[i] *= g;
+    outR[i] *= g;
+  }
+  return { left: outL, right: outR };
+}
+
+/**
+ * Voice changer: pitch + character color, mixed with dry.
+ * character: 0 custom, 1 higher, 2 lower, 3 chipmunk, 4 deep, 5 robot, 6 alien
+ * mix 0–1 wet amount; pitchSemis used when character is 0 (custom) or as offset.
+ */
+export function applyVoiceChangerStereo(
+  left: Float32Array,
+  right: Float32Array,
+  sampleRate: number,
+  opts: { mix: number; pitchSemis?: number; character?: number }
+): void {
+  const mix = Math.max(0, Math.min(1, opts.mix));
+  if (mix < 0.02) return;
+
+  let semis = typeof opts.pitchSemis === "number" ? opts.pitchSemis : 0;
+  const character = Math.round(opts.character || 0);
+  // Character packs set a default pitch if user left pitch near 0
+  if (character === 1) semis = semis || 4;
+  else if (character === 2) semis = semis || -4;
+  else if (character === 3) semis = semis || 7;
+  else if (character === 4) semis = semis || -6;
+  else if (character === 5) semis = semis || 0;
+  else if (character === 6) semis = semis || 5;
+
+  const dryL = new Float32Array(left);
+  const dryR = new Float32Array(right);
+
+  let wetL = new Float32Array(left);
+  let wetR = new Float32Array(right);
+
+  if (Math.abs(semis) >= 0.05) {
+    const shifted = pitchShiftStereo(wetL, wetR, sampleRate, semis);
+    wetL = shifted.left;
+    wetR = shifted.right;
+  }
+
+  // Character coloring
+  if (character === 5) {
+    // Robot: mild ring-mod + bit of grit
+    const f = 55;
+    for (let i = 0; i < wetL.length; i++) {
+      const m = Math.sin((2 * Math.PI * f * i) / sampleRate);
+      wetL[i] = (wetL[i] || 0) * (0.55 + 0.45 * m);
+      wetR[i] = (wetR[i] || 0) * (0.55 + 0.45 * m);
+    }
+    saturateInPlace(wetL, 0.35);
+    saturateInPlace(wetR, 0.35);
+  } else if (character === 3 || character === 1) {
+    // Brighter / helium
+    applyBiquadInPlace(wetL, "highshelf", 2500, sampleRate, 3.5, 0.7);
+    applyBiquadInPlace(wetR, "highshelf", 2500, sampleRate, 3.5, 0.7);
+  } else if (character === 4 || character === 2) {
+    applyBiquadInPlace(wetL, "lowshelf", 200, sampleRate, 4, 0.7);
+    applyBiquadInPlace(wetR, "lowshelf", 200, sampleRate, 4, 0.7);
+    applyBiquadInPlace(wetL, "highshelf", 5000, sampleRate, -3, 0.7);
+    applyBiquadInPlace(wetR, "highshelf", 5000, sampleRate, -3, 0.7);
+  } else if (character === 6) {
+    applyBiquadInPlace(wetL, "peak", 1800, sampleRate, 5, 1.2);
+    applyBiquadInPlace(wetR, "peak", 1800, sampleRate, 5, 1.2);
+    const f = 12;
+    for (let i = 0; i < wetL.length; i++) {
+      const m = 1 + 0.08 * Math.sin((2 * Math.PI * f * i) / sampleRate);
+      wetL[i] = (wetL[i] || 0) * m;
+      wetR[i] = (wetR[i] || 0) * m;
+    }
+  }
+
+  const dry = 1 - mix;
+  for (let i = 0; i < left.length; i++) {
+    left[i] = dryL[i] * dry + (wetL[i] || 0) * mix;
+    right[i] = dryR[i] * dry + (wetR[i] || 0) * mix;
+  }
+}
+
 /** Linear resample mono. */
 export function resampleMono(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate) return new Float32Array(input);
