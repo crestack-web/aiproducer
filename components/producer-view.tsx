@@ -6152,54 +6152,71 @@ export function ProducerView({
                       border: "none",
                       color: text,
                       fontWeight: 700,
-                      fontSize: sidebarCollapsed ? 11 : isExpanded ? 14 : 13,
+                      fontSize: sidebarCollapsed ? 10 : isExpanded ? 14 : 13,
                       lineHeight: 1.25,
                       padding: 0,
                       textAlign: "left",
                       cursor: "pointer",
                       width: "100%",
                       minWidth: 0,
+                      height: sidebarCollapsed ? "100%" : undefined,
                       fontFamily: "inherit",
-                      display: sidebarCollapsed ? "none" : "flex",
-                      flexDirection: "row",
+                      display: "flex",
+                      flexDirection: sidebarCollapsed ? "column" : "row",
                       alignItems: "center",
-                      gap: 6,
+                      justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                      gap: sidebarCollapsed ? 2 : 6,
                       overflow: "hidden",
                       flexShrink: 0,
                     }}
+                    title={tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
                   >
+                    {!sidebarCollapsed && (
+                      <span
+                        style={{
+                          color: faint,
+                          fontSize: 10,
+                          fontVariantNumeric: "tabular-nums",
+                          minWidth: 14,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {trackIdx + 1}
+                      </span>
+                    )}
                     <span
-                      style={{
-                        color: faint,
-                        fontSize: 10,
-                        fontVariantNumeric: "tabular-nums",
-                        minWidth: 14,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {trackIdx + 1}
-                    </span>
-                    <span
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                      title={
-                        tr.kind === "vocal"
-                          ? `${tr.label} — double-click to rename`
-                          : tr.label
+                      style={
+                        sidebarCollapsed
+                          ? {
+                              writingMode: "vertical-rl",
+                              transform: "rotate(180deg)",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              letterSpacing: 0.04,
+                              color: text,
+                              maxHeight: "100%",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              lineHeight: 1.1,
+                            }
+                          : {
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              flex: 1,
+                              minWidth: 0,
+                            }
                       }
                     >
                       {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
                     </span>
-                    {isExpanded ? (
-                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
-                    ) : (
-                      <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
-                    )}
+                    {!sidebarCollapsed &&
+                      (isExpanded ? (
+                        <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▾</span>
+                      ) : (
+                        <span style={{ color: faint, fontSize: 10, flexShrink: 0 }}>▸</span>
+                      ))}
                   </button>
                 )}
                 {!sidebarCollapsed && tr.sub && isExpanded && renamingTrackId !== tr.id ? (
@@ -6589,6 +6606,44 @@ export function ProducerView({
                     if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
                 >
+                  {/* Sticky track name on lane when side editor collapsed (Riffle-style) */}
+                  {sidebarCollapsed && (
+                    <div
+                      style={{
+                        position: "sticky",
+                        left: 0,
+                        zIndex: 4,
+                        float: "left",
+                        height: "100%",
+                        width: 22,
+                        marginRight: -22,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        pointerEvents: "none",
+                        background:
+                          "linear-gradient(90deg, rgba(11,10,15,0.92) 40%, transparent)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          writingMode: "vertical-rl",
+                          transform: "rotate(180deg)",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: 0.03,
+                          color: text,
+                          maxHeight: "90%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          opacity: 0.92,
+                        }}
+                      >
+                        {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
+                      </span>
+                    </div>
+                  )}
                   <div
                     data-layer-id={tr.id}
                     style={{
@@ -6715,24 +6770,31 @@ export function ProducerView({
                         dimmed={dimmed}
                       />
                     )}
+                    {/* Track name on the colored lane (visible even when side editor is collapsed) */}
                     <div
                       style={{
                         position: "absolute",
-                        left: 6,
-                        top: 4,
-                        right: 6,
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: "#0B0A0F",
-                        textShadow: "0 0 4px rgba(255,255,255,0.35)",
+                        left: 8,
+                        top: 0,
+                        bottom: 0,
+                        maxWidth: "72%",
+                        display: "flex",
+                        alignItems: "center",
+                        fontSize: clipH >= 40 ? 12 : 10,
+                        fontWeight: 800,
+                        letterSpacing: 0.01,
+                        color: "rgba(255,255,255,0.95)",
+                        textShadow:
+                          "0 1px 2px rgba(0,0,0,0.65), 0 0 8px rgba(0,0,0,0.35)",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                         pointerEvents: "none",
+                        zIndex: 2,
+                        paddingRight: 8,
                       }}
                     >
-                      {tr.label}
-                      {tr.sub ? ` — ${tr.sub}` : ""}
+                      {tr.label || (tr.kind === "beat" ? "Beat" : "Vocal")}
                     </div>
                     {/* Region selection on the same recording waveform */}
                     {isTakeEditing && takeSel && takeDurationMs > 0 ? (
