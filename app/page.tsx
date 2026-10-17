@@ -294,7 +294,10 @@ export default function WelcomePage() {
             </Link>
             <span className="footer-tag">Your voice. Produced.</span>
           </div>
-          <nav className="footer-legal" aria-label="Legal">
+          <nav className="footer-legal" aria-label="Site">
+            <Link href="/how" className="footer-legal-link">
+              How it works
+            </Link>
             <Link href="/privacy" className="footer-legal-link">
               Privacy Policy
             </Link>
