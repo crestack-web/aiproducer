@@ -15,6 +15,7 @@ export default function HowItWorksPage() {
     <>
       <style>{css}</style>
       <div className="notes-page">
+        <div className="notes-ambient" aria-hidden />
         <header className="notes-header">
           <Link href="/" className="notes-logo">
             <img src={STUDIO_LOGO_URL} alt="" width={28} height={28} />
@@ -173,129 +174,163 @@ export default function HowItWorksPage() {
 
 const css = `
   .notes-page{
+    --bg:#050508;
+    --text:#F4F1EC;
+    --muted:#9B96A3;
+    --faint:#5C5866;
+    --border:rgba(255,255,255,.09);
+    --border-hi:rgba(255,255,255,.16);
+    --brass:#E7A961;
+    --brass-soft:rgba(231,169,97,.15);
+    --surface:rgba(255,255,255,.045);
+    position:relative;
     min-height:100vh;
-    background:#F4F1EC;
-    color:#1A1714;
+    background:var(--bg);
+    color:var(--text);
     font-family:Inter,system-ui,-apple-system,sans-serif;
   }
+  .notes-ambient{
+    position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(ellipse at 50% -12%,rgba(123,235,212,.1),transparent 50%),
+      radial-gradient(ellipse at 100% 18%,rgba(231,169,97,.08),transparent 45%);
+  }
   .notes-header{
-    position:sticky;top:0;z-index:10;
+    position:sticky;top:0;z-index:20;
     display:flex;align-items:center;justify-content:space-between;
+    gap:16px;
     padding:14px 20px;
-    background:rgba(244,241,236,.92);
-    backdrop-filter:blur(12px);
-    border-bottom:1px solid rgba(26,23,20,.08);
+    background:rgba(5,5,8,.88);
+    backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--border);
   }
   .notes-logo{
     display:flex;align-items:center;gap:10px;
-    text-decoration:none;color:#1A1714;font-weight:700;font-size:15px;
+    text-decoration:none;color:var(--text);font-weight:700;font-size:15px;
   }
   .notes-logo img{border-radius:8px}
   .notes-label{
-    font-size:13px;color:#6B6560;font-weight:500;
+    font-size:12px;font-weight:600;
+    letter-spacing:.06em;
+    color:var(--brass);
+    text-transform:lowercase;
   }
   .notes-article{
+    position:relative;z-index:1;
     max-width:640px;
     margin:0 auto;
     padding:48px 22px 96px;
   }
   .notes-hero{
     text-align:center;
-    padding:24px 0 40px;
+    padding:28px 0 44px;
   }
   .notes-by{
-    margin:0 0 28px;
-    font-size:14px;color:#8A847C;
+    margin:0 0 32px;
+    font-size:14px;color:var(--faint);
   }
   .notes-edition{
-    margin:0 0 12px;
-    font-size:12px;font-weight:600;
+    margin:0 0 14px;
+    font-size:11px;font-weight:700;
     letter-spacing:.16em;text-transform:uppercase;
-    color:#8A847C;
+    color:var(--brass);
   }
   .notes-hero h1{
     margin:0 0 14px;
     font-family:Fraunces,Georgia,serif;
-    font-weight:600;
-    font-size:clamp(2.4rem,8vw,3.4rem);
-    line-height:1.05;
+    font-weight:500;
+    font-size:clamp(2.35rem,8vw,3.35rem);
+    line-height:1.06;
     letter-spacing:-.03em;
-    color:#111;
+    color:var(--text);
   }
   .notes-date{
     margin:0;
-    font-size:14px;color:#8A847C;
+    font-size:14px;color:var(--muted);
   }
   .notes-body,.notes-section{
-    margin-top:28px;
+    margin-top:32px;
   }
   .notes-lead{
-    font-size:1.15rem;font-weight:500;color:#1A1714;
+    font-size:1.2rem;font-weight:500;color:var(--text);
+    margin:0 0 1em;
   }
   .notes-body p,.notes-section p{
     font-size:1.05rem;
-    line-height:1.65;
-    color:#3F3A36;
-    margin:0 0 1.1em;
+    line-height:1.7;
+    color:var(--muted);
+    margin:0 0 1.15em;
   }
   .notes-section h2{
-    margin:0 0 14px;
+    margin:0 0 16px;
     font-family:Fraunces,Georgia,serif;
-    font-weight:600;
-    font-size:clamp(1.55rem,4.5vw,1.95rem);
+    font-weight:500;
+    font-size:clamp(1.5rem,4.5vw,1.9rem);
     line-height:1.2;
     letter-spacing:-.02em;
-    color:#111;
+    color:var(--text);
   }
   .notes-kicker{
-    margin:0 0 10px;
+    margin:0 0 12px;
     font-size:11px;font-weight:700;
     letter-spacing:.14em;text-transform:uppercase;
-    color:#8A847C;
+    color:var(--brass);
   }
   .notes-rule{
     border:none;
-    border-top:1px solid rgba(26,23,20,.1);
-    margin:40px 0;
+    border-top:1px solid var(--border);
+    margin:44px 0;
   }
   .notes-figure{
-    margin:22px 0 10px;
-    border-radius:16px;
+    margin:24px 0 12px;
+    border-radius:18px;
     overflow:hidden;
-    background:#e8e4dc;
-    border:1px solid rgba(26,23,20,.08);
-    box-shadow:0 18px 40px -24px rgba(0,0,0,.25);
+    background:var(--surface);
+    border:1px solid var(--border);
+    box-shadow:0 24px 48px -28px rgba(0,0,0,.55);
   }
   .notes-figure img{
     display:block;width:100%;height:auto;
   }
   .notes-caption{
     font-size:0.92rem !important;
-    color:#6B6560 !important;
+    color:var(--faint) !important;
     line-height:1.5 !important;
   }
   .notes-cta{
-    margin-top:48px;
+    margin-top:52px;
     text-align:center;
-    padding:36px 20px;
-    border-radius:20px;
-    background:#fff;
-    border:1px solid rgba(26,23,20,.08);
+    padding:40px 22px;
+    border-radius:22px;
+    background:var(--surface);
+    border:1px solid var(--border);
   }
-  .notes-cta h2{margin-bottom:8px}
-  .notes-cta p{margin-bottom:20px}
+  .notes-cta h2{
+    margin:0 0 8px;
+    font-family:Fraunces,Georgia,serif;
+    font-weight:500;
+    font-size:clamp(1.4rem,3.5vw,1.75rem);
+    color:var(--text);
+  }
+  .notes-cta p{
+    margin:0 0 22px;
+    color:var(--muted);
+    font-size:15px;
+  }
   .notes-btn{
     display:inline-flex;align-items:center;justify-content:center;
     padding:12px 26px;border-radius:999px;
     background:linear-gradient(135deg,#E8A04A,#C47820);
     color:#1A1208;font-weight:650;font-size:15px;
     text-decoration:none;
+    box-shadow:0 8px 24px -10px rgba(231,169,97,.45);
   }
+  .notes-btn:hover{filter:brightness(1.05)}
   .notes-back{
-    display:block;margin-top:16px;
-    font-size:14px;color:#6B6560;text-decoration:none;
+    display:block;margin-top:18px;
+    font-size:14px;color:var(--muted);text-decoration:none;
   }
-  .notes-back:hover{color:#1A1714}
+  .notes-back:hover{color:var(--brass)}
   @media (min-width:720px){
     .notes-article{padding:64px 24px 120px}
     .notes-header{padding:16px 28px}
