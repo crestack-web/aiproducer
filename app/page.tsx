@@ -5,6 +5,7 @@ import { WelcomeMusicRail } from "@/components/welcome-music-rail";
 import { WelcomeProductDemo } from "@/components/welcome-product-demo";
 import { WelcomeAnalytics } from "@/components/product-analytics";
 import "./welcome-page.css";
+import { FOOTER_BANNER_SRC } from "@/lib/welcome-footer-banner";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
 
@@ -99,7 +100,7 @@ export default function WelcomePage() {
 
       <section className="footer-banner" aria-label="AP Studio">
         <img
-          src="/welcome/footer-banner.jpg"
+          src={FOOTER_BANNER_SRC}
           alt="AP Studio — record with your real voice"
           className="footer-banner-img"
           width={1600}
