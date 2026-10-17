@@ -59,20 +59,24 @@ export default function WelcomePage() {
 
         <section className="section" id="how">
           <div className="section-head">
-            <h2>From first idea to radio-ready — in 5 steps</h2>
-            <p>Studio plans the song, guides every vocal layer, then cleans, balances, and masters.</p>
+            <p className="section-kicker">How it works</p>
+            <h2>Idea in. Song out. Five plays.</h2>
+            <p>No theory. No blank-page panic. Studio maps the track, coaches every take, then mixes and masters — so you just show up and sing.</p>
           </div>
           <div className="pipeline">
             {[
-              ["1", "Create the beat", "AI instrumental built for vocals — or upload your own."],
-              ["2", "Get a producer plan", "Intro, verse, chorus mapped. Exactly what to record next."],
-              ["3", "Record, guided", "One task at a time. Lead, doubles, harmonies, adlibs."],
-              ["4", "Assemble & polish", "Takes placed, cleaned, balanced into intentional stacks."],
-              ["5", "Master for release", "Radio-ready export without opening a DAW."],
+              ["1", "Drop the beat", "AI builds an instrumental made for vocals — or upload the one already in your head."],
+              ["2", "Get the game plan", "Intro, verse, chorus laid out. You always know the next line to record."],
+              ["3", "Record, one layer at a time", "Lead, doubles, harmonies, adlibs. Guided tasks — not a wall of tracks."],
+              ["4", "Stack & shine", "Best takes placed, cleaned, and balanced into real vocal stacks."],
+              ["5", "Master & ship", "Radio-ready export. Skip the DAW. Keep the credit."],
             ].map(([n, title, body]) => (
               <div className="pipe-row" key={n}>
                 <div className="pipe-num">{n}</div>
-                <div><h3>{title}</h3><p>{body}</p></div>
+                <div className="pipe-body">
+                  <h3>{title}</h3>
+                  <p>{body}</p>
+                </div>
               </div>
             ))}
           </div>
@@ -650,7 +654,7 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel h3{color:var(--text)}
   html[data-theme="light"] .panel p{color:var(--muted)}
   .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
-  .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:0 24px 80px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
+  .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 20px 96px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
   .beta-banner{
     position:relative;
     z-index:30;
@@ -700,7 +704,7 @@ html[data-theme="light"] .chip{
   .primary.lg{font-size:16px;padding:14px 28px}.primary.block,.secondary.block{width:100%;text-align:center}
   .secondary,.ghost{display:inline-flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border-hi);color:var(--text)!important;font-weight:500;font-size:14.5px;padding:12px 20px;border-radius:999px;text-decoration:none}
   .ghost{padding:8px 16px;font-size:14px}
-  .hero{text-align:center;padding:56px 0 40px;max-width:820px;margin:0 auto}
+  .hero{text-align:center;padding:72px 0 48px;max-width:760px;margin:0 auto}
   .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--brass);margin-bottom:18px}
   .eyebrow span{width:6px;height:6px;border-radius:99px;background:var(--signal);box-shadow:0 0 12px var(--signal)}
   h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:clamp(2.1rem,6vw,3.5rem);line-height:1.08;letter-spacing:-.02em;margin:0 0 16px}
@@ -763,15 +767,54 @@ html[data-theme="light"] .chip{
   .task strong{display:block;font-size:13.5px;margin-bottom:2px}.task span{font-size:12.5px;color:var(--muted);line-height:1.4}
   .task-num{width:28px;height:28px;border-radius:8px;background:rgba(231,169,97,.15);color:var(--brass);font-size:12px;font-weight:600;display:grid;place-items:center;flex-shrink:0}
   .showcase-cta{display:flex;width:100%;margin-top:14px;padding:12px 16px;font-size:14px}
-  .section{margin-top:72px}
-  .section-head{text-align:center;max-width:600px;margin:0 auto 32px}
+  .section{margin-top:88px}
+  .section-head{text-align:center;max-width:640px;margin:0 auto 40px}
   .section-head h2{font-family:Fraunces,serif;font-weight:500;font-size:clamp(1.55rem,4vw,2.2rem);margin:0 0 12px}
   .section-head p{color:var(--muted);line-height:1.55;font-size:15px;margin:0}
-  .pipeline{border-radius:20px;border:1px solid var(--border);overflow:hidden;background:rgba(255,255,255,.02);max-width:720px;margin:0 auto}
-  .pipe-row{display:grid;grid-template-columns:48px 1fr;gap:0 14px;padding:18px 20px;border-bottom:1px solid var(--border)}
-  .pipe-row:last-child{border-bottom:none}
-  .pipe-num{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--brass);background:rgba(231,169,97,.15);border:1px solid rgba(231,169,97,.25)}
-  .pipe-row h3{font-size:15.5px;font-weight:600;margin:0 0 4px}.pipe-row p{font-size:14px;color:var(--muted);line-height:1.5;margin:0}
+  .pipeline{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:12px;
+    max-width:920px;
+    margin:0 auto;
+  }
+  @media (min-width:720px){
+    .pipeline{grid-template-columns:1fr 1fr;gap:14px}
+    .pipeline .pipe-row:last-child{grid-column:1 / -1;max-width:460px;margin:0 auto;width:100%}
+  }
+  .pipe-row{
+    display:grid;
+    grid-template-columns:44px 1fr;
+    gap:0 14px;
+    align-items:start;
+    padding:20px 18px;
+    border-radius:18px;
+    border:1px solid var(--border);
+    background:rgba(255,255,255,.03);
+    transition:border-color .2s ease, background .2s ease, transform .2s ease;
+  }
+  .pipe-row:hover{
+    border-color:rgba(231,169,97,.35);
+    background:rgba(231,169,97,.06);
+    transform:translateY(-1px);
+  }
+  .pipe-num{
+    width:40px;height:40px;border-radius:12px;
+    display:grid;place-items:center;
+    font-size:14px;font-weight:700;
+    color:var(--brass);
+    background:rgba(231,169,97,.14);
+    border:1px solid rgba(231,169,97,.28);
+  }
+  .pipe-body h3{font-size:16px;font-weight:650;margin:2px 0 6px;letter-spacing:-.01em}
+  .pipe-body p,.pipe-row p{font-size:14px;color:var(--muted);line-height:1.55;margin:0}
+  .section-kicker{
+    display:inline-block;
+    margin:0 0 10px;
+    font-size:12px;font-weight:700;
+    letter-spacing:.12em;text-transform:uppercase;
+    color:var(--brass);
+  }
   .compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:800px;margin:0 auto}
   .compare-card{padding:22px;border-radius:18px;border:1px solid var(--border);background:var(--surface)}
   .compare-card.yes{border-color:rgba(123,235,212,.35);background:radial-gradient(ellipse at 50% 0%,rgba(123,235,212,.08),transparent 55%),rgba(255,255,255,.04)}
