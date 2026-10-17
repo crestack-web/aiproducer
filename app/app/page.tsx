@@ -805,7 +805,7 @@ function AppInner() {
         : meta;
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
         <div style={{ position: "relative", width: "100%", aspectRatio: "1 / 1" }}>
           <Link
             href={`/app/studio/${p.id}`}
@@ -813,13 +813,13 @@ function AppInner() {
               display: "block",
               width: "100%",
               height: "100%",
-              borderRadius: 16,
+              borderRadius: 12,
               overflow: "hidden",
               textDecoration: "none",
               color: "inherit",
               border: `1px solid ${C.border}`,
               background: C.surface,
-              boxShadow: C.cardShadow || "0 8px 24px rgba(0,0,0,0.2)",
+              boxShadow: C.cardShadow || "0 6px 18px rgba(0,0,0,0.18)",
             }}
           >
             {cover ? (
@@ -861,9 +861,9 @@ function AppInner() {
               display: "block",
               textDecoration: "none",
               color: C.text,
-              fontWeight: 700,
-              fontSize: 15,
-              letterSpacing: -0.2,
+              fontWeight: 650,
+              fontSize: 13,
+              letterSpacing: -0.15,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -898,13 +898,18 @@ function AppInner() {
         style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
       >
         <style>{`
+          .dash-project-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+          }
           @media (min-width: 900px) {
             .dash-content { padding: 32px 8px 56px !important; }
-            .dash-project-grid { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 18px !important; }
+            .dash-project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 16px !important; }
           }
           @media (min-width: 1200px) {
             .dash-content { max-width: 1200px !important; padding: 36px 12px 64px !important; }
-            .dash-project-grid { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+            .dash-project-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 18px !important; }
           }
         `}</style>
 
@@ -1390,8 +1395,17 @@ function AppInner() {
               </div>
             )}
             {libraryTab === "recordings" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
+              <div
+                className="dash-project-grid"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 12,
+                }}
+              >
+                {loading && (
+                  <p style={{ color: C.textMuted, gridColumn: "1 / -1" }}>Loading…</p>
+                )}
                 {!loading &&
                   projects.filter(
                     (p) =>
@@ -1401,16 +1415,18 @@ function AppInner() {
                       ) &&
                       matchesLibraryQuery(p)
                   ).length === 0 && (
-                    <EmptyState
-                      scene="recordings"
-                      title="Your voice belongs here"
-                      description="Every take you record in a session shows up when you open that project. Grab headphones and hit Record."
-                      action={
-                        <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
-                          Start a session
-                        </button>
-                      }
-                    />
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <EmptyState
+                        scene="recordings"
+                        title="Your voice belongs here"
+                        description="Every take you record in a session shows up when you open that project. Grab headphones and hit Record."
+                        action={
+                          <button type="button" style={ctaBtn} onClick={() => router.push("/app/studio")}>
+                            Start a session
+                          </button>
+                        }
+                      />
+                    </div>
                   )}
                 {projects
                   .filter(
