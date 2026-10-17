@@ -15,9 +15,7 @@ export default function WelcomePage() {
       <div className="ambient" aria-hidden />
       <div className="beta-banner" role="status">
         <span className="beta-pill">Beta</span>
-        <span className="beta-copy">
-          AP Studio is in beta — features may change, and we&apos;d love your feedback while we ship.
-        </span>
+        <span className="beta-copy">Features may change</span>
       </div>
       <header className="header">
         <div className="header-inner">
@@ -659,34 +657,31 @@ html[data-theme="light"] .chip{
     display:flex;
     align-items:center;
     justify-content:center;
-    gap:10px;
-    flex-wrap:wrap;
-    padding:9px 16px;
-    background:linear-gradient(90deg, rgba(231,169,97,.16), rgba(123,235,212,.1));
-    border-bottom:1px solid rgba(231,169,97,.28);
-    color:var(--text);
-    font-size:13px;
-    line-height:1.35;
+    gap:8px;
+    padding:6px 14px;
+    background:rgba(231,169,97,.08);
+    border-bottom:1px solid var(--border);
+    font-size:12px;
+    line-height:1.3;
     text-align:center;
   }
   .beta-pill{
     display:inline-flex;
     align-items:center;
-    padding:2px 8px;
+    padding:1px 7px;
     border-radius:999px;
-    background:var(--brass);
-    color:#1a1208;
+    border:1px solid rgba(231,169,97,.4);
+    background:transparent;
+    color:var(--brass);
     font-size:10px;
-    font-weight:800;
-    letter-spacing:.08em;
+    font-weight:700;
+    letter-spacing:.06em;
     text-transform:uppercase;
   }
-  .beta-copy{color:var(--muted);font-weight:500}
+  .beta-copy{color:var(--muted);font-weight:400}
   html[data-theme="light"] .beta-banner{
-    background:linear-gradient(90deg, rgba(231,169,97,.22), rgba(123,235,212,.12));
-    border-bottom-color:rgba(231,169,97,.35);
+    background:rgba(196,120,32,.08);
   }
-  html[data-theme="light"] .beta-copy{color:var(--muted)}
   .header{
     position:relative;z-index:30;width:100%;
     box-sizing:border-box;
