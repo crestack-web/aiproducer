@@ -12,6 +12,7 @@ import {
   type InstrumentParams,
 } from "./types";
 import { ticksToSeconds, patternLengthTicks } from "./time";
+import { scheduleArrangement } from "./schedule";
 
 export type ActiveVoice = {
   stop: (when?: number) => void;
@@ -383,6 +384,111 @@ export function playPattern(
     },
   };
 }
+
+
+/**
+ * Schedule a full-song arrangement from v2 clips using scheduleArrangement.
+ * Uses the same AudioContext and VoicePool as playPattern — no second context.
+ * Pattern-relative notes are converted to song positions (clip offsets, loops, mute/solo).
+ */
+const INSTRUMENTS_SET = new Set<InstrumentId>(["pluck", "synth_lead", "synth_bass", "drum_kit"]);
+
+export function playArrangement(
+  ctx: AudioContext,
+  doc: BeatStudioDoc,
+  opts?: {
+    lookAheadSec?: number;
+    loop?: boolean;
+    pool?: VoicePool;
+    fromTick?: number;
+    toTick?: number;
+  }
+): PatternPlayer {
+  const events = scheduleArrangement(doc, {
+    fromTick: opts?.fromTick,
+    toTick: opts?.toTick,
+  });
+  const lookAhead = opts?.lookAheadSec ?? 0.05;
+  const horizonSec = 0.35;
+  const t0 = ctx.currentTime + lookAhead;
+  const pool = opts?.pool ?? new VoicePool();
+  let stopped = false;
+
+  const songTicks =
+    typeof (doc as BeatStudioDoc).songLengthTicks === "number" && (doc as BeatStudioDoc).songLengthTicks > 0
+      ? (doc as BeatStudioDoc).songLengthTicks
+      : patternLengthTicks(doc.bars, doc.timeSignature, doc.ppq);
+  const songSec = Math.max(0.05, ticksToSeconds(songTicks, doc.tempoBpm, doc.ppq));
+  const shouldLoop = opts?.loop ?? doc.loop ?? false;
+
+  type Rel = {
+    startSec: number;
+    durationSec: number;
+    instrumentId: InstrumentId;
+    pitch: number;
+    velocity: number;
+    params?: InstrumentParams;
+  };
+
+  // Map trackId → instrument params from doc
+  const trackParams = new Map<string, InstrumentParams | undefined>();
+  for (const t of doc.tracks) {
+    trackParams.set(t.id, t.instrumentParams);
+  }
+
+  const rel: Rel[] = events.map((e) => ({
+    startSec: e.startSec,
+    durationSec: Math.max(0.03, e.durationSec),
+    instrumentId: (INSTRUMENTS_SET.has(e.instrumentId as InstrumentId)
+      ? e.instrumentId
+      : "pluck") as InstrumentId,
+    pitch: e.pitch,
+    velocity: e.velocity,
+    params: trackParams.get(e.trackId),
+  }));
+  rel.sort((a, b) => a.startSec - b.startSec);
+
+  const scheduledKeys = new Set<string>();
+
+  function scheduleThrough(untilAbs: number) {
+    if (stopped || rel.length === 0) return;
+    const lastCycle = shouldLoop ? Math.floor((untilAbs - t0) / songSec) + 1 : 0;
+    for (let cycle = 0; cycle <= lastCycle; cycle++) {
+      if (!shouldLoop && cycle > 0) break;
+      for (let i = 0; i < rel.length; i++) {
+        const e = rel[i];
+        const abs = t0 + cycle * songSec + e.startSec;
+        if (abs > untilAbs) continue;
+        if (abs + e.durationSec < ctx.currentTime - 0.05) continue;
+        const key = `${cycle}:${i}:${abs.toFixed(4)}`;
+        if (scheduledKeys.has(key)) continue;
+        scheduledKeys.add(key);
+        playNote(ctx, e.instrumentId, e.pitch, e.velocity, e.durationSec, abs, e.params, pool);
+      }
+    }
+    if (scheduledKeys.size > 4000) scheduledKeys.clear();
+  }
+
+  scheduleThrough(ctx.currentTime + horizonSec);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  function pump() {
+    if (stopped) return;
+    scheduleThrough(ctx.currentTime + horizonSec);
+    timer = setTimeout(pump, 25);
+  }
+  timer = setTimeout(pump, 25);
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pool.stopAll(ctx.currentTime);
+      scheduledKeys.clear();
+    },
+  };
+}
+
 
 export function newNoteId(): string {
   return `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;

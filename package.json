@@ -18,7 +18,7 @@
     "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run test:performance && npm run build",
     "worker": "tsx --tsconfig tsconfig.json workers/production-worker.ts",
     "worker:prod": "tsx workers/production-worker.ts",
-    "test:beat-studio": "node scripts/test-beat-studio.mjs"
+    "test:beat-studio": "node scripts/test-beat-studio.mjs && node scripts/test-beat-studio-arrangement.mjs && node scripts/test-beat-studio-v2-integration.mjs && node scripts/test-beat-studio-arrangement-ops.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
