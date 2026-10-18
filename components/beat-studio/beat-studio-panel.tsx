@@ -192,7 +192,10 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     const ctx = await getCtx();
     const d = docRef.current;
     playT0Ref.current = ctx.currentTime;
-    playerRef.current = playPattern(ctx, d, poolRef.current, { loop: d.loop !== false });
+    playerRef.current = playPattern(ctx, d, {
+      pool: poolRef.current,
+      loop: d.loop !== false,
+    });
     setPlaying(true);
 
     const patternSec = ticksToSeconds(patternLengthTicks(d), d.tempoBpm, d.ppq);
