@@ -63,6 +63,8 @@ type Props = {
   playingSong?: boolean;
   /** Open the pattern editor for a track (BandLab-style) */
   onEditTrack?: (trackId: string) => void;
+  /** Beat / song name shown on the timeline header */
+  songLabel?: string;
 };
 
 export default function ArrangementTimeline({
@@ -71,6 +73,7 @@ export default function ArrangementTimeline({
   playheadTick = null,
   playingSong = false,
   onEditTrack,
+  songLabel,
 }: Props) {
   const [pxPerBar, setPxPerBar] = useState(48);
   const [selected, setSelected] = useState<{ trackId: string; clipId: string } | null>(null);
@@ -138,92 +141,128 @@ export default function ArrangementTimeline({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 12, color: muted, fontWeight: 600 }}>ARRANGEMENT</span>
-        <label style={{ fontSize: 11, color: muted, display: "flex", alignItems: "center", gap: 6 }}>
-          Zoom
-          <input
-            type="range"
-            min={28}
-            max={96}
-            value={pxPerBar}
-            onChange={(e) => setPxPerBar(Number(e.target.value))}
-            style={{ width: 90 }}
-          />
-        </label>
-        {selected && (
-          <>
-            <button
-              type="button"
-              style={chipBtn}
-              onClick={() => {
-                onChange(duplicateClip(doc, selected.trackId, selected.clipId));
-              }}
-            >
-              Duplicate clip
-            </button>
-            <button
-              type="button"
-              style={{ ...chipBtn, borderColor: "rgba(248,113,113,0.4)" }}
-              onClick={() => {
-                onChange(deleteClip(doc, selected.trackId, selected.clipId));
-                setSelected(null);
-              }}
-            >
-              Delete clip
-            </button>
-            <button
-              type="button"
-              style={chipBtn}
-              onClick={() => {
-                const track = doc.tracks.find((t) => t.id === selected.trackId);
-                const clip = track?.clips?.find((c) => c.id === selected.clipId);
-                if (!clip) return;
-                const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? bt;
-                onChange(resizeClip(doc, selected.trackId, selected.clipId, cur + bt, "bar"));
-              }}
-            >
-              +1 bar
-            </button>
-            <button
-              type="button"
-              style={chipBtn}
-              onClick={() => {
-                const track = doc.tracks.find((t) => t.id === selected.trackId);
-                const clip = track?.clips?.find((c) => c.id === selected.clipId);
-                if (!clip) return;
-                const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? bt;
-                onChange(resizeClip(doc, selected.trackId, selected.clipId, Math.max(bt, cur - bt), "bar"));
-              }}
-            >
-              −1 bar
-            </button>
-          </>
-        )}
-      </div>
-
-      {/* Sections strip */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: muted }}>Sections</span>
-        {SECTION_KINDS.filter((k) => k.id !== "custom").map((k) => (
-          <button key={k.id} type="button" style={chipBtn} onClick={() => addSectionAtEnd(k.id)}>
-            + {k.label}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
+      {songLabel ? (
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: brass,
+            letterSpacing: "0.04em",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            padding: "0 2px",
+          }}
+          title={songLabel}
+        >
+          {songLabel}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap", minWidth: 0 }}>
+          <button
+            type="button"
+            onClick={() => setShowTools((v) => !v)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: `1px solid ${border}`,
+              background: showTools ? "rgba(231,169,97,0.15)" : "transparent",
+              color: showTools ? brass : muted,
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            {showTools ? "Hide tools" : "Tools"}
           </button>
-        ))}
+          {selected && (
+            <>
+              <button type="button" style={chipBtn} onClick={() => onChange(duplicateClip(doc, selected.trackId, selected.clipId))}>
+                Duplicate
+              </button>
+              <button
+                type="button"
+                style={{ ...chipBtn, borderColor: "rgba(248,113,113,0.5)", color: "#f87171" }}
+                onClick={() => {
+                  onChange(deleteClip(doc, selected.trackId, selected.clipId));
+                  setSelected(null);
+                }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+          <label style={{ marginLeft: "auto", fontSize: 10, color: muted, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            Zoom
+            <input
+              type="range"
+              min={28}
+              max={80}
+              value={pxPerBar}
+              onChange={(e) => setPxPerBar(Number(e.target.value))}
+              style={{ width: 64 }}
+            />
+          </label>
+        </div>
+        {showTools && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: muted, fontWeight: 600 }}>SECTIONS</span>
+            {SECTION_KINDS.filter((k) => k.id !== "custom").map((k) => (
+              <button key={k.id} type="button" style={chipBtn} onClick={() => addSectionAtEnd(k.id)}>
+                + {k.label}
+              </button>
+            ))}
+            {selected && (
+              <>
+                <button
+                  type="button"
+                  style={chipBtn}
+                  onClick={() => {
+                    const clip = doc.tracks.find((t) => t.id === selected.trackId)?.clips.find((c) => c.id === selected.clipId);
+                    if (!clip) return;
+                    const btLocal = barTicks(doc);
+                    const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? btLocal;
+                    onChange(resizeClip(doc, selected.trackId, selected.clipId, cur + btLocal, "bar"));
+                  }}
+                >
+                  +1 bar
+                </button>
+                <button
+                  type="button"
+                  style={chipBtn}
+                  onClick={() => {
+                    const clip = doc.tracks.find((t) => t.id === selected.trackId)?.clips.find((c) => c.id === selected.clipId);
+                    if (!clip) return;
+                    const btLocal = barTicks(doc);
+                    const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? btLocal;
+                    onChange(resizeClip(doc, selected.trackId, selected.clipId, Math.max(btLocal, cur - btLocal), "bar"));
+                  }}
+                >
+                  −1 bar
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div
         ref={scrollRef}
         style={{
           overflowX: "auto",
+          overflowY: "hidden",
           borderRadius: 12,
           border: `1px solid ${border}`,
           background: surface,
           WebkitOverflowScrolling: "touch",
+          maxWidth: "100%",
+          touchAction: "pan-x",
         }}
       >
-        <div style={{ position: "relative", width: widthPx + 100, minWidth: "100%" }}>
+        <div style={{ position: "relative", width: Math.max(widthPx + 96, 280), minWidth: "100%" }}>
           {/* Section labels */}
           <div style={{ position: "relative", height: 28, marginLeft: 88, borderBottom: `1px solid ${border}` }}>
             {doc.sections.map((s) => (

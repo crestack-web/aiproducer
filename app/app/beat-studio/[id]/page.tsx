@@ -7,13 +7,13 @@ import BeatStudioPanel from "@/components/beat-studio/beat-studio-panel";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 
 /**
- * Standalone Beat Studio MVP — /app/beat-studio/[id]
- * Isolated from Booth vocal recording and Console timeline.
+ * Standalone Beat Studio — /app/beat-studio/[id]
+ * Slim mobile chrome; name lives inside the panel timeline.
  */
 export default function BeatStudioPage() {
   const params = useParams();
   const projectId = String(params?.id || "");
-  const [title, setTitle] = useState("Beat Studio");
+  const [title, setTitle] = useState("Untitled beat");
   const [tempo, setTempo] = useState<number | null>(null);
 
   useEffect(() => {
@@ -34,93 +34,92 @@ export default function BeatStudioPage() {
 
   return (
     <div style={pageStyle}>
-      <div style={ambientStyle} aria-hidden />
       <header style={headerStyle}>
         <Link href="/app" style={logoStyle}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={STUDIO_LOGO_URL} alt="" width={28} height={28} style={{ borderRadius: 8 }} />
-          AP Studio
+          <img src={STUDIO_LOGO_URL} alt="" width={24} height={24} style={{ borderRadius: 6 }} />
+          <span>AP Studio</span>
         </Link>
-        <span style={{ color: "#E7A961", fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>
-          beat studio
-        </span>
+        <span style={badgeStyle}>beat studio</span>
       </header>
       <main style={mainStyle}>
-        <h1 style={h1Style}>{title}</h1>
-        <p style={subStyle}>Program drums, sketch melodies, save the pattern with your project.</p>
-        <BeatStudioPanel projectId={projectId} initialTempo={tempo ?? undefined} />
-        <div style={{ marginTop: 28, display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <BeatStudioPanel
+          projectId={projectId}
+          initialTempo={tempo ?? undefined}
+          initialTitle={title}
+          onTitleChange={setTitle}
+        />
+        <nav style={navStyle}>
           <Link href={`/app/console/${projectId}`} style={linkStyle}>
-            Open Console →
+            Console
           </Link>
           <Link href={`/app/studio/${projectId}`} style={linkStyle}>
-            Open Booth →
+            Booth
           </Link>
           <Link href="/app" style={linkStyle}>
-            ← Library
+            Library
           </Link>
-        </div>
+        </nav>
       </main>
     </div>
   );
 }
 
 const pageStyle: React.CSSProperties = {
-  minHeight: "100vh",
+  minHeight: "100dvh",
   background: "#050508",
   color: "#F4F1EC",
   fontFamily: "Inter, system-ui, sans-serif",
-  position: "relative",
-};
-const ambientStyle: React.CSSProperties = {
-  position: "fixed",
-  inset: 0,
-  pointerEvents: "none",
-  background:
-    "radial-gradient(ellipse at 50% -12%, rgba(123,235,212,.1), transparent 50%), radial-gradient(ellipse at 100% 20%, rgba(231,169,97,.08), transparent 45%)",
+  overflowX: "hidden",
+  maxWidth: "100vw",
 };
 const headerStyle: React.CSSProperties = {
-  position: "sticky",
-  top: 0,
-  zIndex: 10,
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  padding: "14px 20px",
-  background: "rgba(5,5,8,.88)",
-  backdropFilter: "blur(12px)",
-  borderBottom: "1px solid rgba(255,255,255,.09)",
+  padding: "10px 14px",
+  borderBottom: "1px solid rgba(255,255,255,0.06)",
+  position: "sticky",
+  top: 0,
+  zIndex: 30,
+  background: "rgba(5,5,8,0.92)",
+  backdropFilter: "blur(10px)",
 };
 const logoStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: 10,
+  gap: 8,
   color: "#F4F1EC",
   textDecoration: "none",
   fontWeight: 700,
   fontSize: 15,
 };
+const badgeStyle: React.CSSProperties = {
+  color: "#E7A961",
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: "0.06em",
+  textTransform: "lowercase",
+};
 const mainStyle: React.CSSProperties = {
-  position: "relative",
-  zIndex: 1,
-  maxWidth: 900,
+  padding: "10px 12px 24px",
+  maxWidth: 720,
   margin: "0 auto",
-  padding: "28px 20px 80px",
+  width: "100%",
+  boxSizing: "border-box",
+  overflowX: "hidden",
 };
-const h1Style: React.CSSProperties = {
-  fontFamily: "Fraunces, Georgia, serif",
-  fontWeight: 500,
-  fontSize: "clamp(1.5rem, 4vw, 2rem)",
-  margin: "0 0 8px",
-};
-const subStyle: React.CSSProperties = {
-  color: "#9B96A3",
-  margin: "0 0 24px",
-  fontSize: 14,
-  lineHeight: 1.5,
+const navStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 16,
+  justifyContent: "center",
+  marginTop: 20,
+  paddingTop: 12,
+  borderTop: "1px solid rgba(255,255,255,0.06)",
 };
 const linkStyle: React.CSSProperties = {
-  color: "#E7A961",
-  fontSize: 14,
+  color: "rgba(244,241,236,0.55)",
+  fontSize: 12,
+  fontWeight: 600,
   textDecoration: "none",
 };

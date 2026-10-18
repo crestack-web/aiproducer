@@ -60,15 +60,22 @@ function metaFor(id: InstrumentId) {
 
 type StudioView = "studio" | "edit";
 
-type Props = { projectId: string; initialTempo?: number };
+type Props = {
+  projectId: string;
+  initialTempo?: number;
+  initialTitle?: string;
+  onTitleChange?: (title: string) => void;
+};
 
-export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
+export default function BeatStudioPanel({ projectId, initialTempo, initialTitle, onTitleChange }: Props) {
   const [doc, setDoc] = useState<BeatStudioDoc>(() =>
     emptyBeatStudioDoc({ tempoBpm: initialTempo || 90, bars: 2 })
   );
   const [view, setView] = useState<StudioView>("studio");
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [beatName, setBeatName] = useState(initialTitle || "Untitled beat");
+  const [editingName, setEditingName] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +129,10 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   }, []);
 
   useEffect(() => {
+    if (initialTitle) setBeatName(initialTitle);
+  }, [initialTitle]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -135,6 +146,10 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         const loaded = beatStudioFromProjectMetadata(meta);
         if (!cancelled) {
           setDoc(ensureV2(loaded || emptyBeatStudioDoc({ tempoBpm: p?.tempo || initialTempo || 90 })));
+          if (typeof p?.title === "string" && p.title.trim()) {
+            setBeatName(p.title.trim());
+            onTitleChange?.(p.title.trim());
+          }
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Load failed");
@@ -145,7 +160,7 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, initialTempo]);
+  }, [projectId, initialTempo, onTitleChange]);
 
   useEffect(() => {
     return () => {
@@ -295,10 +310,14 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     const saveId = (saveGenRef.current += 1);
     try {
       const payload = serializeBeatStudioDoc(snapshot);
+      const title = beatName.trim().slice(0, 120) || "Untitled beat";
       const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ metadata: { beat_studio: payload } }),
+        body: JSON.stringify({
+          title,
+          metadata: { beat_studio: payload },
+        }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -314,7 +333,7 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     } finally {
       if (saveId === saveGenRef.current) setSaving(false);
     }
-  }, [projectId]);
+  }, [projectId, beatName]);
 
   const loadPreset = useCallback(
     (id: BeatPresetId) => {
@@ -447,33 +466,100 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         flexDirection: "column",
         gap: 10,
         width: "100%",
+        maxWidth: "100%",
         minHeight: "70vh",
-        paddingBottom: view === "studio" ? 88 : 12,
+        paddingBottom: view === "studio" ? 100 : 12,
+        overflowX: "hidden",
+        boxSizing: "border-box",
       }}
     >
-      {/* Top bar */}
+      {/* Top bar — beat name + compact controls */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          flexWrap: "wrap",
+          flexWrap: "nowrap",
+          minWidth: 0,
         }}
       >
         {view === "edit" ? (
-          <button type="button" onClick={closeEditor} style={ghostBtn} aria-label="Back to timeline">
-            ← Studio
+          <button type="button" onClick={closeEditor} style={{ ...ghostBtn, flexShrink: 0 }} aria-label="Back to timeline">
+            ←
           </button>
         ) : null}
-        <div style={{ flex: 1, minWidth: 80 }}>
-          <div style={{ fontWeight: 800, fontSize: 16, color: text }}>
-            {view === "edit" && editMeta ? `${editMeta.emoji} ${editMeta.label}` : "Studio"}
-          </div>
-          <div style={{ fontSize: 11, color: muted }}>
-            {view === "edit" ? "Edit this loop · changes update the timeline" : "Arrange clips · tap an instrument to edit"}
-          </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {view === "edit" && editMeta ? (
+            <div style={{ fontWeight: 800, fontSize: 15, color: text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {editMeta.emoji} {editMeta.label}
+            </div>
+          ) : editingName ? (
+            <input
+              autoFocus
+              value={beatName}
+              maxLength={120}
+              onChange={(e) => setBeatName(e.target.value)}
+              onBlur={() => {
+                setEditingName(false);
+                const t = beatName.trim().slice(0, 120) || "Untitled beat";
+                setBeatName(t);
+                onTitleChange?.(t);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") {
+                  setBeatName(initialTitle || "Untitled beat");
+                  setEditingName(false);
+                }
+              }}
+              aria-label="Beat name"
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: `1px solid ${brass}`,
+                background: "rgba(0,0,0,0.4)",
+                color: text,
+                fontWeight: 800,
+                fontSize: 15,
+                outline: "none",
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingName(true)}
+              title="Rename beat"
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                minWidth: 0,
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  fontWeight: 800,
+                  fontSize: 16,
+                  color: text,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {beatName}
+              </span>
+              <span style={{ fontSize: 10, color: muted }}>Tap to rename</span>
+            </button>
+          )}
         </div>
-        <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <span style={{ fontSize: 10 }}>BPM</span>
           <input
             type="number"
@@ -481,10 +567,10 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
             max={200}
             value={doc.tempoBpm}
             onChange={(e) => setTempo(Number(e.target.value) || 90)}
-            style={{ ...numInput, width: 52 }}
+            style={{ ...numInput, width: 48 }}
           />
         </label>
-        <button type="button" onClick={() => void save()} disabled={saving} style={ghostBtn}>
+        <button type="button" onClick={() => void save()} disabled={saving} style={{ ...ghostBtn, flexShrink: 0 }}>
           {saving ? "…" : "Save"}
         </button>
       </div>
@@ -507,10 +593,11 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
             playheadTick={playheadTick}
             playingSong={playMode === "song" && playing}
             onEditTrack={openTrackEditor}
+            songLabel={beatName}
           />
 
           {/* Compact preset chips */}
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
             {BEAT_PRESETS.map((p) => (
               <button
                 key={p.id}
