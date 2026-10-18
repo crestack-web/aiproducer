@@ -262,3 +262,35 @@ export function passwordResetEmailHtml(opts: {
   const text = `Reset your ${STUDIO_NAME} password: ${opts.resetUrl}`;
   return { subject, html, text };
 }
+
+
+export function sessionInviteEmailHtml(opts: {
+  inviterName: string;
+  projectTitle: string;
+  role: string;
+  joinUrl: string;
+  appUrl: string;
+}): { subject: string; html: string; text: string } {
+  const roleNice =
+    opts.role === "producer" ? "Producer" : opts.role === "listener" ? "Listener" : "Artist";
+  const inviter = opts.inviterName.replace(/[<>&"]/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c] || c)
+  );
+  const title = opts.projectTitle.replace(/[<>&"]/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c] || c)
+  );
+  const subject = `${opts.inviterName} invited you to collaborate on “${opts.projectTitle}” — ${STUDIO_NAME}`;
+  const body = `
+    ${p(`<strong style="color:${BRAND.text}">${inviter}</strong> invited you to an AP Session on <strong style="color:${BRAND.text}">${title}</strong>.`)}
+    ${p(`You’ll join as <strong style="color:${BRAND.brass}">${roleNice}</strong> — record, produce, or listen together.`)}
+    ${p("Don’t have an account yet? Create one free, then open the invite to access the project.")}
+    ${cta(opts.joinUrl, "Open invite & join session")}
+    <p style="margin:16px 0 0;font-size:13px;color:${BRAND.faint};line-height:1.5;word-break:break-all;">
+      Or paste this link:<br/>
+      <a href="${opts.joinUrl}" style="color:${BRAND.brass};">${opts.joinUrl}</a>
+    </p>
+  `;
+  const html = shellEmail("You’re invited to collaborate", body);
+  const text = `${opts.inviterName} invited you to “${opts.projectTitle}” on ${STUDIO_NAME} as ${roleNice}. Join: ${opts.joinUrl}`;
+  return { subject, html, text };
+}
