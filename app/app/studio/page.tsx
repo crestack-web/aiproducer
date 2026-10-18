@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState, type CSSProperties } from "react
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AppShell } from "@/components/app-shell";
+import { stableAvatarSeed } from "@/components/artist-avatar";
 import {
   useBeatAudio,
   BeatPreviewTransport,
@@ -12,7 +13,9 @@ import {
   BeatActionsSheet,
 } from "@/components/beat-preview-player";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
+import { waitForBeatReady } from "@/lib/studio/poll-beat-ready";
 import { useTheme } from "@/lib/theme";
+import { grantedPlanForEmail, planDisplayName, resolveSubscriptionPlan } from "@/lib/subscription-grants";
 import { ApPaywall } from "@/components/ap-paywall";
 
 const GENRES = [
@@ -97,11 +100,17 @@ const STYLE_PRESETS = [
   "Gospel choir pocket",
   "Amapiano night drive",
 ];
-/** Beat length presets (seconds). Free tier covers ≤30s. */
-const LENGTH_PRESETS = [15, 30, 60, 120, 180, 240] as const;
+/** Beat length presets (seconds). Free tier: 60s and 90s only. */
+const LENGTH_PRESETS = [60, 90, 120, 180, 240] as const;
+const FREE_LENGTH_PRESETS = [60, 90] as const;
 /** Estimated USD/sec — override via env on server; client mirror for preview. */
-const COST_PER_SEC_USD = 0.00583;
-const FREE_MAX_SEC = 180;
+/** $1.00 per 2 minutes (120s) — scales with selected length */
+const COST_PER_SEC_USD = 1 / 120;
+function estimateStudioBeatCostUsd(sec: number): number {
+  const s = Math.max(5, Math.min(240, Math.round(sec || 60)));
+  return Math.max(0.25, Math.round(s * COST_PER_SEC_USD * 100) / 100);
+}
+const FREE_MAX_SEC = 90;
 const FREE_GEN_COUNT = 3;
 type Project = {
   id: string;
@@ -147,6 +156,8 @@ function StudioPageInner() {
   const startInConsole = searchParams.get("mode") === "console";
   const { colors: C } = useTheme();
   const [userName, setUserName] = useState("Artist");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -189,7 +200,7 @@ function StudioPageInner() {
 
 
 
-  const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
+  const [beatMode, setBeatMode] = useState<"ai" | "upload" | "create">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -221,7 +232,12 @@ function StudioPageInner() {
           .select("subscription_plan, plan, metadata")
           .eq("id", user.id)
           .maybeSingle();
-        if (cancelled || !profile) return;
+        if (cancelled) return;
+        if (grantedPlanForEmail(user.email)) {
+          setIsPaidPlan(true);
+          return;
+        }
+        if (!profile) return;
         const plan = String(
           (profile as { subscription_plan?: string }).subscription_plan ||
             (profile as { plan?: string }).plan ||
@@ -232,7 +248,7 @@ function StudioPageInner() {
           meta && typeof meta === "object"
             ? String(meta.plan || meta.subscription_plan || "").toLowerCase()
             : "";
-        setIsPaidPlan(plan === "creator" || plan === "pro" || mp === "creator" || mp === "pro");
+        setIsPaidPlan(plan === "creator" || plan === "band" || plan === "pro" || mp === "creator" || mp === "band" || mp === "pro");
       } catch {
         /* stay free */
       }
@@ -258,11 +274,13 @@ function StudioPageInner() {
         .eq("id", user.id)
         .maybeSingle();
       setUserName(profile?.display_name || user.email?.split("@")[0] || "Artist");
+      setUserEmail(user.email || null);
+      setUserId(user.id);
       if (profile?.genre) setGenre(profile.genre);
       const res = await fetch("/api/projects");
       if (res.ok) {
         const json = await res.json();
-        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft" && p.status !== "failed"));
+        setProjects((json.projects || []).filter((p: Project) => p.status !== "draft" && (p.status !== "failed" || p.has_beat)));
       }
       setLoading(false);
     })();
@@ -497,7 +515,40 @@ function StudioPageInner() {
     }
   }
 
+  async function openBeatCreator() {
+    if (creating) return;
+    setCreating(true);
+    setError(null);
+    setLimitMessage(null);
+    try {
+      const createRes = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: prompt.trim() || `${mood} ${genre}`.trim() || "Beat Studio",
+          genre,
+          mood,
+          tempo,
+          prompt: prompt.trim() || undefined,
+        }),
+      });
+      if (!createRes.ok) {
+        const j = await createRes.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start Beat Studio");
+      }
+      const json = await createRes.json();
+      const project = json.project || json;
+      if (!project?.id) throw new Error("No project id");
+      router.push(`/app/beat-studio/${project.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open Beat Studio");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   async function createAndGenerate(opts?: { billable?: boolean }) {
+
     if (creating) return; // one generation at a time (client)
     setCreating(true);
     setError(null);
@@ -507,11 +558,14 @@ function StudioPageInner() {
       if (beatMode === "upload" && !beatFile) throw new Error("Choose a beat file to upload");
 
       // Vague prompt + AI mode → ask for specificity instead of wasting a credit
-      if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC) {
-        // Soft client gate — server remains authoritative for free users
-        setError(
-          `Free beats are limited to ${Math.round(FREE_MAX_SEC / 60)} minutes (${FREE_MAX_SEC}s). Choose ${FREE_MAX_SEC}s or shorter, or upgrade for longer beats.`
-        );
+      if (beatMode === "ai" && beatDurationSec > FREE_MAX_SEC && !opts?.billable) {
+        // Longer than free allowance → open paid-beat purchase modal (not a dead-end error)
+        const cost = estimateStudioBeatCostUsd(beatDurationSec);
+        const msg =
+          `Free beats are limited to ${FREE_MAX_SEC}s. Choose ${FREE_MAX_SEC}s or shorter, or continue with a paid beat (≈ $${cost.toFixed(2)}).`;
+        setLimitMessage(msg);
+        setUpgradeModal({ message: msg, estimatedCostUsd: cost });
+        setError(null);
         setCreating(false);
         return;
       }
@@ -572,35 +626,54 @@ function StudioPageInner() {
             forceBillable: Boolean(opts?.billable),
           }),
         });
+        const beatJson = await beatRes.json().catch(() => ({}));
         if (!beatRes.ok) {
-          const j = await beatRes.json().catch(() => ({}));
-          if (j.errorType === "LIMIT_EXCEEDED" || j.code === "BEAT_GEN_LIMIT") {
+          const j = beatJson as Record<string, unknown>;
+          if (
+            j.errorType === "LIMIT_EXCEEDED" ||
+            j.code === "BEAT_GEN_LIMIT" ||
+            j.code === "FREE_DURATION_EXCEEDED" ||
+            j.code === "FREE_COUNT_EXCEEDED" ||
+            j.code === "SEQUENTIAL_FREE_BLOCKED"
+          ) {
             const details = (j.details || {}) as {
               code?: string;
               estimatedCostUsd?: number;
               canBillable?: boolean;
+              canSubscribe?: boolean;
+              upgradePath?: string;
+              freeMaxDurationSec?: number;
             };
+            const limitCode =
+              (typeof details.code === "string" && details.code) ||
+              (typeof j.code === "string" ? j.code : undefined);
             const msg =
               typeof j.error === "string"
                 ? j.error
                 : "Free beat limit — finish your current free beat, subscribe, or continue with a paid beat.";
             setLimitMessage(msg);
-            if (details.code === "SEQUENTIAL_FREE_BLOCKED") {
-              setLimitMessage(msg);
-              // Do not offer another paid spam path — must finish current free beat first
+            if (limitCode === "PER_SONG_BEAT_GEN_LIMIT" || details.upgradePath === "upload_beat") {
+              setBeatMode("upload");
+              setError(msg);
+            } else if (limitCode === "BEAT_GEN_IN_FLIGHT") {
+              setError(null);
             } else if (
-              details.code === "FREE_COUNT_EXCEEDED" ||
+              limitCode === "FREE_DURATION_EXCEEDED" ||
+              limitCode === "SEQUENTIAL_FREE_BLOCKED" ||
+              limitCode === "FREE_COUNT_EXCEEDED" ||
               details.canBillable
             ) {
+              const cost =
+                typeof details.estimatedCostUsd === "number"
+                  ? details.estimatedCostUsd
+                  : estimateStudioBeatCostUsd(beatDurationSec);
+              setError(null);
               setUpgradeModal({
                 message: msg,
-                estimatedCostUsd:
-                  typeof details.estimatedCostUsd === "number"
-                    ? details.estimatedCostUsd
-                    : Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+                estimatedCostUsd: cost,
               });
-            } else if (details.code === "BEAT_GEN_IN_FLIGHT") {
-              setLimitMessage(msg);
+            } else {
+              setError(msg);
             }
             throw new Error(msg);
           }
@@ -608,15 +681,34 @@ function StudioPageInner() {
             (typeof j.error === "string" && j.error) || "Beat generation failed (not upload)"
           );
         }
+
+        const waitResult = await waitForBeatReady(
+          project.id,
+          beatJson as { status?: string; beat?: { audio_path?: string } | null }
+        );
+        if (!waitResult.ok && waitResult.reason === "failed") {
+          throw new Error("Beat generation failed. Try again.");
+        }
+        // timeout: keep the project — beat may still finish; show it in Your beats
       }
 
-      // Plan build in background — do not block preview. Failure does not roll back the beat.
-      void fetch(`/api/projects/${project.id}/analyze`, { method: "POST" }).then(async (analyzeRes) => {
-        if (!analyzeRes.ok) {
-          const j = await analyzeRes.json().catch(() => ({}));
-          console.warn("analyze/plan", j);
-        }
-      });
+      // AI beats: build section plan in background. Uploaded beats never auto-plan —
+      // artist chooses "Let AP Plan" or "Build from scratch" (or open Console with no plan).
+      if (beatMode === "ai") {
+        void fetch(`/api/projects/${project.id}/analyze`, { method: "POST" }).then(async (analyzeRes) => {
+          if (!analyzeRes.ok) {
+            const j = await analyzeRes.json().catch(() => ({}));
+            console.warn("analyze/plan", j);
+          }
+        });
+      } else {
+        // Mark plan mode pending so Booth does not assume an AI blueprint exists
+        void fetch(`/api/projects/${project.id}/plan`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "set_mode", mode: "scratch" }),
+        }).catch(() => undefined);
+      }
 
       const title =
         beatMode === "upload" && beatFile
@@ -649,7 +741,31 @@ function StudioPageInner() {
       // Auto-load preview in player
       void togglePlayBeat(project.id);
     } catch (e) {
-      if (projectId) await discardFailedProject(projectId);
+      // Never delete a project that already has a beat (poll timeout / UI error after success)
+      if (projectId) {
+        let keep = false;
+        try {
+          const res = await fetch("/api/projects");
+          if (res.ok) {
+            const json = await res.json();
+            const row = (json.projects || []).find((x: Project) => x.id === projectId);
+            if (row?.has_beat || (row?.status && row.status !== "draft" && row.status !== "failed")) {
+              keep = true;
+              setReadyBeat({
+                projectId,
+                title: `${mood} ${genre}`,
+                source: beatMode === "upload" ? "upload" : "ai",
+                genre,
+                mood,
+              });
+              setProjects((json.projects || []).filter((x: Project) => x.status !== "draft" && (x.status !== "failed" || x.has_beat)));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        if (!keep) await discardFailedProject(projectId);
+      }
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setCreating(false);
@@ -663,7 +779,18 @@ function StudioPageInner() {
 
 
   const beats = projects.filter(
-    (p) => p.has_beat || ["beat_ready", "analyzing", "blueprint_ready", "recording", "generating_beat"].includes(p.status)
+    (p) =>
+      p.has_beat ||
+      [
+        "beat_ready",
+        "analyzing",
+        "blueprint_ready",
+        "recording",
+        "generating_beat",
+        "processing",
+        "complete",
+        "completed",
+      ].includes(p.status)
   );
 
   async function downloadBeat(projectId: string, title: string) {
@@ -674,6 +801,17 @@ function StudioPageInner() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
+        if (
+          res.status === 402 ||
+          j.code === "PAYMENT_REQUIRED" ||
+          j.code === "PAYWALL" ||
+          j.reason === "payment_required"
+        ) {
+          setSubscribePaywallProjectId(projectId);
+          setSubscribePaywallOpen(true);
+          setError(null);
+          return;
+        }
         throw new Error(typeof j.error === "string" ? j.error : "Could not download beat");
       }
       const blob = await res.blob();
@@ -760,7 +898,7 @@ function StudioPageInner() {
   });
 
   return (
-    <AppShell active="studio" userName={userName} onSignOut={signOut}>
+    <AppShell active="studio" userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
       <div
         style={{
           width: "100%",
@@ -773,9 +911,6 @@ function StudioPageInner() {
           alignItems: "stretch",
         }}
       >
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: 2, color: C.brass, marginBottom: 10 }}>
-          ◆ STUDIO
-        </div>
         <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.5rem, 2.8vw, 2rem)", fontWeight: 500, margin: "0 0 6px", color: C.text }}>
           Create your beat
         </h1>
@@ -806,10 +941,13 @@ function StudioPageInner() {
             }}
           >
             <button type="button" style={modeTab(beatMode === "ai")} onClick={() => setBeatMode("ai")}>
-              AI beat
+              AP beat
             </button>
             <button type="button" style={modeTab(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
               Upload
+            </button>
+            <button type="button" style={modeTab(beatMode === "create")} onClick={() => setBeatMode("create")}>
+              Beat creator
             </button>
           </div>
 
@@ -994,16 +1132,35 @@ function StudioPageInner() {
                       Duration · {beatDurationSec}s
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
-                      {LENGTH_PRESETS.map((s) => (
-                        <button key={s} type="button" style={chip(beatDurationSec === s)} onClick={() => setBeatDurationSec(s)}>
-                          {s}s
+                      {LENGTH_PRESETS.map((s) => {
+                        const freeLocked = !isPaidPlan && !(FREE_LENGTH_PRESETS as readonly number[]).includes(s);
+                        return (
+                        <button
+                          key={s}
+                          type="button"
+                          style={{
+                            ...chip(beatDurationSec === s && !freeLocked),
+                            opacity: freeLocked ? 0.45 : 1,
+                            cursor: freeLocked ? "not-allowed" : "pointer",
+                          }}
+                          title={freeLocked ? "Longer beats unlock when you subscribe or finish a song." : undefined}
+                          onClick={() => {
+                            if (freeLocked) {
+                              setError("Longer beats unlock when you subscribe or finish a song.");
+                              return;
+                            }
+                            setBeatDurationSec(s);
+                          }}
+                        >
+                          {s}s{freeLocked ? " 🔒" : ""}
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                     <input
                       type="range"
                       min={10}
-                      max={240}
+                      max={(isPaidPlan ? 240 : FREE_MAX_SEC)}
                       step={5}
                       value={beatDurationSec}
                       onChange={(e) => setBeatDurationSec(Number(e.target.value))}
@@ -1015,13 +1172,13 @@ function StudioPageInner() {
                         <>
                           <span style={{ color: C.brass }}>Free · up to {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min</span>
                           {" · "}
-                          Est. cost ~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                          Est. cost ~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}
                           {" · "}AP covers {FREE_GEN_COUNT} gens
                         </>
                       ) : (
                         <>
                           Above free {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min — shorten or upgrade · Est. ~$
-                          {(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}
+                          {estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}
                         </>
                       )}
                     </div>
@@ -1029,7 +1186,7 @@ function StudioPageInner() {
                 )}
               </div>
             </>
-          ) : (
+          ) : beatMode === "upload" ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0" }}>
               <input
                 ref={fileRef}
@@ -1062,6 +1219,26 @@ function StudioPageInner() {
                 {beatFile ? beatFile.name : "WAV, MP3, M4A…"}
               </span>
             </div>
+          ) : (
+            <div
+              style={{
+                padding: "14px 12px",
+                borderRadius: 14,
+                border: `1px solid ${C.border}`,
+                background: C.bgDeep,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 6 }}>
+                Make the beat yourself
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
+                Open Beat Studio — play keys, record a short MIDI pattern, save it with the project.
+                Works alongside AP-generated and uploaded beats.
+              </p>
+              <div style={{ fontSize: 12.5, color: C.textFaint, lineHeight: 1.5 }}>
+                Virtual instrument · Record & play · Optional quantize
+              </div>
+            </div>
           )}
 
           {limitMessage && (
@@ -1085,7 +1262,7 @@ function StudioPageInner() {
                   onClick={() =>
                     setUpgradeModal({
                       message: limitMessage,
-                      estimatedCostUsd: Math.round(beatDurationSec * COST_PER_SEC_USD * 100) / 100,
+                      estimatedCostUsd: estimateStudioBeatCostUsd(beatDurationSec),
                     })
                   }
                   style={{ ...chip(false), borderColor: C.brass, color: C.brass, fontWeight: 650 }}
@@ -1123,14 +1300,14 @@ function StudioPageInner() {
               Free AP beats
             </div>
             We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time; next unlocks after you download a produced song (up to{" "}
-            <strong style={{ color: C.text }}>{Math.max(1, Math.round(FREE_MAX_SEC / 60))} minutes</strong> each).
+            <strong style={{ color: C.text }}>90 seconds</strong> each).
             Generate one at a time — the next free beat unlocks after you{" "}
             <strong style={{ color: C.text }}>record and Produce</strong> the current one.
             After all {FREE_GEN_COUNT} free beats, AP still generates; the{" "}
             <strong style={{ color: C.text }}>beat cost is added to your song download</strong> after Produce.
             <div style={{ marginTop: 6, color: C.text }}>
               This length (~{beatDurationSec}s) estimates{" "}
-              <strong>~${(beatDurationSec * COST_PER_SEC_USD).toFixed(2)}</strong>
+              <strong>~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}</strong>
               {beatDurationSec <= FREE_MAX_SEC
                 ? " — free while sequential free slots remain"
                 : " — above free length; upgrade or shorten"}
@@ -1155,15 +1332,22 @@ function StudioPageInner() {
               opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1,
             }}
             disabled={creating || (beatMode === "upload" && !beatFile)}
-            onClick={() => void createAndGenerate()}
+            onClick={() => {
+              if (beatMode === "create") void openBeatCreator();
+              else void createAndGenerate();
+            }}
           >
             {creating
               ? beatMode === "upload"
                 ? "Uploading & analyzing…"
-                : "Generating your beat…"
+                : beatMode === "create"
+                  ? "Opening Beat Studio…"
+                  : "Generating your beat…"
               : beatMode === "upload"
                 ? "Upload & preview beat"
-                : "Create beat"}
+                : beatMode === "create"
+                  ? "Open Beat Studio"
+                  : "Create beat"}
           </button>
         </div>
 
@@ -1246,6 +1430,70 @@ function StudioPageInner() {
               onSeek={seek}
               onSkip={skip}
             />
+
+            {readyBeat.source === "upload" ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "rgba(0,0,0,0.2)",
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 6 }}>
+                YOUR UPLOADED BEAT
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
+                This is your instrumental — not an AP-generated beat. Choose how you want to record on it,
+                or open Console and import vocals with no plan.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/app/studio/${readyBeat.projectId}?plan=ai`)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: "none",
+                    background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                    color: "#1A1208",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                  }}
+                >
+                  Let AP Plan
+                  <span style={{ display: "block", fontWeight: 500, fontSize: 11, opacity: 0.85, marginTop: 2 }}>
+                    AP listens to your beat and builds a recording plan
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/app/studio/${readyBeat.projectId}?plan=scratch`)}
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: `1px solid ${C.border}`,
+                    background: "transparent",
+                    color: C.text,
+                    fontWeight: 650,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                  }}
+                >
+                  Build from Scratch
+                  <span style={{ display: "block", fontWeight: 500, fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                    Choose your own sections and what to record
+                  </span>
+                </button>
+              </div>
+            </div>
+            ) : (
             <div
               style={{
                 marginTop: 14,
@@ -1256,7 +1504,7 @@ function StudioPageInner() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: C.brass, letterSpacing: 0.04, marginBottom: 8 }}>
-                AI EDIT SECTION{isPaidPlan ? "" : " · Creator / Pro"}
+                AI EDIT SECTION{isPaidPlan ? "" : " · Artist / Band / Label"}
               </div>
               {!isPaidPlan && (
                 <p style={{ margin: "0 0 8px", fontSize: 12, color: C.textMuted, lineHeight: 1.4 }}>
@@ -1334,6 +1582,8 @@ function StudioPageInner() {
               </button>
             </div>
 
+
+            )}
 
             {beatVersions.length > 1 && versionsProjectId === readyBeat.projectId && (
               <div style={{ marginTop: 12 }}>
@@ -1667,8 +1917,8 @@ function StudioPageInner() {
             <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>AI beat editing</div>
             <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
               Reworking intro, verse, chorus, and other sections is included on{" "}
-              <strong style={{ color: C.text }}>Creator</strong> and{" "}
-              <strong style={{ color: C.text }}>Pro</strong>. You can keep the single unedited beat you already generated and continue to record.
+              <strong style={{ color: C.text }}>Artist</strong> and{" "}
+              <strong style={{ color: C.text }}>Band</strong>. You can keep the single unedited beat you already generated and continue to record.
             </p>
             <button
               type="button"
@@ -1742,7 +1992,7 @@ function StudioPageInner() {
       )}
 
 
-      {subscribePaywallOpen && subscribePaywallProjectId ? (
+      {subscribePaywallOpen ? (
         <ApPaywall
           open={subscribePaywallOpen}
           onClose={() => {
@@ -1799,16 +2049,33 @@ function StudioPageInner() {
               color: C.text,
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Generate another beat?</div>
-            <p style={{ margin: "0 0 14px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Unlock a longer beat</div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
               {upgradeModal.message}
             </p>
-            <p style={{ margin: "0 0 14px", fontSize: 12.5, color: C.textMuted }}>
-              Continue with a paid beat (~$
-              {(upgradeModal.estimatedCostUsd ?? beatDurationSec * COST_PER_SEC_USD).toFixed(2)}) —
-              you can record and Produce now; download unlocks after payment for{" "}
-              <strong style={{ color: C.text }}>session + beat</strong>.
-            </p>
+            <div
+              style={{
+                margin: "0 0 14px",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.brass}`,
+                background: "rgba(231,169,97,0.1)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.brass, marginBottom: 4 }}>
+                Paid beat price
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>
+                $
+                {(upgradeModal.estimatedCostUsd ?? estimateStudioBeatCostUsd(beatDurationSec)).toFixed(2)}
+              </div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                Based on your selected length ({beatDurationSec}s). Pricing:{" "}
+                <strong style={{ color: C.text }}>$1.00 for 2 minutes</strong>
+                {" "}(30s ≈ $0.25 · 1 min ≈ $0.50 · 3 min ≈ $1.50).
+                Charged when you download the produced song.
+              </div>
+            </div>
             <button
               type="button"
               disabled={creating}
@@ -1831,13 +2098,15 @@ function StudioPageInner() {
                 marginBottom: 8,
               }}
             >
-              Generate paid beat
+              {`Generate paid beat · $${(upgradeModal.estimatedCostUsd ?? estimateStudioBeatCostUsd(beatDurationSec)).toFixed(2)}`}
             </button>
             <button
               type="button"
               onClick={() => {
                 setUpgradeModal(null);
-                router.push("/app?tab=profile");
+                const projectId = projects[0]?.id ?? null;
+                setSubscribePaywallProjectId(projectId);
+                setSubscribePaywallOpen(true);
               }}
               style={{
                 width: "100%",
