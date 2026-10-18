@@ -301,7 +301,7 @@ export async function acceptInvite(
   };
 }
 
-export async function listMembersWithProfiles(
+export async function listMembers(
   supabase: SupabaseClient,
   sessionId: string
 ): Promise<Array<ApSessionMember & { display_name?: string | null; avatar_url?: string | null }>> {
