@@ -1,6 +1,65 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ApSession, ApSessionInvite, ApSessionMember, ApSessionRole } from "./types";
-import { getProjectOwnerId, randomInviteToken, assertSessionPerm } from "./access";
+import { getProjectOwnerId, randomInviteToken, assertSessionPerm, getMemberRole } from "./access";
+import { createServiceClient } from "@/lib/supabase/service";
+
+/** Prefer service role for membership writes (RLS has no INSERT on ap_session_members). */
+function adminClient(fallback: SupabaseClient): SupabaseClient {
+  try {
+    return createServiceClient();
+  } catch (e) {
+    console.warn("sessions: service role unavailable, falling back to user client", e);
+    return fallback;
+  }
+}
+
+/** Ensure user is an active member; insert/upsert via service role when needed. */
+async function ensureMember(
+  userClient: SupabaseClient,
+  sessionId: string,
+  userId: string,
+  role: ApSessionRole
+): Promise<{ ok: true } | { error: string; status: number }> {
+  const existing = await getMemberRole(userClient, sessionId, userId);
+  if (existing) return { ok: true };
+
+  const db = adminClient(userClient);
+  const { data: row } = await db
+    .from("ap_session_members")
+    .select("id, left_at, role")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (row && !row.left_at) return { ok: true };
+
+  if (row && row.left_at) {
+    const { error } = await db
+      .from("ap_session_members")
+      .update({ left_at: null, role, joined_at: new Date().toISOString(), last_seen_at: new Date().toISOString() })
+      .eq("id", row.id);
+    if (error) {
+      console.error("ensureMember rejoin", error);
+      return { error: "Could not restore session membership", status: 500 };
+    }
+    return { ok: true };
+  }
+
+  const { error } = await db.from("ap_session_members").insert({
+    session_id: sessionId,
+    user_id: userId,
+    role,
+  });
+  if (error) {
+    // unique violation → already a member
+    if (String(error.code) === "23505" || /duplicate/i.test(error.message || "")) {
+      return { ok: true };
+    }
+    console.error("ensureMember insert", error);
+    return { error: "Could not add session membership", status: 500 };
+  }
+  return { ok: true };
+}
 
 export async function createApSession(
   supabase: SupabaseClient,
@@ -27,6 +86,8 @@ export async function createApSession(
     .maybeSingle();
 
   if (existing) {
+    const mem = await ensureMember(supabase, existing.id as string, opts.userId, "owner");
+    if ("error" in mem) return mem;
     return { session: existing as ApSession };
   }
 
@@ -47,16 +108,14 @@ export async function createApSession(
     return { error: "Could not create session", status: 500 };
   }
 
-  const { error: memErr } = await supabase.from("ap_session_members").insert({
-    session_id: session.id,
-    user_id: opts.userId,
-    role: "owner",
-  });
-  if (memErr) {
-    console.error("createApSession member", memErr);
+  const mem = await ensureMember(supabase, session.id as string, opts.userId, "owner");
+  if ("error" in mem) {
+    console.error("createApSession member", mem);
+    // Session exists but membership failed — still return session; invite path will retry ensureMember
   }
 
-  await supabase.from("ap_session_events").insert({
+  const db = adminClient(supabase);
+  await db.from("ap_session_events").insert({
     session_id: session.id,
     actor_id: opts.userId,
     event_type: "session_created",
@@ -81,7 +140,34 @@ export async function createInvite(
     return { error: "Cannot invite as owner", status: 400 };
   }
 
-  const perm = await assertSessionPerm(supabase, opts.sessionId, opts.userId, "invite");
+  // Load session — allow project owner / session creator even if membership row was missing (RLS gap)
+  const { data: session } = await supabase
+    .from("ap_sessions")
+    .select("id, created_by, project_id, status")
+    .eq("id", opts.sessionId)
+    .maybeSingle();
+
+  if (!session) {
+    return { error: "Session not found", status: 404 };
+  }
+  if (session.status === "ended") {
+    return { error: "Session has ended", status: 400 };
+  }
+
+  const ownerId = session.project_id
+    ? await getProjectOwnerId(supabase, session.project_id as string)
+    : null;
+  const isCreator = session.created_by === opts.userId;
+  const isProjectOwner = ownerId === opts.userId;
+
+  let perm = await assertSessionPerm(supabase, opts.sessionId, opts.userId, "invite");
+  if (!perm.ok) {
+    if (isCreator || isProjectOwner) {
+      const mem = await ensureMember(supabase, opts.sessionId, opts.userId, "owner");
+      if ("error" in mem) return mem;
+      perm = await assertSessionPerm(supabase, opts.sessionId, opts.userId, "invite");
+    }
+  }
   if (!perm.ok) {
     return { error: perm.error, status: perm.status };
   }
@@ -92,7 +178,9 @@ export async function createInvite(
       ? new Date(Date.now() + opts.expiresInHours * 3600_000).toISOString()
       : null;
 
-  const { data, error } = await supabase
+  // Insert invite with service role so missing membership RLS edge cases don't block creators
+  const db = adminClient(supabase);
+  const { data, error } = await db
     .from("ap_session_invites")
     .insert({
       session_id: opts.sessionId,
@@ -108,10 +196,13 @@ export async function createInvite(
 
   if (error || !data) {
     console.error("createInvite", error);
-    return { error: "Could not create invite", status: 500 };
+    return {
+      error: error?.message ? `Could not create invite: ${error.message}` : "Could not create invite",
+      status: 500,
+    };
   }
 
-  await supabase.from("ap_session_events").insert({
+  await db.from("ap_session_events").insert({
     session_id: opts.sessionId,
     actor_id: opts.userId,
     event_type: "invite_created",
@@ -125,103 +216,95 @@ export async function createInvite(
 }
 
 export async function acceptInvite(
-  supabase: SupabaseClient,
+  service: SupabaseClient,
   opts: { token: string; userId: string }
 ): Promise<
   | { sessionId: string; projectId: string; role: ApSessionRole }
   | { error: string; status: number }
 > {
-  const { data: invite, error } = await supabase
+  const { data: invite } = await service
     .from("ap_session_invites")
-    .select("*, ap_sessions!inner(id, project_id, status)")
+    .select("*")
     .eq("token", opts.token)
     .maybeSingle();
 
-  if (error || !invite) {
-    return { error: "Invalid invitation", status: 404 };
+  if (!invite) return { error: "Invalid invite", status: 404 };
+  if (invite.revoked_at) return { error: "Invite revoked", status: 410 };
+  if (invite.expires_at && new Date(invite.expires_at as string).getTime() < Date.now()) {
+    return { error: "Invite expired", status: 410 };
   }
-  if (invite.revoked_at) {
-    return { error: "Invitation revoked", status: 410 };
-  }
-  if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
-    return { error: "Invitation expired", status: 410 };
-  }
-  if (invite.use_count >= invite.max_uses) {
-    return { error: "Invitation already used", status: 410 };
-  }
+  const maxUses = typeof invite.max_uses === "number" ? invite.max_uses : 1;
+  const useCount = typeof invite.use_count === "number" ? invite.use_count : 0;
+  if (useCount >= maxUses) return { error: "Invite has no uses left", status: 410 };
 
-  const session = invite.ap_sessions as { id: string; project_id: string; status: string };
-  if (session.status === "ended") {
-    return { error: "Session has ended", status: 410 };
-  }
+  const { data: session } = await service
+    .from("ap_sessions")
+    .select("id, project_id, status")
+    .eq("id", invite.session_id)
+    .maybeSingle();
+  if (!session) return { error: "Session not found", status: 404 };
+  if (session.status === "ended") return { error: "Session has ended", status: 400 };
+
+  const role = (invite.role as ApSessionRole) || "artist";
+  if (role === "owner") return { error: "Invalid invite role", status: 400 };
 
   // Upsert membership
-  const { data: existing } = await supabase
+  const { data: existing } = await service
     .from("ap_session_members")
-    .select("id, left_at, role")
+    .select("id, left_at")
     .eq("session_id", session.id)
     .eq("user_id", opts.userId)
     .maybeSingle();
 
-  if (existing && !existing.left_at) {
-    return {
-      sessionId: session.id,
-      projectId: session.project_id,
-      role: existing.role as ApSessionRole,
-    };
-  }
-
-  if (existing) {
-    await supabase
+  if (existing?.left_at) {
+    await service
       .from("ap_session_members")
-      .update({ left_at: null, role: invite.role, joined_at: new Date().toISOString() })
+      .update({
+        left_at: null,
+        role,
+        joined_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+      })
       .eq("id", existing.id);
-  } else {
-    const { error: insErr } = await supabase.from("ap_session_members").insert({
+  } else if (!existing) {
+    const { error: memErr } = await service.from("ap_session_members").insert({
       session_id: session.id,
       user_id: opts.userId,
-      role: invite.role,
+      role,
     });
-    if (insErr) {
-      console.error("acceptInvite member", insErr);
+    if (memErr && String(memErr.code) !== "23505") {
+      console.error("acceptInvite member", memErr);
       return { error: "Could not join session", status: 500 };
     }
   }
 
-  await supabase
+  await service
     .from("ap_session_invites")
     .update({
-      use_count: invite.use_count + 1,
+      use_count: useCount + 1,
       accepted_by: opts.userId,
       accepted_at: new Date().toISOString(),
     })
     .eq("id", invite.id);
 
-  await supabase.from("ap_session_events").insert({
+  await service.from("ap_session_events").insert({
     session_id: session.id,
     actor_id: opts.userId,
-    event_type: "member_joined",
-    payload: { role: invite.role },
-  });
-
-  await supabase.from("ap_session_messages").insert({
-    session_id: session.id,
-    user_id: null,
-    kind: "system",
-    body: "A collaborator joined the session",
+    event_type: "invite_accepted",
+    payload: { invite_id: invite.id, role },
   });
 
   return {
-    sessionId: session.id,
-    projectId: session.project_id,
-    role: invite.role as ApSessionRole,
+    sessionId: session.id as string,
+    projectId: session.project_id as string,
+    role,
   };
 }
 
-export async function listMembers(
+export async function listMembersWithProfiles(
   supabase: SupabaseClient,
   sessionId: string
-): Promise<ApSessionMember[]> {
+): Promise<Array<ApSessionMember & { display_name?: string | null; avatar_url?: string | null }>> {
   const { data: members } = await supabase
     .from("ap_session_members")
     .select("id, session_id, user_id, role, last_seen_at, is_recording, is_playing, joined_at, left_at")
@@ -265,7 +348,8 @@ export async function endSession(
     .from("ap_sessions")
     .update({ status: "ended", ended_at: new Date().toISOString() })
     .eq("id", sessionId);
-  await supabase.from("ap_session_events").insert({
+  const db = adminClient(supabase);
+  await db.from("ap_session_events").insert({
     session_id: sessionId,
     actor_id: userId,
     event_type: "session_ended",
