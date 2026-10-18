@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { BeatStudioPanel } from "@/components/beat-studio/beat-studio-panel";
+import BeatStudioPanel from "@/components/beat-studio/beat-studio-panel";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 
 /**
