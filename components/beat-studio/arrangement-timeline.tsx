@@ -222,11 +222,15 @@ export default function ArrangementTimeline({
                   type="button"
                   style={chipBtn}
                   onClick={() => {
-                    const clip = doc.tracks.find((t) => t.id === selected.trackId)?.clips.find((c) => c.id === selected.clipId);
+                    const sel = selected;
+                    if (!sel) return;
+                    const clip = doc.tracks
+                      .find((t) => t.id === sel.trackId)
+                      ?.clips?.find((c) => c.id === sel.clipId);
                     if (!clip) return;
                     const btLocal = barTicks(doc);
                     const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? btLocal;
-                    onChange(resizeClip(doc, selected.trackId, selected.clipId, cur + btLocal, "bar"));
+                    onChange(resizeClip(doc, sel.trackId, sel.clipId, cur + btLocal, "bar"));
                   }}
                 >
                   +1 bar
@@ -235,11 +239,15 @@ export default function ArrangementTimeline({
                   type="button"
                   style={chipBtn}
                   onClick={() => {
-                    const clip = doc.tracks.find((t) => t.id === selected.trackId)?.clips.find((c) => c.id === selected.clipId);
+                    const sel = selected;
+                    if (!sel) return;
+                    const clip = doc.tracks
+                      .find((t) => t.id === sel.trackId)
+                      ?.clips?.find((c) => c.id === sel.clipId);
                     if (!clip) return;
                     const btLocal = barTicks(doc);
                     const cur = clip.durationTicks ?? doc.patterns[clip.patternId]?.lengthTicks ?? btLocal;
-                    onChange(resizeClip(doc, selected.trackId, selected.clipId, Math.max(btLocal, cur - btLocal), "bar"));
+                    onChange(resizeClip(doc, sel.trackId, sel.clipId, Math.max(btLocal, cur - btLocal), "bar"));
                   }}
                 >
                   −1 bar
