@@ -11,13 +11,14 @@
     "db:push": "supabase db push",
     "test:booth-console": "node scripts/test-booth-console-parity.mjs",
     "test:fx-automation": "node scripts/test-fx-automation.mjs",
-    "test:unit": "node scripts/test-placement.mjs && node scripts/test-session-preview-membership.mjs && node scripts/test-speaker-duck-state.mjs",
+    "test:unit": "node scripts/test-placement.mjs && node scripts/test-session-preview-membership.mjs && node scripts/test-speaker-duck-state.mjs && node scripts/test-beat-studio.mjs",
     "test:pitch": "node scripts/test-pitch-polish.mjs",
     "test:performance": "node scripts/test-performance-polish.mjs",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm run test:unit && npm run test:pitch && npm run test:performance && npm run build",
     "worker": "tsx --tsconfig tsconfig.json workers/production-worker.ts",
-    "worker:prod": "tsx workers/production-worker.ts"
+    "worker:prod": "tsx workers/production-worker.ts",
+    "test:beat-studio": "node scripts/test-beat-studio.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
