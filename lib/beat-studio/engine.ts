@@ -309,7 +309,7 @@ export function playPattern(
   const rel: Rel[] = [];
   for (const track of doc.tracks) {
     if (track.muted) continue;
-    for (const note of track.notes) {
+    for (const note of track.notes ?? []) {
       rel.push({
         startSec: ticksToSeconds(note.startTick, doc.tempoBpm, doc.ppq),
         durationSec: Math.max(0.03, ticksToSeconds(note.durationTicks, doc.tempoBpm, doc.ppq)),

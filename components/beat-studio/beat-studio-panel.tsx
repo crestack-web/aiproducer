@@ -102,7 +102,7 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     if (!drumTrack) {
       return notesToStepGrid([], steps, doc.ppq);
     }
-    return notesToStepGrid(drumTrack.notes, steps, doc.ppq);
+    return notesToStepGrid(drumTrack.notes ?? [], steps, doc.ppq);
   }, [drumTrack, steps, doc.ppq]);
 
   const getCtx = useCallback(async () => {
