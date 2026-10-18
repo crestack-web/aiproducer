@@ -104,13 +104,6 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
     };
   }, [projectId]);
 
-  // Keep track instrument in sync
-  useEffect(() => {
-    setDoc((prev) => ({
-      ...prev,
-      tracks: prev.tracks.map((t, i) => (i === 0 ? { ...t, instrumentId } : t)),
-    }));
-  }, [instrumentId]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -277,7 +270,16 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
           Instrument
           <select
             value={instrumentId}
-            onChange={(e) => setInstrumentId(e.target.value as InstrumentId)}
+            onChange={(e) => {
+              const id = e.target.value as InstrumentId;
+              setInstrumentId(id);
+              setDoc((prev) => ({
+                ...prev,
+                tracks: prev.tracks.map((t, i) =>
+                  i === 0 ? { ...t, instrumentId: id } : t
+                ),
+              }));
+            }}
             style={selectStyle}
           >
             <option value="pluck">Pluck</option>
@@ -352,6 +354,7 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
                 void pointerUp(semi);
               }}
               onPointerCancel={() => void pointerUp(semi)}
+              onPointerLeave={() => void pointerUp(semi)}
               style={whiteKeyStyle}
               aria-label={`Key ${semi}`}
             />
@@ -378,6 +381,7 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
                   void pointerUp(semi);
                 }}
                 onPointerCancel={() => void pointerUp(semi)}
+                onPointerLeave={() => void pointerUp(semi)}
                 style={{
                   ...blackKeyStyle,
                   left: `calc(${leftPct}% - 4%)`,
