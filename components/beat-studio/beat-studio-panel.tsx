@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Beat Studio — mobile-first production UI
- * Tabs: Beat (step sequencer) · Melody (piano roll) · Sounds
- * Audio: existing Web Audio engine (audio-clock scheduling)
+ * Beat Studio — BandLab-inspired mobile flow
+ * Studio (timeline) → tap instrument emoji → pattern editor sheet
+ * Audio: existing Web Audio engine
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,18 +22,14 @@ import {
   playPattern,
   playArrangement,
   createNote,
-  newNoteId,
   type PatternPlayer,
 } from "@/lib/beat-studio/engine";
 import { patternLengthTicks, ticksToSeconds, secondsToTicks } from "@/lib/beat-studio/time";
 import {
   DRUM_LANES,
-  STEPS_PER_BAR,
   notesToStepGrid,
   stepGridToNotes,
-  ensureDrumTrack,
   totalSteps,
-  defaultStepGrid,
   type StepGrid,
   type DrumLaneId,
 } from "@/lib/beat-studio/drums";
@@ -46,14 +42,23 @@ const muted = "rgba(244,241,236,0.55)";
 const text = "#F4F1EC";
 const surface = "rgba(18,18,24,0.96)";
 
-type TabId = "beat" | "melody" | "arrange" | "sounds";
-
-const INSTRUMENTS: { id: InstrumentId; label: string; category: string; implemented: boolean }[] = [
-  { id: "drum_kit", label: "Drum kit", category: "Drums", implemented: true },
-  { id: "pluck", label: "Pluck keys", category: "Piano", implemented: true },
-  { id: "synth_bass", label: "Synth bass", category: "Bass", implemented: true },
-  { id: "synth_lead", label: "Synth lead", category: "Synths", implemented: true },
+const INSTRUMENT_META: {
+  id: InstrumentId;
+  label: string;
+  emoji: string;
+  category: string;
+}[] = [
+  { id: "drum_kit", label: "Drums", emoji: "🥁", category: "Drums" },
+  { id: "pluck", label: "Keys", emoji: "🎹", category: "Piano" },
+  { id: "synth_bass", label: "Bass", emoji: "🎸", category: "Bass" },
+  { id: "synth_lead", label: "Lead", emoji: "✨", category: "Synths" },
 ];
+
+function metaFor(id: InstrumentId) {
+  return INSTRUMENT_META.find((m) => m.id === id) || { id, label: id, emoji: "🎵", category: "Sound" };
+}
+
+type StudioView = "studio" | "edit";
 
 type Props = { projectId: string; initialTempo?: number };
 
@@ -61,7 +66,9 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const [doc, setDoc] = useState<BeatStudioDoc>(() =>
     emptyBeatStudioDoc({ tempoBpm: initialTempo || 90, bars: 2 })
   );
-  const [tab, setTab] = useState<TabId>("beat");
+  const [view, setView] = useState<StudioView>("studio");
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +79,6 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const [activeStep, setActiveStep] = useState(0);
   const [octave, setOctave] = useState(0);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const [rollScroll, setRollScroll] = useState(0);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const poolRef = useRef(new VoicePool());
@@ -84,26 +90,25 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const saveGenRef = useRef(0);
 
   const steps = totalSteps(doc.bars);
+
+  const editingTrack = useMemo(
+    () => doc.tracks.find((t) => t.id === editingTrackId) || null,
+    [doc.tracks, editingTrackId]
+  );
+
   const drumTrack = useMemo(
     () =>
-      doc.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums") ||
-      null,
-    [doc.tracks]
-  );
-  const melodyTrack = useMemo(
-    () =>
-      doc.tracks.find((t) => t.instrumentId !== "drum_kit" && t.id !== "track_drums") ||
-      doc.tracks[0] ||
-      null,
+      doc.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums") || null,
     [doc.tracks]
   );
 
   const grid: StepGrid = useMemo(() => {
-    if (!drumTrack) {
-      return notesToStepGrid([], steps, doc.ppq);
+    if (!editingTrack || editingTrack.instrumentId !== "drum_kit") {
+      if (!drumTrack) return notesToStepGrid([], steps, doc.ppq);
+      return notesToStepGrid(drumTrack.notes ?? [], steps, doc.ppq);
     }
-    return notesToStepGrid(drumTrack.notes ?? [], steps, doc.ppq);
-  }, [drumTrack, steps, doc.ppq]);
+    return notesToStepGrid(editingTrack.notes ?? [], steps, doc.ppq);
+  }, [editingTrack, drumTrack, steps, doc.ppq]);
 
   const getCtx = useCallback(async () => {
     if (!ctxRef.current) {
@@ -126,20 +131,10 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         if (!res.ok) throw new Error("Could not load project");
         const j = await res.json();
         const p = j.project || j;
-        const fromMeta = beatStudioFromProjectMetadata(p?.metadata);
+        const meta = p?.metadata;
+        const loaded = beatStudioFromProjectMetadata(meta);
         if (!cancelled) {
-          if (fromMeta) {
-            const v2 = ensureV2(fromMeta);
-            const next = { ...v2, tracks: ensureDrumTrack(v2.tracks) };
-            setDoc(ensureV2(next));
-          } else {
-            const base = emptyBeatStudioDoc({
-              tempoBpm: typeof p?.tempo === "number" ? p.tempo : initialTempo || 90,
-              bars: 2,
-            });
-            base.tracks = ensureDrumTrack(base.tracks);
-            setDoc(ensureV2(base));
-          }
+          setDoc(ensureV2(loaded || emptyBeatStudioDoc({ tempoBpm: p?.tempo || initialTempo || 90 })));
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Load failed");
@@ -149,25 +144,45 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     })();
     return () => {
       cancelled = true;
+    };
+  }, [projectId, initialTempo]);
+
+  useEffect(() => {
+    return () => {
       playerRef.current?.stop();
       poolRef.current.stopAll();
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       void ctxRef.current?.close();
-      ctxRef.current = null;
     };
-  }, [projectId, initialTempo]);
-
-  const updateDrumGrid = useCallback((next: StepGrid) => {
-    setDoc((d) => {
-      const notes = stepGridToNotes(next, totalSteps(d.bars), d.ppq);
-      const withDrums = { ...d, tracks: ensureDrumTrack(d.tracks) };
-      const drum =
-        withDrums.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums") ||
-        withDrums.tracks[0];
-      if (!drum) return withDrums;
-      return updateTrackNotes(withDrums, drum.id, notes);
-    });
   }, []);
+
+  const openTrackEditor = useCallback((trackId: string) => {
+    setEditingTrackId(trackId);
+    setView("edit");
+    setShowAdd(false);
+    setSelectedNoteId(null);
+  }, []);
+
+  const closeEditor = useCallback(() => {
+    setView("studio");
+    setEditingTrackId(null);
+    setSelectedNoteId(null);
+  }, []);
+
+  const updateDrumGrid = useCallback(
+    (g: StepGrid) => {
+      setDoc((d) => {
+        const base = ensureV2(d);
+        const track =
+          base.tracks.find((t) => t.id === editingTrackId && t.instrumentId === "drum_kit") ||
+          base.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums");
+        if (!track) return d;
+        const notes = stepGridToNotes(g, base.ppq);
+        return updateTrackNotes(base, track.id, notes);
+      });
+    },
+    [editingTrackId]
+  );
 
   const toggleStep = useCallback(
     (lane: DrumLaneId, step: number) => {
@@ -175,7 +190,6 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
       for (const l of DRUM_LANES) g[l.id] = [...(grid[l.id] || [])];
       g[lane][step] = !g[lane][step];
       updateDrumGrid(g);
-      // preview hit
       void (async () => {
         const ctx = await getCtx();
         const laneDef = DRUM_LANES.find((l) => l.id === lane);
@@ -240,7 +254,11 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
 
     const songSec = Math.max(
       0.05,
-      ticksToSeconds(d.songLengthTicks || patternLengthTicks(d.bars, d.timeSignature, d.ppq), d.tempoBpm, d.ppq)
+      ticksToSeconds(
+        d.songLengthTicks || patternLengthTicks(d.bars, d.timeSignature, d.ppq),
+        d.tempoBpm,
+        d.ppq
+      )
     );
 
     const tick = () => {
@@ -256,7 +274,6 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         }
         setPlayheadTick(secondsToTicks(elapsed, d.tempoBpm, d.ppq));
       }
-      // step highlight for drum grid when in song mode (approx within loop region)
       const patternSec = ticksToSeconds(
         patternLengthTicks(d.bars, d.timeSignature, d.ppq),
         d.tempoBpm,
@@ -287,10 +304,9 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         const j = await res.json().catch(() => ({}));
         throw new Error(typeof j.error === "string" ? j.error : "Save failed");
       }
-      // Ignore stale responses if a newer save started
       if (saveId !== saveGenRef.current) return;
       setDoc(payload);
-      setStatus("Pattern saved");
+      setStatus("Saved");
     } catch (e) {
       if (saveId === saveGenRef.current) {
         setError(e instanceof Error ? e.message : "Save failed");
@@ -300,63 +316,91 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     }
   }, [projectId]);
 
-  const loadPreset = useCallback((id: BeatPresetId) => {
-    const preset = BEAT_PRESETS.find((p) => p.id === id);
-    if (!preset) return;
-    stopPlayback();
-    setDoc(ensureV2(applyPreset(preset)));
-    setStatus(`Loaded “${preset.label}” — edit freely`);
-    setTab("beat");
-  }, [stopPlayback]);
+  const loadPreset = useCallback(
+    (id: BeatPresetId) => {
+      const preset = BEAT_PRESETS.find((p) => p.id === id);
+      if (!preset) return;
+      stopPlayback();
+      setDoc(ensureV2(applyPreset(preset)));
+      setStatus(`Loaded “${preset.label}”`);
+    },
+    [stopPlayback]
+  );
 
   const setTempo = (bpm: number) => {
     const v = Math.max(40, Math.min(200, Math.round(bpm)));
     setDoc((d) => ({ ...d, tempoBpm: v }));
   };
 
-  const setMelodyInstrument = (id: InstrumentId) => {
-    if (id === "drum_kit") return;
+  const setTrackInstrument = (trackId: string, id: InstrumentId) => {
     setDoc((d) => {
-      const tracks = d.tracks.map((t) =>
-        t.instrumentId !== "drum_kit" && t.id !== "track_drums"
-          ? { ...t, instrumentId: id }
-          : t
-      );
-      // ensure melody track exists
-      if (!tracks.some((t) => t.instrumentId !== "drum_kit")) {
-        tracks.push({
-          id: "track_melody",
-          name: "Melody",
-          instrumentId: id,
-          notes: [],
-        });
-      }
-      return { ...d, tracks };
+      const base = ensureV2(d);
+      return {
+        ...base,
+        tracks: base.tracks.map((t) =>
+          t.id === trackId ? { ...t, instrumentId: id, name: metaFor(id).label } : t
+        ),
+      };
     });
+  };
+
+  const addInstrumentTrack = (id: InstrumentId) => {
+    setDoc((d) => {
+      const base = ensureV2(d);
+      if (base.tracks.some((t) => t.instrumentId === id && id === "drum_kit")) {
+        // only one drum kit track
+        const existing = base.tracks.find((t) => t.instrumentId === "drum_kit");
+        if (existing) {
+          setTimeout(() => openTrackEditor(existing.id), 0);
+          return base;
+        }
+      }
+      const meta = metaFor(id);
+      const trackId = `track_${id}_${Date.now().toString(36)}`;
+      const patId = `pat_${id}_${Date.now().toString(36)}`;
+      const lengthTicks =
+        base.songLengthTicks ||
+        patternLengthTicks(base.bars, base.timeSignature, base.ppq);
+      const pattern = {
+        id: patId,
+        name: meta.label,
+        lengthTicks: patternLengthTicks(base.bars, base.timeSignature, base.ppq),
+        notes: [] as BeatStudioNote[],
+        kind: (id === "drum_kit" ? "drum" : "melodic") as "drum" | "melodic",
+      };
+      return {
+        ...base,
+        patterns: { ...base.patterns, [patId]: pattern },
+        tracks: [
+          ...base.tracks,
+          {
+            id: trackId,
+            name: meta.label,
+            instrumentId: id,
+            clips: [
+              {
+                id: `clip_${trackId}`,
+                patternId: patId,
+                startTick: 0,
+                durationTicks: lengthTicks,
+              },
+            ],
+            notes: [],
+          },
+        ],
+      };
+    });
+    setShowAdd(false);
+    setStatus(`Added ${metaFor(id).label}`);
   };
 
   const addMelodyNote = (pitch: number, startTick: number, durationTicks: number) => {
     setDoc((d) => {
-      let base = ensureV2({ ...d, tracks: ensureDrumTrack(d.tracks) });
-      let mi = base.tracks.findIndex((t) => t.instrumentId !== "drum_kit");
-      if (mi < 0) {
-        base = {
-          ...base,
-          tracks: [
-            ...base.tracks,
-            {
-              id: "track_melody",
-              name: "Melody",
-              instrumentId: "pluck",
-              notes: [],
-              clips: [],
-            },
-          ],
-        };
-        base = ensureV2(base);
-        mi = base.tracks.findIndex((t) => t.instrumentId !== "drum_kit");
-      }
-      const track = base.tracks[mi];
+      const base = ensureV2(d);
+      const track =
+        base.tracks.find((t) => t.id === editingTrackId) ||
+        base.tracks.find((t) => t.instrumentId !== "drum_kit");
+      if (!track || track.instrumentId === "drum_kit") return d;
       const nextNotes = [
         ...(track.notes || []),
         createNote(pitch, startTick, durationTicks, 100),
@@ -370,12 +414,13 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     const noteId = selectedNoteId;
     setDoc((d) => {
       const base = ensureV2(d);
-      // Only edit the melody (non-drum) track that contains the note
-      const track = base.tracks.find(
-        (t) =>
-          t.instrumentId !== "drum_kit" &&
-          (t.notes || []).some((n) => n.id === noteId)
-      );
+      const track =
+        base.tracks.find((t) => t.id === editingTrackId) ||
+        base.tracks.find(
+          (t) =>
+            t.instrumentId !== "drum_kit" &&
+            (t.notes || []).some((n) => n.id === noteId)
+        );
       if (!track) return d;
       const nextNotes = (track.notes || []).filter((n) => n.id !== noteId);
       return updateTrackNotes(base, track.id, nextNotes);
@@ -392,344 +437,452 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     return <p style={{ color: muted, padding: 16 }}>Loading Beat Studio…</p>;
   }
 
+  const editMeta = editingTrack ? metaFor(editingTrack.instrumentId) : null;
+  const isDrumEdit = editingTrack?.instrumentId === "drum_kit";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
-      {/* Transport */}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        width: "100%",
+        minHeight: "70vh",
+        paddingBottom: view === "studio" ? 88 : 12,
+      }}
+    >
+      {/* Top bar */}
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",
           alignItems: "center",
           gap: 8,
-          padding: "10px 12px",
-          borderRadius: 16,
-          background: surface,
-          border: `1px solid ${border}`,
+          flexWrap: "wrap",
         }}
       >
-        <button
-          type="button"
-          onClick={() => void startSongPlayback()}
-          style={{
-            ...primaryBtn,
-            background: playMode === "song" && playing
-              ? "linear-gradient(135deg,#7BEBD4,#2dd4bf)"
-              : primaryBtn.background,
-            color: playMode === "song" && playing ? "#0a0a0c" : primaryBtn.color,
-          }}
-          aria-label="Play song"
-        >
-          {playMode === "song" && playing ? "Playing song…" : "Play Song"}
-        </button>
-        <button
-          type="button"
-          onClick={() => void startPatternPreview()}
-          style={{
-            ...ghostBtn,
-            borderColor: playMode === "pattern" && playing ? brass : border,
-          }}
-          aria-label="Preview pattern"
-        >
-          {playMode === "pattern" && playing ? "Previewing…" : "Preview Pattern"}
-        </button>
-        <button
-          type="button"
-          onClick={() => stopPlayback()}
-          disabled={!playing}
-          style={{ ...ghostBtn, opacity: playing ? 1 : 0.45 }}
-          aria-label="Stop"
-        >
-          Stop
-        </button>
-        <label style={labelStyle}>
-          BPM
+        {view === "edit" ? (
+          <button type="button" onClick={closeEditor} style={ghostBtn} aria-label="Back to timeline">
+            ← Studio
+          </button>
+        ) : null}
+        <div style={{ flex: 1, minWidth: 80 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: text }}>
+            {view === "edit" && editMeta ? `${editMeta.emoji} ${editMeta.label}` : "Studio"}
+          </div>
+          <div style={{ fontSize: 11, color: muted }}>
+            {view === "edit" ? "Edit this loop · changes update the timeline" : "Arrange clips · tap an instrument to edit"}
+          </div>
+        </div>
+        <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10 }}>BPM</span>
           <input
             type="number"
             min={40}
             max={200}
             value={doc.tempoBpm}
             onChange={(e) => setTempo(Number(e.target.value) || 90)}
-            style={numInput}
+            style={{ ...numInput, width: 52 }}
           />
-        </label>
-        <label style={labelStyle}>
-          Bars
-          <select
-            value={doc.bars}
-            onChange={(e) => {
-              const bars = Number(e.target.value) || 2;
-              setDoc((d) => ({ ...d, bars }));
-            }}
-            style={numInput}
-          >
-            {[1, 2, 4].map((b) => (
-              <option key={b} value={b}>
-                {b}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={doc.loop !== false}
-            onChange={(e) => setDoc((d) => ({ ...d, loop: e.target.checked }))}
-          />
-          Loop
         </label>
         <button type="button" onClick={() => void save()} disabled={saving} style={ghostBtn}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? "…" : "Save"}
         </button>
       </div>
 
-      {/* Tabs */}
-      <div
-        style={{
-          display: "flex",
-          gap: 4,
-          padding: 4,
-          borderRadius: 14,
-          background: "rgba(0,0,0,0.35)",
-          border: `1px solid ${border}`,
-        }}
-      >
-        {(
-          [
-            ["beat", "Beat"],
-            ["melody", "Melody"],
-            ["arrange", "Arrange"],
-            ["sounds", "Sounds"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            style={{
-              flex: 1,
-              padding: "10px 8px",
-              borderRadius: 11,
-              border: "none",
-              background: tab === id ? "rgba(231,169,97,0.2)" : "transparent",
-              color: tab === id ? brass : muted,
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {error && (
+        <p style={{ color: "#f87171", margin: 0, fontSize: 13 }} role="alert">
+          {error}
+        </p>
+      )}
+      {status && (
+        <p style={{ color: brass, margin: 0, fontSize: 12 }}>{status}</p>
+      )}
 
-      {/* Presets strip */}
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
-        {BEAT_PRESETS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => loadPreset(p.id)}
-            title={p.description}
-            style={{
-              flexShrink: 0,
-              padding: "8px 12px",
-              borderRadius: 999,
-              border: `1px solid ${border}`,
-              background: "rgba(0,0,0,0.3)",
-              color: text,
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {/* STUDIO VIEW — timeline first */}
+      {view === "studio" && (
+        <>
+          <ArrangementTimeline
+            doc={ensureV2(doc)}
+            onChange={(d) => setDoc(ensureV2(d))}
+            playheadTick={playheadTick}
+            playingSong={playMode === "song" && playing}
+            onEditTrack={openTrackEditor}
+          />
 
-      {error && <p style={{ color: "#F87171", margin: 0, fontSize: 13 }}>{error}</p>}
-      {status && <p style={{ color: brass, margin: 0, fontSize: 13 }}>{status}</p>}
+          {/* Compact preset chips */}
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+            {BEAT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => loadPreset(p.id)}
+                style={{
+                  ...chipBtn,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
 
-      {tab === "beat" && (
+          {/* Add track picker */}
+          {showAdd && (
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 16,
+                background: surface,
+                border: `1px solid ${border}`,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: muted, marginBottom: 10 }}>
+                ADD INSTRUMENT
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: 10,
+                }}
+              >
+                {INSTRUMENT_META.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      addInstrumentTrack(m.id);
+                      // open editor for newest matching track after state settles
+                      setTimeout(() => {
+                        const latest = docRef.current.tracks.filter((t) => t.instrumentId === m.id).at(-1);
+                        if (latest) openTrackEditor(latest.id);
+                      }, 50);
+                    }}
+                    style={instrumentTile}
+                  >
+                    <span style={{ fontSize: 28 }}>{m.emoji}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700 }}>{m.label}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdd(false)}
+                style={{ ...ghostBtn, marginTop: 10, width: "100%" }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* EDIT VIEW — pattern roll for selected instrument */}
+      {view === "edit" && editingTrack && (
         <div
           style={{
             borderRadius: 16,
-            border: `1px solid ${border}`,
             background: surface,
-            padding: "12px 8px 14px",
-            overflowX: "auto",
+            border: `1px solid ${border}`,
+            padding: 12,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, padding: "0 4px" }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: muted, letterSpacing: "0.06em" }}>
-              STEP SEQUENCER · {steps} steps
-            </span>
-            <button type="button" onClick={clearDrums} style={{ ...ghostBtn, padding: "4px 10px", fontSize: 11 }}>
-              Clear
-            </button>
-          </div>
-          {DRUM_LANES.map((lane) => (
-            <div
-              key={lane.id}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={() => void startPatternPreview()}
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 6,
+                ...ghostBtn,
+                borderColor: playMode === "pattern" && playing ? brass : border,
               }}
             >
-              <button
-                type="button"
-                onClick={() =>
-                  void (async () => {
-                    const ctx = await getCtx();
-                    playNote(ctx, "drum_kit", lane.pitch, 110, 0.15, ctx.currentTime, undefined, poolRef.current);
-                  })()
+              {playMode === "pattern" && playing ? "Previewing…" : "Preview loop"}
+            </button>
+            <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
+              Bars
+              <select
+                value={doc.bars}
+                onChange={(e) => {
+                  const bars = Number(e.target.value) || 2;
+                  setDoc((d) => ({ ...d, bars }));
+                }}
+                style={numInput}
+              >
+                {[1, 2, 4].map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!isDrumEdit && (
+              <select
+                value={editingTrack.instrumentId}
+                onChange={(e) =>
+                  setTrackInstrument(editingTrack.id, e.target.value as InstrumentId)
                 }
+                style={numInput}
+              >
+                {INSTRUMENT_META.filter((m) => m.id !== "drum_kit").map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.emoji} {m.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {isDrumEdit && (
+              <button type="button" onClick={clearDrums} style={ghostBtn}>
+                Clear
+              </button>
+            )}
+            <button type="button" onClick={closeEditor} style={primaryBtn}>
+              Done
+            </button>
+          </div>
+
+          {isDrumEdit ? (
+            <div>
+              <div
                 style={{
-                  width: 56,
-                  flexShrink: 0,
                   fontSize: 11,
                   fontWeight: 700,
-                  color: lane.color,
-                  background: "transparent",
-                  border: "none",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  padding: "4px 2px",
+                  letterSpacing: "0.06em",
+                  color: muted,
+                  marginBottom: 8,
                 }}
               >
-                {lane.label}
-              </button>
-              <div style={{ display: "flex", gap: 3, flex: 1 }}>
-                {Array.from({ length: steps }, (_, s) => {
-                  const on = grid[lane.id]?.[s];
-                  const isPlay = playing && activeStep === s;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      aria-label={`${lane.label} step ${s + 1}`}
-                      onClick={() => toggleStep(lane.id, s)}
-                      style={{
-                        flex: 1,
-                        minWidth: steps > 16 ? 14 : 18,
-                        height: 28,
-                        borderRadius: 5,
-                        border: isPlay ? `1px solid ${brass}` : "1px solid transparent",
-                        background: on
-                          ? lane.color
-                          : s % 4 === 0
-                            ? "rgba(255,255,255,0.08)"
-                            : "rgba(255,255,255,0.04)",
-                        opacity: on ? 1 : 0.85,
-                        cursor: "pointer",
-                        padding: 0,
-                        boxShadow: isPlay ? `0 0 0 1px ${brass}` : undefined,
-                      }}
-                    />
-                  );
-                })}
+                STEP SEQUENCER · {steps} steps
               </div>
+              {DRUM_LANES.map((lane) => (
+                <div
+                  key={lane.id}
+                  style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void (async () => {
+                        const ctx = await getCtx();
+                        playNote(
+                          ctx,
+                          "drum_kit",
+                          lane.pitch,
+                          110,
+                          0.15,
+                          ctx.currentTime,
+                          undefined,
+                          poolRef.current
+                        );
+                      })()
+                    }
+                    style={{
+                      width: 56,
+                      flexShrink: 0,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: lane.color,
+                      background: "transparent",
+                      border: "none",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      padding: "4px 2px",
+                    }}
+                  >
+                    {lane.label}
+                  </button>
+                  <div style={{ display: "flex", gap: 3, flex: 1 }}>
+                    {Array.from({ length: steps }, (_, s) => {
+                      const on = grid[lane.id]?.[s];
+                      const isPlay = playing && activeStep === s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          aria-label={`${lane.label} step ${s + 1}`}
+                          onClick={() => toggleStep(lane.id, s)}
+                          style={{
+                            flex: 1,
+                            minWidth: steps > 16 ? 14 : 18,
+                            height: 28,
+                            borderRadius: 5,
+                            border: isPlay ? `1px solid ${brass}` : "1px solid transparent",
+                            background: on
+                              ? lane.color
+                              : s % 4 === 0
+                                ? "rgba(255,255,255,0.08)"
+                                : "rgba(255,255,255,0.04)",
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <p style={{ margin: "10px 4px 0", fontSize: 11, color: muted, lineHeight: 1.4 }}>
+                Tap steps to program the loop. Done returns to the timeline.
+              </p>
             </div>
-          ))}
-          <p style={{ margin: "10px 4px 0", fontSize: 11, color: muted, lineHeight: 1.4 }}>
-            Tap a step to toggle. Tap the lane name to preview the sound. Play loops the pattern.
-          </p>
+          ) : (
+            <MelodyRoll
+              notes={editingTrack.notes || []}
+              ppq={doc.ppq}
+              bars={doc.bars}
+              tempoBpm={doc.tempoBpm}
+              octave={octave}
+              setOctave={setOctave}
+              selectedNoteId={selectedNoteId}
+              setSelectedNoteId={setSelectedNoteId}
+              onAddNote={addMelodyNote}
+              onDelete={deleteSelectedNote}
+              onPreview={async (pitch) => {
+                const ctx = await getCtx();
+                const id = editingTrack.instrumentId;
+                playNote(
+                  ctx,
+                  id === "drum_kit" ? "pluck" : id,
+                  pitch,
+                  100,
+                  0.25,
+                  ctx.currentTime,
+                  undefined,
+                  poolRef.current
+                );
+              }}
+              activeStep={playing ? activeStep : -1}
+              steps={steps}
+            />
+          )}
         </div>
       )}
 
-      {tab === "melody" && (
-        <MelodyRoll
-          notes={melodyTrack?.notes || []}
-          ppq={doc.ppq}
-          bars={doc.bars}
-          tempoBpm={doc.tempoBpm}
-          octave={octave}
-          setOctave={setOctave}
-          selectedNoteId={selectedNoteId}
-          setSelectedNoteId={setSelectedNoteId}
-          onAddNote={addMelodyNote}
-          onDelete={deleteSelectedNote}
-          onPreview={async (pitch) => {
-            const ctx = await getCtx();
-            const id = (melodyTrack?.instrumentId || "pluck") as InstrumentId;
-            playNote(ctx, id === "drum_kit" ? "pluck" : id, pitch, 100, 0.25, ctx.currentTime, undefined, poolRef.current);
+      {/* Bottom transport + instrument dock (studio only) */}
+      {view === "studio" && (
+        <div
+          style={{
+            position: "sticky",
+            bottom: 0,
+            marginTop: "auto",
+            padding: "10px 8px 12px",
+            borderRadius: "18px 18px 0 0",
+            background: "rgba(10,10,14,0.96)",
+            borderTop: `1px solid ${border}`,
+            backdropFilter: "blur(12px)",
+            zIndex: 20,
           }}
-          activeStep={playing ? activeStep : -1}
-          steps={steps}
-        />
-      )}
+        >
+          {/* Transport */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 14,
+              marginBottom: 12,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => stopPlayback()}
+              disabled={!playing}
+              style={circleBtn}
+              aria-label="Stop"
+            >
+              ■
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (playing && playMode === "song") stopPlayback();
+                else void startSongPlayback();
+              }}
+              style={{
+                ...circleBtn,
+                width: 56,
+                height: 56,
+                fontSize: 20,
+                background:
+                  playMode === "song" && playing
+                    ? "linear-gradient(135deg,#7BEBD4,#2dd4bf)"
+                    : `linear-gradient(135deg, ${brass}, #C4893F)`,
+                color: "#1A1208",
+                border: "none",
+              }}
+              aria-label={playing && playMode === "song" ? "Pause" : "Play song"}
+            >
+              {playing && playMode === "song" ? "❚❚" : "▶"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void startPatternPreview()}
+              style={circleBtn}
+              aria-label="Preview pattern"
+              title="Preview pattern"
+            >
+              ↻
+            </button>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                color: muted,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={doc.loop !== false}
+                onChange={(e) => setDoc((d) => ({ ...d, loop: e.target.checked }))}
+              />
+              Loop
+            </label>
+          </div>
 
-      {tab === "arrange" && (
-        <ArrangementTimeline
-          doc={doc}
-          onChange={(next) => {
-            stopPlayback();
-            setDoc(ensureV2(next));
-          }}
-          playheadTick={playheadTick}
-          playingSong={playMode === "song" && playing}
-        />
-      )}
-
-      {tab === "sounds" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <p style={{ margin: 0, fontSize: 13, color: muted }}>
-            Choose how the melody track sounds. Drums always use the drum kit synthesizer.
-          </p>
-          {["Drums", "Piano", "Bass", "Synths"].map((cat) => (
-            <div key={cat}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: muted, letterSpacing: "0.08em", marginBottom: 6 }}>
-                {cat.toUpperCase()}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {INSTRUMENTS.filter((i) => i.category === cat).map((inst) => {
-                  const active =
-                    inst.id === "drum_kit"
-                      ? true
-                      : melodyTrack?.instrumentId === inst.id;
-                  return (
-                    <button
-                      key={inst.id}
-                      type="button"
-                      disabled={!inst.implemented}
-                      onClick={() => {
-                        if (inst.id === "drum_kit") {
-                          void (async () => {
-                            const ctx = await getCtx();
-                            playNote(ctx, "drum_kit", 36, 110, 0.2, ctx.currentTime, undefined, poolRef.current);
-                          })();
-                          return;
-                        }
-                        setMelodyInstrument(inst.id);
-                        void (async () => {
-                          const ctx = await getCtx();
-                          playNote(ctx, inst.id, 60, 100, 0.3, ctx.currentTime, undefined, poolRef.current);
-                        })();
-                      }}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: 12,
-                        border: active ? `1px solid ${brass}` : `1px solid ${border}`,
-                        background: active ? "rgba(231,169,97,0.15)" : surface,
-                        color: text,
-                        fontWeight: 600,
-                        fontSize: 13,
-                        cursor: "pointer",
-                        opacity: inst.implemented ? 1 : 0.4,
-                      }}
-                    >
-                      {inst.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-          <p style={{ margin: 0, fontSize: 11, color: muted }}>
-            All listed sounds are synthesized in-browser (no sample packs). More categories can be added later.
-          </p>
+          {/* Instrument dock — emoji buttons */}
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              justifyContent: "center",
+              alignItems: "center",
+              overflowX: "auto",
+              paddingBottom: 4,
+            }}
+          >
+            {doc.tracks.map((t) => {
+              const m = metaFor(t.instrumentId);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => openTrackEditor(t.id)}
+                  style={{
+                    ...instrumentDockBtn,
+                    outline:
+                      editingTrackId === t.id ? `2px solid ${brass}` : "none",
+                  }}
+                  title={`Edit ${t.name}`}
+                >
+                  <span style={{ fontSize: 22 }}>{m.emoji}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700 }}>{m.label}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setShowAdd((v) => !v)}
+              style={{
+                ...instrumentDockBtn,
+                borderStyle: "dashed",
+              }}
+              aria-label="Add instrument"
+            >
+              <span style={{ fontSize: 22 }}>＋</span>
+              <span style={{ fontSize: 10, fontWeight: 700 }}>Add</span>
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -757,7 +910,7 @@ function MelodyRoll({
   bars: number;
   tempoBpm: number;
   octave: number;
-  setOctave: (n: number | ((o: number) => number)) => void;
+  setOctave: (n: number) => void;
   selectedNoteId: string | null;
   setSelectedNoteId: (id: string | null) => void;
   onAddNote: (pitch: number, startTick: number, durationTicks: number) => void;
@@ -766,40 +919,29 @@ function MelodyRoll({
   activeStep: number;
   steps: number;
 }) {
-  const pitches = useMemo(() => {
-    // C3..B4 relative to octave offset (base MIDI 48)
-    const base = 48 + octave * 12;
-    return Array.from({ length: 24 }, (_, i) => base + (23 - i));
-  }, [octave]);
-
-  const cellW = 28;
+  const base = 48 + octave * 12;
+  const pitches = Array.from({ length: 18 }, (_, i) => base + 17 - i);
+  const cellW = Math.max(18, Math.min(28, Math.floor(280 / Math.max(8, steps))));
   const cellH = 18;
-  const patternTicks = bars * 4 * ppq;
-  const cols = steps; // 16th grid
 
   return (
-    <div
-      style={{
-        borderRadius: 16,
-        border: `1px solid ${border}`,
-        background: surface,
-        padding: 10,
-      }}
-    >
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: muted }}>PIANO ROLL</span>
-        <button type="button" style={ghostBtn} onClick={() => setOctave((o) => o - 1)}>
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: muted, letterSpacing: "0.06em" }}>
+          PIANO ROLL
+        </span>
+        <button type="button" style={ghostBtn} onClick={() => setOctave(Math.max(-2, octave - 1))}>
           Oct −
         </button>
-        <button type="button" style={ghostBtn} onClick={() => setOctave((o) => o + 1)}>
+        <button type="button" style={ghostBtn} onClick={() => setOctave(Math.min(2, octave + 1))}>
           Oct +
         </button>
         <button type="button" style={ghostBtn} onClick={onDelete} disabled={!selectedNoteId}>
           Delete note
         </button>
       </div>
-      <div style={{ overflow: "auto", maxHeight: 320, WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
-        <div style={{ position: "relative", width: cols * cellW + 36, minHeight: pitches.length * cellH }}>
+      <div style={{ overflowX: "auto", borderRadius: 10, border: `1px solid ${border}` }}>
+        <div style={{ position: "relative", width: 36 + steps * cellW, minHeight: pitches.length * cellH }}>
           {pitches.map((pitch, row) => (
             <div key={pitch} style={{ display: "flex", height: cellH }}>
               <button
@@ -809,32 +951,32 @@ function MelodyRoll({
                   width: 36,
                   flexShrink: 0,
                   fontSize: 9,
-                  color: muted,
-                  background: isBlackKey(pitch) ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.06)",
                   border: "none",
-                  borderRight: `1px solid ${border}`,
+                  borderBottom: `1px solid ${border}`,
+                  background: isBlackKey(pitch) ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.04)",
+                  color: muted,
                   cursor: "pointer",
                   padding: 0,
                 }}
               >
                 {pitchName(pitch)}
               </button>
-              {Array.from({ length: cols }, (_, col) => (
+              {Array.from({ length: steps }, (_, col) => (
                 <button
                   key={col}
                   type="button"
                   onClick={() => {
-                    const startTick = Math.round(col * (ppq / 4));
-                    const dur = Math.round(ppq / 4);
-                    onAddNote(pitch, startTick, dur);
+                    const startTick = col * (ppq / 4);
+                    const durationTicks = ppq / 4;
+                    onAddNote(pitch, startTick, durationTicks);
                     onPreview(pitch);
                   }}
                   style={{
                     width: cellW,
                     height: cellH,
                     border: "none",
-                    borderRight: col % 4 === 3 ? `1px solid ${border}` : "1px solid rgba(255,255,255,0.04)",
-                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    borderBottom: `1px solid ${border}`,
+                    borderRight: col % 4 === 3 ? `1px solid ${border}` : "1px solid rgba(255,255,255,0.03)",
                     background:
                       activeStep === col
                         ? "rgba(231,169,97,0.12)"
@@ -848,7 +990,6 @@ function MelodyRoll({
               ))}
             </div>
           ))}
-          {/* Note blocks */}
           {notes.map((n) => {
             const col = Math.round(n.startTick / (ppq / 4));
             const row = pitches.indexOf(n.pitch);
@@ -883,7 +1024,7 @@ function MelodyRoll({
         </div>
       </div>
       <p style={{ margin: "10px 0 0", fontSize: 11, color: muted }}>
-        Tap a cell to place a 16th note · tap a note to select · Delete note removes it · {tempoBpm} BPM
+        Tap a cell to place a note · Done returns to the timeline · {tempoBpm} BPM
       </p>
     </div>
   );
@@ -917,6 +1058,16 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 12,
   cursor: "pointer",
 };
+const chipBtn: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 999,
+  border: `1px solid ${border}`,
+  background: "rgba(0,0,0,0.35)",
+  color: text,
+  fontWeight: 600,
+  fontSize: 12,
+  cursor: "pointer",
+};
 const labelStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -933,4 +1084,45 @@ const numInput: React.CSSProperties = {
   background: "rgba(0,0,0,0.35)",
   color: text,
   fontSize: 13,
+};
+const circleBtn: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  borderRadius: "50%",
+  border: `1px solid ${border}`,
+  background: "rgba(255,255,255,0.06)",
+  color: text,
+  fontWeight: 700,
+  fontSize: 12,
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+const instrumentDockBtn: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 2,
+  width: 56,
+  height: 56,
+  borderRadius: 14,
+  border: `1px solid ${border}`,
+  background: "rgba(255,255,255,0.05)",
+  color: text,
+  cursor: "pointer",
+  flexShrink: 0,
+};
+const instrumentTile: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 6,
+  padding: "14px 8px",
+  borderRadius: 14,
+  border: `1px solid ${border}`,
+  background: "rgba(255,255,255,0.04)",
+  color: text,
+  cursor: "pointer",
 };

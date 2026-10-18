@@ -48,12 +48,21 @@ const SECTION_KINDS: { id: SongSectionKind; label: string }[] = [
   { id: "custom", label: "Custom" },
 ];
 
+const INSTRUMENT_EMOJI: Record<string, string> = {
+  drum_kit: "🥁",
+  pluck: "🎹",
+  synth_lead: "✨",
+  synth_bass: "🎸",
+};
+
 type Props = {
   doc: BeatStudioDoc;
   onChange: (doc: BeatStudioDoc) => void;
   /** Playhead tick during song playback; null when stopped / pattern preview */
   playheadTick?: number | null;
   playingSong?: boolean;
+  /** Open the pattern editor for a track (BandLab-style) */
+  onEditTrack?: (trackId: string) => void;
 };
 
 export default function ArrangementTimeline({
@@ -61,6 +70,7 @@ export default function ArrangementTimeline({
   onChange,
   playheadTick = null,
   playingSong = false,
+  onEditTrack,
 }: Props) {
   const [pxPerBar, setPxPerBar] = useState(48);
   const [selected, setSelected] = useState<{ trackId: string; clipId: string } | null>(null);
@@ -304,9 +314,29 @@ export default function ArrangementTimeline({
                     gap: 4,
                   }}
                 >
-                  <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {track.name}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onEditTrack?.(track.id)}
+                    style={{
+                      fontWeight: 700,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      background: "transparent",
+                      border: "none",
+                      color: text,
+                      textAlign: "left",
+                      padding: 0,
+                      cursor: onEditTrack ? "pointer" : "default",
+                      fontSize: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                    title="Edit pattern"
+                  >
+                    <span aria-hidden>{INSTRUMENT_EMOJI[track.instrumentId] || "🎵"}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{track.name}</span>
+                  </button>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
                       type="button"
