@@ -14,15 +14,18 @@ import {
   emptyBeatStudioDoc,
 } from "@/lib/beat-studio/types";
 import { beatStudioFromProjectMetadata, serializeBeatStudioDoc } from "@/lib/beat-studio/serialize";
+import { ensureV2 } from "@/lib/beat-studio/migrate";
+import { updateTrackNotes } from "@/lib/beat-studio/adapter";
 import {
   VoicePool,
   playNote,
   playPattern,
+  playArrangement,
   createNote,
   newNoteId,
   type PatternPlayer,
 } from "@/lib/beat-studio/engine";
-import { patternLengthTicks, ticksToSeconds } from "@/lib/beat-studio/time";
+import { patternLengthTicks, ticksToSeconds, secondsToTicks } from "@/lib/beat-studio/time";
 import {
   DRUM_LANES,
   STEPS_PER_BAR,
@@ -35,6 +38,7 @@ import {
   type DrumLaneId,
 } from "@/lib/beat-studio/drums";
 import { BEAT_PRESETS, applyPreset, type BeatPresetId } from "@/lib/beat-studio/presets";
+import ArrangementTimeline from "@/components/beat-studio/arrangement-timeline";
 
 const brass = "#E7A961";
 const border = "rgba(255,255,255,0.1)";
@@ -42,7 +46,7 @@ const muted = "rgba(244,241,236,0.55)";
 const text = "#F4F1EC";
 const surface = "rgba(18,18,24,0.96)";
 
-type TabId = "beat" | "melody" | "sounds";
+type TabId = "beat" | "melody" | "arrange" | "sounds";
 
 const INSTRUMENTS: { id: InstrumentId; label: string; category: string; implemented: boolean }[] = [
   { id: "drum_kit", label: "Drum kit", category: "Drums", implemented: true },
@@ -63,6 +67,8 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [playMode, setPlayMode] = useState<"pattern" | "song" | null>(null);
+  const [playheadTick, setPlayheadTick] = useState<number | null>(null);
   const [activeStep, setActiveStep] = useState(0);
   const [octave, setOctave] = useState(0);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -75,6 +81,7 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const rafRef = useRef<number | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
+  const saveGenRef = useRef(0);
 
   const steps = totalSteps(doc.bars);
   const drumTrack = useMemo(
@@ -122,15 +129,16 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
         const fromMeta = beatStudioFromProjectMetadata(p?.metadata);
         if (!cancelled) {
           if (fromMeta) {
-            let next = { ...fromMeta, tracks: ensureDrumTrack(fromMeta.tracks) };
-            setDoc(next);
+            const v2 = ensureV2(fromMeta);
+            const next = { ...v2, tracks: ensureDrumTrack(v2.tracks) };
+            setDoc(ensureV2(next));
           } else {
             const base = emptyBeatStudioDoc({
               tempoBpm: typeof p?.tempo === "number" ? p.tempo : initialTempo || 90,
               bars: 2,
             });
             base.tracks = ensureDrumTrack(base.tracks);
-            setDoc(base);
+            setDoc(ensureV2(base));
           }
         }
       } catch (e) {
@@ -152,12 +160,12 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const updateDrumGrid = useCallback((next: StepGrid) => {
     setDoc((d) => {
       const notes = stepGridToNotes(next, totalSteps(d.bars), d.ppq);
-      let tracks = ensureDrumTrack(d.tracks).map((t) =>
-        t.instrumentId === "drum_kit" || t.id === "track_drums"
-          ? { ...t, notes }
-          : t
-      );
-      return { ...d, tracks };
+      const withDrums = { ...d, tracks: ensureDrumTrack(d.tracks) };
+      const drum =
+        withDrums.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums") ||
+        withDrums.tracks[0];
+      if (!drum) return withDrums;
+      return updateTrackNotes(withDrums, drum.id, notes);
     });
   }, []);
 
@@ -183,15 +191,19 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     playerRef.current = null;
     poolRef.current.stopAll();
     setPlaying(false);
+    setPlayMode(null);
+    setPlayheadTick(null);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
   }, []);
 
-  const startPlayback = useCallback(async () => {
+  const startPatternPreview = useCallback(async () => {
     stopPlayback();
     const ctx = await getCtx();
     const d = docRef.current;
     playT0Ref.current = ctx.currentTime;
+    setPlayMode("pattern");
+    setPlayheadTick(null);
     playerRef.current = playPattern(ctx, d, {
       pool: poolRef.current,
       loop: d.loop !== false,
@@ -213,12 +225,59 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     rafRef.current = requestAnimationFrame(tick);
   }, [getCtx, stopPlayback]);
 
+  const startSongPlayback = useCallback(async () => {
+    stopPlayback();
+    const ctx = await getCtx();
+    const d = ensureV2(docRef.current);
+    playT0Ref.current = ctx.currentTime;
+    setPlayMode("song");
+    setPlayheadTick(0);
+    playerRef.current = playArrangement(ctx, d, {
+      pool: poolRef.current,
+      loop: d.loop === true,
+    });
+    setPlaying(true);
+
+    const songSec = Math.max(
+      0.05,
+      ticksToSeconds(d.songLengthTicks || patternLengthTicks(d.bars, d.timeSignature, d.ppq), d.tempoBpm, d.ppq)
+    );
+
+    const tick = () => {
+      const elapsed = ctx.currentTime - playT0Ref.current;
+      if (d.loop === true) {
+        const local = elapsed % songSec;
+        setPlayheadTick(secondsToTicks(local, d.tempoBpm, d.ppq));
+      } else {
+        if (elapsed >= songSec) {
+          stopPlayback();
+          setPlayheadTick(d.songLengthTicks);
+          return;
+        }
+        setPlayheadTick(secondsToTicks(elapsed, d.tempoBpm, d.ppq));
+      }
+      // step highlight for drum grid when in song mode (approx within loop region)
+      const patternSec = ticksToSeconds(
+        patternLengthTicks(d.bars, d.timeSignature, d.ppq),
+        d.tempoBpm,
+        d.ppq
+      );
+      const stepSec = patternSec / Math.max(1, totalSteps(d.bars));
+      const local = elapsed % Math.max(0.001, patternSec);
+      setActiveStep(Math.floor(local / stepSec) % totalSteps(d.bars));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [getCtx, stopPlayback]);
+
   const save = useCallback(async () => {
     setSaving(true);
     setError(null);
     setStatus(null);
+    const snapshot = ensureV2(docRef.current);
+    const saveId = (saveGenRef.current += 1);
     try {
-      const payload = serializeBeatStudioDoc(doc);
+      const payload = serializeBeatStudioDoc(snapshot);
       const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -226,22 +285,26 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error((j as { error?: string }).error || "Save failed");
+        throw new Error(typeof j.error === "string" ? j.error : "Save failed");
       }
+      // Ignore stale responses if a newer save started
+      if (saveId !== saveGenRef.current) return;
       setDoc(payload);
       setStatus("Pattern saved");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Save failed");
+      if (saveId === saveGenRef.current) {
+        setError(e instanceof Error ? e.message : "Save failed");
+      }
     } finally {
-      setSaving(false);
+      if (saveId === saveGenRef.current) setSaving(false);
     }
-  }, [doc, projectId]);
+  }, [projectId]);
 
   const loadPreset = useCallback((id: BeatPresetId) => {
     const preset = BEAT_PRESETS.find((p) => p.id === id);
     if (!preset) return;
     stopPlayback();
-    setDoc(applyPreset(preset));
+    setDoc(ensureV2(applyPreset(preset)));
     setStatus(`Loaded “${preset.label}” — edit freely`);
     setTab("beat");
   }, [stopPlayback]);
@@ -274,39 +337,49 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
 
   const addMelodyNote = (pitch: number, startTick: number, durationTicks: number) => {
     setDoc((d) => {
-      let tracks = ensureDrumTrack(d.tracks);
-      const mi = tracks.findIndex((t) => t.instrumentId !== "drum_kit");
+      let base = ensureV2({ ...d, tracks: ensureDrumTrack(d.tracks) });
+      let mi = base.tracks.findIndex((t) => t.instrumentId !== "drum_kit");
       if (mi < 0) {
-        tracks = [
-          ...tracks,
-          {
-            id: "track_melody",
-            name: "Melody",
-            instrumentId: "pluck",
-            notes: [createNote(pitch, startTick, durationTicks, 100)],
-          },
-        ];
-      } else {
-        const t = tracks[mi];
-        tracks = tracks.map((tr, i) =>
-          i === mi
-            ? { ...tr, notes: [...tr.notes, createNote(pitch, startTick, durationTicks, 100)] }
-            : tr
-        );
+        base = {
+          ...base,
+          tracks: [
+            ...base.tracks,
+            {
+              id: "track_melody",
+              name: "Melody",
+              instrumentId: "pluck",
+              notes: [],
+              clips: [],
+            },
+          ],
+        };
+        base = ensureV2(base);
+        mi = base.tracks.findIndex((t) => t.instrumentId !== "drum_kit");
       }
-      return { ...d, tracks };
+      const track = base.tracks[mi];
+      const nextNotes = [
+        ...(track.notes || []),
+        createNote(pitch, startTick, durationTicks, 100),
+      ];
+      return updateTrackNotes(base, track.id, nextNotes);
     });
   };
 
   const deleteSelectedNote = () => {
     if (!selectedNoteId) return;
-    setDoc((d) => ({
-      ...d,
-      tracks: d.tracks.map((t) => ({
-        ...t,
-        notes: t.notes.filter((n) => n.id !== selectedNoteId),
-      })),
-    }));
+    const noteId = selectedNoteId;
+    setDoc((d) => {
+      const base = ensureV2(d);
+      // Only edit the melody (non-drum) track that contains the note
+      const track = base.tracks.find(
+        (t) =>
+          t.instrumentId !== "drum_kit" &&
+          (t.notes || []).some((n) => n.id === noteId)
+      );
+      if (!track) return d;
+      const nextNotes = (track.notes || []).filter((n) => n.id !== noteId);
+      return updateTrackNotes(base, track.id, nextNotes);
+    });
     setSelectedNoteId(null);
   };
 
@@ -336,11 +409,37 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
       >
         <button
           type="button"
-          onClick={() => (playing ? stopPlayback() : void startPlayback())}
-          style={primaryBtn}
-          aria-label={playing ? "Stop" : "Play"}
+          onClick={() => void startSongPlayback()}
+          style={{
+            ...primaryBtn,
+            background: playMode === "song" && playing
+              ? "linear-gradient(135deg,#7BEBD4,#2dd4bf)"
+              : primaryBtn.background,
+            color: playMode === "song" && playing ? "#0a0a0c" : primaryBtn.color,
+          }}
+          aria-label="Play song"
         >
-          {playing ? "Stop" : "Play"}
+          {playMode === "song" && playing ? "Playing song…" : "Play Song"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void startPatternPreview()}
+          style={{
+            ...ghostBtn,
+            borderColor: playMode === "pattern" && playing ? brass : border,
+          }}
+          aria-label="Preview pattern"
+        >
+          {playMode === "pattern" && playing ? "Previewing…" : "Preview Pattern"}
+        </button>
+        <button
+          type="button"
+          onClick={() => stopPlayback()}
+          disabled={!playing}
+          style={{ ...ghostBtn, opacity: playing ? 1 : 0.45 }}
+          aria-label="Stop"
+        >
+          Stop
         </button>
         <label style={labelStyle}>
           BPM
@@ -398,6 +497,7 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
           [
             ["beat", "Beat"],
             ["melody", "Melody"],
+            ["arrange", "Arrange"],
             ["sounds", "Sounds"],
           ] as const
         ).map(([id, label]) => (
@@ -558,6 +658,18 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
           }}
           activeStep={playing ? activeStep : -1}
           steps={steps}
+        />
+      )}
+
+      {tab === "arrange" && (
+        <ArrangementTimeline
+          doc={doc}
+          onChange={(next) => {
+            stopPlayback();
+            setDoc(ensureV2(next));
+          }}
+          playheadTick={playheadTick}
+          playingSong={playMode === "song" && playing}
         />
       )}
 
