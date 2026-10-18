@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Thin Beat Studio MVP — virtual keys, record pattern, play, save to project.metadata.beat_studio
- * Does not touch Booth recording or Console DAW graph.
+ * Beat Studio MVP panel — isolated from producer-view / Booth recording.
+ * Uses local AudioContext (see lib/beat-studio/TRANSPORT.md).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -14,26 +14,36 @@ import {
   playPattern,
   createNote,
   quantizeTick,
+  sixteenthGridTicks,
   patternLengthTicks,
+  VoicePool,
   type BeatStudioDoc,
+  type InstrumentId,
   type PatternPlayer,
 } from "@/lib/beat-studio";
 
 const WHITE = [0, 2, 4, 5, 7, 9, 11];
 const BLACK = [1, 3, 6, 8, 10];
-const BASE_C = 60; // middle C
+const BASE_C = 60;
 
 type Props = {
   projectId: string;
-  /** Optional initial tempo from project */
   initialTempo?: number | null;
+};
+
+type HeldKey = {
+  pitch: number;
+  startCtxTime: number;
+  voiceStop: (when?: number) => void;
 };
 
 export function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const ctxRef = useRef<AudioContext | null>(null);
   const playerRef = useRef<PatternPlayer | null>(null);
+  const poolRef = useRef(new VoicePool());
   const recordingRef = useRef(false);
-  const recordStartedAtRef = useRef(0);
+  const recordOriginCtxRef = useRef(0);
+  const heldRef = useRef<Map<number, HeldKey>>(new Map());
 
   const [doc, setDoc] = useState<BeatStudioDoc>(() =>
     emptyBeatStudioDoc({ tempoBpm: initialTempo || 90 })
@@ -45,6 +55,8 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const [recording, setRecording] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [octave, setOctave] = useState(0);
+  const [quantize, setQuantize] = useState(false);
+  const [instrumentId, setInstrumentId] = useState<InstrumentId>("pluck");
 
   const getCtx = useCallback(async () => {
     if (!ctxRef.current) {
@@ -57,7 +69,6 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
     return ctxRef.current;
   }, []);
 
-  // Load from project
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -70,8 +81,11 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         const p = j.project || j;
         const fromMeta = beatStudioFromProjectMetadata(p?.metadata);
         if (!cancelled) {
-          if (fromMeta) setDoc(fromMeta);
-          else if (typeof p?.tempo === "number") {
+          if (fromMeta) {
+            setDoc(fromMeta);
+            const inst = fromMeta.tracks[0]?.instrumentId;
+            if (inst) setInstrumentId(inst);
+          } else if (typeof p?.tempo === "number") {
             setDoc(emptyBeatStudioDoc({ tempoBpm: p.tempo }));
           }
         }
@@ -84,10 +98,19 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
     return () => {
       cancelled = true;
       playerRef.current?.stop();
+      poolRef.current.stopAll();
       void ctxRef.current?.close();
       ctxRef.current = null;
     };
   }, [projectId]);
+
+  // Keep track instrument in sync
+  useEffect(() => {
+    setDoc((prev) => ({
+      ...prev,
+      tracks: prev.tracks.map((t, i) => (i === 0 ? { ...t, instrumentId } : t)),
+    }));
+  }, [instrumentId]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -102,10 +125,10 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || "Save failed");
+        throw new Error((j as { error?: string }).error || "Save failed");
       }
       setDoc(payload);
-      setStatus("Pattern saved");
+      setStatus("Pattern saved to project");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -113,21 +136,53 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
     }
   }, [doc, projectId]);
 
-  const onKey = useCallback(
+  const pointerDown = useCallback(
     async (semitone: number) => {
       const pitch = BASE_C + octave * 12 + semitone;
+      if (heldRef.current.has(pitch)) return;
       const ctx = await getCtx();
-      const track = doc.tracks[0];
-      const inst = track?.instrumentId || "synth_lead";
-      playNote(ctx, inst, pitch, 110, 0.35);
+      const voice = playNote(
+        ctx,
+        instrumentId,
+        pitch,
+        110,
+        2.5,
+        ctx.currentTime,
+        undefined,
+        poolRef.current
+      );
+      heldRef.current.set(pitch, {
+        pitch,
+        startCtxTime: ctx.currentTime,
+        voiceStop: voice.stop,
+      });
+    },
+    [getCtx, instrumentId, octave]
+  );
 
+  const pointerUp = useCallback(
+    async (semitone: number) => {
+      const pitch = BASE_C + octave * 12 + semitone;
+      const held = heldRef.current.get(pitch);
+      if (!held) return;
+      heldRef.current.delete(pitch);
+      const ctx = await getCtx();
+      held.voiceStop(ctx.currentTime);
       if (recordingRef.current) {
-        const elapsed = (ctx.currentTime - recordStartedAtRef.current) * 1000;
-        const startTick = quantizeTick(
-          Math.round((elapsed / 1000) * (doc.tempoBpm / 60) * doc.ppq),
-          Math.round(doc.ppq / 4) // 16th grid
+        const startSec = held.startCtxTime - recordOriginCtxRef.current;
+        const durSec = Math.max(0.05, ctx.currentTime - held.startCtxTime);
+        let startTick = Math.round(
+          (startSec * doc.tempoBpm * doc.ppq) / 60
         );
-        const durationTicks = Math.round(doc.ppq / 4);
+        let durationTicks = Math.max(
+          1,
+          Math.round((durSec * doc.tempoBpm * doc.ppq) / 60)
+        );
+        if (quantize) {
+          const grid = sixteenthGridTicks(doc.ppq);
+          startTick = quantizeTick(startTick, grid);
+          durationTicks = Math.max(grid, quantizeTick(durationTicks, grid));
+        }
         const note = createNote(pitch, startTick, durationTicks, 110);
         setDoc((prev) => {
           const tracks = prev.tracks.map((t, i) =>
@@ -137,38 +192,69 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         });
       }
     },
-    [doc.ppq, doc.tempoBpm, doc.tracks, getCtx, octave]
+    [doc.ppq, doc.tempoBpm, getCtx, octave, quantize]
   );
 
   const toggleRecord = useCallback(async () => {
     if (recording) {
+      // finalize any held keys
+      const ctx = await getCtx();
+      for (const [pitch, held] of heldRef.current) {
+        held.voiceStop(ctx.currentTime);
+        if (recordingRef.current) {
+          const startSec = held.startCtxTime - recordOriginCtxRef.current;
+          const durSec = Math.max(0.05, ctx.currentTime - held.startCtxTime);
+          let startTick = Math.round((startSec * doc.tempoBpm * doc.ppq) / 60);
+          let durationTicks = Math.max(1, Math.round((durSec * doc.tempoBpm * doc.ppq) / 60));
+          if (quantize) {
+            const grid = sixteenthGridTicks(doc.ppq);
+            startTick = quantizeTick(startTick, grid);
+            durationTicks = Math.max(grid, quantizeTick(durationTicks, grid));
+          }
+          const note = createNote(pitch, startTick, durationTicks, 110);
+          setDoc((prev) => ({
+            ...prev,
+            tracks: prev.tracks.map((t, i) =>
+              i === 0 ? { ...t, notes: [...t.notes, note] } : t
+            ),
+          }));
+        }
+      }
+      heldRef.current.clear();
       recordingRef.current = false;
       setRecording(false);
       setStatus("Recording stopped");
       return;
     }
     const ctx = await getCtx();
-    recordStartedAtRef.current = ctx.currentTime;
+    recordOriginCtxRef.current = ctx.currentTime;
     recordingRef.current = true;
     setRecording(true);
-    setStatus("Recording — play keys");
-  }, [getCtx, recording]);
+    setStatus("Recording — hold keys to set duration");
+  }, [doc.ppq, doc.tempoBpm, getCtx, quantize, recording]);
 
   const togglePlay = useCallback(async () => {
     if (playing) {
       playerRef.current?.stop();
       playerRef.current = null;
       setPlaying(false);
+      setStatus("Stopped");
       return;
     }
     const ctx = await getCtx();
     playerRef.current?.stop();
-    playerRef.current = playPattern(ctx, doc, { loop: true });
+    playerRef.current = playPattern(ctx, doc, {
+      loop: doc.loop !== false,
+      pool: poolRef.current,
+    });
     setPlaying(true);
     setStatus("Playing pattern");
   }, [doc, getCtx, playing]);
 
   const clearNotes = useCallback(() => {
+    playerRef.current?.stop();
+    playerRef.current = null;
+    setPlaying(false);
     setDoc((prev) => ({
       ...prev,
       tracks: prev.tracks.map((t, i) => (i === 0 ? { ...t, notes: [] } : t)),
@@ -178,29 +264,54 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
 
   const noteCount = doc.tracks.reduce((n, t) => n + t.notes.length, 0);
   const patternTicks = patternLengthTicks(doc.bars, doc.timeSignature, doc.ppq);
+  const recentNotes = doc.tracks[0]?.notes.slice(-8) ?? [];
 
   if (loading) {
-    return <p style={{ color: "var(--muted, #9B96A3)" }}>Loading Beat Studio…</p>;
+    return <p style={{ color: "#9B96A3" }}>Loading Beat Studio…</p>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <label style={{ fontSize: 13, color: "var(--muted, #9B96A3)" }}>
-          Tempo{" "}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <label style={labelStyle}>
+          Instrument
+          <select
+            value={instrumentId}
+            onChange={(e) => setInstrumentId(e.target.value as InstrumentId)}
+            style={selectStyle}
+          >
+            <option value="pluck">Pluck</option>
+            <option value="synth_lead">Lead synth</option>
+            <option value="synth_bass">Bass</option>
+            <option value="drum_kit">Drums (pitch bands)</option>
+          </select>
+        </label>
+        <label style={labelStyle}>
+          Tempo
           <input
             type="number"
             min={40}
             max={200}
             value={doc.tempoBpm}
             onChange={(e) =>
-              setDoc((d) => ({ ...d, tempoBpm: Math.max(40, Math.min(200, Number(e.target.value) || 90)) }))
+              setDoc((d) => ({
+                ...d,
+                tempoBpm: Math.max(40, Math.min(200, Number(e.target.value) || 90)),
+              }))
             }
             style={inputStyle}
           />
         </label>
-        <span style={{ fontSize: 12, color: "var(--faint, #5C5866)" }}>
-          {doc.bars} bars · {noteCount} notes · {patternTicks} ticks
+        <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={quantize}
+            onChange={(e) => setQuantize(e.target.checked)}
+          />
+          Quantize 16ths
+        </label>
+        <span style={{ fontSize: 12, color: "#5C5866" }}>
+          {doc.bars} bars · {noteCount} notes · ppq {doc.ppq}
         </span>
       </div>
 
@@ -209,7 +320,7 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
           {recording ? "Stop record" : "Record"}
         </button>
         <button type="button" onClick={togglePlay} style={btnStyle(playing)}>
-          {playing ? "Stop" : "Play"}
+          {playing ? "Stop" : "Play pattern"}
         </button>
         <button type="button" onClick={clearNotes} style={btnStyle(false)}>
           Clear
@@ -225,8 +336,7 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         </button>
       </div>
 
-      {/* Keyboard */}
-      <div style={{ position: "relative", height: 120, userSelect: "none" }}>
+      <div style={{ position: "relative", height: 120, userSelect: "none", touchAction: "none" }}>
         <div style={{ display: "flex", height: "100%", gap: 2 }}>
           {WHITE.map((semi) => (
             <button
@@ -234,32 +344,20 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
               type="button"
               onPointerDown={(e) => {
                 e.preventDefault();
-                void onKey(semi);
+                (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                void pointerDown(semi);
               }}
-              style={{
-                flex: 1,
-                borderRadius: "0 0 8px 8px",
-                border: "1px solid rgba(255,255,255,.12)",
-                background: "linear-gradient(180deg, #f4f1ec, #d8d2c8)",
-                cursor: "pointer",
-                minWidth: 0,
+              onPointerUp={(e) => {
+                e.preventDefault();
+                void pointerUp(semi);
               }}
+              onPointerCancel={() => void pointerUp(semi)}
+              style={whiteKeyStyle}
               aria-label={`Key ${semi}`}
             />
           ))}
         </div>
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: 0,
-            height: "58%",
-            display: "flex",
-            pointerEvents: "none",
-          }}
-        >
-          {/* black key positions approximate between whites */}
+        <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "58%", display: "flex", pointerEvents: "none" }}>
           {[0, 1, 3, 4, 5].map((whiteIndex, i) => {
             const semi = BLACK[i];
             if (semi == null) return null;
@@ -271,19 +369,18 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
                 onPointerDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  void onKey(semi);
+                  (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                  void pointerDown(semi);
                 }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void pointerUp(semi);
+                }}
+                onPointerCancel={() => void pointerUp(semi)}
                 style={{
-                  pointerEvents: "auto",
-                  position: "absolute",
+                  ...blackKeyStyle,
                   left: `calc(${leftPct}% - 4%)`,
-                  width: "8%",
-                  height: "100%",
-                  borderRadius: "0 0 6px 6px",
-                  border: "1px solid #111",
-                  background: "linear-gradient(180deg, #3a3a42, #121218)",
-                  cursor: "pointer",
-                  zIndex: 2,
                 }}
                 aria-label={`Black key ${semi}`}
               />
@@ -292,24 +389,78 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         </div>
       </div>
 
+      {recentNotes.length > 0 && (
+        <div style={noteListStyle}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "#E7A961", marginBottom: 6 }}>
+            RECENT NOTES
+          </div>
+          {recentNotes.map((n) => (
+            <div key={n.id} style={{ fontSize: 12, color: "#9B96A3", fontFamily: "ui-monospace, monospace" }}>
+              pitch {n.pitch} · start {n.startTick} · dur {n.durationTicks} · vel {n.velocity}
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: "#5C5866", marginTop: 4 }}>
+            pattern length {patternTicks} ticks
+          </div>
+        </div>
+      )}
+
       {error && <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{error}</p>}
-      {status && !error && <p style={{ color: "var(--brass, #E7A961)", fontSize: 13, margin: 0 }}>{status}</p>}
-      <p style={{ fontSize: 12, color: "var(--faint, #5C5866)", margin: 0, lineHeight: 1.45 }}>
-        MVP: play keys to hear a synth. Hit Record, play a short phrase, Stop, then Play and Save.
-        Pattern is stored on the project and reloads with this page — does not replace vocal Booth or Console.
+      {status && !error && <p style={{ color: "#E7A961", fontSize: 13, margin: 0 }}>{status}</p>}
+      <p style={{ fontSize: 12, color: "#5C5866", margin: 0, lineHeight: 1.45 }}>
+        Hold keys while recording to capture duration. Quantize is off by default.
+        Saved on the project only — does not change Booth vocals or Console clips.
       </p>
     </div>
   );
 }
 
+const labelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  fontSize: 12,
+  color: "#9B96A3",
+};
 const inputStyle: React.CSSProperties = {
   width: 64,
-  marginLeft: 6,
   padding: "6px 8px",
   borderRadius: 8,
   border: "1px solid rgba(255,255,255,.12)",
   background: "rgba(255,255,255,.04)",
   color: "inherit",
+};
+const selectStyle: React.CSSProperties = {
+  padding: "6px 8px",
+  borderRadius: 8,
+  border: "1px solid rgba(255,255,255,.12)",
+  background: "#121218",
+  color: "inherit",
+};
+const whiteKeyStyle: React.CSSProperties = {
+  flex: 1,
+  borderRadius: "0 0 8px 8px",
+  border: "1px solid rgba(255,255,255,.12)",
+  background: "linear-gradient(180deg, #f4f1ec, #d8d2c8)",
+  cursor: "pointer",
+  minWidth: 0,
+};
+const blackKeyStyle: React.CSSProperties = {
+  pointerEvents: "auto",
+  position: "absolute",
+  width: "8%",
+  height: "100%",
+  borderRadius: "0 0 6px 6px",
+  border: "1px solid #111",
+  background: "linear-gradient(180deg, #3a3a42, #121218)",
+  cursor: "pointer",
+  zIndex: 2,
+};
+const noteListStyle: React.CSSProperties = {
+  padding: 12,
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,.09)",
+  background: "rgba(255,255,255,.03)",
 };
 
 function btnStyle(active: boolean, primary = false): React.CSSProperties {
