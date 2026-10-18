@@ -200,7 +200,7 @@ function StudioPageInner() {
 
 
 
-  const [beatMode, setBeatMode] = useState<"ai" | "upload">("ai");
+  const [beatMode, setBeatMode] = useState<"ai" | "upload" | "create">("ai");
   const [beatFile, setBeatFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -515,7 +515,40 @@ function StudioPageInner() {
     }
   }
 
+  async function openBeatCreator() {
+    if (creating) return;
+    setCreating(true);
+    setError(null);
+    setLimitMessage(null);
+    try {
+      const createRes = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: prompt.trim() || `${mood} ${genre}`.trim() || "Beat Studio",
+          genre,
+          mood,
+          tempo,
+          prompt: prompt.trim() || undefined,
+        }),
+      });
+      if (!createRes.ok) {
+        const j = await createRes.json().catch(() => ({}));
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start Beat Studio");
+      }
+      const json = await createRes.json();
+      const project = json.project || json;
+      if (!project?.id) throw new Error("No project id");
+      router.push(`/app/beat-studio/${project.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open Beat Studio");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   async function createAndGenerate(opts?: { billable?: boolean }) {
+
     if (creating) return; // one generation at a time (client)
     setCreating(true);
     setError(null);
@@ -913,6 +946,9 @@ function StudioPageInner() {
             <button type="button" style={modeTab(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
               Upload
             </button>
+            <button type="button" style={modeTab(beatMode === "create")} onClick={() => setBeatMode("create")}>
+              Beat creator
+            </button>
           </div>
 
           {beatMode === "ai" ? (
@@ -1150,7 +1186,7 @@ function StudioPageInner() {
                 )}
               </div>
             </>
-          ) : (
+          ) : beatMode === "upload" ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0" }}>
               <input
                 ref={fileRef}
@@ -1182,6 +1218,26 @@ function StudioPageInner() {
               <span style={{ fontSize: 12.5, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis" }}>
                 {beatFile ? beatFile.name : "WAV, MP3, M4A…"}
               </span>
+            </div>
+          ) : (
+            <div
+              style={{
+                padding: "14px 12px",
+                borderRadius: 14,
+                border: `1px solid ${C.border}`,
+                background: C.bgDeep,
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 6 }}>
+                Make the beat yourself
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.textMuted, lineHeight: 1.45 }}>
+                Open Beat Studio — play keys, record a short MIDI pattern, save it with the project.
+                Works alongside AP-generated and uploaded beats.
+              </p>
+              <div style={{ fontSize: 12.5, color: C.textFaint, lineHeight: 1.5 }}>
+                Virtual instrument · Record & play · Optional quantize
+              </div>
             </div>
           )}
 
@@ -1276,15 +1332,22 @@ function StudioPageInner() {
               opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1,
             }}
             disabled={creating || (beatMode === "upload" && !beatFile)}
-            onClick={() => void createAndGenerate()}
+            onClick={() => {
+              if (beatMode === "create") void openBeatCreator();
+              else void createAndGenerate();
+            }}
           >
             {creating
               ? beatMode === "upload"
                 ? "Uploading & analyzing…"
-                : "Generating your beat…"
+                : beatMode === "create"
+                  ? "Opening Beat Studio…"
+                  : "Generating your beat…"
               : beatMode === "upload"
                 ? "Upload & preview beat"
-                : "Create beat"}
+                : beatMode === "create"
+                  ? "Open Beat Studio"
+                  : "Create beat"}
           </button>
         </div>
 
