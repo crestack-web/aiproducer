@@ -77,6 +77,7 @@ export default function ArrangementTimeline({
 }: Props) {
   const [pxPerBar, setPxPerBar] = useState(48);
   const [selected, setSelected] = useState<{ trackId: string; clipId: string } | null>(null);
+  const [showTools, setShowTools] = useState(false);
   const [drag, setDrag] = useState<{
     trackId: string;
     clipId: string;
