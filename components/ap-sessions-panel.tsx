@@ -1,22 +1,17 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { ApSession, ApSessionMember, ApSessionRole } from "@/lib/sessions/types";
+/**
+ * AP Session share modal — Riffle-style Collaborate UI in AP Studio dark theme.
+ * Copy link + email invite; roles: artist / producer / listener.
+ */
 
-type Msg = {
-  id: string;
-  user_id: string | null;
-  kind: string;
-  body: string;
-  created_at: string;
-  display_name?: string | null;
-};
+import React, { useCallback, useEffect, useState } from "react";
+import type { ApSession, ApSessionMember, ApSessionRole } from "@/lib/sessions/types";
 
 type Props = {
   projectId: string;
   open: boolean;
   onClose: () => void;
-  /** Optional: publish local transport when user plays in Console */
   transportPlaying?: boolean;
   transportPositionMs?: number;
   onFollowTransport?: (state: {
@@ -29,32 +24,57 @@ type Props = {
 const brass = "#E7A961";
 const border = "rgba(255,255,255,0.1)";
 const muted = "rgba(245,240,232,0.55)";
-const surface = "rgba(22,20,18,0.98)";
+const surface = "rgba(18,18,24,0.98)";
+const text = "#F5F0E8";
 
 function roleLabel(r: string) {
-  return r.charAt(0).toUpperCase() + r.slice(1);
+  if (r === "owner") return "Owner";
+  if (r === "producer") return "Producer";
+  if (r === "listener") return "Listener";
+  return "Artist";
+}
+
+function roleHint(r: string) {
+  if (r === "producer") return "Can edit session & invite";
+  if (r === "listener") return "Can listen & chat";
+  return "Can record & collaborate";
+}
+
+function initial(name: string) {
+  const t = (name || "?").trim();
+  return (t[0] || "?").toUpperCase();
+}
+
+function avatarColor(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  const hues = [28, 200, 320, 160, 40, 280];
+  const hue = hues[h % hues.length];
+  return `hsl(${hue} 55% 42%)`;
 }
 
 export default function ApSessionsPanel({
   projectId,
   open,
   onClose,
-  transportPlaying,
-  transportPositionMs,
-  onFollowTransport,
 }: Props) {
   const [session, setSession] = useState<ApSession | null>(null);
-  const [members, setMembers] = useState<(ApSessionMember & { presence?: string })[]>([]);
+  const [members, setMembers] = useState<
+    (ApSessionMember & { display_name?: string | null; avatar_url?: string | null })[]
+  >([]);
   const [myRole, setMyRole] = useState<ApSessionRole | null>(null);
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [chatInput, setChatInput] = useState("");
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [inviteRole, setInviteRole] = useState<"artist" | "producer" | "listener">("artist");
+  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<"people" | "chat" | "invite">("people");
-  const lastMsgAt = useRef<string | null>(null);
-  const lastTransportRev = useRef(0);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<"collaborate" | "chat">("collaborate");
+  const [projectTitle, setProjectTitle] = useState("Project");
+
+  const canInvite = myRole === "owner" || myRole === "producer" || myRole == null;
 
   const loadSession = useCallback(async () => {
     setErr(null);
@@ -78,22 +98,22 @@ export default function ApSessionsPanel({
         setErr(detJ.error || "Could not open session");
         return;
       }
-      setSession(detJ.session);
+      setSession(detJ.session || active);
       setMembers(detJ.members || []);
-      setMyRole(detJ.myRole);
+      setMyRole(detJ.myRole || null);
     } catch {
-      setErr("Network error");
+      setErr("Network error loading session");
     }
   }, [projectId]);
 
-  const createSession = async () => {
+  const ensureSession = useCallback(async () => {
     setBusy(true);
     setErr(null);
     try {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, name: "AP Session" }),
+        body: JSON.stringify({ projectId }),
       });
       const j = await res.json();
       if (!res.ok) {
@@ -105,187 +125,134 @@ export default function ApSessionsPanel({
     } finally {
       setBusy(false);
     }
-  };
+  }, [projectId, loadSession]);
 
-  const createInvite = async () => {
-    if (!session) return;
+  const ensureInviteLink = useCallback(async () => {
+    if (!session) return null;
     setBusy(true);
     setErr(null);
     try {
       const res = await fetch(`/api/sessions/${session.id}/invites`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: inviteRole, expiresInHours: 72 }),
+        body: JSON.stringify({ role: inviteRole, expiresInHours: 168, maxUses: 50 }),
       });
       const j = await res.json();
       if (!res.ok) {
-        setErr(j.error || "Could not create invite");
-        return;
+        setErr(typeof j.error === "string" ? j.error : "Could not create invite");
+        return null;
       }
-      setInviteUrl(j.joinUrl || j.joinPath);
-      setTab("invite");
+      const url = j.joinUrl || j.joinPath;
+      setInviteUrl(url);
+      return url as string;
     } finally {
       setBusy(false);
     }
-  };
+  }, [session, inviteRole]);
 
-  const sendChat = async () => {
-    if (!session || !chatInput.trim()) return;
-    const body = chatInput.trim();
-    setChatInput("");
-    const res = await fetch(`/api/sessions/${session.id}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body }),
-    });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      setErr(j.error || "Could not send");
+  const copyLink = useCallback(async () => {
+    setOkMsg(null);
+    let url = inviteUrl;
+    if (!url) {
+      if (!session) {
+        await ensureSession();
+        return;
+      }
+      url = await ensureInviteLink();
+    }
+    if (!url) return;
+    try {
+      await navigator.clipboard?.writeText(url);
+      setCopied(true);
+      setOkMsg("Link copied — send it to your collaborator");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setOkMsg(url);
+    }
+  }, [inviteUrl, session, ensureSession, ensureInviteLink]);
+
+  const sendEmailInvite = useCallback(async () => {
+    const to = email.trim().toLowerCase();
+    if (!to || !to.includes("@")) {
+      setErr("Enter a valid email address");
       return;
     }
-    const j = await res.json();
-    if (j.message) {
-      setMessages((prev) => [...prev, { ...j.message, display_name: "You" }]);
+    if (!session) {
+      await ensureSession();
+      return;
     }
-  };
-
-  const endSession = async () => {
-    if (!session) return;
-    if (!confirm("End this AP Session for everyone?")) return;
-    setBusy(true);
+    setSending(true);
+    setErr(null);
+    setOkMsg(null);
     try {
-      const res = await fetch(`/api/sessions/${session.id}`, {
-        method: "PATCH",
+      const res = await fetch(`/api/sessions/${session.id}/invites`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "ended" }),
+        body: JSON.stringify({
+          role: inviteRole,
+          expiresInHours: 168,
+          maxUses: 20,
+          invitedEmail: to,
+          sendEmail: true,
+        }),
       });
+      const j = await res.json();
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        setErr(j.error || "Could not end session");
+        setErr(typeof j.error === "string" ? j.error : "Could not send invite");
         return;
       }
-      setSession(null);
-      setMembers([]);
-      setMessages([]);
+      if (j.joinUrl) setInviteUrl(j.joinUrl);
+      setOkMsg(
+        j.emailSent
+          ? `Invite emailed to ${to}`
+          : j.emailError
+            ? `Link created, but email failed: ${j.emailError}`
+            : `Invite created for ${to}`
+      );
+      setEmail("");
     } finally {
-      setBusy(false);
+      setSending(false);
     }
-  };
+  }, [email, session, inviteRole, ensureSession]);
 
-  // Initial load + presence + chat poll
   useEffect(() => {
     if (!open) return;
+    setTab("collaborate");
+    setErr(null);
+    setOkMsg(null);
     void loadSession();
-  }, [open, loadSession]);
+    fetch(`/api/projects/${projectId}`)
+      .then((r) => r.json())
+      .then((j) => {
+        const p = j.project || j;
+        if (p?.title) setProjectTitle(String(p.title));
+      })
+      .catch(() => {});
+  }, [open, loadSession, projectId]);
 
+  // Auto-create session when opening with none
   useEffect(() => {
-    if (!open || !session?.id) return;
-    let cancelled = false;
-
-    const tick = async () => {
-      try {
-        const pres = await fetch(`/api/sessions/${session.id}/presence`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            isPlaying: Boolean(transportPlaying),
-          }),
-        });
-        if (pres.ok) {
-          const j = await pres.json();
-          if (!cancelled) {
-            setMembers(j.members || []);
-            if (j.myRole) setMyRole(j.myRole);
-          }
-        }
-
-        const after = lastMsgAt.current;
-        const msgUrl = after
-          ? `/api/sessions/${session.id}/messages?after=${encodeURIComponent(after)}`
-          : `/api/sessions/${session.id}/messages`;
-        const msgRes = await fetch(msgUrl);
-        if (msgRes.ok) {
-          const j = await msgRes.json();
-          const list = (j.messages || []) as Msg[];
-          if (list.length && !cancelled) {
-            setMessages((prev) => {
-              if (!after) return list;
-              const ids = new Set(prev.map((m) => m.id));
-              const merged = [...prev];
-              for (const m of list) {
-                if (!ids.has(m.id)) merged.push(m);
-              }
-              return merged;
-            });
-            lastMsgAt.current = list[list.length - 1].created_at;
-          }
-        }
-
-        const tr = await fetch(`/api/sessions/${session.id}/transport`);
-        if (tr.ok && onFollowTransport) {
-          const j = await tr.json();
-          const t = j.transport || {};
-          const rev = typeof t.revision === "number" ? t.revision : 0;
-          if (rev > lastTransportRev.current && t.updatedBy) {
-            lastTransportRev.current = rev;
-            onFollowTransport({
-              playing: Boolean(t.playing),
-              positionMs: Number(t.positionMs) || 0,
-              revision: rev,
-            });
-          }
-        }
-      } catch {
-        /* ignore transient */
-      }
-    };
-
-    void tick();
-    const id = setInterval(tick, 10000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [open, session?.id, transportPlaying, onFollowTransport]);
-
-  // Publish local transport when host plays/pauses (throttled by parent updates)
-  useEffect(() => {
-    if (!open || !session?.id) return;
-    if (typeof transportPlaying !== "boolean") return;
-    const positionMs = transportPositionMs ?? 0;
-    void fetch(`/api/sessions/${session.id}/transport`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        playing: transportPlaying,
-        positionMs,
-        clientTs: Date.now(),
-      }),
-    }).then(async (res) => {
-      if (res.ok) {
-        const j = await res.json();
-        if (j.transport?.revision) lastTransportRev.current = j.transport.revision;
-      }
-    });
-  }, [open, session?.id, transportPlaying, transportPositionMs]);
+    if (!open || busy || session) return;
+    // soft auto-create after first load found none
+  }, [open, busy, session]);
 
   if (!open) return null;
 
-  const canInvite = myRole === "owner" || myRole === "producer";
-  const canEnd = myRole === "owner";
-
   return (
     <div
+      role="dialog"
+      aria-modal
+      aria-label="Share session"
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 95,
-        background: "rgba(0,0,0,0.72)",
-        backdropFilter: "blur(6px)",
+        zIndex: 80,
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "center",
-        padding: 12,
+        padding: "max(12px, env(safe-area-inset-top)) 12px 24px",
+        background: "rgba(0,0,0,0.55)",
+        backdropFilter: "blur(6px)",
       }}
       onClick={onClose}
     >
@@ -293,343 +260,340 @@ export default function ApSessionsPanel({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(420px, 100%)",
-          maxHeight: "88vh",
+          marginTop: 48,
+          maxHeight: "min(88vh, 720px)",
           overflow: "auto",
-          borderRadius: 18,
+          borderRadius: 20,
           border: `1px solid ${border}`,
           background: surface,
-          boxShadow: "0 28px 90px rgba(0,0,0,0.6)",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+          color: text,
+          fontFamily: "system-ui, -apple-system, sans-serif",
         }}
       >
+        {/* Tabs */}
         <div
           style={{
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "14px 16px",
+            gap: 4,
+            padding: "14px 14px 0",
             borderBottom: `1px solid ${border}`,
           }}
         >
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 16, color: "#F5F0E8" }}>AP Sessions</div>
-            <div style={{ fontSize: 11, color: muted, marginTop: 2 }}>
-              Remote collaboration on this project
-            </div>
-          </div>
+          {(
+            [
+              ["collaborate", "Collaborate"],
+              ["chat", "Session"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              style={{
+                flex: 1,
+                padding: "10px 12px",
+                borderRadius: 999,
+                border: "none",
+                marginBottom: 10,
+                background: tab === id ? "rgba(231,169,97,0.18)" : "transparent",
+                color: tab === id ? brass : muted,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          ))}
           <button
             type="button"
+            aria-label="Close"
             onClick={onClose}
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              border: `1px solid ${border}`,
-              background: "rgba(0,0,0,0.35)",
+              width: 36,
+              height: 36,
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
               color: muted,
+              fontSize: 20,
               cursor: "pointer",
+              marginBottom: 10,
             }}
           >
             ×
           </button>
         </div>
 
-        <div style={{ padding: 16 }}>
-          {err && (
-            <p style={{ color: "#F87171", fontSize: 13, margin: "0 0 12px" }}>{String(err)}</p>
-          )}
+        {tab === "collaborate" && (
+          <div style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: muted, marginBottom: 12, lineHeight: 1.4 }}>
+              Invite collaborators to <strong style={{ color: text }}>{projectTitle}</strong>.
+              They sign in (or create an account) and join with your link.
+            </div>
 
-          {!session ? (
-            <div style={{ textAlign: "center", padding: "24px 8px" }}>
-              <p style={{ color: muted, fontSize: 13, lineHeight: 1.5, margin: "0 0 16px" }}>
-                Start an AP Session so collaborators can join, chat, follow playback, and submit
-                takes — without overwriting your project.
-              </p>
+            {!session ? (
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void createSession()}
-                style={{
-                  padding: "12px 20px",
-                  borderRadius: 12,
-                  border: "none",
-                  background: brass,
-                  color: "#1A1208",
-                  fontWeight: 800,
-                  cursor: busy ? "wait" : "pointer",
-                  fontFamily: "inherit",
-                }}
+                onClick={() => void ensureSession()}
+                style={primaryBtn}
               >
-                {busy ? "Creating…" : "Create AP Session"}
+                {busy ? "Starting…" : "Start collaboration session"}
               </button>
-            </div>
-          ) : (
-            <>
-              <div
-                style={{
-                  padding: 12,
-                  borderRadius: 12,
-                  border: `1px solid ${border}`,
-                  background: "rgba(0,0,0,0.28)",
-                  marginBottom: 12,
-                }}
-              >
-                <div style={{ fontWeight: 700, color: "#F5F0E8" }}>{session.name}</div>
-                <div style={{ fontSize: 11, color: muted, marginTop: 4 }}>
-                  Status · {session.status}
-                  {myRole ? ` · You are ${roleLabel(myRole)}` : ""}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-                {(["people", "chat", "invite"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    style={{
-                      flex: 1,
-                      padding: "8px",
-                      borderRadius: 10,
-                      border: `1px solid ${tab === t ? brass : border}`,
-                      background: tab === t ? "rgba(231,169,97,0.12)" : "transparent",
-                      color: tab === t ? brass : muted,
-                      fontWeight: 700,
-                      fontSize: 12,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
+            ) : (
+              <>
+                {/* Email invite */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <input
+                    type="email"
+                    placeholder="Enter an email address"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    style={inputStyle}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void sendEmailInvite();
                     }}
-                  >
-                    {t === "people" ? "People" : t === "chat" ? "Chat" : "Invite"}
-                  </button>
-                ))}
-              </div>
-
-              {tab === "people" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {members.map((m) => (
-                    <div
-                      key={m.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: `1px solid ${border}`,
-                        background: "rgba(0,0,0,0.25)",
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          background: m.presence === "online" ? "#4ADE80" : muted,
-                          boxShadow: m.presence === "online" ? "0 0 8px #4ADE80" : "none",
-                        }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 650, color: "#F5F0E8", fontSize: 13 }}>
-                          {m.display_name || "Collaborator"}
-                        </div>
-                        <div style={{ fontSize: 11, color: muted }}>
-                          {roleLabel(m.role)}
-                          {m.is_recording ? " · recording" : ""}
-                          {m.is_playing ? " · playing" : ""}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {!members.length && (
-                    <p style={{ color: muted, fontSize: 13 }}>No members yet.</p>
-                  )}
+                  />
                 </div>
-              )}
-
-              {tab === "chat" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div
-                    style={{
-                      maxHeight: 240,
-                      overflow: "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                      padding: 8,
-                      borderRadius: 12,
-                      border: `1px solid ${border}`,
-                      background: "rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {messages.map((m) => (
-                      <div key={m.id} style={{ fontSize: 13 }}>
-                        <span style={{ color: m.kind === "system" ? brass : muted, fontWeight: 650 }}>
-                          {m.kind === "system" ? "System" : m.display_name || "User"}
-                        </span>
-                        <span style={{ color: "#E8E2D6", marginLeft: 8 }}>{m.body}</span>
-                      </div>
-                    ))}
-                    {!messages.length && (
-                      <p style={{ color: muted, fontSize: 12, margin: 0 }}>No messages yet.</p>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void sendChat();
-                      }}
-                      placeholder="Message the session…"
-                      maxLength={2000}
-                      style={{
-                        flex: 1,
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: `1px solid ${border}`,
-                        background: "rgba(0,0,0,0.35)",
-                        color: "#F5F0E8",
-                        fontFamily: "inherit",
-                        fontSize: 13,
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void sendChat()}
-                      style={{
-                        padding: "10px 14px",
-                        borderRadius: 10,
-                        border: "none",
-                        background: brass,
-                        color: "#1A1208",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      Send
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {tab === "invite" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {!canInvite ? (
-                    <p style={{ color: muted, fontSize: 13 }}>
-                      Only the owner or a producer can create invites.
-                    </p>
-                  ) : (
-                    <>
-                      <label style={{ fontSize: 12, color: muted }}>
-                        Role for invite
-                        <select
-                          value={inviteRole}
-                          onChange={(e) =>
-                            setInviteRole(e.target.value as "artist" | "producer" | "listener")
-                          }
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            marginTop: 6,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: `1px solid ${border}`,
-                            background: "rgba(0,0,0,0.35)",
-                            color: "#F5F0E8",
-                            fontFamily: "inherit",
-                          }}
-                        >
-                          <option value="artist">Artist — record & submit takes</option>
-                          <option value="producer">Producer — edit & review</option>
-                          <option value="listener">Listener — listen & chat</option>
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void createInvite()}
-                        style={{
-                          padding: "12px",
-                          borderRadius: 12,
-                          border: "none",
-                          background: brass,
-                          color: "#1A1208",
-                          fontWeight: 800,
-                          cursor: busy ? "wait" : "pointer",
-                          fontFamily: "inherit",
-                        }}
-                      >
-                        Generate invite link
-                      </button>
-                      {inviteUrl && (
-                        <div
-                          style={{
-                            padding: 12,
-                            borderRadius: 12,
-                            border: `1px solid ${border}`,
-                            background: "rgba(0,0,0,0.35)",
-                            wordBreak: "break-all",
-                            fontSize: 12,
-                            color: "#E8E2D6",
-                          }}
-                        >
-                          {inviteUrl}
-                          <button
-                            type="button"
-                            onClick={() => void navigator.clipboard?.writeText(inviteUrl)}
-                            style={{
-                              display: "block",
-                              marginTop: 10,
-                              padding: "8px 12px",
-                              borderRadius: 8,
-                              border: `1px solid ${border}`,
-                              background: "transparent",
-                              color: brass,
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              fontFamily: "inherit",
-                              width: "100%",
-                            }}
-                          >
-                            Copy link
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
-              {canEnd && (
-                <button
-                  type="button"
-                  onClick={() => void endSession()}
+                <div
                   style={{
-                    marginTop: 16,
-                    width: "100%",
-                    padding: "10px",
-                    borderRadius: 10,
-                    border: `1px solid ${border}`,
-                    background: "transparent",
-                    color: muted,
-                    fontSize: 12,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginBottom: 14,
                   }}
                 >
-                  End session
-                </button>
-              )}
+                  <label style={{ fontSize: 12, color: muted, display: "flex", alignItems: "center", gap: 8 }}>
+                    Role
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => {
+                        setInviteRole(e.target.value as typeof inviteRole);
+                        setInviteUrl(null);
+                      }}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 999,
+                        border: `1px solid ${border}`,
+                        background: "rgba(0,0,0,0.35)",
+                        color: text,
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      <option value="artist">Artist · can record</option>
+                      <option value="producer">Producer · can edit</option>
+                      <option value="listener">Listener · view only</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={sending || !canInvite}
+                    onClick={() => void sendEmailInvite()}
+                    style={{
+                      ...primaryBtn,
+                      width: "auto",
+                      padding: "8px 14px",
+                      fontSize: 13,
+                      opacity: canInvite ? 1 : 0.5,
+                    }}
+                  >
+                    {sending ? "Sending…" : "Send invite"}
+                  </button>
+                </div>
+                <p style={{ margin: "0 0 14px", fontSize: 11, color: muted }}>{roleHint(inviteRole)}</p>
 
-              <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, lineHeight: 1.45 }}>
-                Playback sync is best-effort across devices (not sample-accurate). Presence uses a
-                heartbeat — offline after ~45s without a pulse.
+                {/* People with access */}
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, marginBottom: 10 }}>
+                  PEOPLE WITH ACCESS
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                  {members.length === 0 && (
+                    <p style={{ margin: 0, fontSize: 13, color: muted }}>Only you so far — invite someone below.</p>
+                  )}
+                  {members.map((m) => {
+                    const name = m.display_name || "Collaborator";
+                    const seed = String(m.user_id || name);
+                    return (
+                      <div
+                        key={m.id || m.user_id}
+                        style={{ display: "flex", alignItems: "center", gap: 12 }}
+                      >
+                        <div
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 999,
+                            background: avatarColor(seed),
+                            display: "grid",
+                            placeItems: "center",
+                            fontWeight: 800,
+                            fontSize: 15,
+                            color: "#fff",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {initial(name)}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {name}
+                            {m.role === myRole && members.length === 1 ? " (you)" : ""}
+                          </div>
+                          <div style={{ fontSize: 12, color: muted }}>{roleLabel(m.role)}</div>
+                        </div>
+                        <div style={{ fontSize: 12, color: muted, fontWeight: 600 }}>{roleLabel(m.role)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 999,
+                    border: `1px solid ${border}`,
+                    background: "rgba(0,0,0,0.25)",
+                    fontSize: 13,
+                    color: text,
+                    marginBottom: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span aria-hidden>🔒</span>
+                  Only people with the link or invite can join
+                </div>
+
+                {/* Copy link row */}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    padding: 6,
+                    paddingLeft: 12,
+                    borderRadius: 999,
+                    border: `1px solid ${border}`,
+                    background: "rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: 12,
+                      color: muted,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {inviteUrl || "Generate a link to share"}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void copyLink()}
+                    style={{
+                      flexShrink: 0,
+                      padding: "10px 14px",
+                      borderRadius: 999,
+                      border: "none",
+                      background: `linear-gradient(135deg, ${brass}, #C4893F)`,
+                      color: "#1A1208",
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    {copied ? "Copied" : "Copy link"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {err && (
+              <p style={{ color: "#F87171", fontSize: 13, margin: "12px 0 0" }}>{err}</p>
+            )}
+            {okMsg && (
+              <p style={{ color: brass, fontSize: 13, margin: "12px 0 0" }}>{okMsg}</p>
+            )}
+          </div>
+        )}
+
+        {tab === "chat" && (
+          <div style={{ padding: 16 }}>
+            <p style={{ margin: 0, fontSize: 13, color: muted, lineHeight: 1.5 }}>
+              Session is active for this project. Use <strong style={{ color: text }}>Collaborate</strong> to
+              invite artists or producers. They open the link, sign up or log in, then join the Console.
+            </p>
+            {session && (
+              <p style={{ margin: "12px 0 0", fontSize: 12, color: muted }}>
+                Session id: <code style={{ color: brass }}>{session.id.slice(0, 8)}…</code>
               </p>
-            </>
-          )}
-        </div>
+            )}
+            {session && myRole === "owner" && (
+              <button
+                type="button"
+                style={{ ...ghostBtn, marginTop: 16 }}
+                onClick={async () => {
+                  if (!session) return;
+                  await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+                  setSession(null);
+                  setMembers([]);
+                  setInviteUrl(null);
+                  setOkMsg("Session ended");
+                }}
+              >
+                End session
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  flex: 1,
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: 999,
+  border: `1px solid ${border}`,
+  background: "rgba(0,0,0,0.35)",
+  color: text,
+  fontSize: 14,
+  outline: "none",
+};
+
+const primaryBtn: React.CSSProperties = {
+  width: "100%",
+  padding: "12px 16px",
+  borderRadius: 999,
+  border: "none",
+  background: `linear-gradient(135deg, ${brass}, #C4893F)`,
+  color: "#1A1208",
+  fontWeight: 800,
+  fontSize: 14,
+  cursor: "pointer",
+};
+
+const ghostBtn: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 999,
+  border: `1px solid ${border}`,
+  background: "transparent",
+  color: muted,
+  fontWeight: 600,
+  fontSize: 13,
+  cursor: "pointer",
+};
