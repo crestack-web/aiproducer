@@ -46,10 +46,13 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  const origin = req.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "";
-  const joinUrl = origin
-    ? `${origin.replace(/\/$/, "")}${result.joinPath}`
-    : result.joinPath;
+  const origin = (
+    req.headers.get("origin") ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    "https://apstudio.site"
+  ).replace(/\/$/, "");
+  const joinUrl = `${origin}${result.joinPath}`;
 
   return NextResponse.json({
     invite: result.invite,
