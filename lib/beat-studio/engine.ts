@@ -261,9 +261,19 @@ export type PatternPlayer = {
   stop: () => void;
 };
 
+type ScheduledEvent = {
+  absTime: number;
+  instrumentId: InstrumentId;
+  pitch: number;
+  velocity: number;
+  durationSec: number;
+  params?: InstrumentParams;
+};
+
 /**
- * Schedule pattern notes on the audio clock. Cancelling stops voices and loop timer.
- * Does not create its own AudioContext.
+ * Schedule pattern notes on the audio clock with a lookahead loop.
+ * Musical times are computed from ctx.currentTime — not wall-clock setInterval periods —
+ * so loop cycles do not accumulate drift.
  */
 export function playPattern(
   ctx: AudioContext,
@@ -271,61 +281,105 @@ export function playPattern(
   opts?: { lookAheadSec?: number; loop?: boolean; pool?: VoicePool }
 ): PatternPlayer {
   const lookAhead = opts?.lookAheadSec ?? 0.05;
+  const horizonSec = 0.35;
   const t0 = ctx.currentTime + lookAhead;
   const pool = opts?.pool ?? new VoicePool();
   let stopped = false;
-  const generation = { n: 0 };
-  const myGen = ++generation.n;
 
-  const scheduleOnce = (cycleOffsetSec: number) => {
-    if (stopped) return;
-    for (const track of doc.tracks) {
-      if (track.muted) continue;
-      for (const note of track.notes) {
-        const startSec = ticksToSeconds(note.startTick, doc.tempoBpm, doc.ppq) + cycleOffsetSec;
-        const durSec = Math.max(
-          0.03,
-          ticksToSeconds(note.durationTicks, doc.tempoBpm, doc.ppq)
-        );
+  const patternSec = Math.max(
+    0.05,
+    ticksToSeconds(
+      patternLengthTicks(doc.bars, doc.timeSignature, doc.ppq),
+      doc.tempoBpm,
+      doc.ppq
+    )
+  );
+  const shouldLoop = opts?.loop ?? doc.loop ?? false;
+
+  // Relative events within one cycle
+  type Rel = {
+    startSec: number;
+    durationSec: number;
+    instrumentId: InstrumentId;
+    pitch: number;
+    velocity: number;
+    params?: InstrumentParams;
+  };
+  const rel: Rel[] = [];
+  for (const track of doc.tracks) {
+    if (track.muted) continue;
+    for (const note of track.notes) {
+      rel.push({
+        startSec: ticksToSeconds(note.startTick, doc.tempoBpm, doc.ppq),
+        durationSec: Math.max(0.03, ticksToSeconds(note.durationTicks, doc.tempoBpm, doc.ppq)),
+        instrumentId: track.instrumentId,
+        pitch: note.pitch,
+        velocity: note.velocity,
+        params: track.instrumentParams,
+      });
+    }
+  }
+  rel.sort((a, b) => a.startSec - b.startSec);
+
+  /** Absolute times already scheduled (avoid double-fire) */
+  const scheduledKeys = new Set<string>();
+  let maxCycleScheduled = -1;
+
+  function scheduleThrough(untilAbs: number) {
+    if (stopped || rel.length === 0) return;
+    // How many cycles might intersect [t0, untilAbs]?
+    const lastCycle = shouldLoop
+      ? Math.floor((untilAbs - t0) / patternSec) + 1
+      : 0;
+    for (let cycle = 0; cycle <= lastCycle; cycle++) {
+      if (!shouldLoop && cycle > 0) break;
+      for (let i = 0; i < rel.length; i++) {
+        const e = rel[i];
+        const abs = t0 + cycle * patternSec + e.startSec;
+        if (abs > untilAbs) continue;
+        if (abs + e.durationSec < ctx.currentTime - 0.05) continue; // already past
+        const key = `${cycle}:${i}:${abs.toFixed(4)}`;
+        if (scheduledKeys.has(key)) continue;
+        scheduledKeys.add(key);
         playNote(
           ctx,
-          track.instrumentId,
-          note.pitch,
-          note.velocity,
-          durSec,
-          t0 + startSec,
-          track.instrumentParams,
+          e.instrumentId,
+          e.pitch,
+          e.velocity,
+          e.durationSec,
+          abs,
+          e.params,
           pool
         );
       }
+      maxCycleScheduled = Math.max(maxCycleScheduled, cycle);
     }
-  };
-
-  scheduleOnce(0);
-  const patternSec = ticksToSeconds(
-    patternLengthTicks(doc.bars, doc.timeSignature, doc.ppq),
-    doc.tempoBpm,
-    doc.ppq
-  );
-
-  let loopTimer: ReturnType<typeof setInterval> | null = null;
-  const shouldLoop = opts?.loop ?? doc.loop ?? false;
-  if (shouldLoop && patternSec > 0.05) {
-    let cycle = 1;
-    loopTimer = setInterval(() => {
-      if (stopped || myGen !== generation.n) return;
-      scheduleOnce(cycle * patternSec);
-      cycle += 1;
-    }, Math.max(40, patternSec * 1000 - 40));
+    // Bound set size for long loops
+    if (scheduledKeys.size > 4000) {
+      scheduledKeys.clear();
+    }
   }
+
+  // Initial schedule
+  scheduleThrough(ctx.currentTime + horizonSec);
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function pump() {
+    if (stopped) return;
+    scheduleThrough(ctx.currentTime + horizonSec);
+    // Poll on a short timer but *schedule* against audio clock only
+    timer = setTimeout(pump, 25);
+  }
+  timer = setTimeout(pump, 25);
 
   return {
     stop: () => {
       stopped = true;
-      generation.n++;
-      if (loopTimer) clearInterval(loopTimer);
-      loopTimer = null;
+      if (timer) clearTimeout(timer);
+      timer = null;
       pool.stopAll(ctx.currentTime);
+      scheduledKeys.clear();
     },
   };
 }
