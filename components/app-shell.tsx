@@ -800,10 +800,10 @@ export function AppShell({
               <img
                 src={STUDIO_LOGO_URL}
                 alt=""
-                width={32}
-                height={32}
+                width={24}
+                height={24}
                 style={{
-                  borderRadius: 9,
+                  borderRadius: 6,
                   objectFit: "cover",
                   flexShrink: 0,
                   boxShadow: mode === "light" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
@@ -811,11 +811,10 @@ export function AppShell({
               />
               <span
                 style={{
-                  fontFamily: "'IBM Plex Mono', monospace",
-                  fontSize: 18,
-                  letterSpacing: 1.5,
-                  color: C.brass,
                   fontWeight: 700,
+                  fontSize: 15,
+                  letterSpacing: "normal",
+                  color: C.text,
                   lineHeight: 1,
                 }}
               >
