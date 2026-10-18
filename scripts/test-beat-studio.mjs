@@ -186,6 +186,16 @@ assert(pool.voices.length === 16, "voice pool capped at 16");
 pool.stopAll();
 assert(pool.voices.length === 0, "stopAll clears pool");
 
+
+// audio-clock loop positions (no wall-clock period accumulation)
+function absNoteTimes(t0, patternSec, noteStartSec, cycles) {
+  return Array.from({ length: cycles }, (_, c) => t0 + c * patternSec + noteStartSec);
+}
+const times = absNoteTimes(10, 2, 0.5, 5);
+assert(Math.abs(times[0] - 10.5) < 1e-9, "cycle0 note time");
+assert(Math.abs(times[4] - (10 + 8 + 0.5)) < 1e-9, "cycle4 note time no drift formula");
+assert(times[1] - times[0] === 2, "cycle spacing = patternSec");
+
 if (process.exitCode) {
   console.error("\nSome tests failed");
   process.exit(1);
