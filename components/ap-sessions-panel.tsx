@@ -546,7 +546,11 @@ export default function ApSessionsPanel({
                 style={{ ...ghostBtn, marginTop: 16 }}
                 onClick={async () => {
                   if (!session) return;
-                  await fetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+                  await fetch(`/api/sessions/${session.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: "ended" }),
+                  });
                   setSession(null);
                   setMembers([]);
                   setInviteUrl(null);
