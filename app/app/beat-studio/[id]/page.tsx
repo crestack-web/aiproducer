@@ -42,12 +42,12 @@ export default function BeatStudioPage() {
           AP Studio
         </Link>
         <span style={{ color: "#E7A961", fontSize: 12, fontWeight: 600, letterSpacing: "0.06em" }}>
-          beat studio · mvp
+          beat studio
         </span>
       </header>
       <main style={mainStyle}>
         <h1 style={h1Style}>{title}</h1>
-        <p style={subStyle}>Play notes, record a short pattern, save it with the project.</p>
+        <p style={subStyle}>Program drums, sketch melodies, save the pattern with your project.</p>
         <BeatStudioPanel projectId={projectId} initialTempo={tempo} />
         <div style={{ marginTop: 28, display: "flex", gap: 16, flexWrap: "wrap" }}>
           <Link href={`/app/console/${projectId}`} style={linkStyle}>
@@ -103,7 +103,7 @@ const logoStyle: React.CSSProperties = {
 const mainStyle: React.CSSProperties = {
   position: "relative",
   zIndex: 1,
-  maxWidth: 640,
+  maxWidth: 900,
   margin: "0 auto",
   padding: "28px 20px 80px",
 };
