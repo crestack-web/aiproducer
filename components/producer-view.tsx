@@ -349,24 +349,6 @@ function ScissorsIcon({ size = 14 }: { size?: number }) {
   );
 }
 
-function ZoomIcon({ zoomIn }: { zoomIn: boolean }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-      <path d="M20 20l-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      {zoomIn ? (
-        <>
-          <path d="M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          <path d="M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </>
-      ) : (
-        <path d="M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      )}
-    </svg>
-  );
-}
-
-/** Fit entire timeline into the visible scroll area */
 function FitViewIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -3772,13 +3754,58 @@ export function ProducerView({
     if (!el || totalMs <= 0) return;
     const usable = Math.max(160, el.clientWidth - 16);
     const sec = Math.max(0.5, totalMs / 1000);
-    // Allow slightly wider range than +/- buttons so long songs can fit
     const next = Math.max(8, Math.min(160, usable / sec));
     setPxPerSec(next);
     el.scrollLeft = 0;
   }
 
+  /** Zoom timeline with scroll/pinch on the timeline body (not header buttons). */
+  function applyTimelineZoom(factor: number, clientX: number) {
+    const el = timelineScrollRef.current;
+    if (!el) return;
+    setPxPerSec((z) => {
+      const next = Math.max(8, Math.min(160, Math.round(z * factor * 10) / 10));
+      if (next === z) return z;
+      const rect = el.getBoundingClientRect();
+      const cursorX = clientX - rect.left;
+      const timeSec = (el.scrollLeft + cursorX) / Math.max(1e-6, z);
+      requestAnimationFrame(() => {
+        const sc = timelineScrollRef.current;
+        if (!sc) return;
+        sc.scrollLeft = Math.max(0, timeSec * next - cursorX);
+        // keep header scroll in sync
+        const h = headerScrollRef.current;
+        if (h) h.scrollLeft = sc.scrollLeft;
+      });
+      return next;
+    });
+  }
+
+  // Ctrl/Cmd+wheel or trackpad pinch over timeline → zoom (passive:false so preventDefault works)
+  useEffect(() => {
+    const el = timelineScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const pinch = e.ctrlKey || e.metaKey;
+      // Ruler strip: always zoom on vertical wheel (no modifier required)
+      const target = e.target as HTMLElement | null;
+      const onRuler = Boolean(target?.closest?.("[data-console-ruler]"));
+      if (!pinch && !onRuler) return;
+      // Ignore pure horizontal pan gestures
+      if (!pinch && onRuler && Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      const dy = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      const factor = dy > 0 ? 0.9 : 1.11;
+      applyTimelineZoom(factor, e.clientX);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // applyTimelineZoom closes over setPxPerSec/refs — stable enough for mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function togglePlay() {
+
     if (playingRef.current || playing) {
       const ctx = audioCtxRef.current;
       if (ctx && playingRef.current) {
@@ -5311,12 +5338,6 @@ export function ProducerView({
 
         {!isNarrow && (
           <>
-        <button type="button" onClick={() => setPxPerSec((z) => Math.max(28, z - 12))} style={iconBtn(border, surface, text)} aria-label="Zoom out" title="Zoom out">
-          <ZoomIcon zoomIn={false} />
-        </button>
-        <button type="button" onClick={() => setPxPerSec((z) => Math.min(140, z + 12))} style={iconBtn(border, surface, text)} aria-label="Zoom in" title="Zoom in">
-          <ZoomIcon zoomIn={true} />
-        </button>
         <button
           type="button"
           onClick={() => fitTimelineToView()}
@@ -5509,22 +5530,6 @@ export function ProducerView({
               style={{ ...iconBtn(border, surface, text), opacity: redoEnabled ? 1 : 0.35 }}
             >
               ↻
-            </button>
-            <button
-              type="button"
-              onClick={() => setPxPerSec((z) => Math.max(28, z - 12))}
-              style={iconBtn(border, surface, text)}
-              aria-label="Zoom out"
-            >
-              <ZoomIcon zoomIn={false} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setPxPerSec((z) => Math.min(140, z + 12))}
-              style={iconBtn(border, surface, text)}
-              aria-label="Zoom in"
-            >
-              <ZoomIcon zoomIn={true} />
             </button>
             <button
               type="button"
@@ -5936,6 +5941,7 @@ export function ProducerView({
           }}
         >
           <div
+            data-console-ruler=""
             style={{
               position: "sticky",
               top: 0,
@@ -6464,6 +6470,7 @@ export function ProducerView({
         <div
           ref={timelineScrollRef}
           onScroll={onTimelineScroll}
+          title="Ctrl/⌘ + scroll to zoom · scroll on ruler to zoom"
           style={{
             flex: 1,
             minWidth: 0,
@@ -6493,6 +6500,7 @@ export function ProducerView({
             }}
           >
             <div
+              data-console-ruler=""
               style={{
                 position: "sticky",
                 top: 0,
