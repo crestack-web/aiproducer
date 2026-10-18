@@ -48,7 +48,7 @@ export default function BeatStudioPage() {
       <main style={mainStyle}>
         <h1 style={h1Style}>{title}</h1>
         <p style={subStyle}>Program drums, sketch melodies, save the pattern with your project.</p>
-        <BeatStudioPanel projectId={projectId} initialTempo={tempo} />
+        <BeatStudioPanel projectId={projectId} initialTempo={tempo ?? undefined} />
         <div style={{ marginTop: 28, display: "flex", gap: 16, flexWrap: "wrap" }}>
           <Link href={`/app/console/${projectId}`} style={linkStyle}>
             Open Console →
