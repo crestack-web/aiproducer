@@ -5336,19 +5336,6 @@ export function ProducerView({
         </div>
         )}
 
-        {!isNarrow && (
-          <>
-        <button
-          type="button"
-          onClick={() => fitTimelineToView()}
-          style={iconBtn(border, surface, text)}
-          aria-label="Fit to view"
-          title="Fit song to view"
-        >
-          <FitViewIcon />
-        </button>
-          </>
-        )}
         <button
           type="button"
           onClick={() => {
@@ -5530,14 +5517,6 @@ export function ProducerView({
               style={{ ...iconBtn(border, surface, text), opacity: redoEnabled ? 1 : 0.35 }}
             >
               ↻
-            </button>
-            <button
-              type="button"
-              onClick={() => fitTimelineToView()}
-              style={iconBtn(border, surface, text)}
-              aria-label="Fit"
-            >
-              <FitViewIcon />
             </button>
             <button
               type="button"
@@ -6468,12 +6447,23 @@ export function ProducerView({
 
         {/* RIGHT: timeline — horizontal + vertical scroll (vertical synced with headers) */}
         <div
-          ref={timelineScrollRef}
-          onScroll={onTimelineScroll}
-          title="Ctrl/⌘ + scroll to zoom · scroll on ruler to zoom"
           style={{
             flex: 1,
             minWidth: 0,
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
+        >
+        <div
+          ref={timelineScrollRef}
+          onScroll={onTimelineScroll}
+          title="Scroll on ruler or Ctrl/⌘+scroll to zoom"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
             overflowX: "auto",
             overflowY: "auto",
             WebkitOverflowScrolling: "touch",
@@ -7064,6 +7054,143 @@ export function ProducerView({
               />
             </div>
           </div>
+        </div>
+
+        {/* Zoom dock — bottom of timeline (Riffle-style): slider + buttons + fit */}
+        <div
+          style={{
+            position: "absolute",
+            left: isNarrow ? 8 : 12,
+            bottom: isNarrow ? 8 : 12,
+            zIndex: 28,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: isNarrow ? "6px 8px" : "8px 10px",
+            borderRadius: 999,
+            background: "rgba(18, 18, 24, 0.92)",
+            border: `1px solid ${border}`,
+            boxShadow: "0 8px 28px rgba(0,0,0,0.45)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            pointerEvents: "auto",
+            maxWidth: "calc(100% - 24px)",
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => applyTimelineZoom(0.85, (timelineScrollRef.current?.getBoundingClientRect().left || 0) + 40)}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              color: text,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 18,
+              lineHeight: 1,
+              flexShrink: 0,
+              opacity: pxPerSec <= 8 ? 0.35 : 1,
+            }}
+          >
+            −
+          </button>
+          <input
+            type="range"
+            min={8}
+            max={160}
+            step={1}
+            value={Math.round(pxPerSec)}
+            aria-label="Timeline zoom"
+            onChange={(e) => {
+              const next = Math.max(8, Math.min(160, Number(e.target.value) || 56));
+              const el = timelineScrollRef.current;
+              if (!el) {
+                setPxPerSec(next);
+                return;
+              }
+              const rect = el.getBoundingClientRect();
+              const centerX = rect.left + rect.width / 2;
+              const cursorX = centerX - rect.left;
+              const timeSec = (el.scrollLeft + cursorX) / Math.max(1e-6, pxPerSec);
+              setPxPerSec(next);
+              requestAnimationFrame(() => {
+                const sc = timelineScrollRef.current;
+                if (!sc) return;
+                sc.scrollLeft = Math.max(0, timeSec * next - cursorX);
+                const h = headerScrollRef.current;
+                if (h) h.scrollLeft = sc.scrollLeft;
+              });
+            }}
+            style={{
+              width: isNarrow ? 88 : 120,
+              height: 28,
+              margin: 0,
+              accentColor: brass,
+              cursor: "pointer",
+              flexShrink: 1,
+              minWidth: 64,
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => applyTimelineZoom(1.15, (timelineScrollRef.current?.getBoundingClientRect().left || 0) + 40)}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              color: text,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              fontSize: 18,
+              lineHeight: 1,
+              flexShrink: 0,
+              opacity: pxPerSec >= 160 ? 0.35 : 1,
+            }}
+          >
+            +
+          </button>
+          <div
+            style={{
+              width: 1,
+              height: 18,
+              background: border,
+              margin: "0 2px",
+              flexShrink: 0,
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Fit to view"
+            title="Fit song to view"
+            onClick={() => fitTimelineToView()}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              color: text,
+              cursor: "pointer",
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+            }}
+          >
+            <FitViewIcon />
+          </button>
+        </div>
         </div>
       </div>
 
