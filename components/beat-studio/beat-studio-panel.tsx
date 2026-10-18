@@ -1,62 +1,102 @@
 "use client";
 
 /**
- * Beat Studio MVP panel — isolated from producer-view / Booth recording.
- * Uses local AudioContext (see lib/beat-studio/TRANSPORT.md).
+ * Beat Studio — mobile-first production UI
+ * Tabs: Beat (step sequencer) · Melody (piano roll) · Sounds
+ * Audio: existing Web Audio engine (audio-clock scheduling)
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type BeatStudioDoc,
+  type BeatStudioNote,
+  type InstrumentId,
   emptyBeatStudioDoc,
-  serializeBeatStudioDoc,
-  beatStudioFromProjectMetadata,
+} from "@/lib/beat-studio/types";
+import { beatStudioFromProjectMetadata, serializeBeatStudioDoc } from "@/lib/beat-studio/serialize";
+import {
+  VoicePool,
   playNote,
   playPattern,
   createNote,
-  quantizeTick,
-  sixteenthGridTicks,
-  patternLengthTicks,
-  VoicePool,
-  type BeatStudioDoc,
-  type InstrumentId,
+  newNoteId,
   type PatternPlayer,
-} from "@/lib/beat-studio";
+} from "@/lib/beat-studio/engine";
+import { patternLengthTicks, ticksToSeconds } from "@/lib/beat-studio/time";
+import {
+  DRUM_LANES,
+  STEPS_PER_BAR,
+  notesToStepGrid,
+  stepGridToNotes,
+  ensureDrumTrack,
+  totalSteps,
+  defaultStepGrid,
+  type StepGrid,
+  type DrumLaneId,
+} from "@/lib/beat-studio/drums";
+import { BEAT_PRESETS, applyPreset, type BeatPresetId } from "@/lib/beat-studio/presets";
 
-const WHITE = [0, 2, 4, 5, 7, 9, 11];
-const BLACK = [1, 3, 6, 8, 10];
-const BASE_C = 60;
+const brass = "#E7A961";
+const border = "rgba(255,255,255,0.1)";
+const muted = "rgba(244,241,236,0.55)";
+const text = "#F4F1EC";
+const surface = "rgba(18,18,24,0.96)";
 
-type Props = {
-  projectId: string;
-  initialTempo?: number | null;
-};
+type TabId = "beat" | "melody" | "sounds";
 
-type HeldKey = {
-  pitch: number;
-  startCtxTime: number;
-  voiceStop: (when?: number) => void;
-};
+const INSTRUMENTS: { id: InstrumentId; label: string; category: string; implemented: boolean }[] = [
+  { id: "drum_kit", label: "Drum kit", category: "Drums", implemented: true },
+  { id: "pluck", label: "Pluck keys", category: "Piano", implemented: true },
+  { id: "synth_bass", label: "Synth bass", category: "Bass", implemented: true },
+  { id: "synth_lead", label: "Synth lead", category: "Synths", implemented: true },
+];
 
-export function BeatStudioPanel({ projectId, initialTempo }: Props) {
-  const ctxRef = useRef<AudioContext | null>(null);
-  const playerRef = useRef<PatternPlayer | null>(null);
-  const poolRef = useRef(new VoicePool());
-  const recordingRef = useRef(false);
-  const recordOriginCtxRef = useRef(0);
-  const heldRef = useRef<Map<number, HeldKey>>(new Map());
+type Props = { projectId: string; initialTempo?: number };
 
+export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
   const [doc, setDoc] = useState<BeatStudioDoc>(() =>
-    emptyBeatStudioDoc({ tempoBpm: initialTempo || 90 })
+    emptyBeatStudioDoc({ tempoBpm: initialTempo || 90, bars: 2 })
   );
+  const [tab, setTab] = useState<TabId>("beat");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
   const [octave, setOctave] = useState(0);
-  const [quantize, setQuantize] = useState(false);
-  const [instrumentId, setInstrumentId] = useState<InstrumentId>("pluck");
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [rollScroll, setRollScroll] = useState(0);
+
+  const ctxRef = useRef<AudioContext | null>(null);
+  const poolRef = useRef(new VoicePool());
+  const playerRef = useRef<PatternPlayer | null>(null);
+  const playT0Ref = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
+  const steps = totalSteps(doc.bars);
+  const drumTrack = useMemo(
+    () =>
+      doc.tracks.find((t) => t.instrumentId === "drum_kit" || t.id === "track_drums") ||
+      null,
+    [doc.tracks]
+  );
+  const melodyTrack = useMemo(
+    () =>
+      doc.tracks.find((t) => t.instrumentId !== "drum_kit" && t.id !== "track_drums") ||
+      doc.tracks[0] ||
+      null,
+    [doc.tracks]
+  );
+
+  const grid: StepGrid = useMemo(() => {
+    if (!drumTrack) {
+      return notesToStepGrid([], steps, doc.ppq);
+    }
+    return notesToStepGrid(drumTrack.notes, steps, doc.ppq);
+  }, [drumTrack, steps, doc.ppq]);
 
   const getCtx = useCallback(async () => {
     if (!ctxRef.current) {
@@ -82,11 +122,15 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         const fromMeta = beatStudioFromProjectMetadata(p?.metadata);
         if (!cancelled) {
           if (fromMeta) {
-            setDoc(fromMeta);
-            const inst = fromMeta.tracks[0]?.instrumentId;
-            if (inst) setInstrumentId(inst);
-          } else if (typeof p?.tempo === "number") {
-            setDoc(emptyBeatStudioDoc({ tempoBpm: p.tempo }));
+            let next = { ...fromMeta, tracks: ensureDrumTrack(fromMeta.tracks) };
+            setDoc(next);
+          } else {
+            const base = emptyBeatStudioDoc({
+              tempoBpm: typeof p?.tempo === "number" ? p.tempo : initialTempo || 90,
+              bars: 2,
+            });
+            base.tracks = ensureDrumTrack(base.tracks);
+            setDoc(base);
           }
         }
       } catch (e) {
@@ -99,11 +143,68 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
       cancelled = true;
       playerRef.current?.stop();
       poolRef.current.stopAll();
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
       void ctxRef.current?.close();
       ctxRef.current = null;
     };
-  }, [projectId]);
+  }, [projectId, initialTempo]);
 
+  const updateDrumGrid = useCallback((next: StepGrid) => {
+    setDoc((d) => {
+      const notes = stepGridToNotes(next, totalSteps(d.bars), d.ppq);
+      let tracks = ensureDrumTrack(d.tracks).map((t) =>
+        t.instrumentId === "drum_kit" || t.id === "track_drums"
+          ? { ...t, notes }
+          : t
+      );
+      return { ...d, tracks };
+    });
+  }, []);
+
+  const toggleStep = useCallback(
+    (lane: DrumLaneId, step: number) => {
+      const g = { ...grid };
+      for (const l of DRUM_LANES) g[l.id] = [...(grid[l.id] || [])];
+      g[lane][step] = !g[lane][step];
+      updateDrumGrid(g);
+      // preview hit
+      void (async () => {
+        const ctx = await getCtx();
+        const laneDef = DRUM_LANES.find((l) => l.id === lane);
+        if (!laneDef) return;
+        playNote(ctx, "drum_kit", laneDef.pitch, 110, 0.15, ctx.currentTime, undefined, poolRef.current);
+      })();
+    },
+    [grid, updateDrumGrid, getCtx]
+  );
+
+  const stopPlayback = useCallback(() => {
+    playerRef.current?.stop();
+    playerRef.current = null;
+    poolRef.current.stopAll();
+    setPlaying(false);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+  }, []);
+
+  const startPlayback = useCallback(async () => {
+    stopPlayback();
+    const ctx = await getCtx();
+    const d = docRef.current;
+    playT0Ref.current = ctx.currentTime;
+    playerRef.current = playPattern(ctx, d, poolRef.current, { loop: d.loop !== false });
+    setPlaying(true);
+
+    const patternSec = ticksToSeconds(patternLengthTicks(d), d.tempoBpm, d.ppq);
+    const stepSec = patternSec / Math.max(1, totalSteps(d.bars));
+
+    const tick = () => {
+      const elapsed = (ctx.currentTime - playT0Ref.current) % Math.max(0.001, patternSec);
+      setActiveStep(Math.floor(elapsed / stepSec) % totalSteps(d.bars));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [getCtx, stopPlayback]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -121,7 +222,7 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
         throw new Error((j as { error?: string }).error || "Save failed");
       }
       setDoc(payload);
-      setStatus("Pattern saved to project");
+      setStatus("Pattern saved");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -129,359 +230,588 @@ export function BeatStudioPanel({ projectId, initialTempo }: Props) {
     }
   }, [doc, projectId]);
 
-  const pointerDown = useCallback(
-    async (semitone: number) => {
-      const pitch = BASE_C + octave * 12 + semitone;
-      if (heldRef.current.has(pitch)) return;
-      const ctx = await getCtx();
-      const voice = playNote(
-        ctx,
-        instrumentId,
-        pitch,
-        110,
-        2.5,
-        ctx.currentTime,
-        undefined,
-        poolRef.current
-      );
-      heldRef.current.set(pitch, {
-        pitch,
-        startCtxTime: ctx.currentTime,
-        voiceStop: voice.stop,
-      });
-    },
-    [getCtx, instrumentId, octave]
-  );
+  const loadPreset = useCallback((id: BeatPresetId) => {
+    const preset = BEAT_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    stopPlayback();
+    setDoc(applyPreset(preset));
+    setStatus(`Loaded “${preset.label}” — edit freely`);
+    setTab("beat");
+  }, [stopPlayback]);
 
-  const pointerUp = useCallback(
-    async (semitone: number) => {
-      const pitch = BASE_C + octave * 12 + semitone;
-      const held = heldRef.current.get(pitch);
-      if (!held) return;
-      heldRef.current.delete(pitch);
-      const ctx = await getCtx();
-      held.voiceStop(ctx.currentTime);
-      if (recordingRef.current) {
-        const startSec = held.startCtxTime - recordOriginCtxRef.current;
-        const durSec = Math.max(0.05, ctx.currentTime - held.startCtxTime);
-        let startTick = Math.round(
-          (startSec * doc.tempoBpm * doc.ppq) / 60
-        );
-        let durationTicks = Math.max(
-          1,
-          Math.round((durSec * doc.tempoBpm * doc.ppq) / 60)
-        );
-        if (quantize) {
-          const grid = sixteenthGridTicks(doc.ppq);
-          startTick = quantizeTick(startTick, grid);
-          durationTicks = Math.max(grid, quantizeTick(durationTicks, grid));
-        }
-        const note = createNote(pitch, startTick, durationTicks, 110);
-        setDoc((prev) => {
-          const tracks = prev.tracks.map((t, i) =>
-            i === 0 ? { ...t, notes: [...t.notes, note] } : t
-          );
-          return { ...prev, tracks };
+  const setTempo = (bpm: number) => {
+    const v = Math.max(40, Math.min(200, Math.round(bpm)));
+    setDoc((d) => ({ ...d, tempoBpm: v }));
+  };
+
+  const setMelodyInstrument = (id: InstrumentId) => {
+    if (id === "drum_kit") return;
+    setDoc((d) => {
+      const tracks = d.tracks.map((t) =>
+        t.instrumentId !== "drum_kit" && t.id !== "track_drums"
+          ? { ...t, instrumentId: id }
+          : t
+      );
+      // ensure melody track exists
+      if (!tracks.some((t) => t.instrumentId !== "drum_kit")) {
+        tracks.push({
+          id: "track_melody",
+          name: "Melody",
+          instrumentId: id,
+          notes: [],
         });
       }
-    },
-    [doc.ppq, doc.tempoBpm, getCtx, octave, quantize]
-  );
-
-  const toggleRecord = useCallback(async () => {
-    if (recording) {
-      // finalize any held keys
-      const ctx = await getCtx();
-      for (const [pitch, held] of heldRef.current) {
-        held.voiceStop(ctx.currentTime);
-        if (recordingRef.current) {
-          const startSec = held.startCtxTime - recordOriginCtxRef.current;
-          const durSec = Math.max(0.05, ctx.currentTime - held.startCtxTime);
-          let startTick = Math.round((startSec * doc.tempoBpm * doc.ppq) / 60);
-          let durationTicks = Math.max(1, Math.round((durSec * doc.tempoBpm * doc.ppq) / 60));
-          if (quantize) {
-            const grid = sixteenthGridTicks(doc.ppq);
-            startTick = quantizeTick(startTick, grid);
-            durationTicks = Math.max(grid, quantizeTick(durationTicks, grid));
-          }
-          const note = createNote(pitch, startTick, durationTicks, 110);
-          setDoc((prev) => ({
-            ...prev,
-            tracks: prev.tracks.map((t, i) =>
-              i === 0 ? { ...t, notes: [...t.notes, note] } : t
-            ),
-          }));
-        }
-      }
-      heldRef.current.clear();
-      recordingRef.current = false;
-      setRecording(false);
-      setStatus("Recording stopped");
-      return;
-    }
-    const ctx = await getCtx();
-    recordOriginCtxRef.current = ctx.currentTime;
-    recordingRef.current = true;
-    setRecording(true);
-    setStatus("Recording — hold keys to set duration");
-  }, [doc.ppq, doc.tempoBpm, getCtx, quantize, recording]);
-
-  const togglePlay = useCallback(async () => {
-    if (playing) {
-      playerRef.current?.stop();
-      playerRef.current = null;
-      setPlaying(false);
-      setStatus("Stopped");
-      return;
-    }
-    const ctx = await getCtx();
-    playerRef.current?.stop();
-    playerRef.current = playPattern(ctx, doc, {
-      loop: doc.loop !== false,
-      pool: poolRef.current,
+      return { ...d, tracks };
     });
-    setPlaying(true);
-    setStatus("Playing pattern");
-  }, [doc, getCtx, playing]);
+  };
 
-  const clearNotes = useCallback(() => {
-    playerRef.current?.stop();
-    playerRef.current = null;
-    setPlaying(false);
-    setDoc((prev) => ({
-      ...prev,
-      tracks: prev.tracks.map((t, i) => (i === 0 ? { ...t, notes: [] } : t)),
+  const addMelodyNote = (pitch: number, startTick: number, durationTicks: number) => {
+    setDoc((d) => {
+      let tracks = ensureDrumTrack(d.tracks);
+      const mi = tracks.findIndex((t) => t.instrumentId !== "drum_kit");
+      if (mi < 0) {
+        tracks = [
+          ...tracks,
+          {
+            id: "track_melody",
+            name: "Melody",
+            instrumentId: "pluck",
+            notes: [createNote(pitch, startTick, durationTicks, 100)],
+          },
+        ];
+      } else {
+        const t = tracks[mi];
+        tracks = tracks.map((tr, i) =>
+          i === mi
+            ? { ...tr, notes: [...tr.notes, createNote(pitch, startTick, durationTicks, 100)] }
+            : tr
+        );
+      }
+      return { ...d, tracks };
+    });
+  };
+
+  const deleteSelectedNote = () => {
+    if (!selectedNoteId) return;
+    setDoc((d) => ({
+      ...d,
+      tracks: d.tracks.map((t) => ({
+        ...t,
+        notes: t.notes.filter((n) => n.id !== selectedNoteId),
+      })),
     }));
-    setStatus("Notes cleared");
-  }, []);
+    setSelectedNoteId(null);
+  };
 
-  const noteCount = doc.tracks.reduce((n, t) => n + t.notes.length, 0);
-  const patternTicks = patternLengthTicks(doc.bars, doc.timeSignature, doc.ppq);
-  const recentNotes = doc.tracks[0]?.notes.slice(-8) ?? [];
+  const clearDrums = () => {
+    const g = notesToStepGrid([], steps, doc.ppq);
+    updateDrumGrid(g);
+  };
 
   if (loading) {
-    return <p style={{ color: "#9B96A3" }}>Loading Beat Studio…</p>;
+    return <p style={{ color: muted, padding: 16 }}>Loading Beat Studio…</p>;
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
+      {/* Transport */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 12px",
+          borderRadius: 16,
+          background: surface,
+          border: `1px solid ${border}`,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => (playing ? stopPlayback() : void startPlayback())}
+          style={primaryBtn}
+          aria-label={playing ? "Stop" : "Play"}
+        >
+          {playing ? "Stop" : "Play"}
+        </button>
         <label style={labelStyle}>
-          Instrument
-          <select
-            value={instrumentId}
-            onChange={(e) => {
-              const id = e.target.value as InstrumentId;
-              setInstrumentId(id);
-              setDoc((prev) => ({
-                ...prev,
-                tracks: prev.tracks.map((t, i) =>
-                  i === 0 ? { ...t, instrumentId: id } : t
-                ),
-              }));
-            }}
-            style={selectStyle}
-          >
-            <option value="pluck">Pluck</option>
-            <option value="synth_lead">Lead synth</option>
-            <option value="synth_bass">Bass</option>
-            <option value="drum_kit">Drums (pitch bands)</option>
-          </select>
-        </label>
-        <label style={labelStyle}>
-          Tempo
+          BPM
           <input
             type="number"
             min={40}
             max={200}
             value={doc.tempoBpm}
-            onChange={(e) =>
-              setDoc((d) => ({
-                ...d,
-                tempoBpm: Math.max(40, Math.min(200, Number(e.target.value) || 90)),
-              }))
-            }
-            style={inputStyle}
+            onChange={(e) => setTempo(Number(e.target.value) || 90)}
+            style={numInput}
           />
+        </label>
+        <label style={labelStyle}>
+          Bars
+          <select
+            value={doc.bars}
+            onChange={(e) => {
+              const bars = Number(e.target.value) || 2;
+              setDoc((d) => ({ ...d, bars }));
+            }}
+            style={numInput}
+          >
+            {[1, 2, 4].map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
         </label>
         <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
-            checked={quantize}
-            onChange={(e) => setQuantize(e.target.checked)}
+            checked={doc.loop !== false}
+            onChange={(e) => setDoc((d) => ({ ...d, loop: e.target.checked }))}
           />
-          Quantize 16ths
+          Loop
         </label>
-        <span style={{ fontSize: 12, color: "#5C5866" }}>
-          {doc.bars} bars · {noteCount} notes · ppq {doc.ppq}
-        </span>
+        <button type="button" onClick={() => void save()} disabled={saving} style={ghostBtn}>
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        <button type="button" onClick={toggleRecord} style={btnStyle(recording)}>
-          {recording ? "Stop record" : "Record"}
-        </button>
-        <button type="button" onClick={togglePlay} style={btnStyle(playing)}>
-          {playing ? "Stop" : "Play pattern"}
-        </button>
-        <button type="button" onClick={clearNotes} style={btnStyle(false)}>
-          Clear
-        </button>
-        <button type="button" onClick={save} disabled={saving} style={btnStyle(false, true)}>
-          {saving ? "Saving…" : "Save pattern"}
-        </button>
-        <button type="button" onClick={() => setOctave((o) => Math.max(-2, o - 1))} style={btnStyle(false)}>
+      {/* Tabs */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: 4,
+          borderRadius: 14,
+          background: "rgba(0,0,0,0.35)",
+          border: `1px solid ${border}`,
+        }}
+      >
+        {(
+          [
+            ["beat", "Beat"],
+            ["melody", "Melody"],
+            ["sounds", "Sounds"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            style={{
+              flex: 1,
+              padding: "10px 8px",
+              borderRadius: 11,
+              border: "none",
+              background: tab === id ? "rgba(231,169,97,0.2)" : "transparent",
+              color: tab === id ? brass : muted,
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Presets strip */}
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+        {BEAT_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => loadPreset(p.id)}
+            title={p.description}
+            style={{
+              flexShrink: 0,
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: `1px solid ${border}`,
+              background: "rgba(0,0,0,0.3)",
+              color: text,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {error && <p style={{ color: "#F87171", margin: 0, fontSize: 13 }}>{error}</p>}
+      {status && <p style={{ color: brass, margin: 0, fontSize: 13 }}>{status}</p>}
+
+      {tab === "beat" && (
+        <div
+          style={{
+            borderRadius: 16,
+            border: `1px solid ${border}`,
+            background: surface,
+            padding: "12px 8px 14px",
+            overflowX: "auto",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, padding: "0 4px" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: muted, letterSpacing: "0.06em" }}>
+              STEP SEQUENCER · {steps} steps
+            </span>
+            <button type="button" onClick={clearDrums} style={{ ...ghostBtn, padding: "4px 10px", fontSize: 11 }}>
+              Clear
+            </button>
+          </div>
+          {DRUM_LANES.map((lane) => (
+            <div
+              key={lane.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 6,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  void (async () => {
+                    const ctx = await getCtx();
+                    playNote(ctx, "drum_kit", lane.pitch, 110, 0.15, ctx.currentTime, undefined, poolRef.current);
+                  })()
+                }
+                style={{
+                  width: 56,
+                  flexShrink: 0,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: lane.color,
+                  background: "transparent",
+                  border: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  padding: "4px 2px",
+                }}
+              >
+                {lane.label}
+              </button>
+              <div style={{ display: "flex", gap: 3, flex: 1 }}>
+                {Array.from({ length: steps }, (_, s) => {
+                  const on = grid[lane.id]?.[s];
+                  const isPlay = playing && activeStep === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      aria-label={`${lane.label} step ${s + 1}`}
+                      onClick={() => toggleStep(lane.id, s)}
+                      style={{
+                        flex: 1,
+                        minWidth: steps > 16 ? 14 : 18,
+                        height: 28,
+                        borderRadius: 5,
+                        border: isPlay ? `1px solid ${brass}` : "1px solid transparent",
+                        background: on
+                          ? lane.color
+                          : s % 4 === 0
+                            ? "rgba(255,255,255,0.08)"
+                            : "rgba(255,255,255,0.04)",
+                        opacity: on ? 1 : 0.85,
+                        cursor: "pointer",
+                        padding: 0,
+                        boxShadow: isPlay ? `0 0 0 1px ${brass}` : undefined,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <p style={{ margin: "10px 4px 0", fontSize: 11, color: muted, lineHeight: 1.4 }}>
+            Tap a step to toggle. Tap the lane name to preview the sound. Play loops the pattern.
+          </p>
+        </div>
+      )}
+
+      {tab === "melody" && (
+        <MelodyRoll
+          notes={melodyTrack?.notes || []}
+          ppq={doc.ppq}
+          bars={doc.bars}
+          tempoBpm={doc.tempoBpm}
+          octave={octave}
+          setOctave={setOctave}
+          selectedNoteId={selectedNoteId}
+          setSelectedNoteId={setSelectedNoteId}
+          onAddNote={addMelodyNote}
+          onDelete={deleteSelectedNote}
+          onPreview={async (pitch) => {
+            const ctx = await getCtx();
+            const id = (melodyTrack?.instrumentId || "pluck") as InstrumentId;
+            playNote(ctx, id === "drum_kit" ? "pluck" : id, pitch, 100, 0.25, ctx.currentTime, undefined, poolRef.current);
+          }}
+          activeStep={playing ? activeStep : -1}
+          steps={steps}
+        />
+      )}
+
+      {tab === "sounds" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <p style={{ margin: 0, fontSize: 13, color: muted }}>
+            Choose how the melody track sounds. Drums always use the drum kit synthesizer.
+          </p>
+          {["Drums", "Piano", "Bass", "Synths"].map((cat) => (
+            <div key={cat}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: muted, letterSpacing: "0.08em", marginBottom: 6 }}>
+                {cat.toUpperCase()}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {INSTRUMENTS.filter((i) => i.category === cat).map((inst) => {
+                  const active =
+                    inst.id === "drum_kit"
+                      ? true
+                      : melodyTrack?.instrumentId === inst.id;
+                  return (
+                    <button
+                      key={inst.id}
+                      type="button"
+                      disabled={!inst.implemented}
+                      onClick={() => {
+                        if (inst.id === "drum_kit") {
+                          void (async () => {
+                            const ctx = await getCtx();
+                            playNote(ctx, "drum_kit", 36, 110, 0.2, ctx.currentTime, undefined, poolRef.current);
+                          })();
+                          return;
+                        }
+                        setMelodyInstrument(inst.id);
+                        void (async () => {
+                          const ctx = await getCtx();
+                          playNote(ctx, inst.id, 60, 100, 0.3, ctx.currentTime, undefined, poolRef.current);
+                        })();
+                      }}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 12,
+                        border: active ? `1px solid ${brass}` : `1px solid ${border}`,
+                        background: active ? "rgba(231,169,97,0.15)" : surface,
+                        color: text,
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: "pointer",
+                        opacity: inst.implemented ? 1 : 0.4,
+                      }}
+                    >
+                      {inst.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <p style={{ margin: 0, fontSize: 11, color: muted }}>
+            All listed sounds are synthesized in-browser (no sample packs). More categories can be added later.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact piano roll — tap grid to add notes, select to delete */
+function MelodyRoll({
+  notes,
+  ppq,
+  bars,
+  tempoBpm,
+  octave,
+  setOctave,
+  selectedNoteId,
+  setSelectedNoteId,
+  onAddNote,
+  onDelete,
+  onPreview,
+  activeStep,
+  steps,
+}: {
+  notes: BeatStudioNote[];
+  ppq: number;
+  bars: number;
+  tempoBpm: number;
+  octave: number;
+  setOctave: (n: number | ((o: number) => number)) => void;
+  selectedNoteId: string | null;
+  setSelectedNoteId: (id: string | null) => void;
+  onAddNote: (pitch: number, startTick: number, durationTicks: number) => void;
+  onDelete: () => void;
+  onPreview: (pitch: number) => void;
+  activeStep: number;
+  steps: number;
+}) {
+  const pitches = useMemo(() => {
+    // C3..B4 relative to octave offset (base MIDI 48)
+    const base = 48 + octave * 12;
+    return Array.from({ length: 24 }, (_, i) => base + (23 - i));
+  }, [octave]);
+
+  const cellW = 28;
+  const cellH = 18;
+  const patternTicks = bars * 4 * ppq;
+  const cols = steps; // 16th grid
+
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        border: `1px solid ${border}`,
+        background: surface,
+        padding: 10,
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: muted }}>PIANO ROLL</span>
+        <button type="button" style={ghostBtn} onClick={() => setOctave((o) => o - 1)}>
           Oct −
         </button>
-        <button type="button" onClick={() => setOctave((o) => Math.min(2, o + 1))} style={btnStyle(false)}>
+        <button type="button" style={ghostBtn} onClick={() => setOctave((o) => o + 1)}>
           Oct +
         </button>
+        <button type="button" style={ghostBtn} onClick={onDelete} disabled={!selectedNoteId}>
+          Delete note
+        </button>
       </div>
-
-      <div style={{ position: "relative", height: 120, userSelect: "none", touchAction: "none" }}>
-        <div style={{ display: "flex", height: "100%", gap: 2 }}>
-          {WHITE.map((semi) => (
-            <button
-              key={semi}
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-                void pointerDown(semi);
-              }}
-              onPointerUp={(e) => {
-                e.preventDefault();
-                void pointerUp(semi);
-              }}
-              onPointerCancel={() => void pointerUp(semi)}
-              onPointerLeave={() => void pointerUp(semi)}
-              style={whiteKeyStyle}
-              aria-label={`Key ${semi}`}
-            />
-          ))}
-        </div>
-        <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "58%", display: "flex", pointerEvents: "none" }}>
-          {[0, 1, 3, 4, 5].map((whiteIndex, i) => {
-            const semi = BLACK[i];
-            if (semi == null) return null;
-            const leftPct = ((whiteIndex + 1) / WHITE.length) * 100 - 100 / WHITE.length / 2;
-            return (
+      <div style={{ overflow: "auto", maxHeight: 320, WebkitOverflowScrolling: "touch", touchAction: "pan-x pan-y" }}>
+        <div style={{ position: "relative", width: cols * cellW + 36, minHeight: pitches.length * cellH }}>
+          {pitches.map((pitch, row) => (
+            <div key={pitch} style={{ display: "flex", height: cellH }}>
               <button
-                key={semi}
                 type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-                  void pointerDown(semi);
-                }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void pointerUp(semi);
-                }}
-                onPointerCancel={() => void pointerUp(semi)}
-                onPointerLeave={() => void pointerUp(semi)}
+                onClick={() => onPreview(pitch)}
                 style={{
-                  ...blackKeyStyle,
-                  left: `calc(${leftPct}% - 4%)`,
+                  width: 36,
+                  flexShrink: 0,
+                  fontSize: 9,
+                  color: muted,
+                  background: isBlackKey(pitch) ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.06)",
+                  border: "none",
+                  borderRight: `1px solid ${border}`,
+                  cursor: "pointer",
+                  padding: 0,
                 }}
-                aria-label={`Black key ${semi}`}
+              >
+                {pitchName(pitch)}
+              </button>
+              {Array.from({ length: cols }, (_, col) => (
+                <button
+                  key={col}
+                  type="button"
+                  onClick={() => {
+                    const startTick = Math.round(col * (ppq / 4));
+                    const dur = Math.round(ppq / 4);
+                    onAddNote(pitch, startTick, dur);
+                    onPreview(pitch);
+                  }}
+                  style={{
+                    width: cellW,
+                    height: cellH,
+                    border: "none",
+                    borderRight: col % 4 === 3 ? `1px solid ${border}` : "1px solid rgba(255,255,255,0.04)",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    background:
+                      activeStep === col
+                        ? "rgba(231,169,97,0.12)"
+                        : col % 4 === 0
+                          ? "rgba(255,255,255,0.03)"
+                          : "transparent",
+                    padding: 0,
+                    cursor: "pointer",
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+          {/* Note blocks */}
+          {notes.map((n) => {
+            const col = Math.round(n.startTick / (ppq / 4));
+            const row = pitches.indexOf(n.pitch);
+            if (row < 0 || col < 0) return null;
+            const w = Math.max(cellW * 0.9, (n.durationTicks / (ppq / 4)) * cellW);
+            const selected = n.id === selectedNoteId;
+            return (
+              <div
+                key={n.id}
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedNoteId(n.id);
+                }}
+                style={{
+                  position: "absolute",
+                  left: 36 + col * cellW + 1,
+                  top: row * cellH + 1,
+                  width: w - 2,
+                  height: cellH - 2,
+                  borderRadius: 4,
+                  background: selected ? brass : "rgba(123,235,212,0.75)",
+                  border: selected ? "1px solid #fff" : "1px solid rgba(0,0,0,0.3)",
+                  pointerEvents: "auto",
+                  cursor: "pointer",
+                  zIndex: 2,
+                }}
               />
             );
           })}
         </div>
       </div>
-
-      {recentNotes.length > 0 && (
-        <div style={noteListStyle}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "#E7A961", marginBottom: 6 }}>
-            RECENT NOTES
-          </div>
-          {recentNotes.map((n) => (
-            <div key={n.id} style={{ fontSize: 12, color: "#9B96A3", fontFamily: "ui-monospace, monospace" }}>
-              pitch {n.pitch} · start {n.startTick} · dur {n.durationTicks} · vel {n.velocity}
-            </div>
-          ))}
-          <div style={{ fontSize: 11, color: "#5C5866", marginTop: 4 }}>
-            pattern length {patternTicks} ticks
-          </div>
-        </div>
-      )}
-
-      {error && <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{error}</p>}
-      {status && !error && <p style={{ color: "#E7A961", fontSize: 13, margin: 0 }}>{status}</p>}
-      <p style={{ fontSize: 12, color: "#5C5866", margin: 0, lineHeight: 1.45 }}>
-        Hold keys while recording to capture duration. Quantize is off by default.
-        Saved on the project only — does not change Booth vocals or Console clips.
+      <p style={{ margin: "10px 0 0", fontSize: 11, color: muted }}>
+        Tap a cell to place a 16th note · tap a note to select · Delete note removes it · {tempoBpm} BPM
       </p>
     </div>
   );
 }
 
+function isBlackKey(pitch: number) {
+  return [1, 3, 6, 8, 10].includes(pitch % 12);
+}
+function pitchName(pitch: number) {
+  const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  return `${names[pitch % 12]}${Math.floor(pitch / 12) - 1}`;
+}
+
+const primaryBtn: React.CSSProperties = {
+  padding: "10px 18px",
+  borderRadius: 999,
+  border: "none",
+  background: `linear-gradient(135deg, ${brass}, #C4893F)`,
+  color: "#1A1208",
+  fontWeight: 800,
+  fontSize: 14,
+  cursor: "pointer",
+};
+const ghostBtn: React.CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 999,
+  border: `1px solid ${border}`,
+  background: "transparent",
+  color: text,
+  fontWeight: 600,
+  fontSize: 12,
+  cursor: "pointer",
+};
 const labelStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 4,
-  fontSize: 12,
-  color: "#9B96A3",
+  gap: 2,
+  fontSize: 10,
+  color: muted,
+  fontWeight: 600,
 };
-const inputStyle: React.CSSProperties = {
+const numInput: React.CSSProperties = {
   width: 64,
   padding: "6px 8px",
   borderRadius: 8,
-  border: "1px solid rgba(255,255,255,.12)",
-  background: "rgba(255,255,255,.04)",
-  color: "inherit",
+  border: `1px solid ${border}`,
+  background: "rgba(0,0,0,0.35)",
+  color: text,
+  fontSize: 13,
 };
-const selectStyle: React.CSSProperties = {
-  padding: "6px 8px",
-  borderRadius: 8,
-  border: "1px solid rgba(255,255,255,.12)",
-  background: "#121218",
-  color: "inherit",
-};
-const whiteKeyStyle: React.CSSProperties = {
-  flex: 1,
-  borderRadius: "0 0 8px 8px",
-  border: "1px solid rgba(255,255,255,.12)",
-  background: "linear-gradient(180deg, #f4f1ec, #d8d2c8)",
-  cursor: "pointer",
-  minWidth: 0,
-};
-const blackKeyStyle: React.CSSProperties = {
-  pointerEvents: "auto",
-  position: "absolute",
-  width: "8%",
-  height: "100%",
-  borderRadius: "0 0 6px 6px",
-  border: "1px solid #111",
-  background: "linear-gradient(180deg, #3a3a42, #121218)",
-  cursor: "pointer",
-  zIndex: 2,
-};
-const noteListStyle: React.CSSProperties = {
-  padding: 12,
-  borderRadius: 12,
-  border: "1px solid rgba(255,255,255,.09)",
-  background: "rgba(255,255,255,.03)",
-};
-
-function btnStyle(active: boolean, primary = false): React.CSSProperties {
-  return {
-    padding: "8px 14px",
-    borderRadius: 999,
-    border: primary
-      ? "none"
-      : `1px solid ${active ? "rgba(231,169,97,.5)" : "rgba(255,255,255,.12)"}`,
-    background: primary
-      ? "linear-gradient(135deg,#E8A04A,#C47820)"
-      : active
-        ? "rgba(231,169,97,.2)"
-        : "rgba(255,255,255,.04)",
-    color: primary ? "#1A1208" : active ? "#E7A961" : "inherit",
-    fontWeight: 600,
-    fontSize: 13,
-    cursor: "pointer",
-  };
-}
