@@ -35,6 +35,7 @@ import {
 } from "@/lib/beat-studio/drums";
 import { BEAT_PRESETS, applyPreset, type BeatPresetId } from "@/lib/beat-studio/presets";
 import ArrangementTimeline from "@/components/beat-studio/arrangement-timeline";
+import { STUDIO_LOGO_URL, STUDIO_NAME } from "@/lib/brand";
 
 const brass = "#E7A961";
 const border = "rgba(255,255,255,0.1)";
@@ -453,7 +454,98 @@ export default function BeatStudioPanel({ projectId, initialTempo, initialTitle,
   };
 
   if (loading) {
-    return <p style={{ color: muted, padding: 16 }}>Loading Beat Studio…</p>;
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="Loading Beat Studio"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 18,
+          minHeight: "55vh",
+          width: "100%",
+          padding: 24,
+          boxSizing: "border-box",
+        }}
+      >
+        <style>{`
+          @keyframes apStudioPulse {
+            0%, 100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 12px rgba(231,169,97,0.35)); }
+            50% { transform: scale(1.06); opacity: 0.92; filter: drop-shadow(0 0 22px rgba(231,169,97,0.55)); }
+          }
+          @keyframes apStudioRing {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+          @keyframes apStudioFade {
+            0%, 100% { opacity: 0.35; }
+            50% { opacity: 0.85; }
+          }
+        `}</style>
+        <div style={{ position: "relative", width: 88, height: 88 }}>
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "50%",
+              border: "2px solid transparent",
+              borderTopColor: brass,
+              borderRightColor: "rgba(231,169,97,0.25)",
+              animation: "apStudioRing 1.1s linear infinite",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 10,
+              borderRadius: 18,
+              overflow: "hidden",
+              background: "rgba(18,18,24,0.9)",
+              border: `1px solid ${border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              animation: "apStudioPulse 1.8s ease-in-out infinite",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={STUDIO_LOGO_URL}
+              alt={STUDIO_NAME}
+              width={52}
+              height={52}
+              style={{ borderRadius: 12, display: "block" }}
+            />
+          </div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              fontWeight: 800,
+              fontSize: 15,
+              letterSpacing: "0.04em",
+              color: text,
+            }}
+          >
+            {STUDIO_NAME}
+          </div>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 12,
+              color: muted,
+              animation: "apStudioFade 1.6s ease-in-out infinite",
+            }}
+          >
+            Opening Beat Studio
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const editMeta = editingTrack ? metaFor(editingTrack.instrumentId) : null;
