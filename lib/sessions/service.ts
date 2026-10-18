@@ -178,21 +178,38 @@ export async function createInvite(
       ? new Date(Date.now() + opts.expiresInHours * 3600_000).toISOString()
       : null;
 
-  // Insert invite with service role so missing membership RLS edge cases don't block creators
+  // Insert invite with service role so missing membership RLS edge cases don't block creators.
+  // Some production DBs were created before max_uses/use_count existed — try full row, then core columns.
   const db = adminClient(supabase);
-  const { data, error } = await db
-    .from("ap_session_invites")
-    .insert({
-      session_id: opts.sessionId,
-      token,
-      role: opts.role,
-      created_by: opts.userId,
-      expires_at: expiresAt,
-      max_uses: opts.maxUses ?? 20,
-      invited_email: opts.invitedEmail || null,
-    })
-    .select("*")
-    .single();
+  const baseRow: Record<string, unknown> = {
+    session_id: opts.sessionId,
+    token,
+    role: opts.role,
+    created_by: opts.userId,
+    expires_at: expiresAt,
+    invited_email: opts.invitedEmail || null,
+  };
+  const fullRow = {
+    ...baseRow,
+    max_uses: opts.maxUses ?? 20,
+    use_count: 0,
+  };
+
+  let data: Record<string, unknown> | null = null;
+  let error: { message?: string; code?: string } | null = null;
+
+  {
+    const res = await db.from("ap_session_invites").insert(fullRow).select("*").single();
+    data = res.data as Record<string, unknown> | null;
+    error = res.error;
+  }
+
+  if (error && /max_uses|use_count|schema cache/i.test(error.message || "")) {
+    console.warn("createInvite: retrying without max_uses/use_count", error.message);
+    const res = await db.from("ap_session_invites").insert(baseRow).select("*").single();
+    data = res.data as Record<string, unknown> | null;
+    error = res.error;
+  }
 
   if (error || !data) {
     console.error("createInvite", error);
@@ -233,9 +250,17 @@ export async function acceptInvite(
   if (invite.expires_at && new Date(invite.expires_at as string).getTime() < Date.now()) {
     return { error: "Invite expired", status: 410 };
   }
-  const maxUses = typeof invite.max_uses === "number" ? invite.max_uses : 1;
-  const useCount = typeof invite.use_count === "number" ? invite.use_count : 0;
-  if (useCount >= maxUses) return { error: "Invite has no uses left", status: 410 };
+  const maxUses =
+    typeof invite.max_uses === "number" && Number.isFinite(invite.max_uses)
+      ? (invite.max_uses as number)
+      : 20;
+  const useCount =
+    typeof invite.use_count === "number" && Number.isFinite(invite.use_count)
+      ? (invite.use_count as number)
+      : 0;
+  if (invite.max_uses != null && useCount >= maxUses) {
+    return { error: "Invite has no uses left", status: 410 };
+  }
 
   const { data: session } = await service
     .from("ap_sessions")
@@ -278,14 +303,28 @@ export async function acceptInvite(
     }
   }
 
-  await service
-    .from("ap_session_invites")
-    .update({
-      use_count: useCount + 1,
+  {
+    const upd: Record<string, unknown> = {
       accepted_by: opts.userId,
       accepted_at: new Date().toISOString(),
-    })
-    .eq("id", invite.id);
+    };
+    if (invite.use_count != null || invite.max_uses != null) {
+      upd.use_count = useCount + 1;
+    }
+    const { error: updErr } = await service
+      .from("ap_session_invites")
+      .update(upd)
+      .eq("id", invite.id);
+    if (updErr && /use_count|schema cache/i.test(updErr.message || "")) {
+      await service
+        .from("ap_session_invites")
+        .update({
+          accepted_by: opts.userId,
+          accepted_at: new Date().toISOString(),
+        })
+        .eq("id", invite.id);
+    }
+  }
 
   await service.from("ap_session_events").insert({
     session_id: session.id,
