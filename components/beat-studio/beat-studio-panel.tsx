@@ -198,7 +198,11 @@ export default function BeatStudioPanel({ projectId, initialTempo }: Props) {
     });
     setPlaying(true);
 
-    const patternSec = ticksToSeconds(patternLengthTicks(d), d.tempoBpm, d.ppq);
+    const patternSec = ticksToSeconds(
+      patternLengthTicks(d.bars, d.timeSignature, d.ppq),
+      d.tempoBpm,
+      d.ppq
+    );
     const stepSec = patternSec / Math.max(1, totalSteps(d.bars));
 
     const tick = () => {
