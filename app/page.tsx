@@ -284,38 +284,31 @@ export default function WelcomePage() {
       </section>
 
       <footer className="site-footer">
-        <div className="site-footer-inner">
-          <div className="footer-brand">
-            <Link href="/" className="footer-logo">
-              <img
-                src="/logo.svg"
-                alt="AP Studio"
-                width={32}
-                height={32}
-                className="logo-img"
-              />
-              <span>AP Studio</span>
-            </Link>
-            <span className="footer-tag">Your voice. Produced.</span>
-          </div>
-          <nav className="footer-legal" aria-label="Site">
-            <Link href="/how" className="footer-legal-link">
-              How it works
-            </Link>
-            <Link href="/privacy" className="footer-legal-link">
-              Privacy Policy
-            </Link>
-            <Link href="/terms" className="footer-legal-link">
-              Terms of Service
-            </Link>
+        <div className="footer-card">
+          <Link href="/" className="footer-logo-mark" aria-label="AP Studio home">
+            <img src="/logo.svg" alt="" width={36} height={36} className="logo-img" />
+          </Link>
+          <p className="footer-headline">Your voice isn&apos;t going to produce itself.</p>
+          <Link href={START_HREF} className="footer-cta">
+            Start creating free
+          </Link>
+          <p className="footer-join">Join artists shipping real songs with their voice</p>
+
+          <p className="footer-company-label">Company</p>
+          <nav className="footer-company" aria-label="Company">
+            <Link href="/how">How it works</Link>
+            <Link href="/#workspace">Workspace</Link>
+            <Link href="/#pricing">Pricing</Link>
+            <Link href="/#faq">FAQ</Link>
           </nav>
-          <div className="footer-socials">
+
+          <div className="footer-socials" aria-label="Social">
             <a
               href="https://www.instagram.com/Apstudio.site"
               target="_blank"
               rel="noopener noreferrer"
               className="social-link"
-              aria-label="AP Studio on Instagram"
+              aria-label="Instagram"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" strokeWidth="1.75" />
@@ -328,14 +321,44 @@ export default function WelcomePage() {
               target="_blank"
               rel="noopener noreferrer"
               className="social-link"
-              aria-label="AP Studio on TikTok"
+              aria-label="TikTok"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .56.04.82.12v-3.4a6.22 6.22 0 0 0-.82-.05A6.34 6.34 0 0 0 3.15 15.4 6.34 6.34 0 0 0 9.49 21.7a6.34 6.34 0 0 0 6.34-6.34V8.92a8.2 8.2 0 0 0 4.76 1.52V7.02a4.84 4.84 0 0 1-1-.33z" />
               </svg>
             </a>
+            <a
+              href="https://x.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="X"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.746l7.73-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" />
+              </svg>
+            </a>
+            <a
+              href="https://www.youtube.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="social-link"
+              aria-label="YouTube"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.5 31.5 0 0 0 0 12a31.5 31.5 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1A31.5 31.5 0 0 0 24 12a31.5 31.5 0 0 0-.5-5.8zM9.75 15.5v-7l6.5 3.5-6.5 3.5z" />
+              </svg>
+            </a>
           </div>
-                </div>
+        </div>
+
+        <div className="footer-bottom">
+          <p className="footer-copy">© {new Date().getFullYear()} AP Studio</p>
+          <nav className="footer-legal" aria-label="Legal">
+            <Link href="/terms">Terms of Service</Link>
+            <Link href="/privacy">Privacy Policy</Link>
+          </nav>
+        </div>
       </footer>
     </>
   );
@@ -429,76 +452,155 @@ html[data-theme="light"] .chip{
     border-color:rgba(196,120,32,.35);
     box-shadow:0 12px 36px rgba(196,120,32,.14),var(--shadow);
   }
-  /* Welcome footer — dark default; light overrides below (scoped so later rules cannot wash out dark mode) */
+  /* Welcome footer — card layout (Riffle-style), AP theme */
   .site-footer{
-    width:100%;max-width:100%;
-    margin-top:48px;
-    box-sizing:border-box;overflow-x:clip;
-    border-top:1px solid var(--border-hi, rgba(255,255,255,.12));
-    background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(0,0,0,.35));
-    color:var(--text);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:20px;
+    padding:28px 16px 36px;
+    background:var(--bg,#050508);
+    color:var(--text,#f4f1ec);
   }
-  .site-footer-inner{
-    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px 28px;
-    max-width:1200px;margin:0 auto;width:100%;
-    padding:28px 24px 36px;box-sizing:border-box;
-    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:20px;
+  .footer-card{
+    width:100%;
+    max-width:420px;
+    margin:0 auto;
+    padding:28px 22px 26px;
+    border-radius:28px;
+    background:linear-gradient(180deg, rgba(24,24,30,.98), rgba(14,14,18,.98));
+    border:1px solid rgba(255,255,255,.08);
+    box-shadow:0 28px 56px -32px rgba(0,0,0,.75);
+    text-align:center;
   }
-  .site-footer .footer-brand{display:flex;flex-direction:column;gap:6px}
-  .site-footer .footer-logo{
-    display:inline-flex;align-items:center;gap:10px;
-    text-decoration:none;color:var(--text);font-weight:600;font-size:15px;
+  .footer-logo-mark{
+    display:inline-flex;
+    margin:0 auto 16px;
+    border-radius:12px;
+    overflow:hidden;
   }
-  .site-footer .footer-logo:hover{opacity:.9}
-  .site-footer .footer-tag{font-size:13px;color:var(--muted)}
-  .site-footer .footer-legal{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
-  .site-footer .footer-legal-link{
-    font-size:13px;font-weight:600;color:var(--muted);text-decoration:none;
-    padding:6px 0;border-bottom:1px solid transparent;
+  .footer-logo-mark img{display:block;border-radius:10px}
+  .footer-headline{
+    margin:0 0 16px;
+    font-family:Fraunces,serif;
+    font-weight:500;
+    font-size:clamp(1.35rem,5vw,1.7rem);
+    line-height:1.25;
+    letter-spacing:-0.02em;
+    color:var(--text,#f4f1ec);
   }
-  .site-footer .footer-legal-link:hover{color:var(--brass);border-bottom-color:rgba(231,169,97,.35)}
-  html[data-theme="light"] .site-footer .footer-legal-link{color:var(--muted)}
-  html[data-theme="light"] .site-footer .footer-legal-link:hover{color:var(--brass)}
-  .site-footer .footer-socials{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .footer-cta{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    padding:12px 22px;
+    border-radius:999px;
+    background:linear-gradient(135deg, var(--brass,#e7a961), #c4893f);
+    color:#1a1208;
+    font-weight:750;
+    font-size:14.5px;
+    text-decoration:none;
+    box-shadow:0 10px 28px -12px rgba(231,169,97,.55);
+    transition:transform .15s ease, filter .15s ease;
+  }
+  .footer-cta:hover{transform:translateY(-1px);filter:brightness(1.05)}
+  .footer-join{
+    margin:12px 0 0;
+    font-size:13px;
+    color:var(--muted,#9b96a3);
+  }
+  .footer-company-label{
+    margin:28px 0 12px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted,#9b96a3);
+  }
+  .footer-company{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px 20px;
+    max-width:280px;
+    margin:0 auto;
+  }
+  .footer-company a{
+    font-size:14px;
+    font-weight:600;
+    color:rgba(244,241,236,.78);
+    text-decoration:none;
+  }
+  .footer-company a:hover{color:var(--brass,#e7a961)}
+  .footer-socials{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:10px;
+    margin-top:22px;
+  }
   .site-footer .social-link{
     display:inline-flex;align-items:center;justify-content:center;
-    width:42px;height:42px;padding:0;border-radius:999px;
-    border:1px solid var(--border-hi, rgba(255,255,255,.14));
-    color:var(--muted);text-decoration:none;
-    background:rgba(255,255,255,.06);
+    width:40px;height:40px;padding:0;border-radius:999px;
+    border:1px solid rgba(255,255,255,.1);
+    color:var(--muted,#9b96a3);text-decoration:none;
+    background:rgba(255,255,255,.04);
     transition:color .15s,border-color .15s,background .15s;
   }
   .site-footer .social-link:hover{
-    color:var(--brass);
-    border-color:rgba(231,169,97,.5);
+    color:var(--brass,#e7a961);
+    border-color:rgba(231,169,97,.45);
     background:rgba(231,169,97,.12);
   }
   .site-footer .social-link svg{flex-shrink:0;color:currentColor}
-  /* Light mode footer */
-  html[data-theme="light"] .site-footer{
-    border-top:1px solid var(--border);
-    background:linear-gradient(180deg,#FFFBF6,var(--bg));
-    color:var(--text);
+  .footer-bottom{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:10px;
+    padding:4px 8px 8px;
   }
-  html[data-theme="light"] .site-footer .footer-logo{color:var(--text)}
-  html[data-theme="light"] .site-footer .footer-tag{color:var(--muted)}
+  .footer-copy{
+    margin:0;
+    font-size:12px;
+    color:var(--muted,#9b96a3);
+  }
+  .footer-legal{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:8px 16px;
+  }
+  .footer-legal a{
+    font-size:12px;
+    font-weight:600;
+    color:var(--muted,#9b96a3);
+    text-decoration:none;
+  }
+  .footer-legal a:hover{color:var(--brass,#e7a961)}
+
+  html[data-theme="light"] .site-footer{
+    background:var(--bg,#f7f4ef);
+  }
+  html[data-theme="light"] .footer-card{
+    background:linear-gradient(180deg,#fff,#faf7f2);
+    border-color:rgba(0,0,0,.06);
+    box-shadow:0 24px 48px -28px rgba(0,0,0,.18);
+  }
+  html[data-theme="light"] .footer-headline{color:var(--text)}
+  html[data-theme="light"] .footer-company a{color:rgba(0,0,0,.65)}
+  html[data-theme="light"] .footer-company a:hover{color:var(--brass)}
   html[data-theme="light"] .site-footer .social-link{
     background:#fff;
-    border-color:var(--border);
+    border-color:rgba(0,0,0,.08);
     color:var(--muted);
-    box-shadow:var(--shadow);
+    box-shadow:0 1px 3px rgba(0,0,0,.04);
   }
   html[data-theme="light"] .site-footer .social-link:hover{
     color:var(--brass);
     border-color:var(--brass);
-    background:var(--brass-soft);
+    background:rgba(231,169,97,.1);
   }
-  @media (min-width:1100px){
-    .site-footer-inner{max-width:1240px;padding:32px 40px 40px}
-  }
-  @media (min-width:1400px){
-    .site-footer-inner{max-width:1320px}
-  }
+
   .create-upload-btn{
     border:none;cursor:pointer;font-family:inherit;
   }
