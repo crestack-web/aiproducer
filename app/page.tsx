@@ -3,6 +3,7 @@ import { RotatingHeadline } from "@/components/rotating-headline";
 import { WelcomeCreateHook } from "@/components/welcome-create-hook";
 import { WelcomeMusicRail } from "@/components/welcome-music-rail";
 import { WelcomeProductDemo } from "@/components/welcome-product-demo";
+import { WelcomeMotionSections } from "@/components/welcome-motion-sections";
 import { WelcomeAnalytics } from "@/components/product-analytics";
 
 const START_HREF = "/auth?mode=signup&next=/onboarding";
@@ -33,6 +34,7 @@ export default function WelcomePage() {
             <a href="#workspace">Workspace</a>
             <a href="#listen">Listen</a>
             <a href="#how">How it works</a>
+            <a href="#motion-mix">Produce</a>
             <a href="#value">Why Studio</a>
             <a href="#faq">FAQ</a>
             <a href="#pricing">Pricing</a>
@@ -54,6 +56,8 @@ export default function WelcomePage() {
         </section>
 
         <WelcomeProductDemo />
+
+        <WelcomeMotionSections />
 
         <WelcomeMusicRail />
 
@@ -1276,6 +1280,91 @@ html[data-theme="light"] .chip{
       width:min(100vw - 80px, 1400px);
       max-width:1400px;
     }
+  }
+
+
+  .motion-sections{
+    margin:56px 0 24px;
+    padding:0 4px;
+  }
+  .motion-head{margin-bottom:28px}
+  .motion-grid{
+    display:grid;
+    gap:28px;
+    grid-template-columns:1fr;
+  }
+  .motion-card{
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .motion-kicker{
+    margin:0 0 6px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--brass,#e7a961);
+  }
+  .motion-title{
+    margin:0 0 8px;
+    font-family:Fraunces,serif;
+    font-weight:500;
+    font-size:clamp(1.25rem,3.5vw,1.65rem);
+    color:var(--text,#f4f1ec);
+  }
+  .motion-body{
+    margin:0;
+    font-size:14.5px;
+    line-height:1.55;
+    color:var(--muted,#9b96a3);
+    max-width:42ch;
+  }
+  .motion-frame{
+    position:relative;
+    width:100%;
+    max-width:440px;
+    margin:0 auto;
+    aspect-ratio:4/5;
+    border-radius:24px;
+    overflow:hidden;
+    background:#050508;
+    box-shadow:0 24px 48px -28px rgba(0,0,0,.55);
+    border:1px solid rgba(255,255,255,.07);
+  }
+  .motion-frame.ready .motion-skeleton{opacity:0;pointer-events:none}
+  .motion-skeleton{
+    position:absolute;inset:0;
+    background:linear-gradient(120deg,rgba(255,255,255,.04),rgba(231,169,97,.08),rgba(255,255,255,.04));
+    background-size:200% 100%;
+    animation:motionShimmer 1.4s ease-in-out infinite;
+    transition:opacity .35s ease;
+  }
+  @keyframes motionShimmer{
+    0%{background-position:100% 0}
+    100%{background-position:-100% 0}
+  }
+  .motion-iframe{
+    position:absolute;inset:0;
+    width:100%;height:100%;
+    border:0;
+    display:block;
+    background:transparent;
+  }
+  html[data-theme="light"] .motion-title{color:var(--text)}
+  html[data-theme="light"] .motion-body{color:var(--muted)}
+  html[data-theme="light"] .motion-frame{
+    box-shadow:0 20px 40px -24px rgba(0,0,0,.2);
+    border-color:rgba(0,0,0,.08);
+  }
+  @media (min-width:900px){
+    .motion-sections{margin:72px 0 32px}
+    .motion-grid{
+      grid-template-columns:1fr 1fr;
+      gap:32px;
+      align-items:start;
+    }
+    .motion-frame{max-width:100%}
   }
 
   .footer-banner{
