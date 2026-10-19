@@ -23,6 +23,7 @@ import { useTheme } from "@/lib/theme";
 import { PwaInstallButton } from "@/components/pwa-install";
 import { ProductTour, useProductTour } from "@/components/product-tour";
 import { AppUsageAnalytics } from "@/components/product-analytics";
+import { AppIntro } from "@/components/app-intro";
 import { ArtistAvatar } from "@/components/artist-avatar";
 import {
   IconBell,
@@ -475,6 +476,7 @@ export function AppShell({
 
   return (
     <div style={shell}>
+      <AppIntro />
       <style>{`
         .studio-sidebar { display: flex; }
         .studio-bottom-nav { display: none; }
