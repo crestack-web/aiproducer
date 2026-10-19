@@ -36,6 +36,7 @@ export default function WelcomePage() {
               <a href="#listen">Listen</a>
               <a href="#how">How it works</a>
               <a href="#motion-create">Create</a>
+            <a href="#motion-edit">Edit</a>
             <a href="#motion-mix">Produce</a>
               <a href="#value">Why Studio</a>
               <a href="#faq">FAQ</a>
@@ -1511,6 +1512,18 @@ html[data-theme="light"] .chip{
     line-height:1.55;
     color:var(--muted,#9b96a3);
     max-width:42ch;
+  }
+  .motion-frame.landscape{
+    aspect-ratio:16/9;
+    max-width:720px;
+  }
+  .motion-card-landscape.motion-card-featured .motion-frame{
+    max-width:min(100%,720px);
+  }
+  @media (min-width:900px){
+    .motion-card-landscape.motion-card-featured{
+      grid-template-columns:1fr minmax(320px, 560px);
+    }
   }
   .motion-frame{
     position:relative;

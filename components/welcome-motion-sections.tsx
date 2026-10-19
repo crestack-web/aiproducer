@@ -14,9 +14,11 @@ type MotionCardProps = {
   kicker: string;
   id: string;
   featured?: boolean;
+  /** landscape stages (e.g. 16:9 edit graphic) */
+  landscape?: boolean;
 };
 
-function MotionCard({ src, title, body, kicker, id, featured }: MotionCardProps) {
+function MotionCard({ src, title, body, kicker, id, featured, landscape }: MotionCardProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
@@ -42,13 +44,13 @@ function MotionCard({ src, title, body, kicker, id, featured }: MotionCardProps)
   }, []);
 
   return (
-    <article className={`motion-card${featured ? " motion-card-featured" : ""}`} id={id}>
+    <article className={`motion-card${featured ? " motion-card-featured" : ""}${landscape ? " motion-card-landscape" : ""}`} id={id}>
       <div className="motion-copy">
         <p className="motion-kicker">{kicker}</p>
         <h3 className="motion-title">{title}</h3>
         <p className="motion-body">{body}</p>
       </div>
-      <div ref={frameRef} className={`motion-frame${loaded ? " ready" : ""}`}>
+      <div ref={frameRef} className={`motion-frame${loaded ? " ready" : ""}${landscape ? " landscape" : ""}`}>
         {!loaded && <div className="motion-skeleton" aria-hidden />}
         {inView ? (
           <iframe
@@ -72,7 +74,7 @@ export function WelcomeMotionSections() {
         <p className="section-kicker">See it move</p>
         <h2>From idea to mixed song</h2>
         <p>
-          Pick a vibe, watch AP build the beat, then arrange, clean, and mix —
+          Pick a vibe, build the beat, edit phrases with effects, then produce and mix —
           all the way to a session you can direct.
         </p>
       </div>
@@ -85,6 +87,17 @@ export function WelcomeMotionSections() {
         title="Make a beat in seconds"
         body="Choose genre, mood, and tempo — AP lays drums, bass, and melody, then drops the finished beat in your library ready to play."
       />
+
+      <MotionCard
+        id="motion-edit"
+        featured
+        landscape
+        src="/welcome/editing-motion.html"
+        kicker="Edit"
+        title="Split · rearrange · effects"
+        body="Cut phrases, shuffle the arrangement, and sprinkle reverb, echo, and pitch — then hit play and hear the track come together."
+      />
+
 
       <div className="motion-grid">
         <MotionCard
