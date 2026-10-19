@@ -2271,7 +2271,20 @@ export function ProducerView({
   }
 
   function applyFxSnapshot(id: string, fx: TrackFx, persist: boolean) {
+    fxByIdRef.current = { ...fxByIdRef.current, [id]: { ...fx } };
     setFxById((prev) => ({ ...prev, [id]: { ...fx } }));
+    const graph = fxGraphRef.current.get(id);
+    if (graph) {
+      try {
+        const kind = tracks.find((x) => x.id === id)?.kind || "vocal";
+        graph.apply(
+          trackFxToLiveParams(fx as unknown as Record<string, number>),
+          isAudible(id, kind)
+        );
+      } catch {
+        /* */
+      }
+    }
     if (persist) void persistFx(id, fx);
   }
 
@@ -3425,16 +3438,38 @@ export function ProducerView({
     return !muted[id];
   }
 
-  function applyGains(atMs?: number) {
+  function applyGains(atMs?: number, force = false) {
     const tMs =
       typeof atMs === "number" && Number.isFinite(atMs)
         ? atMs
         : playheadMsRef.current;
     const autoDoc = automationDocRef.current;
+    const hasAnyAutomation = (autoDoc?.lanes?.length || 0) > 0;
     for (const tr of tracks) {
       const on = isAudible(tr.id, tr.kind);
       const base = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
-      const overlay = sampleTrackAutomation(autoDoc, tr.id, tMs);
+      // Only sample automation when lanes exist — avoids wiping static FX every frame
+      const overlay =
+        hasAnyAutomation || force
+          ? sampleTrackAutomation(autoDoc, tr.id, tMs)
+          : ({} as ReturnType<typeof sampleTrackAutomation>);
+      const hasOverlay = Object.keys(overlay).length > 0;
+      // Skip re-applying static FX every RAF tick (was starving setTargetAtTime ramps)
+      if (!force && !hasOverlay && fxGraphRef.current.has(tr.id)) {
+        // Still update mute/solo via output gain only
+        const graph = fxGraphRef.current.get(tr.id)!;
+        const gLin = on
+          ? Math.pow(10, Math.max(-12, Math.min(12, Number(base.gainDb) || 0)) / 20)
+          : 0;
+        try {
+          const now = audioCtxRef.current?.currentTime ?? 0;
+          graph.gain.gain.cancelScheduledValues(now);
+          graph.gain.gain.setTargetAtTime(Math.min(gLin, 2.5), now, 0.02);
+        } catch {
+          /* */
+        }
+        continue;
+      }
       const fx = { ...base, ...overlay } as TrackFx;
       const graph = fxGraphRef.current.get(tr.id);
       if (graph) {
@@ -3454,7 +3489,7 @@ export function ProducerView({
   }
 
   useEffect(() => {
-    applyGains();
+    applyGains(undefined, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, soloId, tracks, fxById]);
 
@@ -3662,6 +3697,8 @@ export function ProducerView({
           tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null;
         buf = await fetchDecode(ctx, tr.url, fallback);
       }
+      // Stale startPlayback after pause/stop — do not attach a new FX graph
+      if (gen !== playbackGenRef.current) return;
       if (!buf) {
         if (tr.kind === "beat") {
           console.warn("[producer-view] beat buffer missing — will try HTMLAudio fallback");
@@ -8662,7 +8699,23 @@ export function ProducerView({
               border={border}
               brass={brass}
               surface={bg}
-              onChange={(fx) => setFxById((prev) => ({ ...prev, [fxOpenId]: fx }))}
+              onChange={(fx) => {
+                fxByIdRef.current = { ...fxByIdRef.current, [fxOpenId]: fx };
+                setFxById((prev) => ({ ...prev, [fxOpenId]: fx }));
+                const graph = fxGraphRef.current.get(fxOpenId);
+                if (graph) {
+                  const kind = tracks.find((x) => x.id === fxOpenId)?.kind || "vocal";
+                  const on = isAudible(fxOpenId, kind);
+                  try {
+                    graph.apply(
+                      trackFxToLiveParams(fx as unknown as Record<string, number>),
+                      on
+                    );
+                  } catch {
+                    /* */
+                  }
+                }
+              }}
               onCommit={(fx) => void persistFx(fxOpenId, fx)}
               rack={fxRackById[fxOpenId] || []}
               onRackChange={(rack) =>

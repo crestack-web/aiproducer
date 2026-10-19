@@ -323,9 +323,27 @@ export function createLiveTrackFxGraph(
     pan,
   ];
 
+  /** Set AudioParam to an exact value without continuous re-ramp fighting. */
+  function setParam(p: AudioParam, value: number, now: number, smooth = false) {
+    const v = Number.isFinite(value) ? value : 0;
+    try {
+      p.cancelScheduledValues(now);
+      if (smooth) {
+        p.setTargetAtTime(v, now, 0.02);
+      } else {
+        p.setValueAtTime(v, now);
+      }
+    } catch {
+      try {
+        p.value = v;
+      } catch {
+        /* */
+      }
+    }
+  }
+
   function apply(fx: LiveFxParams, audible: boolean) {
     const now = ctx.currentTime;
-    const ramp = 0.035;
 
     // Sanitize
     const safe = (v: number, d = 0) =>
@@ -335,24 +353,24 @@ export function createLiveTrackFxGraph(
       safe(fx.highPassHz) > 20 ? clamp(safe(fx.highPassHz), 20, 400) : 20;
     const tel = clamp(safe(fx.telephone), 0, 1);
     if (tel > 0.02) {
-      hpf.frequency.setTargetAtTime(400 + tel * 450, now, ramp);
-      lpf.frequency.setTargetAtTime(2500 + (1 - tel) * 3500, now, ramp);
+      setParam(hpf.frequency, 400 + tel * 450, now);
+      setParam(lpf.frequency, 2500 + (1 - tel) * 3500, now);
     } else {
-      hpf.frequency.setTargetAtTime(hp, now, ramp);
+      setParam(hpf.frequency, hp, now);
       const lp =
         safe(fx.lowPassHz) > 500
           ? clamp(safe(fx.lowPassHz), 800, 18000)
           : 18000;
-      lpf.frequency.setTargetAtTime(lp, now, ramp);
+      setParam(lpf.frequency, lp, now);
     }
 
-    low.gain.setTargetAtTime(clamp(safe(fx.eqLowDb), -12, 12), now, ramp);
-    mid.gain.setTargetAtTime(clamp(safe(fx.eqMidDb), -12, 12), now, ramp);
-    high.gain.setTargetAtTime(clamp(safe(fx.eqHighDb), -12, 12), now, ramp);
-    airF.gain.setTargetAtTime(clamp(safe(fx.air) * 5.5, 0, 6), now, ramp);
+    setParam(low.gain, clamp(safe(fx.eqLowDb), -12, 12), now);
+    setParam(mid.gain, clamp(safe(fx.eqMidDb), -12, 12), now);
+    setParam(high.gain, clamp(safe(fx.eqHighDb), -12, 12), now);
+    setParam(airF.gain, clamp(safe(fx.air) * 5.5, 0, 6), now);
 
     // Static HF cut — not dynamic de-ess
-    deess.gain.setTargetAtTime(-14 * clamp(safe(fx.deEss), 0, 1), now, ramp);
+    setParam(deess.gain, -14 * clamp(safe(fx.deEss), 0, 1), now);
 
     const satAmt = clamp(safe(fx.saturation), 0, 1);
     try {
@@ -361,57 +379,51 @@ export function createLiveTrackFxGraph(
       /* */
     }
     // Makeup compensation so sat doesn't explode level
-    satDrive.gain.setTargetAtTime(1 + satAmt * 0.8, now, ramp);
-    satPost.gain.setTargetAtTime(1 / (1 + satAmt * 0.55), now, ramp);
+    setParam(satDrive.gain, 1 + satAmt * 0.8, now);
+    setParam(satPost.gain, 1 / (1 + satAmt * 0.55), now);
 
     const cAmt = clamp(safe(fx.compress), 0, 1);
     if (cAmt > 0.02) {
-      comp.threshold.setTargetAtTime(-12 - cAmt * 28, now, ramp);
-      comp.ratio.setTargetAtTime(1 + cAmt * 10, now, ramp);
-      comp.knee.setTargetAtTime(10, now, ramp);
+      setParam(comp.threshold, -12 - cAmt * 28, now);
+      setParam(comp.ratio, 1 + cAmt * 10, now);
+      setParam(comp.knee, 10, now);
     } else {
-      comp.threshold.setTargetAtTime(0, now, ramp);
-      comp.ratio.setTargetAtTime(1, now, ramp);
-      comp.knee.setTargetAtTime(0, now, ramp);
+      setParam(comp.threshold, 0, now);
+      setParam(comp.ratio, 1, now);
+      setParam(comp.knee, 0, now);
     }
 
-    delayGain.gain.setTargetAtTime(clamp(safe(fx.delay), 0, 1) * 0.42, now, ramp);
-    delayFb.gain.setTargetAtTime(clamp(safe(fx.delay), 0, 1) > 0.02 ? 0.2 : 0, now, ramp);
-    slapGain.gain.setTargetAtTime(
-      clamp(safe(fx.slapDelay), 0, 1) * 0.32,
-      now,
-      ramp
-    );
-    revGain.gain.setTargetAtTime(clamp(safe(fx.reverb), 0, 1) * 0.32, now, ramp);
-    plateGain.gain.setTargetAtTime(
-      clamp(safe(fx.plateReverb), 0, 1) * 0.38,
-      now,
-      ramp
-    );
+    const del = clamp(safe(fx.delay), 0, 1);
+    setParam(delayGain.gain, del * 0.42, now);
+    // Kill feedback hard when delay is off so tails don't stick across plays
+    setParam(delayFb.gain, del > 0.02 ? 0.2 : 0, now);
+    setParam(slapGain.gain, clamp(safe(fx.slapDelay), 0, 1) * 0.32, now);
+    setParam(revGain.gain, clamp(safe(fx.reverb), 0, 1) * 0.32, now);
+    setParam(plateGain.gain, clamp(safe(fx.plateReverb), 0, 1) * 0.38, now);
 
     const chAmt = Math.max(safe(fx.chorus), safe(fx.doubler) * 0.75);
-    chGain.gain.setTargetAtTime(clamp(chAmt, 0, 1) * 0.32, now, ramp);
-    chLfo.frequency.setTargetAtTime(
+    setParam(chGain.gain, clamp(chAmt, 0, 1) * 0.32, now);
+    setParam(
+      chLfo.frequency,
       safe(fx.doubler) > safe(fx.chorus) ? 0.32 : 0.85,
-      now,
-      ramp
+      now
     );
 
     // Soft limiter engagement
     const lim = clamp(safe(fx.limiter), 0, 1);
-    limComp.threshold.setTargetAtTime(lim > 0.05 ? -2 - lim * 8 : 0, now, ramp);
+    setParam(limComp.threshold, lim > 0.05 ? -2 - lim * 8 : 0, now);
 
     // Width proxy — neutral at 0 (no phantom gain)
     const w = clamp(safe(fx.width), 0, 1);
-    widthL.gain.setTargetAtTime(1 + w * 0.12, now, ramp);
-    widthR.gain.setTargetAtTime(1 + w * 0.12, now, ramp);
+    setParam(widthL.gain, 1 + w * 0.12, now);
+    setParam(widthR.gain, 1 + w * 0.12, now);
 
     const gLin = audible
       ? Math.pow(10, clamp(safe(fx.gainDb), -12, 12) / 20)
       : 0;
-    // Safety ceiling on output gain
-    gain.gain.setTargetAtTime(Math.min(gLin, 2.5), now, ramp);
-    pan.pan.setTargetAtTime(clamp(safe(fx.pan), -1, 1), now, ramp);
+    // Safety ceiling on output gain — smooth only mute/unmute
+    setParam(gain.gain, Math.min(gLin, 2.5), now, true);
+    setParam(pan.pan, clamp(safe(fx.pan), -1, 1), now, true);
 
     // gate ignored in live — produce_only
     void fx.gate;
@@ -428,6 +440,18 @@ export function createLiveTrackFxGraph(
     pan,
     apply,
     dispose: () => {
+      try {
+        const t0 = ctx.currentTime;
+        delayFb.gain.setValueAtTime(0, t0);
+        delayGain.gain.setValueAtTime(0, t0);
+        revGain.gain.setValueAtTime(0, t0);
+        plateGain.gain.setValueAtTime(0, t0);
+        slapGain.gain.setValueAtTime(0, t0);
+        chGain.gain.setValueAtTime(0, t0);
+        gain.gain.setValueAtTime(0, t0);
+      } catch {
+        /* */
+      }
       try {
         chLfo.stop();
       } catch {
