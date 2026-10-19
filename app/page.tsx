@@ -14,35 +14,37 @@ export default function WelcomePage() {
       <WelcomeAnalytics />
       <style>{css}</style>
       <div className="ambient" aria-hidden />
-      <div className="beta-banner" role="status">
-        <span className="beta-pill">Beta</span>
-        <span className="beta-copy">Features may change</span>
-      </div>
-      <header className="header">
-        <div className="header-inner">
-          <Link href="/" className="logo">
-            <img
-              src="/logo.svg"
-              alt="AP Studio"
-              width={28}
-              height={28}
-              className="logo-img"
-            />
-            AP Studio
-          </Link>
-          <nav className="nav desktop-nav">
-            <a href="#workspace">Workspace</a>
-            <a href="#listen">Listen</a>
-            <a href="#how">How it works</a>
-            <a href="#motion-mix">Produce</a>
-            <a href="#value">Why Studio</a>
-            <a href="#faq">FAQ</a>
-            <a href="#pricing">Pricing</a>
-            <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
-            <Link href={START_HREF} className="primary">Start creating</Link>
-          </nav>
+      <div className="top-chrome">
+        <div className="beta-banner" role="status">
+          <span className="beta-pill">Beta</span>
+          <span className="beta-copy">Features may change</span>
         </div>
-      </header>
+        <header className="header">
+          <div className="header-inner">
+            <Link href="/" className="logo">
+              <img
+                src="/logo.svg"
+                alt="AP Studio"
+                width={28}
+                height={28}
+                className="logo-img"
+              />
+              AP Studio
+            </Link>
+            <nav className="nav desktop-nav">
+              <a href="#workspace">Workspace</a>
+              <a href="#listen">Listen</a>
+              <a href="#how">How it works</a>
+              <a href="#motion-mix">Produce</a>
+              <a href="#value">Why Studio</a>
+              <a href="#faq">FAQ</a>
+              <a href="#pricing">Pricing</a>
+              <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
+              <Link href={START_HREF} className="primary">Start creating</Link>
+            </nav>
+          </div>
+        </header>
+      </div>
 
 <div className="wrap">
 <section className="hero">
@@ -365,7 +367,23 @@ export default function WelcomePage() {
 }
 
 const css = `
-  :root{--bg:#050508;--surface:rgba(255,255,255,.045);--border:rgba(255,255,255,.09);--border-hi:rgba(255,255,255,.16);--text:#F4F1EC;--muted:#9B96A3;--faint:#5C5866;--signal:#7BEBD4;--brass:#E7A961;--brass-soft:rgba(231,169,97,.15);--shadow:none;--header-bg:transparent}
+  :root{
+    --bg:#050508;
+    --surface:rgba(255,255,255,.06);
+    --surface-2:rgba(255,255,255,.09);
+    --border:rgba(255,255,255,.08);
+    --border-hi:rgba(255,255,255,.14);
+    --text:#F4F1EC;
+    --muted:#9B96A3;
+    --faint:#5C5866;
+    --signal:#7BEBD4;
+    --brass:#E7A961;
+    --brass-soft:rgba(231,169,97,.15);
+    --shadow:0 8px 32px rgba(0,0,0,.35);
+    --header-bg:rgba(8,8,12,.55);
+    --glass:rgba(18,18,24,.52);
+    --glass-border:rgba(255,255,255,.1);
+  }
   /* Warm paper studio — higher contrast muted text, soft ivory cards */
   html[data-theme="light"]{
     --bg:#F3EBE0;
@@ -399,12 +417,8 @@ const css = `
       radial-gradient(ellipse at 0% 70%,rgba(123,92,219,.08),transparent 42%),
       radial-gradient(ellipse at 80% 100%,rgba(232,93,76,.07),transparent 40%);
   }
-    /* Light header: same structure/size as dark — colors only */
-  html[data-theme="light"] .header{
-    background:var(--header-bg);
-    border-bottom:1px solid var(--border);
-    box-shadow:0 1px 0 rgba(48,36,22,.04);
-  }
+  /* Light sticky chrome handled under .top-chrome */
+
   html[data-theme="light"] .nav a:not(.primary):not(.ghost){
     color:var(--muted);
   }
@@ -623,9 +637,11 @@ html[data-theme="light"] .chip{
 
 .faq-list{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
   .faq-item{
-    border:1px solid var(--border);
-    border-radius:14px;
-    background:var(--surface);
+    border:1px solid var(--glass-border, var(--border));
+    border-radius:16px;
+    background:var(--glass, var(--surface));
+    backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);
     padding:0 18px;
   }
   .faq-item summary{
@@ -762,18 +778,35 @@ html[data-theme="light"] .chip{
   html[data-theme="light"] .panel-label{color:var(--brass)}
   html[data-theme="light"] .panel h3{color:var(--text)}
   html[data-theme="light"] .panel p{color:var(--muted)}
-  .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse at 50% -10%,rgba(123,235,212,.12),transparent 55%),radial-gradient(ellipse at 100% 100%,rgba(231,169,97,.08),transparent 50%)}
+  .ambient{position:fixed;inset:0;pointer-events:none;z-index:0;background:
+    radial-gradient(ellipse at 50% -8%,rgba(123,235,212,.14),transparent 52%),
+    radial-gradient(ellipse at 100% 20%,rgba(231,169,97,.1),transparent 48%),
+    radial-gradient(ellipse at 0% 80%,rgba(124,92,219,.08),transparent 45%),
+    radial-gradient(ellipse at 80% 100%,rgba(231,169,97,.06),transparent 40%)}
   .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 20px 96px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
+  /* Sticky glass chrome (Suno / modern iOS feel) */
+  .top-chrome{
+    position:sticky;
+    top:0;
+    z-index:50;
+    width:100%;
+    box-sizing:border-box;
+    background:var(--header-bg);
+    backdrop-filter:saturate(160%) blur(20px);
+    -webkit-backdrop-filter:saturate(160%) blur(20px);
+    border-bottom:1px solid var(--glass-border, rgba(255,255,255,.1));
+    box-shadow:0 1px 0 rgba(255,255,255,.04), 0 12px 40px rgba(0,0,0,.25);
+  }
   .beta-banner{
     position:relative;
-    z-index:30;
+    z-index:1;
     display:flex;
     align-items:center;
     justify-content:center;
     gap:8px;
     padding:6px 14px;
-    background:rgba(231,169,97,.08);
-    border-bottom:1px solid var(--border);
+    background:rgba(231,169,97,.07);
+    border-bottom:1px solid rgba(255,255,255,.05);
     font-size:12px;
     line-height:1.3;
     text-align:center;
@@ -784,7 +817,7 @@ html[data-theme="light"] .chip{
     padding:1px 7px;
     border-radius:999px;
     border:1px solid rgba(231,169,97,.4);
-    background:transparent;
+    background:rgba(231,169,97,.08);
     color:var(--brass);
     font-size:10px;
     font-weight:700;
@@ -792,18 +825,44 @@ html[data-theme="light"] .chip{
     text-transform:uppercase;
   }
   .beta-copy{color:var(--muted);font-weight:400}
+  html[data-theme="light"] .top-chrome{
+    background:rgba(255,251,246,.78);
+    border-bottom-color:rgba(48,36,22,.08);
+    box-shadow:0 1px 0 rgba(48,36,22,.04), 0 8px 28px rgba(48,36,22,.06);
+  }
   html[data-theme="light"] .beta-banner{
     background:rgba(196,120,32,.08);
+    border-bottom-color:rgba(48,36,22,.06);
   }
   .header{
-    position:relative;z-index:30;width:100%;
+    position:relative;
+    z-index:1;
+    width:100%;
     box-sizing:border-box;
+    background:transparent;
   }
   .header-inner{
     display:flex;align-items:center;justify-content:space-between;gap:12px;
     max-width:1200px;margin:0 auto;width:100%;
-    padding:12px 24px;min-height:56px;box-sizing:border-box;
+    padding:10px 20px;min-height:52px;box-sizing:border-box;
     min-width:0;
+  }
+  .nav a:not(.primary):not(.ghost){
+    transition:color .15s, background .15s;
+  }
+  .nav a:not(.primary):not(.ghost):hover{
+    color:var(--text);
+    background:rgba(255,255,255,.06);
+  }
+  .ghost{
+    background:rgba(255,255,255,.06) !important;
+    border:1px solid rgba(255,255,255,.12) !important;
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+  }
+  .ghost:hover{
+    background:rgba(255,255,255,.1) !important;
+    border-color:rgba(255,255,255,.18) !important;
   }
   .logo{display:inline-flex;align-items:center;gap:10px;font-weight:600;color:inherit;text-decoration:none;flex-shrink:0;min-width:0}
   .logo-img{border-radius:6px;flex-shrink:0;display:block}
