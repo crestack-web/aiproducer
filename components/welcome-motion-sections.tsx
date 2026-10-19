@@ -16,18 +16,26 @@ type MotionCardProps = {
 };
 
 function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
-  const ref = useRef<HTMLIFrameElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = frameRef.current;
     if (!el) return;
+    // Load immediately if already visible (e.g. fast scroll / large screens)
+    const rect = el.getBoundingClientRect();
+    if (rect.top < window.innerHeight + 200 && rect.bottom > -100) {
+      setInView(true);
+    }
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setInView(true);
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
       },
-      { rootMargin: "120px", threshold: 0.15 }
+      { rootMargin: "200px 0px", threshold: 0.05 }
     );
     io.observe(el);
     return () => io.disconnect();
@@ -40,20 +48,19 @@ function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
         <h3 className="motion-title">{title}</h3>
         <p className="motion-body">{body}</p>
       </div>
-      <div className={`motion-frame${loaded ? " ready" : ""}`}>
+      <div ref={frameRef} className={`motion-frame${loaded ? " ready" : ""}`}>
         {!loaded && <div className="motion-skeleton" aria-hidden />}
-        {inView && (
+        {inView ? (
           <iframe
-            ref={ref}
             src={src}
             title={title}
             className="motion-iframe"
-            loading="lazy"
             onLoad={() => setLoaded(true)}
-            // Allow scripts for the self-contained animation; no other origins.
+            // Scripts required for the self-contained animation.
             sandbox="allow-scripts allow-same-origin"
+            referrerPolicy="no-referrer"
           />
-        )}
+        ) : null}
       </div>
     </article>
   );

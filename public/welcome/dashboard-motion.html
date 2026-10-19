@@ -1,8 +1,30 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 <style>
   /* Welcome page embed: hide replay, fill stage */
-  body { padding: 0 !important; min-height: 100% !important; justify-content: stretch !important; }
-  .stage { max-width: none !important; width: 100% !important; border-radius: 0 !important; box-shadow: none !important; }
+  html, body {
+    height: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #050508 !important;
+  }
+  body {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: center !important;
+    min-height: 100% !important;
+  }
+  .stage {
+    max-width: none !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: 100% !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+  }
   #replay, button#replay { display: none !important; }
 </style>
 </head><body>
