@@ -2,9 +2,12 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import BeatStudioPanel from "@/components/beat-studio/beat-studio-panel";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
+import { createClient } from "@/lib/supabase/client";
+
+const BEAT_CREATOR_ALLOWLIST = new Set(["crestack@gmail.com"]);
 
 /**
  * Standalone Beat Studio — /app/beat-studio/[id]
@@ -12,12 +15,41 @@ import { STUDIO_LOGO_URL } from "@/lib/brand";
  */
 export default function BeatStudioPage() {
   const params = useParams();
+  const router = useRouter();
   const projectId = String(params?.id || "");
   const [title, setTitle] = useState("Untitled beat");
   const [tempo, setTempo] = useState<number | null>(null);
+  const [access, setAccess] = useState<"loading" | "ok" | "denied">("loading");
 
   useEffect(() => {
-    if (!projectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase.auth.getUser();
+        const email = data.user?.email?.trim().toLowerCase() || "";
+        if (!email || !BEAT_CREATOR_ALLOWLIST.has(email)) {
+          if (!cancelled) {
+            setAccess("denied");
+            router.replace("/app/studio");
+          }
+          return;
+        }
+        if (!cancelled) setAccess("ok");
+      } catch {
+        if (!cancelled) {
+          setAccess("denied");
+          router.replace("/app/studio");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    if (!projectId || access !== "ok") return;
     fetch(`/api/projects/${projectId}`)
       .then((r) => r.json())
       .then((j) => {
@@ -26,10 +58,20 @@ export default function BeatStudioPage() {
         if (typeof p?.tempo === "number") setTempo(p.tempo);
       })
       .catch(() => {});
-  }, [projectId]);
+  }, [projectId, access]);
 
   if (!projectId) {
     return <p style={{ padding: 24, color: "#9B96A3" }}>Missing project id</p>;
+  }
+
+  if (access !== "ok") {
+    return (
+      <p style={{ padding: 24, color: "#9B96A3" }}>
+        {access === "denied"
+          ? "Beat Studio is not available on your account yet."
+          : "Checking access…"}
+      </p>
+    );
   }
 
   return (

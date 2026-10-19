@@ -516,6 +516,10 @@ function StudioPageInner() {
   }
 
   async function openBeatCreator() {
+    if (!userEmail || userEmail.trim().toLowerCase() !== "crestack@gmail.com") {
+      setError("Beat creator is not available on your account yet.");
+      return;
+    }
     if (creating) return;
     setCreating(true);
     setError(null);
@@ -897,6 +901,20 @@ function StudioPageInner() {
     fontFamily: "inherit",
   });
 
+
+  useEffect(() => {
+    if (
+      beatMode === "create" &&
+      userEmail &&
+      userEmail.trim().toLowerCase() !== "crestack@gmail.com"
+    ) {
+      setBeatMode("ai");
+    }
+  }, [beatMode, userEmail]);
+
+  const canUseBeatCreator =
+    !!userEmail && userEmail.trim().toLowerCase() === "crestack@gmail.com";
+
   return (
     <AppShell active="studio" userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
       <div
@@ -946,9 +964,11 @@ function StudioPageInner() {
             <button type="button" style={modeTab(beatMode === "upload")} onClick={() => setBeatMode("upload")}>
               Upload
             </button>
-            <button type="button" style={modeTab(beatMode === "create")} onClick={() => setBeatMode("create")}>
-              Beat creator
-            </button>
+            {canUseBeatCreator ? (
+              <button type="button" style={modeTab(beatMode === "create")} onClick={() => setBeatMode("create")}>
+                Beat creator
+              </button>
+            ) : null}
           </div>
 
           {beatMode === "ai" ? (
