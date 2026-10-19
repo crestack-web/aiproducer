@@ -1,7 +1,7 @@
 import { grantedPlanForEmail } from "@/lib/subscription-grants";
 import { createServiceClient } from "@/lib/supabase/server";
 
-export const FREE_BEAT_GEN_COUNT = Number(process.env.BEAT_GEN_FREE_COUNT || 3) || 3;
+export const FREE_BEAT_GEN_COUNT = Number(process.env.BEAT_GEN_FREE_COUNT || 1) || 1;
 export const FREE_MAX_DURATION_SEC = Number(process.env.BEAT_GEN_FREE_MAX_SEC || 90) || 90;
 export const FREE_DURATION_OPTIONS_SEC = [60, 90].filter((s) => s <= FREE_MAX_DURATION_SEC);
 export const MAX_BEAT_GENS_PER_SONG = Number(process.env.MAX_BEAT_GENS_PER_SONG || 3) || 3;
@@ -169,7 +169,7 @@ export async function getBeatGenQuota(userId: string): Promise<BeatQuotaSnapshot
     message:
       remaining > 0
         ? undefined
-        : "You've used your free beats. Subscribe or generate a paid beat.",
+        : "You've used your free beat. Finish a song and pay to download, subscribe, or generate a paid beat.",
     upgradePath: remaining > 0 ? undefined : "finish_download",
     costPerSecUsd,
   };

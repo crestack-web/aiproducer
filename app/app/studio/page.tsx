@@ -111,7 +111,7 @@ function estimateStudioBeatCostUsd(sec: number): number {
   return Math.max(0.25, Math.round(s * COST_PER_SEC_USD * 100) / 100);
 }
 const FREE_MAX_SEC = 90;
-const FREE_GEN_COUNT = 3;
+const FREE_GEN_COUNT = 1;
 type Project = {
   id: string;
   title: string;
@@ -1193,7 +1193,7 @@ function StudioPageInner() {
                           <span style={{ color: C.brass }}>Free · up to {Math.max(1, Math.round(FREE_MAX_SEC / 60))} min</span>
                           {" · "}
                           Est. cost ~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}
-                          {" · "}AP covers {FREE_GEN_COUNT} gens
+                          {" · "}AP covers {FREE_GEN_COUNT} free generation
                         </>
                       ) : (
                         <>
@@ -1317,19 +1317,19 @@ function StudioPageInner() {
             }}
           >
             <div style={{ fontWeight: 700, color: C.brass, marginBottom: 4, fontSize: 11, letterSpacing: 0.04, textTransform: "uppercase" }}>
-              Free AP beats
+              Free AP beat
             </div>
-            We cover <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beats</strong> — one at a time; next unlocks after you download a produced song (up to{" "}
-            <strong style={{ color: C.text }}>90 seconds</strong> each).
-            Generate one at a time — the next free beat unlocks after you{" "}
-            <strong style={{ color: C.text }}>record and Produce</strong> the current one.
-            After all {FREE_GEN_COUNT} free beats, AP still generates; the{" "}
-            <strong style={{ color: C.text }}>beat cost is added to your song download</strong> after Produce.
+            You get <strong style={{ color: C.text }}>{FREE_GEN_COUNT} free beat</strong> (up to{" "}
+            <strong style={{ color: C.text }}>90 seconds</strong>).
+            {" "}Listening in Studio is free — <strong style={{ color: C.text }}>downloading</strong> requires
+            paying for the session or finishing the full song and unlocking it.
+            After your free generation, AP can still make more beats; those are{" "}
+            <strong style={{ color: C.text }}>billable on song download</strong> after Produce.
             <div style={{ marginTop: 6, color: C.text }}>
               This length (~{beatDurationSec}s) estimates{" "}
               <strong>~${estimateStudioBeatCostUsd(beatDurationSec).toFixed(2)}</strong>
               {beatDurationSec <= FREE_MAX_SEC
-                ? " — free while sequential free slots remain"
+                ? " — covered by your free generation if you still have it"
                 : " — above free length; upgrade or shorten"}
               .
             </div>

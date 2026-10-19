@@ -28,6 +28,21 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Free beat may be listened to in-app; commercial file download requires unlock / plan / paid session
+  const access = await assertCommercialDownloadAccess(user.id, projectId, {
+    email: user.email,
+  });
+  if (!access.ok) {
+    return NextResponse.json(
+      {
+        error: access.message || "Pay for this session or finish the song to download the beat.",
+        code: "PAYMENT_REQUIRED",
+        reason: access.reason,
+      },
+      { status: 402 }
+    );
+  }
+
   const service = createServiceClient();
   const { data: beat } = await service
     .from("beats")

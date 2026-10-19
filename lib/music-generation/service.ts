@@ -15,7 +15,7 @@ import type {
   MusicProviderName,
 } from "./types";
 import { MusicGenerationError, publicErrorMessage, sanitizeClientErrorMessage, publicBeatLimitMessage } from "./types";
-import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC, isPaidBeatSubscriber } from "./beat-quota";
+import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC, isPaidBeatSubscriber, FREE_BEAT_GEN_COUNT } from "./beat-quota";
 
 export function getMusicGenerationMode(): "mock" | "provider" {
   const m = (process.env.MUSIC_GENERATION_MODE || "").toLowerCase();
@@ -185,9 +185,9 @@ export async function enqueueMusicGeneration(
         allowed: true,
         isPaid: false,
         usedSuccessful: 0,
-        freeBaseAllowance: 3,
+        freeBaseAllowance: FREE_BEAT_GEN_COUNT,
         downloadUnlocks: 0,
-        freeLimit: 3,
+        freeLimit: FREE_BEAT_GEN_COUNT,
         usedSecondsThisMonth: 0,
         paidSecondsBudget: 0,
         freeMaxDurationSec: 90,

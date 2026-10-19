@@ -205,7 +205,7 @@ export function publicBeatLimitMessage(
     case "FREE_COUNT_EXCEEDED":
     case "SEQUENTIAL_FREE_BLOCKED":
       return (
-        "You've used your free beats. Finish a song, subscribe, or continue with a paid beat" +
+        "You've used your free beat. Finish the song and pay to download, subscribe, or continue with a paid beat" +
         (cost ? ` (${cost}).` : ".")
       );
     case "BEAT_GEN_IN_FLIGHT":

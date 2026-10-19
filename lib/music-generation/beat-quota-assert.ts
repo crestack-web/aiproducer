@@ -94,7 +94,7 @@ export async function assertBeatGenAllowed(
       throw new MusicGenerationError(
         "LIMIT_EXCEEDED",
         snap.message ||
-          "Free beat limit reached. Subscribe or continue with a paid beat (cost added at download).",
+          "Free beat limit reached (1 free generation). Finish your song and pay to download, subscribe, or continue with a paid beat.",
         {
           details: {
             code: "FREE_COUNT_EXCEEDED",

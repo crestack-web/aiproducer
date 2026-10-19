@@ -81,7 +81,7 @@ export default function TermsPage() {
 
           <h2>6. Free and paid features</h2>
           <p>
-            Some features are free with limits (for example a limited number of free AI beats).
+            Some features are free with limits (for example one free AI beat; downloads require payment or a finished paid song session).
             Paid features may include session unlocks, subscriptions, or per-song downloads. Prices
             and limits may change. Paid beat generation may be billed according to length (for
             example a stated rate such as $1 for a 2-minute beat) and charged when you unlock a
