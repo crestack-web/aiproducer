@@ -48,7 +48,7 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Baloo 2
 .chip.on i{opacity:1}
 </style>
 <style>
-  /* Welcome page embed */
+  /* Welcome page embed — full 16:9 scene letterboxed, never crop */
   html, body {
     height: 100% !important;
     width: 100% !important;
@@ -61,8 +61,10 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Baloo 2
     justify-content: center !important;
   }
   #scene {
-    /* fit() script scales; ensure full area */
-    max-width: 100%;
+    width: 1280px !important;
+    height: 720px !important;
+    flex: none !important;
+    transform-origin: center center !important;
   }
 </style>
 </head><body><div id="scene">
@@ -81,7 +83,21 @@ body{display:flex;align-items:center;justify-content:center;font-family:"Baloo 2
 </div>
 <div id="chips"><div class="chip" style="--k:#14b8a6"><i></i>Reverb</div><div class="chip" style="--k:#8b5cf6"><i></i>Echo</div><div class="chip" style="--k:#ec4899"><i></i>Pitch shift</div></div>
 </div>
-<script>function fit(){var s=Math.min(innerWidth/1280,innerHeight/720);document.getElementById('scene').style.transform='scale('+s+')'}fit();addEventListener('resize',fit)</script><script>
+<script>
+function fit(){
+  var scene=document.getElementById('scene');
+  if(!scene)return;
+  var w=window.innerWidth||1,h=window.innerHeight||1;
+  var s=Math.min(w/1280,h/720);
+  scene.style.transform='scale('+s+')';
+  scene.style.transformOrigin='center center';
+}
+fit();
+addEventListener('resize',fit);
+// iOS Safari: re-fit after layout
+setTimeout(fit,50);
+setTimeout(fit,300);
+</script><script>
 (function(){
 var lane=document.getElementById('lane'),segs=[].slice.call(lane.querySelectorAll('.seg')),
 cap=document.getElementById('cap'),steps=[].slice.call(document.querySelectorAll('#steps b')),

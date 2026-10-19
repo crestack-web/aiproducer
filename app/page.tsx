@@ -1479,6 +1479,7 @@ html[data-theme="light"] .chip{
     .motion-card-featured .motion-copy{text-align:left}
     .motion-card-featured .motion-body{max-width:36ch}
     .motion-card-featured .motion-frame{max-width:360px;margin:0 auto}
+    .motion-card-landscape.motion-card-featured .motion-frame{max-width:100%!important}
   }
 
   .motion-grid{
@@ -1513,18 +1514,6 @@ html[data-theme="light"] .chip{
     color:var(--muted,#9b96a3);
     max-width:42ch;
   }
-  .motion-frame.landscape{
-    aspect-ratio:16/9;
-    max-width:720px;
-  }
-  .motion-card-landscape.motion-card-featured .motion-frame{
-    max-width:min(100%,720px);
-  }
-  @media (min-width:900px){
-    .motion-card-landscape.motion-card-featured{
-      grid-template-columns:1fr minmax(320px, 560px);
-    }
-  }
   .motion-frame{
     position:relative;
     width:100%;
@@ -1536,6 +1525,23 @@ html[data-theme="light"] .chip{
     background:#050508;
     box-shadow:0 24px 48px -28px rgba(0,0,0,.55);
     border:1px solid rgba(255,255,255,.07);
+  }
+  /* Landscape stages must win over base 4/5 + featured 360px cap */
+  .motion-frame.landscape{
+    aspect-ratio:16/9 !important;
+    max-width:100% !important;
+    width:100%;
+  }
+  .motion-card-landscape{
+    max-width:100%;
+  }
+  .motion-card-landscape .motion-frame{
+    max-width:100% !important;
+  }
+  @media (min-width:900px){
+    .motion-card-landscape.motion-card-featured{
+      grid-template-columns:1fr minmax(360px, 640px);
+    }
   }
   .motion-frame.ready .motion-skeleton{opacity:0;pointer-events:none}
   .motion-skeleton{
@@ -1582,6 +1588,7 @@ html[data-theme="light"] .chip{
     .motion-card-featured .motion-copy{text-align:left}
     .motion-card-featured .motion-body{max-width:36ch}
     .motion-card-featured .motion-frame{max-width:360px;margin:0 auto}
+    .motion-card-landscape.motion-card-featured .motion-frame{max-width:100%!important}
   }
 
   .motion-grid{

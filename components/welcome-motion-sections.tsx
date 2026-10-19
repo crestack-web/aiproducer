@@ -50,7 +50,7 @@ function MotionCard({ src, title, body, kicker, id, featured, landscape }: Motio
         <h3 className="motion-title">{title}</h3>
         <p className="motion-body">{body}</p>
       </div>
-      <div ref={frameRef} className={`motion-frame${loaded ? " ready" : ""}${landscape ? " landscape" : ""}`}>
+      <div ref={frameRef} className={["motion-frame", loaded ? "ready" : "", landscape ? "landscape" : ""].filter(Boolean).join(" ")}>
         {!loaded && <div className="motion-skeleton" aria-hidden />}
         {inView ? (
           <iframe
