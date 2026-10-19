@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Welcome page motion demos — Mix + Console dashboard animations.
+ * Welcome page motion demos — Create beat, Mix, Console.
  * Self-contained HTML stages served from /welcome/*.html
  */
 
@@ -13,9 +13,10 @@ type MotionCardProps = {
   body: string;
   kicker: string;
   id: string;
+  featured?: boolean;
 };
 
-function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
+function MotionCard({ src, title, body, kicker, id, featured }: MotionCardProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
@@ -23,7 +24,6 @@ function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
   useEffect(() => {
     const el = frameRef.current;
     if (!el) return;
-    // Load immediately if already visible (e.g. fast scroll / large screens)
     const rect = el.getBoundingClientRect();
     if (rect.top < window.innerHeight + 200 && rect.bottom > -100) {
       setInView(true);
@@ -42,7 +42,7 @@ function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
   }, []);
 
   return (
-    <article className="motion-card" id={id}>
+    <article className={`motion-card${featured ? " motion-card-featured" : ""}`} id={id}>
       <div className="motion-copy">
         <p className="motion-kicker">{kicker}</p>
         <h3 className="motion-title">{title}</h3>
@@ -56,7 +56,6 @@ function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
             title={title}
             className="motion-iframe"
             onLoad={() => setLoaded(true)}
-            // Scripts required for the self-contained animation.
             sandbox="allow-scripts allow-same-origin"
             referrerPolicy="no-referrer"
           />
@@ -68,15 +67,24 @@ function MotionCard({ src, title, body, kicker, id }: MotionCardProps) {
 
 export function WelcomeMotionSections() {
   return (
-    <section className="motion-sections" aria-label="How Studio produces your song">
+    <section className="motion-sections" aria-label="How Studio creates and produces your song">
       <div className="section-head motion-head">
         <p className="section-kicker">See it move</p>
-        <h2>From take to mixed song</h2>
+        <h2>From idea to mixed song</h2>
         <p>
-          Watch AP arrange every layer, clean the vocal, and mix the final bounce —
-          then direct the console like a real session.
+          Pick a vibe, watch AP build the beat, then arrange, clean, and mix —
+          all the way to a session you can direct.
         </p>
       </div>
+
+      <MotionCard
+        id="motion-create"
+        featured
+        src="/welcome/create-beat-motion.html"
+        kicker="Create"
+        title="Make a beat in seconds"
+        body="Choose genre, mood, and tempo — AP lays drums, bass, and melody, then drops the finished beat in your library ready to play."
+      />
 
       <div className="motion-grid">
         <MotionCard

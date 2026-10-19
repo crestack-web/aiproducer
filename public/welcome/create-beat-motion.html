@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AP Studio – Create a beat</title>
+<style>
+:root{--bg:#07070b;--card:#14141d;--line:#2a2a38;--cream:#f2efe9;--amber:#e9a95f;--dim:#8d8b99;--vio:#a855c8;--lem:#d6c94a;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
+:root:not([data-theme="light"]){--bg:#07070b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--cream);font-family:Inter,system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:18px;padding:20px 14px 28px}
+.serif{font-family:"Iowan Old Style",Georgia,serif}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.tab{background:none;border:1px solid var(--line);color:var(--dim);padding:9px 14px;border-radius:99px;font:inherit;font-size:14px;cursor:pointer}
+.tab.on{border-color:var(--amber);color:var(--amber);background:#2a1f12}
+.phone{width:min(360px,100%);aspect-ratio:9/16;max-height:72vh;background:#0a0a10;border-radius:34px;position:relative;overflow:hidden}
+.scene{position:absolute;inset:0;padding:22px 20px;opacity:0;visibility:hidden;transition:opacity .4s}
+.scene.on{opacity:1;visibility:visible}
+h2{font-family:"Iowan Old Style",Georgia,serif;font-size:26px;line-height:1.15;margin-bottom:6px}
+.sub{color:var(--dim);font-size:14px;line-height:1.4}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:9px 16px;font-size:14px;color:var(--dim);margin:0 6px 8px 0}
+.pill.sel{border-color:var(--amber);background:#2a1f12;color:var(--amber)}
+.label{font-size:13px;color:var(--dim);margin:20px 0 10px}
+.btn{display:inline-block;background:var(--cream);color:#111;font-weight:600;border-radius:99px;padding:14px 24px;font-size:16px}
+.ap{border:1px solid var(--amber);color:var(--amber);font-size:11px;border-radius:99px;padding:2px 8px;margin-left:8px;font-weight:600}
+
+/* every animated item uses --d (delay) and plays only while its scene is .on */
+.scene .a{opacity:0}
+.scene.on .pop{animation:pop .5s cubic-bezier(.2,1.4,.4,1) var(--d,0s) both}
+.scene.on .rise{animation:rise .6s ease var(--d,0s) both}
+@keyframes pop{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.scene.on .tap{animation:tap .5s ease var(--d,0s) both}
+@keyframes tap{0%{opacity:1;transform:scale(1)}40%{transform:scale(.92)}100%{opacity:1;transform:scale(1)}}
+.scene.on .sel-in{animation:sel .4s ease var(--d,0s) both}
+@keyframes sel{from{border-color:var(--line);background:none;color:var(--dim)}to{border-color:var(--amber);background:#2a1f12;color:var(--amber)}}
+
+/* scene 1 */
+.rail{height:6px;background:#23232f;border-radius:9px;position:relative;margin:6px 0 8px}
+.fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:9px;background:linear-gradient(90deg,var(--vio),var(--amber))}
+.scene.on .fill{animation:fillw 1.4s ease var(--d,0s) both}
+@keyframes fillw{to{width:var(--w,60%)}}
+.bpm{display:flex;justify-content:space-between;font-size:13px;color:var(--dim)}
+.bpm b{color:var(--cream);font-family:"Iowan Old Style",Georgia,serif;font-size:20px}
+.cursor{position:absolute;width:34px;height:34px;border-radius:50%;background:#ffffff33;border:2px solid #fff;right:70px;bottom:44px;opacity:0}
+.scene.on .cursor{animation:cur 5s ease 2.4s both}
+@keyframes cur{0%{opacity:0;transform:translate(60px,90px)}15%{opacity:1;transform:none}30%{transform:scale(.7)}40%{transform:scale(1);opacity:1}100%{opacity:0}}
+
+/* scene 2 */
+.stage{display:grid;place-items:center;height:230px;position:relative;margin-top:14px}
+.ring{position:absolute;width:210px;height:210px;border-radius:50%;border:2px dashed #a855c855}
+.scene.on .ring{animation:spin 9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.orbw{width:150px;height:150px;filter:drop-shadow(0 0 30px #a855c866)}
+.scene.on .orbw{animation:grow 3.4s ease .2s both,float 4s ease-in-out 3.6s infinite}
+@keyframes grow{from{transform:scale(.1) rotate(-90deg);opacity:0}to{transform:none;opacity:1}}
+@keyframes float{50%{transform:translateY(-8px)}}
+.bars{display:flex;align-items:flex-end;gap:4px;height:60px;justify-content:center;margin:6px 0 14px}
+.bars i{width:6px;border-radius:4px;background:linear-gradient(var(--amber),var(--vio));height:8px}
+.scene.on .bars i{animation:bar 1s ease-in-out var(--d) infinite alternate}
+@keyframes bar{to{height:var(--h)}}
+.steps div{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--dim);margin:8px 0}
+.steps span{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:11px;color:#111}
+.scene.on .steps div{animation:stp .5s ease var(--d) both}
+.scene.on .steps span{animation:chk .3s ease calc(var(--d) + .5s) both}
+@keyframes stp{to{color:var(--cream)}}
+@keyframes chk{to{background:var(--amber);border-color:var(--amber)}}
+
+/* scene 3 */
+.row{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:14px;margin-bottom:12px}
+.row.hot{border-color:var(--amber)}
+.thumb{width:52px;height:52px;border-radius:14px;background:#0d140d;display:grid;place-items:center;font-size:22px}
+.row h3{font-size:17px;display:flex;align-items:center}
+.row p{font-size:13px;color:var(--dim);margin-top:3px}
+.toast{background:var(--amber);color:#1b1206;border-radius:99px;padding:10px 16px;font-weight:600;font-size:14px;display:inline-block;margin:6px 0 18px}
+.scene.on .newrow{animation:drop .8s cubic-bezier(.2,1.2,.4,1) 1s both}
+@keyframes drop{from{opacity:0;transform:translateY(-60px) scale(.9)}to{opacity:1;transform:none}}
+.scene.on .glow{animation:glow 1.6s ease 1.8s 2}
+@keyframes glow{50%{box-shadow:0 0 36px #e9a95f77}}
+.row.dim{opacity:.7}
+
+/* scene 4 */
+.np{text-align:center;font-family:"Iowan Old Style",Georgia,serif;letter-spacing:.18em;font-size:13px;color:var(--dim);margin-bottom:16px}
+.art{width:78%;aspect-ratio:1;margin:0 auto 18px;border-radius:26px;background:#14141a;overflow:hidden;display:grid;place-items:center}
+.art svg{width:112%;height:112%}
+.scene.on .art svg{animation:spin 24s linear infinite}
+.scene.on .art{animation:pop .7s ease both}
+.time{display:flex;justify-content:space-between;font-family:"Iowan Old Style",Georgia,serif;font-size:13px;color:var(--dim);margin-top:8px}
+.ctrl{display:flex;justify-content:center;align-items:center;gap:34px;margin-top:20px;font-size:20px;color:var(--dim)}
+.play{width:64px;height:64px;border-radius:50%;background:var(--cream);color:#111;display:grid;place-items:center;font-size:20px;font-weight:700;letter-spacing:2px}
+.scene.on .play{animation:beat .75s ease-in-out infinite}
+@keyframes beat{50%{transform:scale(1.07)}}
+.knob{position:absolute;right:-7px;top:-5px;width:16px;height:16px;border-radius:50%;background:var(--cream)}
+
+.ctl{display:flex;gap:10px;align-items:center}
+.ctl button{background:none;border:1px solid var(--line);color:var(--cream);border-radius:99px;padding:9px 16px;font:inherit;font-size:14px;cursor:pointer}
+.tabs,.ctl{display:none}
+body{padding:0;min-height:0;justify-content:center}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01s!important;animation-delay:0s!important}}
+</style>
+
+<style>
+  /* Welcome page embed */
+  html, body {
+    height: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #07070b !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-height: 100% !important;
+  }
+  .tabs, .ctl { display: none !important; }
+  .phone {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    max-height: none !important;
+    aspect-ratio: auto !important;
+    border-radius: 0 !important;
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<radialGradient id="g1" cx="40%" cy="30%" r="80%"><stop offset="0" stop-color="#d6c94a"/><stop offset=".55" stop-color="#cdbf45"/><stop offset=".8" stop-color="#b85fb0"/><stop offset="1" stop-color="#7a3fc4"/></radialGradient>
+<symbol id="orb" viewBox="0 0 200 200"><circle cx="100" cy="100" r="96" fill="url(#g1)"/><circle cx="100" cy="100" r="93" fill="none" stroke="#ffffff44" stroke-width="3"/>
+<path d="M20 110 Q55 60 100 100 T182 90" fill="none" stroke="#a855c8" stroke-width="6" stroke-linecap="round"/>
+<path d="M22 70 Q70 40 110 70 T180 60" fill="none" stroke="#e8dc6e" stroke-width="4" stroke-linecap="round" opacity=".6"/>
+<path d="M22 140 Q70 120 110 145 T182 130" fill="none" stroke="#e8dc6e" stroke-width="4" stroke-linecap="round" opacity=".6"/>
+<circle cx="60" cy="50" r="7" fill="#fff" opacity=".6"/><circle cx="150" cy="150" r="9" fill="#a855c8"/><circle cx="148" cy="125" r="6" fill="#fff" opacity=".7"/></symbol></defs></svg>
+
+<div class="tabs" id="tabs"></div>
+<div class="phone" id="phone">
+
+<section class="scene" data-name="Pick the vibe">
+ <p class="sub a pop" style="--d:.1s;color:var(--amber);font-weight:600">AP STUDIO</p>
+ <h2 class="a rise" style="--d:.2s">What are we making?</h2>
+ <p class="sub a rise" style="--d:.3s">Choose a genre and mood, set the tempo.</p>
+ <div class="label a rise" style="--d:.4s">Genre</div>
+ <div><span class="pill a pop" style="--d:.5s">Afrobeat</span><span class="pill a pop sel-in" style="--d:.6s;animation-name:pop,sel;animation-delay:.6s,1.3s;animation-duration:.5s,.4s">R&amp;B</span><span class="pill a pop" style="--d:.7s">Dancehall</span><span class="pill a pop" style="--d:.8s">Trap</span></div>
+ <div class="label a rise" style="--d:.9s">Mood</div>
+ <div><span class="pill a pop" style="--d:1s">Chill</span><span class="pill a pop" style="--d:1.1s;animation-name:pop,sel;animation-delay:1.1s,2s;animation-duration:.5s,.4s">Energetic</span><span class="pill a pop" style="--d:1.2s">Spiritual</span></div>
+ <div class="label a rise" style="--d:1.4s">Tempo</div>
+ <div class="a rise" style="--d:1.5s"><div class="bpm"><span>60</span><b>96 BPM</b><span>160</span></div><div class="rail"><div class="fill" style="--d:2s;--w:46%"></div></div></div>
+ <div style="text-align:center;margin-top:26px" class="a rise" style="--d:1.8s"><span class="btn tap a" style="--d:3.4s;animation-name:rise,tap;animation-delay:1.8s,3.4s;animation-duration:.6s,.5s">Create a beat</span></div>
+ <div class="cursor"></div>
+</section>
+
+<section class="scene" data-name="Generate">
+ <h2 class="a rise" style="--d:.1s">Building your beat</h2>
+ <p class="sub a rise" style="--d:.2s">Energetic R&amp;B · 96 BPM</p>
+ <div class="stage"><div class="ring"></div><svg class="orbw"><use href="#orb"/></svg></div>
+ <div class="bars" id="bars"></div>
+ <div class="steps">
+  <div style="--d:.8s"><span></span>Laying down drums</div>
+  <div style="--d:1.8s"><span></span>Shaping the bass</div>
+  <div style="--d:2.8s"><span></span>Writing the melody</div>
+  <div style="--d:3.8s"><span></span>Mixing and mastering</div>
+ </div>
+</section>
+
+<section class="scene" data-name="Beat ready">
+ <h2 class="a rise" style="--d:.1s">Your beat is ready</h2>
+ <div class="toast a pop" style="--d:.4s">Saved to Library</div>
+ <div class="row dim a rise" style="--d:.2s"><div class="thumb">♪</div><div><h3>Majnun - Riga<span class="ap">AP</span></h3><p>Dancehall · Spiritual</p></div></div>
+ <div class="row hot newrow glow a"><div class="thumb">♫</div><div><h3>Energetic R&amp;B<span class="ap">AP</span></h3><p>R&amp;B · Energetic · New</p></div></div>
+ <div class="row dim a rise" style="--d:.3s"><div class="thumb">♪</div><div><h3>Playful R&amp;B<span class="ap">AP</span></h3><p>R&amp;B · Playful</p></div></div>
+</section>
+
+<section class="scene" data-name="Play it">
+ <div class="np a rise" style="--d:0s">NOW PLAYING</div>
+ <div class="art"><svg><use href="#orb"/></svg></div>
+ <h2 class="a rise" style="--d:.5s;font-size:28px">Energetic R&amp;B</h2>
+ <p class="sub a rise" style="--d:.6s">R&amp;B · Energetic</p>
+ <div class="a rise" style="--d:.8s;margin-top:20px"><div class="rail"><div class="fill" style="--d:.9s;--w:100%;animation-duration:4.2s;animation-timing-function:linear"><i class="knob"></i></div></div><div class="time"><span>0:00</span><span>2:00</span></div></div>
+ <div class="ctrl a rise" style="--d:1s"><span>⏮</span><div class="play">II</div><span>⏭</span></div>
+</section>
+</div>
+
+<div class="ctl"><button id="prev">Back</button><button id="pp">Pause</button><button id="next">Next</button></div>
+
+<script>
+const scenes=[...document.querySelectorAll('.scene')],tabs=document.getElementById('tabs'),DUR=5500;
+let cur=0,timer=null,playing=true,solo=null;
+const bars=document.getElementById('bars');
+for(let i=0;i<28;i++){const b=document.createElement('i');b.style.setProperty('--d',(i*0.05)+'s');b.style.setProperty('--h',(12+Math.abs(Math.sin(i*1.3))*46)+'px');bars.appendChild(b)}
+scenes.forEach((s,i)=>{const t=document.createElement('button');t.className='tab';t.textContent=s.dataset.name;t.onclick=()=>{go(i);};tabs.appendChild(t)});
+function go(i){
+  cur=(i+scenes.length)%scenes.length;
+  scenes.forEach((s,k)=>{s.classList.remove('on');if(k===cur){void s.offsetWidth;s.classList.add('on')}});
+  [...tabs.children].forEach((t,k)=>t.classList.toggle('on',k===cur));
+  clearTimeout(timer);
+  if(playing)timer=setTimeout(()=>go(solo!==null?cur:cur+1),DUR);
+}
+document.getElementById('prev').onclick=()=>go(cur-1);
+document.getElementById('next').onclick=()=>go(cur+1);
+document.getElementById('pp').onclick=e=>{playing=!playing;e.target.textContent=playing?'Pause':'Play';go(cur)};
+/* embed one scene alone: add #1, #2, #3 or #4 to the page URL */
+const h=parseInt(location.hash.slice(1));
+if(h>=1&&h<=4){solo=h-1;document.body.classList.add('solo');go(solo)}else go(0);
+</script>
+</body>
+</html>

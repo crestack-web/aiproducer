@@ -35,7 +35,8 @@ export default function WelcomePage() {
               <a href="#workspace">Workspace</a>
               <a href="#listen">Listen</a>
               <a href="#how">How it works</a>
-              <a href="#motion-mix">Produce</a>
+              <a href="#motion-create">Create</a>
+            <a href="#motion-mix">Produce</a>
               <a href="#value">Why Studio</a>
               <a href="#faq">FAQ</a>
               <a href="#pricing">Pricing</a>
@@ -1459,6 +1460,26 @@ html[data-theme="light"] .chip{
     padding:0 4px;
   }
   .motion-head{margin-bottom:28px}
+  .motion-card-featured{
+    margin-bottom:28px;
+    max-width:440px;
+    margin-left:auto;
+    margin-right:auto;
+  }
+  @media (min-width:900px){
+    .motion-card-featured{
+      max-width:100%;
+      display:grid;
+      grid-template-columns:1fr minmax(280px, 360px);
+      gap:28px 36px;
+      align-items:center;
+      margin-bottom:40px;
+    }
+    .motion-card-featured .motion-copy{text-align:left}
+    .motion-card-featured .motion-body{max-width:36ch}
+    .motion-card-featured .motion-frame{max-width:360px;margin:0 auto}
+  }
+
   .motion-grid{
     display:grid;
     gap:28px;
@@ -1530,7 +1551,27 @@ html[data-theme="light"] .chip{
   }
   @media (min-width:900px){
     .motion-sections{margin:72px 0 32px}
-    .motion-grid{
+    .motion-card-featured{
+    margin-bottom:28px;
+    max-width:440px;
+    margin-left:auto;
+    margin-right:auto;
+  }
+  @media (min-width:900px){
+    .motion-card-featured{
+      max-width:100%;
+      display:grid;
+      grid-template-columns:1fr minmax(280px, 360px);
+      gap:28px 36px;
+      align-items:center;
+      margin-bottom:40px;
+    }
+    .motion-card-featured .motion-copy{text-align:left}
+    .motion-card-featured .motion-body{max-width:36ch}
+    .motion-card-featured .motion-frame{max-width:360px;margin:0 auto}
+  }
+
+  .motion-grid{
       grid-template-columns:1fr 1fr;
       gap:32px;
       align-items:start;
