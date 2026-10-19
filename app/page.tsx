@@ -45,6 +45,7 @@ export default function WelcomePage() {
           </div>
         </header>
       </div>
+      <div className="top-chrome-spacer" aria-hidden />
 
 <div className="wrap">
 <section className="hero">
@@ -404,7 +405,8 @@ const css = `
     --header-bg:#FFFBF6;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;max-width:100%}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);max-width:100%}
+  body{overflow-x:clip}
   body{min-width:0}
 
   .theme-slot{display:inline-flex;align-items:center;margin:0 4px}
@@ -786,16 +788,24 @@ html[data-theme="light"] .chip{
   .wrap{position:relative;z-index:1;max-width:1120px;margin:0 auto;padding:0 20px 96px;width:100%;box-sizing:border-box;min-width:0;overflow-x:clip}
   /* Sticky glass chrome (Suno / modern iOS feel) */
   .top-chrome{
-    position:sticky;
+    position:fixed;
     top:0;
-    z-index:50;
+    left:0;
+    right:0;
+    z-index:100;
     width:100%;
     box-sizing:border-box;
-    background:var(--header-bg);
-    backdrop-filter:saturate(160%) blur(20px);
-    -webkit-backdrop-filter:saturate(160%) blur(20px);
+    background:rgba(8,8,12,.72);
+    backdrop-filter:saturate(180%) blur(22px);
+    -webkit-backdrop-filter:saturate(180%) blur(22px);
     border-bottom:1px solid var(--glass-border, rgba(255,255,255,.1));
-    box-shadow:0 1px 0 rgba(255,255,255,.04), 0 12px 40px rgba(0,0,0,.25);
+    box-shadow:0 1px 0 rgba(255,255,255,.04), 0 12px 40px rgba(0,0,0,.28);
+  }
+  /* Reserve space so content is not under the fixed chrome */
+  .top-chrome-spacer{
+    height:var(--chrome-h, 88px);
+    width:100%;
+    flex-shrink:0;
   }
   .beta-banner{
     position:relative;
@@ -826,7 +836,7 @@ html[data-theme="light"] .chip{
   }
   .beta-copy{color:var(--muted);font-weight:400}
   html[data-theme="light"] .top-chrome{
-    background:rgba(255,251,246,.78);
+    background:rgba(255,251,246,.82);
     border-bottom-color:rgba(48,36,22,.08);
     box-shadow:0 1px 0 rgba(48,36,22,.04), 0 8px 28px rgba(48,36,22,.06);
   }
