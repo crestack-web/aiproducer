@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Welcome page motion demos — Create beat, Mix, Console.
+ * Welcome page motion demos — Create, Edit, Sing, Mix, Console.
  * Self-contained HTML stages served from /welcome/*.html
  */
 
@@ -16,10 +16,22 @@ type MotionCardProps = {
   featured?: boolean;
   /** landscape stages (e.g. 16:9 edit graphic) */
   landscape?: boolean;
+  /** postMessage play/pause to iframe when section enters/leaves view */
+  withAudio?: boolean;
 };
 
-function MotionCard({ src, title, body, kicker, id, featured, landscape }: MotionCardProps) {
+function MotionCard({
+  src,
+  title,
+  body,
+  kicker,
+  id,
+  featured,
+  landscape,
+  withAudio,
+}: MotionCardProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [inView, setInView] = useState(false);
 
@@ -32,34 +44,75 @@ function MotionCard({ src, title, body, kicker, id, featured, landscape }: Motio
     }
     const io = new IntersectionObserver(
       (entries) => {
+        const visible = entries.some((e) => e.isIntersecting && e.intersectionRatio > 0.15);
+        if (withAudio) {
+          setInView(true);
+          const win = iframeRef.current?.contentWindow;
+          if (win) {
+            win.postMessage(
+              { type: "ap-singing", action: visible ? "play" : "pause" },
+              "*"
+            );
+          }
+          return;
+        }
         if (entries.some((e) => e.isIntersecting)) {
           setInView(true);
           io.disconnect();
         }
       },
-      { rootMargin: "200px 0px", threshold: 0.05 }
+      {
+        rootMargin: withAudio ? "0px" : "200px 0px",
+        threshold: withAudio ? [0, 0.15, 0.4] : 0.05,
+      }
     );
     io.observe(el);
     return () => io.disconnect();
-  }, []);
+  }, [withAudio]);
+
+  // Re-send play once iframe finishes loading while already in view
+  useEffect(() => {
+    if (!withAudio || !loaded) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    const el = frameRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const visible = rect.top < window.innerHeight && rect.bottom > 0;
+    if (visible) {
+      win.postMessage({ type: "ap-singing", action: "play" }, "*");
+    }
+  }, [withAudio, loaded]);
 
   return (
-    <article className={`motion-card${featured ? " motion-card-featured" : ""}${landscape ? " motion-card-landscape" : ""}`} id={id}>
+    <article
+      className={`motion-card${featured ? " motion-card-featured" : ""}${
+        landscape ? " motion-card-landscape" : ""
+      }`}
+      id={id}
+    >
       <div className="motion-copy">
         <p className="motion-kicker">{kicker}</p>
         <h3 className="motion-title">{title}</h3>
         <p className="motion-body">{body}</p>
       </div>
-      <div ref={frameRef} className={["motion-frame", loaded ? "ready" : "", landscape ? "landscape" : ""].filter(Boolean).join(" ")}>
+      <div
+        ref={frameRef}
+        className={["motion-frame", loaded ? "ready" : "", landscape ? "landscape" : ""]
+          .filter(Boolean)
+          .join(" ")}
+      >
         {!loaded && <div className="motion-skeleton" aria-hidden />}
         {inView ? (
           <iframe
+            ref={iframeRef}
             src={src}
             title={title}
             className="motion-iframe"
             onLoad={() => setLoaded(true)}
             sandbox="allow-scripts allow-same-origin"
             referrerPolicy="no-referrer"
+            allow="autoplay"
           />
         ) : null}
       </div>
@@ -98,6 +151,16 @@ export function WelcomeMotionSections() {
         body="Cut phrases, shuffle the arrangement, and sprinkle reverb, echo, and pitch — then hit play and hear the track come together."
       />
 
+      <MotionCard
+        id="motion-sing"
+        featured
+        landscape
+        withAudio
+        src="/welcome/singing-motion.html"
+        kicker="AP sings"
+        title="Only you"
+        body="AP hits the stage — dancing under the lights while the track plays. Tap the music button if your browser needs a nudge."
+      />
 
       <div className="motion-grid">
         <MotionCard

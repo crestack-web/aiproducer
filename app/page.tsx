@@ -37,6 +37,7 @@ export default function WelcomePage() {
               <a href="#how">How it works</a>
               <a href="#motion-create">Create</a>
             <a href="#motion-edit">Edit</a>
+            <a href="#motion-sing">AP sings</a>
             <a href="#motion-mix">Produce</a>
               <a href="#value">Why Studio</a>
               <a href="#faq">FAQ</a>
