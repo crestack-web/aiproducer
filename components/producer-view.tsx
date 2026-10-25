@@ -29,7 +29,12 @@ import {
   AP_SUGGESTIONS,
   type DawAction,
 } from "@/lib/ap-engine/console-commands";
-import { applyFxPreset, FX_PRESETS } from "@/lib/ap-engine/fx-presets";
+import {
+  applyFxPreset,
+  applyEffectPluginPreset,
+  EFFECT_PLUGIN_PRESETS,
+  FX_PRESETS,
+} from "@/lib/ap-engine/fx-presets";
 import {
   createLiveTrackFxGraph,
   trackFxToLiveParams,
@@ -10003,6 +10008,51 @@ function TrackFxPanel({
             </div>
 
             <div style={{ padding: "16px 16px 20px" }}>
+              {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      color: brass,
+                      marginBottom: 8,
+                    }}
+                  >
+                    PRESETS
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).map((pr) => (
+                      <button
+                        key={pr.id}
+                        type="button"
+                        onClick={() => {
+                          const next = applyEffectPluginPreset(
+                            fx as never,
+                            modalDef.id,
+                            pr.id
+                          ) as TrackFx;
+                          onChange(next);
+                          onCommit(next);
+                        }}
+                        style={{
+                          padding: "6px 11px",
+                          borderRadius: 999,
+                          border: `1px solid ${border}`,
+                          background: "rgba(0,0,0,0.28)",
+                          color: muted,
+                          fontSize: 11,
+                          fontWeight: 650,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {pr.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {renderKnobs(modalDef.id, modalDef.accent)}
             </div>
 

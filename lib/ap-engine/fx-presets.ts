@@ -321,3 +321,129 @@ export function findPresetByPhrase(phrase: string): FxPreset | null {
   }
   return null;
 }
+
+/** Per-effect presets — only touch that plugin's parameters */
+export type EffectPluginPreset = {
+  id: string;
+  label: string;
+  fx: Partial<TrackFxShape>;
+};
+
+export const EFFECT_PLUGIN_PRESETS: Record<string, EffectPluginPreset[]> = {
+  compress: [
+    { id: "comp_light", label: "Light", fx: { compress: 0.25 } },
+    { id: "comp_vocal", label: "Vocal", fx: { compress: 0.45 } },
+    { id: "comp_punch", label: "Punch", fx: { compress: 0.7 } },
+    { id: "comp_smash", label: "Smash", fx: { compress: 0.9 } },
+  ],
+  deess: [
+    { id: "deess_soft", label: "Soft", fx: { deEss: 0.25 } },
+    { id: "deess_med", label: "Medium", fx: { deEss: 0.45 } },
+    { id: "deess_hard", label: "Hard", fx: { deEss: 0.75 } },
+  ],
+  gate: [
+    { id: "gate_light", label: "Light", fx: { gate: 0.25 } },
+    { id: "gate_tight", label: "Tight", fx: { gate: 0.55 } },
+    { id: "gate_hard", label: "Hard", fx: { gate: 0.85 } },
+  ],
+  denoise: [
+    { id: "nr_light", label: "Light", fx: { noiseReduce: 0.3 } },
+    { id: "nr_med", label: "Medium", fx: { noiseReduce: 0.55 } },
+    { id: "nr_strong", label: "Strong", fx: { noiseReduce: 0.8 } },
+  ],
+  limiter: [
+    { id: "lim_gentle", label: "Gentle", fx: { limiter: 0.25 } },
+    { id: "lim_safe", label: "Safe", fx: { limiter: 0.5 } },
+    { id: "lim_brick", label: "Brick", fx: { limiter: 0.85 } },
+  ],
+  sat: [
+    { id: "sat_warm", label: "Warm", fx: { saturation: 0.25 } },
+    { id: "sat_tape", label: "Tape", fx: { saturation: 0.45 } },
+    { id: "sat_drive", label: "Drive", fx: { saturation: 0.7 } },
+  ],
+  eq: [
+    { id: "eq_flat", label: "Flat", fx: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, air: 0 } },
+    { id: "eq_warm", label: "Warm", fx: { eqLowDb: 1.5, eqMidDb: -0.5, eqHighDb: 0.5, air: 0.15 } },
+    { id: "eq_bright", label: "Bright", fx: { eqLowDb: -1, eqMidDb: 0.5, eqHighDb: 2.5, air: 0.4 } },
+    { id: "eq_radio", label: "Radio", fx: { eqLowDb: -3, eqMidDb: 2, eqHighDb: 1.5, air: 0.25 } },
+    { id: "eq_presence", label: "Presence", fx: { eqLowDb: 0, eqMidDb: 2.5, eqHighDb: 1, air: 0.35 } },
+  ],
+  hpf: [
+    { id: "hpf_rumble", label: "Rumble", fx: { highPassHz: 60 } },
+    { id: "hpf_vocal", label: "Vocal", fx: { highPassHz: 100 } },
+    { id: "hpf_thin", label: "Thin", fx: { highPassHz: 180 } },
+    { id: "hpf_off", label: "Off", fx: { highPassHz: 0 } },
+  ],
+  lpf: [
+    { id: "lpf_off", label: "Open", fx: { lowPassHz: 0 } },
+    { id: "lpf_soft", label: "Soft", fx: { lowPassHz: 8000 } },
+    { id: "lpf_muffle", label: "Muffle", fx: { lowPassHz: 3500 } },
+    { id: "lpf_phone", label: "Phone", fx: { lowPassHz: 2800 } },
+  ],
+  telephone: [
+    { id: "tel_light", label: "Light", fx: { telephone: 0.35 } },
+    { id: "tel_classic", label: "Classic", fx: { telephone: 0.6 } },
+    { id: "tel_extreme", label: "Extreme", fx: { telephone: 0.9 } },
+  ],
+  reverb: [
+    { id: "rev_dry", label: "Dry", fx: { reverb: 0.08 } },
+    { id: "rev_room", label: "Room", fx: { reverb: 0.22 } },
+    { id: "rev_hall", label: "Hall", fx: { reverb: 0.4 } },
+    { id: "rev_wash", label: "Wash", fx: { reverb: 0.65 } },
+  ],
+  plate: [
+    { id: "plate_short", label: "Short", fx: { plateReverb: 0.2 } },
+    { id: "plate_vocal", label: "Vocal", fx: { plateReverb: 0.35 } },
+    { id: "plate_lush", label: "Lush", fx: { plateReverb: 0.55 } },
+  ],
+  delay: [
+    { id: "delay_subtle", label: "Subtle", fx: { delay: 0.15 } },
+    { id: "delay_echo", label: "Echo", fx: { delay: 0.35 } },
+    { id: "delay_bounce", label: "Bounce", fx: { delay: 0.55 } },
+    { id: "delay_wash", label: "Wash", fx: { delay: 0.75 } },
+  ],
+  slap: [
+    { id: "slap_tight", label: "Tight", fx: { slapDelay: 0.2 } },
+    { id: "slap_rock", label: "Rock", fx: { slapDelay: 0.4 } },
+    { id: "slap_wide", label: "Wide", fx: { slapDelay: 0.6 } },
+  ],
+  chorus: [
+    { id: "chor_subtle", label: "Subtle", fx: { chorus: 0.2 } },
+    { id: "chor_rich", label: "Rich", fx: { chorus: 0.4 } },
+    { id: "chor_seasick", label: "Wide", fx: { chorus: 0.65 } },
+  ],
+  doubler: [
+    { id: "dbl_soft", label: "Soft", fx: { doubler: 0.25 } },
+    { id: "dbl_stack", label: "Stack", fx: { doubler: 0.45 } },
+    { id: "dbl_wide", label: "Wide", fx: { doubler: 0.7 } },
+  ],
+  voice: [
+    { id: "voice_natural", label: "Natural", fx: { voiceChanger: 0, voicePitchSemis: 0, voiceCharacter: 0 } },
+    { id: "voice_chip", label: "Chip", fx: { voiceChanger: 0.7, voicePitchSemis: 5, voiceCharacter: 0.4 } },
+    { id: "voice_deep", label: "Deep", fx: { voiceChanger: 0.7, voicePitchSemis: -4, voiceCharacter: 0.35 } },
+    { id: "voice_robot", label: "Robot", fx: { voiceChanger: 0.85, voicePitchSemis: 0, voiceCharacter: 0.8 } },
+  ],
+  rotor: [
+    { id: "rotor_slow", label: "Slow", fx: { rotorMix: 0.4, rotorSpeed: 0.25, rotorDepth: 0.4, rotorWarmth: 0.45, rotorFast: 0 } },
+    { id: "rotor_fast", label: "Fast", fx: { rotorMix: 0.45, rotorSpeed: 0.7, rotorDepth: 0.5, rotorWarmth: 0.35, rotorFast: 1 } },
+    { id: "rotor_glow", label: "Glow", fx: { rotorMix: 0.55, rotorSpeed: 0.4, rotorDepth: 0.55, rotorWarmth: 0.6, rotorFast: 0 } },
+  ],
+  spring: [
+    { id: "spring_soft", label: "Soft", fx: { springMix: 0.3, springDelay: 0.2, springTension: 0.35, springDamp: 0.4, springMod: 0.15 } },
+    { id: "spring_surf", label: "Surf", fx: { springMix: 0.5, springDelay: 0.35, springTension: 0.5, springDamp: 0.3, springMod: 0.35 } },
+    { id: "spring_space", label: "Space", fx: { springMix: 0.65, springDelay: 0.45, springTension: 0.4, springDamp: 0.45, springMod: 0.25 } },
+  ],
+};
+
+/** Merge a single-plugin preset onto current track FX (does not reset other plugins). */
+export function applyEffectPluginPreset(
+  base: TrackFxShape,
+  pluginId: string,
+  presetId: string
+): TrackFxShape {
+  const list = EFFECT_PLUGIN_PRESETS[pluginId];
+  if (!list) return { ...base };
+  const preset = list.find((p) => p.id === presetId);
+  if (!preset) return { ...base };
+  return { ...base, ...preset.fx };
+}
