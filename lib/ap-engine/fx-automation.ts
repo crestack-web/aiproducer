@@ -12,10 +12,19 @@ export type AutomationParamKey =
   | "plateReverb"
   | "highPassHz"
   | "lowPassHz"
+  | "eqLowDb"
+  | "eqMidDb"
   | "eqHighDb"
+  | "air"
   | "width"
   | "compress"
-  | "chorus";
+  | "saturation"
+  | "chorus"
+  | "doubler"
+  | "slapDelay"
+  | "deEss"
+  | "limiter"
+  | "telephone";
 
 export type AutomationPoint = {
   id: string;
@@ -51,10 +60,19 @@ export const AUTOMATION_PARAM_RANGE: Record<
   plateReverb: { min: 0, max: 1, unit: "", live: true, produce: true },
   highPassHz: { min: 0, max: 400, unit: "Hz", live: true, produce: true },
   lowPassHz: { min: 0, max: 18000, unit: "Hz", live: true, produce: true },
+  eqLowDb: { min: -12, max: 12, unit: "dB", live: true, produce: true },
+  eqMidDb: { min: -12, max: 12, unit: "dB", live: true, produce: true },
   eqHighDb: { min: -12, max: 12, unit: "dB", live: true, produce: true },
+  air: { min: 0, max: 1, unit: "", live: true, produce: true },
   width: { min: 0, max: 1, unit: "", live: true, produce: true },
   compress: { min: 0, max: 1, unit: "", live: true, produce: true },
+  saturation: { min: 0, max: 1, unit: "", live: true, produce: true },
   chorus: { min: 0, max: 1, unit: "", live: true, produce: true },
+  doubler: { min: 0, max: 1, unit: "", live: true, produce: true },
+  slapDelay: { min: 0, max: 1, unit: "", live: true, produce: true },
+  deEss: { min: 0, max: 1, unit: "", live: true, produce: true },
+  limiter: { min: 0, max: 1, unit: "", live: true, produce: true },
+  telephone: { min: 0, max: 1, unit: "", live: true, produce: true },
 };
 
 const VALID_PARAMS = new Set<string>(Object.keys(AUTOMATION_PARAM_RANGE));
@@ -192,6 +210,55 @@ export function clearLane(
   return {
     version: 1,
     lanes: doc.lanes.filter((l) => !(l.trackId === trackId && l.param === param)),
+  };
+}
+
+/** Remove one keyframe by id from a lane */
+export function removePoint(
+  doc: FxAutomationDoc,
+  trackId: string,
+  param: AutomationParamKey,
+  pointId: string
+): FxAutomationDoc {
+  return {
+    version: 1,
+    lanes: doc.lanes
+      .map((l) => {
+        if (l.trackId !== trackId || l.param !== param) return l;
+        return { ...l, points: l.points.filter((p) => p.id !== pointId) };
+      })
+      .filter((l) => l.points.length > 0),
+  };
+}
+
+/** Move / set a keyframe by id */
+export function updatePoint(
+  doc: FxAutomationDoc,
+  trackId: string,
+  param: AutomationParamKey,
+  pointId: string,
+  patch: { timeMs?: number; value?: number }
+): FxAutomationDoc {
+  return {
+    version: 1,
+    lanes: doc.lanes.map((l) => {
+      if (l.trackId !== trackId || l.param !== param) return l;
+      const points = l.points
+        .map((p) => {
+          if (p.id !== pointId) return p;
+          return {
+            ...p,
+            timeMs:
+              patch.timeMs != null
+                ? Math.max(0, Number(patch.timeMs) || 0)
+                : p.timeMs,
+            value:
+              patch.value != null ? clampParam(param, Number(patch.value)) : p.value,
+          };
+        })
+        .sort((a, b) => a.timeMs - b.timeMs);
+      return { ...l, points };
+    }),
   };
 }
 
