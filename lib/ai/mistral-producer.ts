@@ -7,7 +7,7 @@
 import { mistralChat, isMistralConfigured } from "@/lib/providers/mistral";
 import type { ProductionBlueprint, ProductionTask, PlannerInput } from "@/lib/production-planner";
 
-const SYSTEM = `You are the AI music producer inside Studio.
+const SYSTEM = `You are AP inside AP Studio. Help the artist produce — AI is a layer in the studio, not the product.
 Your job: rewrite recording instructions so a beginner singer/rapper understands exactly what to perform.
 Rules:
 - Never mention tracks, stems, EQ, compression, buses, panning, or DAW terms.

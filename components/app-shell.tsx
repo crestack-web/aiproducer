@@ -685,7 +685,7 @@ export function AppShell({
             </button>
             <button
               type="button"
-              title="Console — AI timeline / mix"
+              title="Console — timeline / mix"
               onClick={() => projectIdFromPath && goProject("console", projectIdFromPath)}
               style={{
                 ...navItem,
@@ -958,7 +958,7 @@ export function AppShell({
             </button>
             <button
               type="button"
-              title="Console — AI timeline"
+              title="Console — timeline"
               onClick={() => projectIdFromPath && goProject("console", projectIdFromPath)}
               style={{
                 ...bottomItem,

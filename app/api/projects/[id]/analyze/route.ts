@@ -137,7 +137,7 @@ export async function POST(_req: Request, ctx: Ctx) {
           status: "queued",
           stage: "queued",
           error:
-            "Set DEV_MODE=true or MISTRAL_API_KEY so the AI producer can build a plan.",
+            "Set DEV_MODE=true or MISTRAL_API_KEY so AP can build a plan.",
         })
         .eq("id", analyzeJob.id);
 

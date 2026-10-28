@@ -19,7 +19,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: "welcome",
     title: "Welcome to Studio",
-    body: "Studio helps you turn a beat and your voice into a finished song. An AI producer plans the session, you record section by section, then we mix and master.",
+    body: "AP Studio helps you turn a beat and your voice into a finished song. AP plans the session, you record section by section, then you mix and finish — AI is just one layer inside the studio.",
   },
   {
     id: "home",
