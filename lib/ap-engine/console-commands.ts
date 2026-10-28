@@ -45,6 +45,8 @@ export type DawAction =
         | "doubler"
         | "plateReverb"
         | "slapDelay"
+        | "telephone"
+        | "limiter"
         | "rotorMix"
         | "springMix";
       delta: number;
@@ -173,6 +175,57 @@ function matchSection(prompt: string, sections: ConsoleSectionRef[]): ConsoleSec
  * Parse artist language into Console DAW actions.
  * Prefer local execution; flag needsServer when offline audio work is implied.
  */
+
+/** Map natural language effect names → automation/FX param + default amount */
+const EFFECT_PHRASES: {
+  re: RegExp;
+  param: AutomationParamKey;
+  amount: number;
+  label: string;
+}[] = [
+  { re: /\btelephone|phone\s*effect|lo-?fi\s*phone\b/, param: "telephone", amount: 0.65, label: "Telephone" },
+  { re: /\b(room\s+)?reverb|wetter|more\s+space\b/, param: "reverb", amount: 0.4, label: "Reverb" },
+  { re: /\bplate(\s+reverb)?\b/, param: "plateReverb", amount: 0.4, label: "Plate" },
+  { re: /\b(echo\s+)?delay\b/, param: "delay", amount: 0.35, label: "Delay" },
+  { re: /\bslap(back)?(\s+delay)?\b/, param: "slapDelay", amount: 0.4, label: "Slap" },
+  { re: /\bchorus(\s+effect)?\b/, param: "chorus", amount: 0.4, label: "Chorus" },
+  { re: /\b(vocal\s+)?doubler|double(r)?\b/, param: "doubler", amount: 0.45, label: "Doubler" },
+  { re: /\bcompress(or|ion)?|glue\b/, param: "compress", amount: 0.5, label: "Compress" },
+  { re: /\bsaturat(e|ion)|warmth|drive\b/, param: "saturation", amount: 0.4, label: "Saturation" },
+  { re: /\bde-?ess(er)?\b/, param: "deEss", amount: 0.45, label: "De-ess" },
+  { re: /\blimiter|limit(ing)?\b/, param: "limiter", amount: 0.5, label: "Limiter" },
+  { re: /\bwidth|wider|stereo\s*width\b/, param: "width", amount: 0.45, label: "Width" },
+  { re: /\bair|brightness|brighter\b/, param: "air", amount: 0.4, label: "Air" },
+  { re: /\bhigh-?pass|hpf\b/, param: "highPassHz", amount: 120, label: "High-pass" },
+  { re: /\blow-?pass|lpf\b/, param: "lowPassHz", amount: 4000, label: "Low-pass" },
+  { re: /\beq\s*low|bass\s*(up|boost)\b/, param: "eqLowDb", amount: 2, label: "EQ low" },
+  { re: /\beq\s*mid|presence\b/, param: "eqMidDb", amount: 2, label: "EQ mid" },
+  { re: /\beq\s*high|treble\b/, param: "eqHighDb", amount: 2, label: "EQ high" },
+];
+
+function matchEffectPhrase(prompt: string): (typeof EFFECT_PHRASES)[number] | null {
+  const p = prompt.toLowerCase();
+  for (const e of EFFECT_PHRASES) {
+    if (e.re.test(p)) return e;
+  }
+  return null;
+}
+
+/** Amount from “a little / heavy / full” modifiers */
+function effectAmountFromPrompt(prompt: string, base: number, param: AutomationParamKey): number {
+  const p = prompt.toLowerCase();
+  let m = 1;
+  if (/\b(a little|slight|subtle|light|soft)\b/.test(p)) m = 0.55;
+  else if (/\b(heavy|hard|full|max|extreme|lots)\b/.test(p)) m = 1.25;
+  const v = base * m;
+  if (param === "highPassHz") return Math.max(0, Math.min(400, v));
+  if (param === "lowPassHz") return Math.max(0, Math.min(18000, v));
+  if (param === "eqLowDb" || param === "eqMidDb" || param === "eqHighDb")
+    return Math.max(-12, Math.min(12, v));
+  if (param === "gainDb") return Math.max(-24, Math.min(12, v));
+  return Math.max(0, Math.min(1, v));
+}
+
 export function parseConsoleCommands(opts: {
   prompt: string;
   tracks: ConsoleTrackRef[];
@@ -192,6 +245,82 @@ export function parseConsoleCommands(opts: {
     opts.tracks.find((t) => t.id === opts.selectedTrackId) ||
     opts.tracks.find((t) => t.kind === "vocal") ||
     opts.tracks[0];
+
+  // —— Section-scoped OR whole-track effect by name (all automatable FX) ——
+  // e.g. "add telephone to the chorus", "reverb on the verse", "telephone effect"
+  {
+    const effect = matchEffectPhrase(p);
+    const section = matchSection(request, opts.sections);
+    const wantsEffect =
+      effect &&
+      (/\b(add|put|apply|use|with|enable)\b/.test(p) ||
+        /\b(on|in|during|to)\s+(the\s+)?(chorus|hook|verse|intro|outro|bridge)\b/.test(p) ||
+        /\btelephone|phone\s*effect|plate|doubler|de-?ess|limiter\b/.test(p));
+    if (effect && wantsEffect) {
+      const amount = effectAmountFromPrompt(p, effect.amount, effect.param);
+      const fxTargets =
+        targets.length > 0
+          ? targets
+          : defaultTarget
+            ? [defaultTarget]
+            : opts.tracks.filter((x) => x.kind === "vocal");
+      const list = fxTargets.filter((t) => t.kind !== "beat");
+      const applyTo = list.length ? list : fxTargets;
+
+      if (section) {
+        // Plateau on the section: ramp in at start, hold end value through section start+span
+        const fade = Math.min(400, Math.max(120, (section.endMs - section.startMs) * 0.08));
+        const base =
+          effect.param === "highPassHz" || effect.param === "lowPassHz"
+            ? 0
+            : effect.param.startsWith("eq")
+              ? 0
+              : 0.02;
+        for (const tr of applyTo) {
+          actions.push({
+            type: "automation_ramp",
+            trackId: tr.id,
+            param: effect.param,
+            startMs: section.startMs,
+            endMs: Math.min(section.endMs, section.startMs + fade),
+            startValue: base,
+            endValue: amount,
+            label: `${effect.label} on ${tr.label} in ${section.label}`,
+          });
+          // Hold then ease out near section end
+          if (section.endMs - section.startMs > fade * 3) {
+            actions.push({
+              type: "automation_ramp",
+              trackId: tr.id,
+              param: effect.param,
+              startMs: Math.max(section.startMs + fade, section.endMs - fade),
+              endMs: section.endMs,
+              startValue: amount,
+              endValue: base,
+              label: `${effect.label} out on ${tr.label} after ${section.label}`,
+            });
+          }
+          // Also set static baseline so the effect is audible even without playhead automation sampling gaps
+          actions.push({
+            type: "fx_set",
+            trackId: tr.id,
+            patch: { [effect.param]: Math.max(0.08, amount * 0.35) },
+            label: `${effect.label} baseline on ${tr.label}`,
+          });
+        }
+      } else {
+        // Whole-track static amount
+        for (const tr of applyTo) {
+          actions.push({
+            type: "fx_set",
+            trackId: tr.id,
+            patch: { [effect.param]: amount },
+            label: `${effect.label} on ${tr.label}`,
+          });
+        }
+      }
+    }
+  }
 
 
   // —— Choir / stack (uses selected vocal + same-section placement on server) ——
@@ -918,5 +1047,7 @@ export const AP_SUGGESTIONS = [
   "Color this gold",
   "Pan harmony left",
   "More reverb on lead",
+  "Add telephone to the chorus",
+  "Plate on the verse",
   "Go to chorus",
 ] as const;

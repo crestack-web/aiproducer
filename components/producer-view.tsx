@@ -1112,6 +1112,12 @@ export function ProducerView({
           const cur = prev[action.trackId] || { ...DEFAULT_TRACK_FX };
           const next = { ...cur, ...action.patch } as TrackFx;
           void persistFx(action.trackId, next);
+          setFxRackById((r) => ({
+            ...r,
+            [action.trackId]: Array.from(
+              new Set([...(r[action.trackId] || []), ...rackFromFx(next)])
+            ),
+          }));
           return { ...prev, [action.trackId]: next };
         });
         break;
