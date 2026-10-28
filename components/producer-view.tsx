@@ -9113,7 +9113,7 @@ function TrackFxPanel({
   /** Effect currently open in its own modal */
   const [modalId, setModalId] = useState<string | null>(null);
   /** Presets vs Custom knobs vs Keyframe automation */
-  const [fxEditMode, setFxEditMode] = useState<"presets" | "custom" | "keyframes">("custom");
+  const [fxEditMode, setFxEditMode] = useState<"presets" | "custom">("custom");
   const [autoParam, setAutoParam] = useState<AutomationParamKey | null>(null);
   const laneSvgRef = React.useRef<SVGSVGElement | null>(null);
   const dragPtRef = React.useRef<string | null>(null);
@@ -9635,33 +9635,21 @@ function TrackFxPanel({
       );
     }
 
-    const wrap = (viz: React.ReactNode, knobs: React.ReactNode) => (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
-        <div
-          style={{
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,0.06)",
-            background: "rgba(0,0,0,0.4)",
-            padding: 12,
-            overflow: "hidden",
-          }}
-        >
-          {viz}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 16,
-            justifyContent: "center",
-            padding: "8px 4px 4px",
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,0.06)",
-            background: "rgba(0,0,0,0.28)",
-          }}
-        >
-          {knobs}
-        </div>
+    // Decorative transfer curves removed — Custom mode shows interactive amount-over-time curve above
+    const wrap = (_viz: React.ReactNode, knobs: React.ReactNode) => (
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 16,
+          justifyContent: "center",
+          padding: "8px 4px 4px",
+          borderRadius: 14,
+          border: "1px solid rgba(255,255,255,0.06)",
+          background: "rgba(0,0,0,0.28)",
+        }}
+      >
+        {knobs}
       </div>
     );
 
@@ -10032,7 +10020,7 @@ function TrackFxPanel({
             </div>
 
             <div style={{ padding: "16px 16px 20px" }}>
-              {/* Mode tabs: Presets | Custom | Keyframes */}
+              {/* Mode tabs: Presets | Custom only */}
               <div
                 style={{
                   display: "flex",
@@ -10046,22 +10034,11 @@ function TrackFxPanel({
                 {([
                   ["presets", "Presets"],
                   ["custom", "Custom"],
-                  ["keyframes", "Keyframes"],
                 ] as const).map(([id, label]) => (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => {
-                      setFxEditMode(id);
-                      if (id === "keyframes") {
-                        const keys = modalDef.keys.filter((k) =>
-                          k in AUTOMATION_PARAM_RANGE
-                        ) as AutomationParamKey[];
-                        if (keys.length && (!autoParam || !keys.includes(autoParam))) {
-                          setAutoParam(keys[0]);
-                        }
-                      }
-                    }}
+                    onClick={() => setFxEditMode(id)}
                     style={{
                       flex: 1,
                       padding: "8px 6px",
@@ -10083,7 +10060,7 @@ function TrackFxPanel({
               {fxEditMode === "presets" && (
                 <div>
                   <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
-                    Snap to a starting point. Switch to Custom to fine-tune, or Keyframes to automate over time.
+                    Starting points only. Switch to Custom to shape the amount and draw automation on the curve.
                   </p>
                   {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).length === 0 ? (
                     <p style={{ margin: 0, fontSize: 13, color: muted }}>No presets for this effect yet.</p>
@@ -10101,6 +10078,7 @@ function TrackFxPanel({
                             ) as TrackFx;
                             onChange(next);
                             onCommit(next);
+                            setFxEditMode("custom");
                           }}
                           style={{
                             padding: "10px 14px",
@@ -10122,107 +10100,89 @@ function TrackFxPanel({
                 </div>
               )}
 
-              {fxEditMode === "custom" && (
-                <div>
-                  <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
-                    Static settings for the whole track. Use Keyframes to change values over time.
-                  </p>
-                  {renderKnobs(modalDef.id, modalDef.accent)}
-                </div>
-              )}
-
-              {fxEditMode === "keyframes" && (() => {
+              {fxEditMode === "custom" && (() => {
                 const autoKeys = modalDef.keys.filter((k) =>
                   k in AUTOMATION_PARAM_RANGE
                 ) as AutomationParamKey[];
                 const param = (autoParam && autoKeys.includes(autoParam)
                   ? autoParam
                   : autoKeys[0]) as AutomationParamKey | undefined;
-                if (!param) {
-                  return (
-                    <p style={{ margin: 0, fontSize: 13, color: muted }}>
-                      This effect can&apos;t be automated yet. Use Custom knobs for a static setting.
-                    </p>
-                  );
-                }
-                const range = AUTOMATION_PARAM_RANGE[param];
-                const lane = automationDoc.lanes.find(
-                  (l) => l.trackId === trackId && l.param === param
-                );
-                const points = lane?.points || [];
+                const range = param ? AUTOMATION_PARAM_RANGE[param] : null;
                 const songMs = Math.max(1000, totalMs || 60000);
                 const ph = Math.max(0, Math.min(songMs, playheadMs || 0));
-                const currentVal =
-                  typeof fx[param as keyof TrackFx] === "number"
+                const lane = param
+                  ? automationDoc.lanes.find(
+                      (l) => l.trackId === trackId && l.param === param
+                    )
+                  : undefined;
+                const points = lane?.points || [];
+                const staticVal =
+                  param && typeof fx[param as keyof TrackFx] === "number"
                     ? Number(fx[param as keyof TrackFx])
-                    : range.min;
+                    : 0;
 
-                const addAtPlayhead = () => {
-                  const next = upsertPoint(
-                    automationDoc,
-                    trackId,
-                    param,
-                    ph,
-                    currentVal
-                  );
-                  onAutomationChange(next);
+                // Build display polyline: automation points, or flat line at static amount
+                const displayPts =
+                  points.length > 0
+                    ? points
+                    : range
+                      ? [
+                          { id: "s0", timeMs: 0, value: staticVal },
+                          { id: "s1", timeMs: songMs, value: staticVal },
+                        ]
+                      : [];
+
+                const toXY = (timeMs: number, value: number) => {
+                  if (!range) return { x: 0, y: 50 };
+                  const x = (timeMs / songMs) * 100;
+                  const y =
+                    ((range.max - value) / (range.max - range.min || 1)) * 100;
+                  return { x, y };
                 };
 
-                const clearAll = () => {
-                  onAutomationChange(clearLane(automationDoc, trackId, param));
-                };
+                const pathD = displayPts
+                  .map((p, i) => {
+                    const { x, y } = toXY(p.timeMs, p.value);
+                    return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+                  })
+                  .join(" ");
 
-                const onLaneClick = (e: React.MouseEvent<SVGSVGElement>) => {
-                  const svg = e.currentTarget;
-                  const rect = svg.getBoundingClientRect();
-                  const x = (e.clientX - rect.left) / Math.max(1, rect.width);
-                  const y = (e.clientY - rect.top) / Math.max(1, rect.height);
-                  const timeMs = x * songMs;
-                  const value = range.max - y * (range.max - range.min);
-                  onAutomationChange(
-                    upsertPoint(automationDoc, trackId, param, timeMs, value)
-                  );
-                };
+                // Area under curve for glow fill
+                const areaD =
+                  pathD &&
+                  `${pathD} L 100 100 L 0 100 Z`;
 
-                const onPtPointerDown = (ptId: string) => (e: React.PointerEvent) => {
-                  e.stopPropagation();
-                  dragPtRef.current = ptId;
-                  (e.target as Element).setPointerCapture?.(e.pointerId);
-                };
-                const onPtPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-                  if (!dragPtRef.current) return;
+                const onLanePointer = (e: React.PointerEvent<SVGSVGElement>, moving: boolean) => {
+                  if (!param || !range) return;
+                  if (!moving && e.type === "pointermove" && !dragPtRef.current) return;
                   const svg = e.currentTarget;
                   const rect = svg.getBoundingClientRect();
                   const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
                   const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
                   const timeMs = x * songMs;
                   const value = range.max - y * (range.max - range.min);
-                  onAutomationChange(
-                    updatePoint(automationDoc, trackId, param, dragPtRef.current, {
-                      timeMs,
-                      value,
-                    })
-                  );
-                };
-                const onPtPointerUp = () => {
-                  dragPtRef.current = null;
-                };
-
-                const pathD = points.length
-                  ? points
-                      .map((p, i) => {
-                        const x = (p.timeMs / songMs) * 100;
-                        const y = ((range.max - p.value) / (range.max - range.min || 1)) * 100;
-                        return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+                  if (dragPtRef.current) {
+                    onAutomationChange(
+                      updatePoint(automationDoc, trackId, param, dragPtRef.current, {
+                        timeMs,
+                        value,
                       })
-                      .join(" ")
-                  : "";
+                    );
+                    return;
+                  }
+                  if (e.type === "pointerdown" || e.type === "click") {
+                    // Also update static amount so knob matches last edit
+                    const nextFx = { ...fx, [param]: value } as TrackFx;
+                    onChange(nextFx);
+                    onCommit(nextFx);
+                    onAutomationChange(
+                      upsertPoint(automationDoc, trackId, param, timeMs, value)
+                    );
+                  }
+                };
 
                 return (
                   <div>
-                    <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
-                      Click the lane to add a keyframe. Drag points to edit. Playback follows the curve like a traditional DAW.
-                    </p>
                     {autoKeys.length > 1 && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                         {autoKeys.map((k) => (
@@ -10247,193 +10207,195 @@ function TrackFxPanel({
                         ))}
                       </div>
                     )}
-                    <div
-                      style={{
-                        borderRadius: 12,
-                        border: `1px solid ${border}`,
-                        background: "rgba(0,0,0,0.35)",
-                        padding: 8,
-                        marginBottom: 10,
-                      }}
-                    >
-                      <svg
-                        ref={laneSvgRef}
-                        viewBox="0 0 100 100"
-                        preserveAspectRatio="none"
-                        width="100%"
-                        height={120}
-                        style={{ display: "block", cursor: "crosshair", touchAction: "none" }}
-                        onClick={onLaneClick}
-                        onPointerMove={onPtPointerMove}
-                        onPointerUp={onPtPointerUp}
-                        onPointerLeave={onPtPointerUp}
-                      >
-                        {/* grid */}
-                        {[25, 50, 75].map((g) => (
-                          <line
-                            key={g}
-                            x1={0}
-                            y1={g}
-                            x2={100}
-                            y2={g}
-                            stroke="rgba(255,255,255,0.06)"
-                            strokeWidth={0.5}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        ))}
-                        {/* playhead */}
-                        <line
-                          x1={(ph / songMs) * 100}
-                          y1={0}
-                          x2={(ph / songMs) * 100}
-                          y2={100}
-                          stroke={brass}
-                          strokeWidth={0.8}
-                          opacity={0.85}
-                          vectorEffect="non-scaling-stroke"
-                        />
-                        {pathD ? (
-                          <path
-                            d={pathD}
-                            fill="none"
-                            stroke={modalDef.accent}
-                            strokeWidth={1.5}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        ) : null}
-                        {points.map((p) => {
-                          const x = (p.timeMs / songMs) * 100;
-                          const y =
-                            ((range.max - p.value) / (range.max - range.min || 1)) * 100;
-                          return (
-                            <circle
-                              key={p.id}
-                              cx={x}
-                              cy={y}
-                              r={2.8}
-                              fill={modalDef.accent}
-                              stroke="#fff"
-                              strokeWidth={0.4}
-                              style={{ cursor: "grab" }}
-                              onPointerDown={onPtPointerDown(p.id)}
-                              onClick={(e) => e.stopPropagation()}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                onAutomationChange(
-                                  removePoint(automationDoc, trackId, param, p.id)
-                                );
-                              }}
-                            />
-                          );
-                        })}
-                      </svg>
+
+                    {/* Interactive amount curve — the purple line users click like a DAW */}
+                    {param && range ? (
                       <div
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 10,
-                          color: muted,
-                          marginTop: 4,
-                          padding: "0 2px",
-                        }}
-                      >
-                        <span>0:00</span>
-                        <span>
-                          {param} · {points.length} keyframe{points.length === 1 ? "" : "s"}
-                        </span>
-                        <span>
-                          {Math.floor(songMs / 60000)}:
-                          {String(Math.floor((songMs % 60000) / 1000)).padStart(2, "0")}
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                      <button
-                        type="button"
-                        onClick={addAtPlayhead}
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          border: "none",
-                          background: modalDef.accent,
-                          color: "#111",
-                          fontSize: 12,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                          fontFamily: "inherit",
-                        }}
-                      >
-                        Add at playhead
-                      </button>
-                      <button
-                        type="button"
-                        onClick={clearAll}
-                        disabled={!points.length}
-                        style={{
-                          padding: "8px 12px",
-                          borderRadius: 10,
+                          borderRadius: 14,
                           border: `1px solid ${border}`,
-                          background: "transparent",
-                          color: muted,
-                          fontSize: 12,
-                          fontWeight: 650,
-                          cursor: points.length ? "pointer" : "default",
-                          opacity: points.length ? 1 : 0.45,
-                          fontFamily: "inherit",
+                          background: "rgba(0,0,0,0.4)",
+                          padding: "10px 8px 8px",
+                          marginBottom: 14,
                         }}
                       >
-                        Clear lane
-                      </button>
-                    </div>
-                    {points.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 140, overflow: "auto" }}>
-                        {points.map((p) => (
-                          <div
-                            key={p.id}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 10,
+                            color: muted,
+                            marginBottom: 6,
+                            padding: "0 4px",
+                          }}
+                        >
+                          <span>Amount over song</span>
+                          <span style={{ color: modalDef.accent, fontWeight: 700 }}>
+                            {points.length
+                              ? `${points.length} points · drag to shape`
+                              : "Tap curve to automate"}
+                          </span>
+                        </div>
+                        <svg
+                          viewBox="0 0 100 100"
+                          preserveAspectRatio="none"
+                          width="100%"
+                          height={132}
+                          style={{ display: "block", cursor: "crosshair", touchAction: "none" }}
+                          onPointerDown={(e) => {
+                            // If near a point, drag it; else add
+                            if (!param || !range) return;
+                            const svg = e.currentTarget;
+                            const rect = svg.getBoundingClientRect();
+                            const x = (e.clientX - rect.left) / Math.max(1, rect.width);
+                            const timeMs = x * songMs;
+                            const near = points.find(
+                              (p) => Math.abs(p.timeMs - timeMs) < songMs * 0.04
+                            );
+                            if (near) {
+                              dragPtRef.current = near.id;
+                              (e.target as Element).setPointerCapture?.(e.pointerId);
+                            } else {
+                              onLanePointer(e, false);
+                            }
+                          }}
+                          onPointerMove={(e) => onLanePointer(e, true)}
+                          onPointerUp={() => {
+                            dragPtRef.current = null;
+                          }}
+                          onPointerLeave={() => {
+                            dragPtRef.current = null;
+                          }}
+                        >
+                          {[25, 50, 75].map((g) => (
+                            <line
+                              key={g}
+                              x1={0}
+                              y1={g}
+                              x2={100}
+                              y2={g}
+                              stroke="rgba(255,255,255,0.05)"
+                              strokeWidth={0.6}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ))}
+                          {areaD ? (
+                            <path d={areaD} fill={modalDef.accent} opacity={0.12} />
+                          ) : null}
+                          {pathD ? (
+                            <path
+                              d={pathD}
+                              fill="none"
+                              stroke={modalDef.accent}
+                              strokeWidth={2.2}
+                              strokeLinejoin="round"
+                              strokeLinecap="round"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          ) : null}
+                          {/* playhead */}
+                          <line
+                            x1={(ph / songMs) * 100}
+                            y1={0}
+                            x2={(ph / songMs) * 100}
+                            y2={100}
+                            stroke={brass}
+                            strokeWidth={1}
+                            opacity={0.75}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          {points.map((p) => {
+                            const { x, y } = toXY(p.timeMs, p.value);
+                            return (
+                              <circle
+                                key={p.id}
+                                cx={x}
+                                cy={y}
+                                r={3.2}
+                                fill={modalDef.accent}
+                                stroke="#fff"
+                                strokeWidth={0.5}
+                                style={{ cursor: "grab" }}
+                                onPointerDown={(e) => {
+                                  e.stopPropagation();
+                                  dragPtRef.current = p.id;
+                                  (e.target as Element).setPointerCapture?.(e.pointerId);
+                                }}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  onAutomationChange(
+                                    removePoint(automationDoc, trackId, param, p.id)
+                                  );
+                                }}
+                              />
+                            );
+                          })}
+                        </svg>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            marginTop: 8,
+                            padding: "0 2px",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!param) return;
+                              onAutomationChange(
+                                upsertPoint(
+                                  automationDoc,
+                                  trackId,
+                                  param,
+                                  ph,
+                                  staticVal
+                                )
+                              );
+                            }}
                             style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: modalDef.accent,
+                              color: "#111",
                               fontSize: 11,
-                              color: muted,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              fontFamily: "inherit",
                             }}
                           >
-                            <span style={{ minWidth: 48, color: "#F5F0E8", fontWeight: 650 }}>
-                              {(p.timeMs / 1000).toFixed(2)}s
-                            </span>
-                            <span style={{ flex: 1 }}>
-                              {range.unit === "dB"
-                                ? `${p.value >= 0 ? "+" : ""}${p.value.toFixed(1)} dB`
-                                : range.unit === "Hz"
-                                  ? `${Math.round(p.value)} Hz`
-                                  : p.value.toFixed(2)}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onAutomationChange(
-                                  removePoint(automationDoc, trackId, param, p.id)
-                                )
-                              }
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                color: muted,
-                                cursor: "pointer",
-                                fontSize: 14,
-                                padding: "0 4px",
-                              }}
-                              aria-label="Delete keyframe"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
+                            Point at playhead
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!param) return;
+                              onAutomationChange(clearLane(automationDoc, trackId, param));
+                            }}
+                            disabled={!points.length}
+                            style={{
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              border: `1px solid ${border}`,
+                              background: "transparent",
+                              color: muted,
+                              fontSize: 11,
+                              fontWeight: 650,
+                              cursor: points.length ? "pointer" : "default",
+                              opacity: points.length ? 1 : 0.4,
+                              fontFamily: "inherit",
+                            }}
+                          >
+                            Flatten
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    <p style={{ margin: "10px 0 0", fontSize: 11, color: muted }}>
-                      Double-tap a point to delete. Static Custom value is the baseline when no keyframes cover a time.
-                    </p>
+                    ) : null}
+
+                    {/* Knobs — static baseline amount */}
+                    {renderKnobs(modalDef.id, modalDef.accent)}
                   </div>
                 );
               })()}
