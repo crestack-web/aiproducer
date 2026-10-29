@@ -4569,6 +4569,7 @@ export function ProducerView({
         audioUrl: string;
         label?: string;
         fallbackUrl?: string | null;
+        automationTrackId?: string;
         fx?: Record<string, number>;
         muted?: boolean;
         phraseCleanup?: number;
