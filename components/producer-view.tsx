@@ -9273,10 +9273,18 @@ function TrackFxPanel({
     },
   ];
 
+  const commitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   function setKey<K extends keyof TrackFx>(key: K, value: TrackFx[K], commit = false) {
     const next = { ...fx, [key]: value };
     onChange(next);
-    if (commit) onCommit(next);
+    // Always persist — mobile browsers often skip mouseup/touchend on range inputs
+    if (commit) {
+      if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+      onCommit(next);
+      return;
+    }
+    if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = setTimeout(() => onCommit(next), 280);
   }
 
   /** Sensible defaults so "Add effect" is audible and survives reload via track_fx. */
@@ -9291,10 +9299,7 @@ function TrackFxPanel({
       case "denoise":
         return { noiseReduce: 0.55 };
       case "cleanup":
-        return wrap(
-          null,
-          <>{knob("phraseCleanup", "Close gaps", 0, 1, 0.01, accent, "lg")}</>
-        );
+        return { phraseCleanup: 0.45 };
       case "voice":
         return { voiceChanger: 0.85, voicePitchSemis: 4, voiceCharacter: 1 };
       case "limiter":
@@ -9774,7 +9779,12 @@ function TrackFxPanel({
               <div key={i} style={{ flex: 1, height: `${h * 100 * (1 - (Number(fx.gate) || 0) * 0.5)}%`, minHeight: 4, borderRadius: 2, background: accent, opacity: 0.5 + (Number(fx.gate) || 0) * 0.4 }} />
             ))}
           </div>,
-          <>{knob("gate", "Amount", 0, 1, 0.01, accent, "lg")}</>
+          <>
+            {knob("gate", "Amount", 0, 1, 0.01, accent, "lg")}
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
+              Cuts quiet noise between phrases. Applies on <strong style={{ color: accent }}>Export</strong> and <strong style={{ color: accent }}>Produce</strong> — not in live preview.
+            </div>
+          </>
         );
       case "denoise":
         return wrap(
@@ -9784,7 +9794,7 @@ function TrackFxPanel({
           <>
             {knob("noiseReduce", "Strength", 0, 1, 0.01, accent, "lg")}
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
-              Removes stationary background (traffic, fans, room). Best on Produce. Try 0.5–0.75 for distant cars.
+              Removes stationary background (traffic, fans, room). Applies on <strong style={{color: accent}}>Export</strong> and <strong style={{color: accent}}>Produce</strong> — not in live preview. Try 0.5–0.75.
             </div>
           </>
         );

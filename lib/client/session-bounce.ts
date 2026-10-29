@@ -5,6 +5,7 @@
 "use client";
 
 import { closePhraseGapsMono } from "@/lib/audio/phrase-cleanup";
+import { gateInPlace, spectralNoiseReduceInPlace } from "@/lib/ap-engine/dsp";
 import {
   createLiveTrackFxGraph,
   trackFxToLiveParams,
@@ -129,19 +130,42 @@ export async function bounceSessionToWav(opts: {
       opts.onProgress?.(0.05 + (i / Math.max(1, layers.length)) * 0.25);
       try {
         let buf = await decodeUrl(decodeCtx, layer.audioUrl);
-        if ((layer.phraseCleanup || 0) > 0.02 && layer.kind === "vocal") {
-          const ch0 = buf.getChannelData(0);
-          const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
-          const mono = new Float32Array(ch0.length);
-          for (let s = 0; s < ch0.length; s++) {
-            mono[s] = 0.5 * ((ch0[s] || 0) + (ch1[s] || 0));
+        if (layer.kind === "vocal") {
+          const fx = layer.fx || {};
+          const nr = Number(fx.noiseReduce) || 0;
+          const gt = Number(fx.gate) || 0;
+          const pc = layer.phraseCleanup || Number(fx.phraseCleanup) || 0;
+          if (nr > 0.02 || gt > 0.02 || pc > 0.02) {
+            const ch0 = buf.getChannelData(0);
+            const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
+            const left = new Float32Array(ch0);
+            const right = new Float32Array(ch1);
+            if (nr > 0.02) {
+              spectralNoiseReduceInPlace(left, buf.sampleRate, nr);
+              spectralNoiseReduceInPlace(right, buf.sampleRate, nr);
+            }
+            if (gt > 0.02) {
+              const thr = -48 + gt * 28; // 0→-48dB, 1→-20dB
+              const residual = Math.max(0.05, 0.22 - gt * 0.15);
+              gateInPlace(left, buf.sampleRate, thr, residual);
+              gateInPlace(right, buf.sampleRate, thr, residual);
+            }
+            if (pc > 0.02) {
+              const mono = new Float32Array(left.length);
+              for (let s = 0; s < left.length; s++) {
+                mono[s] = 0.5 * ((left[s] || 0) + (right[s] || 0));
+              }
+              const cleaned = closePhraseGapsMono(mono, buf.sampleRate, { amount: pc });
+              const monoBuf = decodeCtx.createBuffer(1, cleaned.length, buf.sampleRate);
+              monoBuf.copyToChannel(cleaned, 0);
+              buf = monoBuf;
+            } else {
+              const out = decodeCtx.createBuffer(2, left.length, buf.sampleRate);
+              out.copyToChannel(left, 0);
+              out.copyToChannel(right, 1);
+              buf = out;
+            }
           }
-          const cleaned = closePhraseGapsMono(mono, buf.sampleRate, {
-            amount: layer.phraseCleanup || 0,
-          });
-          const monoBuf = decodeCtx.createBuffer(1, cleaned.length, buf.sampleRate);
-          monoBuf.copyToChannel(cleaned, 0);
-          buf = monoBuf;
         }
         decoded.push({ layer, buffer: buf });
       } catch {

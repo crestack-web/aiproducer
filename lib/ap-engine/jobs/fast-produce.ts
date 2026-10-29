@@ -248,6 +248,38 @@ function applyFxAutomationToPcm(
         pcm.right[j] *= rG;
       }
     }
+    // Scale wet FX intensity vs baseline (section automation like telephone on chorus)
+    const wetKeys = [
+      "reverb",
+      "delay",
+      "plateReverb",
+      "telephone",
+      "chorus",
+      "doubler",
+      "slapDelay",
+      "compress",
+      "saturation",
+    ] as const;
+    for (const k of wetKeys) {
+      if (overlay[k] === undefined) continue;
+      const base = Number((baseFx as Record<string, number> | null)?.[k]) || 0;
+      const target = Number(overlay[k]) || 0;
+      // When automation raises a send above baseline, boost level slightly as proxy
+      // (full re-EQ per block is too heavy; gain proxy keeps section moves audible)
+      if (target > base + 0.05) {
+        const lift = 1 + Math.min(0.35, (target - base) * 0.4);
+        for (let j = i; j < end; j++) {
+          pcm.left[j] *= lift;
+          pcm.right[j] *= lift;
+        }
+      } else if (base > target + 0.05) {
+        const cut = Math.max(0.65, 1 - (base - target) * 0.35);
+        for (let j = i; j < end; j++) {
+          pcm.left[j] *= cut;
+          pcm.right[j] *= cut;
+        }
+      }
+    }
   }
 }
 
