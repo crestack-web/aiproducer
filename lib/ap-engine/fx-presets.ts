@@ -354,9 +354,9 @@ export const EFFECT_PLUGIN_PRESETS: Record<string, EffectPluginPreset[]> = {
     { id: "clean_close", label: "Close gaps", fx: { phraseCleanup: 0.85 } },
   ],
   denoise: [
-    { id: "nr_light", label: "Light", fx: { noiseReduce: 0.3 } },
-    { id: "nr_med", label: "Medium", fx: { noiseReduce: 0.55 } },
-    { id: "nr_strong", label: "Strong", fx: { noiseReduce: 0.8 } },
+    { id: "nr_light", label: "Light", fx: { noiseReduce: 0.4 } },
+    { id: "nr_med", label: "Medium", fx: { noiseReduce: 0.65 } },
+    { id: "nr_strong", label: "Strong", fx: { noiseReduce: 0.9 } },
   ],
   limiter: [
     { id: "lim_gentle", label: "Gentle", fx: { limiter: 0.25 } },

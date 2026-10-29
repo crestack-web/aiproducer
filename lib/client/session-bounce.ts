@@ -15,70 +15,11 @@ import {
   emptyAutomation,
   type FxAutomationDoc,
 } from "@/lib/ap-engine/fx-automation";
+import {
+  gateInPlacePreview,
+  noiseReduceInPlacePreview,
+} from "@/lib/audio/preview-clean";
 
-
-/** Client-safe gate (no Node Buffer deps). */
-function gateInPlace(buf: Float32Array, sampleRate: number, thresholdDb: number, residual = 0.15): void {
-  const thr = Math.pow(10, thresholdDb / 20);
-  const floor = Math.max(0.02, Math.min(0.35, residual));
-  const rel = Math.exp(-1 / (0.05 * sampleRate));
-  let env = 0;
-  for (let i = 0; i < buf.length; i++) {
-    const x = buf[i] || 0;
-    const a = Math.abs(x);
-    env = a > env ? a : rel * env + (1 - rel) * a;
-    const open = env >= thr ? 1 : Math.max(floor, env / (thr + 1e-9));
-    buf[i] = x * open;
-  }
-}
-
-/** Lightweight spectral denoise for Export (Wiener-ish STFT). */
-function spectralNoiseReduceInPlace(buf: Float32Array, sampleRate: number, amount: number): void {
-  const a = Math.max(0, Math.min(1, amount));
-  if (a < 0.03 || buf.length < 2048) return;
-  const N = 2048;
-  const hop = 512;
-  const nFrames = Math.max(1, Math.floor((buf.length - N) / hop) + 1);
-  const win = new Float32Array(N);
-  for (let i = 0; i < N; i++) win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / N));
-  // Estimate noise from quietest 15% frames by RMS
-  const frameRms: { i: number; r: number }[] = [];
-  for (let f = 0; f < nFrames; f++) {
-    const o = f * hop;
-    let s = 0;
-    for (let i = 0; i < N; i++) {
-      const v = (buf[o + i] || 0) * win[i];
-      s += v * v;
-    }
-    frameRms.push({ i: f, r: Math.sqrt(s / N) });
-  }
-  frameRms.sort((x, y) => x.r - y.r);
-  const nNoise = Math.max(1, Math.floor(nFrames * 0.15));
-  const noiseFloor = frameRms.slice(0, nNoise).reduce((s, x) => s + x.r, 0) / nNoise + 1e-8;
-  // Simple soft gate by frame energy vs noise floor
-  const out = new Float32Array(buf.length);
-  const norm = new Float32Array(buf.length);
-  for (let f = 0; f < nFrames; f++) {
-    const o = f * hop;
-    let s = 0;
-    for (let i = 0; i < N; i++) {
-      const v = (buf[o + i] || 0) * win[i];
-      s += v * v;
-    }
-    const rms = Math.sqrt(s / N);
-    const snr = rms / noiseFloor;
-    const keep = Math.max(0.15, Math.min(1, (snr - 1) / (3 + a * 6)));
-    const g = 1 - a * (1 - keep);
-    for (let i = 0; i < N; i++) {
-      const w = win[i];
-      out[o + i] += (buf[o + i] || 0) * w * w * g;
-      norm[o + i] += w * w;
-    }
-  }
-  for (let i = 0; i < buf.length; i++) {
-    buf[i] = norm[i] > 1e-6 ? out[i] / norm[i] : buf[i];
-  }
-}
 
 /** Ensure Float32Array is ArrayBuffer-backed for AudioBuffer.copyToChannel (TS 5.x DOM types). */
 function toArrayBufferF32(src: Float32Array): Float32Array<ArrayBuffer> {
@@ -215,14 +156,12 @@ export async function bounceSessionToWav(opts: {
             const left = new Float32Array(ch0);
             const right = new Float32Array(ch1);
             if (nr > 0.02) {
-              spectralNoiseReduceInPlace(left, buf.sampleRate, nr);
-              spectralNoiseReduceInPlace(right, buf.sampleRate, nr);
+              noiseReduceInPlacePreview(left, buf.sampleRate, nr);
+              noiseReduceInPlacePreview(right, buf.sampleRate, nr);
             }
             if (gt > 0.02) {
-              const thr = -48 + gt * 28; // 0→-48dB, 1→-20dB
-              const residual = Math.max(0.05, 0.22 - gt * 0.15);
-              gateInPlace(left, buf.sampleRate, thr, residual);
-              gateInPlace(right, buf.sampleRate, thr, residual);
+              gateInPlacePreview(left, buf.sampleRate, gt);
+              gateInPlacePreview(right, buf.sampleRate, gt);
             }
             if (pc > 0.02) {
               const mono = new Float32Array(left.length);

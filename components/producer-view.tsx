@@ -9359,9 +9359,9 @@ function TrackFxPanel({
       case "deess":
         return { deEss: 0.3 };
       case "gate":
-        return { gate: 0.25 };
+        return { gate: 0.45 };
       case "denoise":
-        return { noiseReduce: 0.55 };
+        return { noiseReduce: 0.65 };
       case "cleanup":
         return { phraseCleanup: 0.45 };
       case "voice":
