@@ -24,9 +24,6 @@ import {
   applyEqStereo,
   highPassInPlace,
   gateInPlace,
-  spectralNoiseReduceInPlace,
-  applyVoiceChangerStereo,
-  deEssInPlace,
 } from "@/lib/ap-engine/dsp";
 import { normalizeToInternalPcm } from "@/lib/ap-engine/ingestion/normalize";
 import type { PcmStereo } from "@/lib/ap-engine/types";
@@ -36,7 +33,6 @@ import {
   estimateLoudnessProxyDb,
 } from "@/lib/ap-engine/master/loudness";
 import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
-import { closePhraseGapsStereo } from "@/lib/audio/phrase-cleanup";
 import {
   applyConsoleFxWithAutomation,
   applyConsoleTrackFx as applyConsoleTrackFxShared,
@@ -63,10 +59,8 @@ import { applyWidth } from "@/lib/ap-engine/mix/width";
 import { polishVocalLayer } from "@/lib/ap-engine/pitch";
 import {
   parseFxAutomation,
-  sampleTrackAutomation,
   type FxAutomationDoc,
 } from "@/lib/ap-engine/fx-automation";
-import { addDelayStereo, addReverbStereo, saturateInPlace } from "@/lib/ap-engine/dsp";
 
 export type FastTrackFx = {
   gainDb?: number;
@@ -107,114 +101,6 @@ export type FastTrackFx = {
   plateReverb?: number;
 };
 
-/** Light rotary / chorus motion for Rotor Glow (offline PCM). */
-function applyRotorGlow(
-  pcm: PcmStereo,
-  opts: { mix: number; speed: number; depth: number; warmth: number; fast: number }
-): void {
-  const mix = Math.max(0, Math.min(1, opts.mix));
-  if (mix < 0.02) return;
-  const sr = pcm.sampleRate;
-  const n = pcm.left.length;
-  const rateHz = (opts.fast > 0.5 ? 4.5 : 0.55) * (0.35 + opts.speed * 1.4);
-  const depthMs = 0.4 + opts.depth * 4.2;
-  const depthSamp = (depthMs / 1000) * sr;
-  const warm = Math.max(0, Math.min(1, opts.warmth));
-  const outL = new Float32Array(n);
-  const outR = new Float32Array(n);
-  let lpL = 0;
-  let lpR = 0;
-  const a = 0.12 + warm * 0.28;
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    const mod = Math.sin(2 * Math.PI * rateHz * t);
-    const mod2 = Math.sin(2 * Math.PI * rateHz * 0.97 * t + 1.1);
-    const dL = Math.max(0, Math.min(n - 1, i - depthSamp * (0.5 + 0.5 * mod)));
-    const dR = Math.max(0, Math.min(n - 1, i - depthSamp * (0.5 + 0.5 * mod2)));
-    const i0L = Math.floor(dL);
-    const i0R = Math.floor(dR);
-    const fL = dL - i0L;
-    const fR = dR - i0R;
-    const sL =
-      (pcm.left[i0L] || 0) * (1 - fL) + (pcm.left[Math.min(n - 1, i0L + 1)] || 0) * fL;
-    const sR =
-      (pcm.right[i0R] || 0) * (1 - fR) + (pcm.right[Math.min(n - 1, i0R + 1)] || 0) * fR;
-    lpL = lpL + a * (sL - lpL);
-    lpR = lpR + a * (sR - lpR);
-    const wetL = sL * (1 - warm * 0.35) + lpL * (warm * 0.35);
-    const wetR = sR * (1 - warm * 0.35) + lpR * (warm * 0.35);
-    outL[i] = (pcm.left[i] || 0) * (1 - mix) + wetL * mix;
-    outR[i] = (pcm.right[i] || 0) * (1 - mix) + wetR * mix;
-  }
-  pcm.left.set(outL);
-  pcm.right.set(outR);
-}
-
-/** Spring-style shimmer: delayed, brighter, lightly modulated space. */
-function applySpringShimmer(
-  pcm: PcmStereo,
-  opts: {
-    mix: number;
-    delay: number;
-    tension: number;
-    damp: number;
-    mod: number;
-  }
-): void {
-  const mix = Math.max(0, Math.min(1, opts.mix));
-  if (mix < 0.02) return;
-  const sr = pcm.sampleRate;
-  const n = pcm.left.length;
-  const preMs = 18 + opts.delay * 90;
-  const pre = Math.floor((preMs / 1000) * sr);
-  const tension = Math.max(0, Math.min(1, opts.tension));
-  const damp = Math.max(0, Math.min(1, opts.damp));
-  const modAmt = Math.max(0, Math.min(1, opts.mod));
-  // Brighten then damp — spring character
-  applyEqStereo(pcm, [
-    { type: "highshelf", freq: 4500, gainDb: tension * 3.2 - damp * 4.5, q: 0.7 },
-    { type: "peak", freq: 2200, gainDb: tension * 1.4 - 0.4, q: 1.1 },
-  ]);
-  // Layer short delays as spring taps
-  const taps = [
-    { ms: preMs, g: 0.42 },
-    { ms: preMs * 1.55, g: 0.28 },
-    { ms: preMs * 2.35, g: 0.16 },
-  ];
-  const wetL = new Float32Array(n);
-  const wetR = new Float32Array(n);
-  for (const tap of taps) {
-    const d = Math.floor((tap.ms / 1000) * sr);
-    for (let i = 0; i < n; i++) {
-      const j = i - d;
-      if (j < 0) continue;
-      const wobble =
-        1 +
-        modAmt *
-          0.012 *
-          Math.sin((2 * Math.PI * (0.7 + tension) * i) / sr + tap.g * 4);
-      wetL[i] += (pcm.left[j] || 0) * tap.g * wobble;
-      wetR[i] += (pcm.right[j] || 0) * tap.g * wobble * 0.92;
-    }
-  }
-  // Soft one-pole damp on wet
-  let lpL = 0;
-  let lpR = 0;
-  const a = 0.15 + damp * 0.45;
-  for (let i = 0; i < n; i++) {
-    lpL = lpL + a * (wetL[i] - lpL);
-    lpR = lpR + a * (wetR[i] - lpR);
-    wetL[i] = lpL;
-    wetR[i] = lpR;
-  }
-  const wetAmt = Math.min(0.55, mix * 0.48);
-  for (let i = 0; i < n; i++) {
-    pcm.left[i] = (pcm.left[i] || 0) * (1 - wetAmt * 0.15) + wetL[i] * wetAmt;
-    pcm.right[i] = (pcm.right[i] || 0) * (1 - wetAmt * 0.15) + wetR[i] * wetAmt;
-  }
-  void pre;
-}
-
 /** Apply Console Track FX on top of role processing (matches producer-view intent). */
 
 /** Offline automation: re-apply key params in ~50ms blocks along the timeline. */
@@ -238,7 +124,7 @@ export type FastVocalLayer = {
 };
 
 /** Fast path engine id — bump when mix/master separation or loudness changes. */
-export const FAST_ENGINE_VERSION = "ap-fast-space-9";
+export const FAST_ENGINE_VERSION = "ap-fast-space-10-console-fx";
 
 /**
  * Post level-match fader from role hierarchy (linear).

@@ -369,16 +369,17 @@ export function applyConsoleFxWithAutomation(
   layerStartMs: number
 ): void {
   const base = baseFx || {};
-  const hasAuto =
-    automation &&
-    automation.lanes.some(
+  if (
+    !automation ||
+    !automation.lanes.some(
       (l) => l.trackId === trackId && l.enabled !== false && l.points.length > 0
-    );
-
-  if (!hasAuto) {
+    )
+  ) {
     applyConsoleTrackFx(pcm, base);
     return;
   }
+
+  const autoDoc = automation;
 
   // Peak automation values so static wet FX cover the loudest section intent
   const peakFx: ConsoleTrackFx = { ...base };
@@ -395,7 +396,7 @@ export function applyConsoleFxWithAutomation(
     "air",
     "width",
   ];
-  for (const lane of automation!.lanes) {
+  for (const lane of autoDoc.lanes) {
     if (lane.trackId !== trackId || lane.enabled === false) continue;
     const key = lane.param as keyof ConsoleTrackFx;
     if (!peakKeys.includes(key)) continue;
@@ -414,7 +415,7 @@ export function applyConsoleFxWithAutomation(
   const block = Math.max(64, Math.floor(sr * 0.05));
   for (let i = 0; i < len; i += block) {
     const timeMs = layerStartMs + (i / sr) * 1000;
-    const overlay = sampleTrackAutomation(automation!, trackId, timeMs);
+    const overlay = sampleTrackAutomation(autoDoc, trackId, timeMs);
     if (!Object.keys(overlay).length) continue;
     const end = Math.min(len, i + block);
 
