@@ -364,9 +364,9 @@ export function processPreviewBuffer(
       deEss: de,
       deClick: dc,
     });
-    const ab = new Float32Array(new ArrayBuffer(data.byteLength));
+    const ab = new Float32Array(data.length);
     ab.set(data);
-    out.copyToChannel(ab, c);
+    out.copyToChannel(ab as unknown as Float32Array<ArrayBuffer>, c);
   }
   return out;
 }
