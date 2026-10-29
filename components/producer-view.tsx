@@ -4467,9 +4467,13 @@ export function ProducerView({
         .filter((l) => l.audioUrl)
         .map((l) => {
           const fx = fxById[l.id] || DEFAULT_TRACK_FX;
+          const isBeat =
+            l.id === "beat" ||
+            /beat|instrumental/i.test(l.role || "") ||
+            /beat|instrumental/i.test(l.label || "");
           return {
             id: l.id,
-            kind: (l.kind === "beat" ? "beat" : "vocal") as "beat" | "vocal",
+            kind: (isBeat ? "beat" : "vocal") as "beat" | "vocal",
             startMs: l.startMs || 0,
             audioUrl: l.audioUrl as string,
             fx: { ...(fx as unknown as Record<string, number>) },

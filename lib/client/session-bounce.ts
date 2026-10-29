@@ -140,7 +140,11 @@ function mergeFx(
   base: BounceFx,
   auto: Partial<Record<string, number>>
 ): BounceFx {
-  return { ...base, ...auto };
+  const out: BounceFx = { ...base };
+  for (const [k, v] of Object.entries(auto)) {
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
 }
 
 function automationBreakpoints(
