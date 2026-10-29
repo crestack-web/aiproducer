@@ -1,6 +1,6 @@
 /**
  * Client-safe vocal cleanup for Console preview + Export.
- * Real spectral denoise (STFT) + noise gate — no Node Buffer.
+ * Closer parity with Produce: spectral denoise, de-click, de-ess, HPF, gate.
  */
 
 function fft(re: Float32Array, im: Float32Array) {
@@ -52,7 +52,115 @@ function ifft(re: Float32Array, im: Float32Array) {
   }
 }
 
-/** Downward expansion / noise gate. amount 0–1. */
+/** One-pole high-pass (rumble / proximity). */
+export function highPassInPlacePreview(
+  buf: Float32Array,
+  sampleRate: number,
+  cutoffHz: number
+): void {
+  const fc = Math.max(20, Math.min(cutoffHz, sampleRate * 0.45));
+  const x = Math.exp((-2 * Math.PI * fc) / sampleRate);
+  let prevX = 0;
+  let prevY = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const xi = buf[i] || 0;
+    const yi = x * (prevY + xi - prevX);
+    prevX = xi;
+    prevY = yi;
+    buf[i] = yi;
+  }
+}
+
+/** Soften tongue clicks / mouth pops (short impulsive spikes). */
+export function deClickInPlacePreview(
+  buf: Float32Array,
+  sampleRate: number,
+  amount: number
+): void {
+  const a = Math.max(0, Math.min(1, amount));
+  if (a < 0.05 || buf.length < 32) return;
+  const win = Math.max(8, Math.floor(sampleRate * 0.002)); // ~2ms neighborhood
+  const thrMul = 3.2 - a * 1.4; // lower = more aggressive
+  const out = new Float32Array(buf);
+  for (let i = win; i < buf.length - win; i++) {
+    let sum = 0;
+    for (let k = -win; k <= win; k++) {
+      if (k === 0) continue;
+      sum += Math.abs(buf[i + k] || 0);
+    }
+    const mean = sum / (win * 2);
+    const abs = Math.abs(buf[i] || 0);
+    // Click: sharp sample vs neighbors
+    const prev = Math.abs(buf[i - 1] || 0);
+    const next = Math.abs(buf[i + 1] || 0);
+    const jump = abs - 0.5 * (prev + next);
+    if (mean > 1e-6 && abs > mean * thrMul && jump > mean * (1.2 - a * 0.4)) {
+      // Interpolate across spike
+      const blended = 0.5 * ((buf[i - 1] || 0) + (buf[i + 1] || 0));
+      out[i] = (buf[i] || 0) * (1 - a * 0.92) + blended * (a * 0.92);
+    }
+  }
+  // Second pass for double-sample clicks
+  for (let i = win; i < buf.length - win - 1; i++) {
+    const a0 = Math.abs(out[i] || 0);
+    const a1 = Math.abs(out[i + 1] || 0);
+    let sum = 0;
+    for (let k = -win; k <= win; k++) {
+      if (k === 0 || k === 1) continue;
+      sum += Math.abs(out[i + k] || 0);
+    }
+    const mean = sum / (win * 2 - 1);
+    if (mean > 1e-6 && a0 > mean * thrMul && a1 > mean * thrMul) {
+      const blended = 0.5 * ((out[i - 1] || 0) + (out[i + 2] || 0));
+      out[i] = out[i] * (1 - a * 0.85) + blended * (a * 0.85);
+      out[i + 1] = out[i + 1] * (1 - a * 0.85) + blended * (a * 0.85);
+    }
+  }
+  buf.set(out);
+}
+
+/**
+ * De-ess + tame airy mouth noise (5–9 kHz band).
+ * Also reduces harsh tongue/air bursts Produce usually softens.
+ */
+export function deEssInPlacePreview(
+  buf: Float32Array,
+  sampleRate: number,
+  amount: number
+): void {
+  const a = Math.max(0, Math.min(1, amount));
+  if (a < 0.04) return;
+  // Extract HF band via one-pole HP @ 5kHz
+  const fc = 5000;
+  const x = Math.exp((-2 * Math.PI * fc) / sampleRate);
+  const band = new Float32Array(buf.length);
+  let prevX = 0;
+  let prevY = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const xi = buf[i] || 0;
+    const yi = x * (prevY + xi - prevX);
+    prevX = xi;
+    prevY = yi;
+    band[i] = yi;
+  }
+  // Soft LP on band ~9k so we don't only hit extreme HF
+  const fc2 = 9000;
+  const x2 = Math.exp((-2 * Math.PI * fc2) / sampleRate);
+  let lp = 0;
+  const atk = Math.exp(-1 / (0.0025 * sampleRate));
+  const rel = Math.exp(-1 / (0.045 * sampleRate));
+  let env = 0;
+  for (let i = 0; i < buf.length; i++) {
+    lp = lp + (1 - x2) * ((band[i] || 0) - lp);
+    const s = Math.abs(lp);
+    env = s > env ? atk * env + (1 - atk) * s : rel * env + (1 - rel) * s;
+    // Stronger duck than old export path (Produce-like)
+    const duck = 1 - Math.min(0.72, env * a * 5.2);
+    buf[i] = (buf[i] || 0) * duck;
+  }
+}
+
+/** Downward expansion / noise gate for breaths and room in gaps. */
 export function gateInPlacePreview(
   buf: Float32Array,
   sampleRate: number,
@@ -60,29 +168,25 @@ export function gateInPlacePreview(
 ): void {
   const a = Math.max(0, Math.min(1, amount));
   if (a < 0.02) return;
-  // Higher amount → higher threshold + near-silent floor in gaps
-  const thrDb = -52 + a * 34; // ~-52dB … -18dB
+  const thrDb = -54 + a * 36;
   const thr = Math.pow(10, thrDb / 20);
-  const floor = Math.max(0.008, 0.16 * (1 - a)); // was ~0.15 residual — too open
-  const atk = Math.exp(-1 / (0.003 * sampleRate));
-  const rel = Math.exp(-1 / ((0.04 + (1 - a) * 0.06) * sampleRate));
+  const floor = Math.max(0.004, 0.12 * (1 - a));
+  const atk = Math.exp(-1 / (0.0025 * sampleRate));
+  const rel = Math.exp(-1 / ((0.05 + (1 - a) * 0.08) * sampleRate));
   let env = 0;
   for (let i = 0; i < buf.length; i++) {
-    const x = buf[i] || 0;
-    const abs = Math.abs(x);
+    const xi = buf[i] || 0;
+    const abs = Math.abs(xi);
     env = abs > env ? atk * env + (1 - atk) * abs : rel * env + (1 - rel) * abs;
     let open = 1;
     if (env < thr) {
-      open = Math.max(floor, (env / (thr + 1e-12)) ** (1.2 + a * 1.5));
+      open = Math.max(floor, (env / (thr + 1e-12)) ** (1.35 + a * 1.8));
     }
-    buf[i] = x * open;
+    buf[i] = xi * open;
   }
 }
 
-/**
- * Real spectral noise reduction (noise profile from quiet frames + over-subtraction).
- * Same approach as Produce offline path.
- */
+/** STFT spectral denoise (noise profile from quiet frames). */
 export function noiseReduceInPlacePreview(
   buf: Float32Array,
   sampleRate: number,
@@ -139,9 +243,8 @@ export function noiseReduceInPlacePreview(
   if (noiseFrames < 1) return;
   for (let k = 0; k <= bins; k++) noisePow[k] /= noiseFrames;
 
-  // Stronger than before so Medium/Strong presets are actually audible on Export
-  const alpha = 1.5 + a * 3.5; // 1.5 … 5.0 over-subtraction
-  const beta = 0.008 + (1 - a) * 0.05; // residual floor
+  const alpha = 1.6 + a * 3.8;
+  const beta = 0.006 + (1 - a) * 0.04;
   const out = new Float32Array(buf.length);
   const norm = new Float32Array(buf.length);
 
@@ -162,8 +265,11 @@ export function noiseReduceInPlacePreview(
       if (g > 1) g = 1;
       if (k > 0) {
         const hz = (k * sampleRate) / N;
+        // Protect speech formants; allow more cut on airy HF (>6k) for breaths/tongue air
         if (hz >= 300 && hz <= 3500 && p > np * 8) {
-          g = Math.max(g, 0.5 + 0.5 * (1 - a * 0.4));
+          g = Math.max(g, 0.52 + 0.48 * (1 - a * 0.35));
+        } else if (hz > 6000) {
+          g = Math.min(g, 1 - a * 0.35);
         }
       }
       g = 1 - a * (1 - g);
@@ -186,15 +292,65 @@ export function noiseReduceInPlacePreview(
   }
 }
 
-/** Process a full AudioBuffer for Console preview / shared cleanup. */
+/**
+ * Produce-like vocal cleanup chain for one channel.
+ * When denoise/gate are engaged, also de-click + de-ess so tongue clicks
+ * and airy mouth noise are treated (not only broadband room tone).
+ */
+export function cleanVocalChannelInPlace(
+  buf: Float32Array,
+  sampleRate: number,
+  opts: {
+    noiseReduce?: number;
+    gate?: number;
+    deEss?: number;
+    /** 0–1 explicit de-click; defaults from denoise/gate if omitted */
+    deClick?: number;
+  }
+): void {
+  const nr = opts.noiseReduce || 0;
+  const gt = opts.gate || 0;
+  let de = opts.deEss || 0;
+  let dc = opts.deClick ?? 0;
+
+  // Auto-engage mouth-noise tools when user asked for cleanup (matches Produce intent)
+  if (de < 0.05 && (nr > 0.25 || gt > 0.25)) {
+    de = Math.max(de, 0.28 + Math.max(nr, gt) * 0.35);
+  }
+  if (dc < 0.05 && (nr > 0.2 || gt > 0.2 || de > 0.2)) {
+    dc = Math.max(dc, 0.4 + Math.max(nr, gt, de) * 0.4);
+  }
+
+  // Produce lightCleanVocal baseline
+  highPassInPlacePreview(buf, sampleRate, 85);
+
+  if (nr > 0.02) noiseReduceInPlacePreview(buf, sampleRate, nr);
+  if (dc > 0.05) deClickInPlacePreview(buf, sampleRate, Math.min(1, dc));
+  if (de > 0.04) deEssInPlacePreview(buf, sampleRate, Math.min(1, de));
+  if (gt > 0.02) gateInPlacePreview(buf, sampleRate, gt);
+  // Extra light gate when denoise is strong (airy gaps)
+  if (nr > 0.45 && gt < 0.15) {
+    gateInPlacePreview(buf, sampleRate, 0.22 + (nr - 0.45) * 0.5);
+  }
+}
+
+/** Process a full AudioBuffer for Console preview / Export. */
 export function processPreviewBuffer(
   ctx: BaseAudioContext,
   source: AudioBuffer,
-  opts: { gate?: number; noiseReduce?: number }
+  opts: {
+    gate?: number;
+    noiseReduce?: number;
+    deEss?: number;
+    deClick?: number;
+  }
 ): AudioBuffer {
   const gate = opts.gate || 0;
   const nr = opts.noiseReduce || 0;
-  if (gate < 0.02 && nr < 0.02) return source;
+  const de = opts.deEss || 0;
+  const dc = opts.deClick || 0;
+  if (gate < 0.02 && nr < 0.02 && de < 0.04 && dc < 0.05) return source;
+
   const out = ctx.createBuffer(
     source.numberOfChannels,
     source.length,
@@ -202,8 +358,12 @@ export function processPreviewBuffer(
   );
   for (let c = 0; c < source.numberOfChannels; c++) {
     const data = new Float32Array(source.getChannelData(c));
-    if (nr > 0.02) noiseReduceInPlacePreview(data, source.sampleRate, nr);
-    if (gate > 0.02) gateInPlacePreview(data, source.sampleRate, gate);
+    cleanVocalChannelInPlace(data, source.sampleRate, {
+      gate,
+      noiseReduce: nr,
+      deEss: de,
+      deClick: dc,
+    });
     const ab = new Float32Array(new ArrayBuffer(data.byteLength));
     ab.set(data);
     out.copyToChannel(ab, c);

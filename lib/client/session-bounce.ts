@@ -15,10 +15,7 @@ import {
   emptyAutomation,
   type FxAutomationDoc,
 } from "@/lib/ap-engine/fx-automation";
-import {
-  gateInPlacePreview,
-  noiseReduceInPlacePreview,
-} from "@/lib/audio/preview-clean";
+import { cleanVocalChannelInPlace } from "@/lib/audio/preview-clean";
 
 
 /** Ensure Float32Array is ArrayBuffer-backed for AudioBuffer.copyToChannel (TS 5.x DOM types). */
@@ -149,20 +146,24 @@ export async function bounceSessionToWav(opts: {
           const fx = layer.fx || {};
           const nr = Number(fx.noiseReduce) || 0;
           const gt = Number(fx.gate) || 0;
+          const de = Number(fx.deEss) || 0;
           const pc = layer.phraseCleanup || Number(fx.phraseCleanup) || 0;
-          if (nr > 0.02 || gt > 0.02 || pc > 0.02) {
+          if (nr > 0.02 || gt > 0.02 || de > 0.04 || pc > 0.02) {
             const ch0 = buf.getChannelData(0);
             const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
             const left = new Float32Array(ch0);
             const right = new Float32Array(ch1);
-            if (nr > 0.02) {
-              noiseReduceInPlacePreview(left, buf.sampleRate, nr);
-              noiseReduceInPlacePreview(right, buf.sampleRate, nr);
-            }
-            if (gt > 0.02) {
-              gateInPlacePreview(left, buf.sampleRate, gt);
-              gateInPlacePreview(right, buf.sampleRate, gt);
-            }
+            // Full Produce-like chain: HPF, denoise, de-click, de-ess, gate
+            cleanVocalChannelInPlace(left, buf.sampleRate, {
+              noiseReduce: nr,
+              gate: gt,
+              deEss: de,
+            });
+            cleanVocalChannelInPlace(right, buf.sampleRate, {
+              noiseReduce: nr,
+              gate: gt,
+              deEss: de,
+            });
             if (pc > 0.02) {
               const mono = new Float32Array(left.length);
               for (let s = 0; s < left.length; s++) {

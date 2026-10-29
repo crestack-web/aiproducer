@@ -3815,6 +3815,7 @@ export function ProducerView({
           playBuf = processPreviewBuffer(ctx, buf, {
             gate: Number(fx.gate) || 0,
             noiseReduce: Number(fx.noiseReduce) || 0,
+            deEss: Number(fx.deEss) || 0,
           });
         }
       } catch {
@@ -8886,7 +8887,8 @@ export function ProducerView({
                 if (
                   playingRef.current &&
                   ((Number(fx.gate) || 0) > 0.02 ||
-                    (Number(fx.noiseReduce) || 0) > 0.02)
+                    (Number(fx.noiseReduce) || 0) > 0.02 ||
+                    (Number(fx.deEss) || 0) > 0.04)
                 ) {
                   const tMs = playheadMsRef.current;
                   void startPlayback(tMs);
