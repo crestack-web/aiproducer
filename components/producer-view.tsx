@@ -58,6 +58,7 @@ import {
 } from "@/lib/ap-engine/fx-automation";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { bounceSessionToWav, downloadBlob } from "@/lib/client/session-bounce";
+import { processPreviewBuffer } from "@/lib/audio/preview-clean";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
@@ -462,16 +463,20 @@ function trackRowHeight(opts: {
   colorOpen: boolean;
   takeEditing: boolean;
   isNarrow: boolean;
+  /** User-resized height — when set, this wins (DAW-style free expand). */
+  customHeight?: number | null;
 }): number {
-  const { expanded, stackOpen, colorOpen, takeEditing, isNarrow } = opts;
-  // Keep rows tight: expanded only adds a little for name + volume (Suno-like).
-  // Never balloon the left rail past the timeline track card.
+  const { expanded, stackOpen, colorOpen, takeEditing, isNarrow, customHeight } = opts;
+  if (typeof customHeight === "number" && Number.isFinite(customHeight)) {
+    // Soft max keeps layout usable on phones; still much taller than before
+    return Math.max(64, Math.min(560, Math.round(customHeight)));
+  }
   if (takeEditing) {
     return isNarrow ? 132 : 148;
   }
   if (stackOpen) return Math.max(TRACK_ROW_H_EXPANDED + 120, 240);
   if (colorOpen && expanded) return isNarrow ? 128 : 140;
-  if (expanded) return isNarrow ? 108 : 118;
+  if (expanded) return isNarrow ? 140 : 160;
   return TRACK_ROW_H;
 }
 
@@ -779,6 +784,10 @@ export function ProducerView({
   const playheadStateThrottleRef = useRef(0);
   const [playing, setPlaying] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
+  /** User-dragged track lane height (px). Unbounded growth up to a soft max for usability. */
+  const [trackHeightPx, setTrackHeightPx] = useState<Record<string, number>>({});
+  const heightDragRef = useRef<{ id: string; startY: number; startH: number } | null>(null);
+
   const [pxPerSec, setPxPerSec] = useState(56);
   pxPerSecRef.current = pxPerSec;
   const [loopOn, setLoopOn] = useState(false);
@@ -2317,6 +2326,19 @@ export function ProducerView({
         /* */
       }
     }
+    // Gate / denoise are buffer-preprocessed — re-cue playback so preview matches knobs
+    if (
+      persist &&
+      playingRef.current &&
+      ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02 ||
+        (Number((fxByIdRef.current[id] || {}).gate) || 0) > 0.02 ||
+        (Number((fxByIdRef.current[id] || {}).noiseReduce) || 0) > 0.02)
+    ) {
+      const t = playheadMsRef.current;
+      queueMicrotask(() => {
+        if (playingRef.current) void startPlayback(t);
+      });
+    }
     if (persist) void persistFx(id, fx);
   }
 
@@ -3786,7 +3808,19 @@ export function ProducerView({
       const on = isAudible(tr.id, tr.kind);
       const fx = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
       const src = ctx.createBufferSource();
-      src.buffer = buf;
+      // Live preview: gate + noise remover on the buffer (true clean, not just UI labels)
+      let playBuf = buf;
+      try {
+        if ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02) {
+          playBuf = processPreviewBuffer(ctx, buf, {
+            gate: Number(fx.gate) || 0,
+            noiseReduce: Number(fx.noiseReduce) || 0,
+          });
+        }
+      } catch {
+        playBuf = buf;
+      }
+      src.buffer = playBuf;
 
       // Always use the live FX graph so knob changes apply mid-playback.
       // Graph is transparent when amounts are ~0 (no robotic color on clean tracks).
@@ -6139,12 +6173,14 @@ export function ProducerView({
               colorOpen,
               takeEditing: isTakeEditingSide,
               isNarrow,
+              customHeight: trackHeightPx[tr.id] ?? (isExpanded ? 160 : null),
             });
             return (
               <div
                 key={`h-${tr.id}`}
                 onContextMenu={(e) => openTrackContextMenu(e, tr.id)}
                 style={{
+                  position: "relative",
                   height: rowH,
                   minHeight: rowH,
                   maxHeight: rowH,
@@ -6244,6 +6280,9 @@ export function ProducerView({
                     type="button"
                     onClick={() => {
                       setExpandedId(isExpanded ? null : tr.id);
+                      if (!isExpanded && !trackHeightPx[tr.id]) {
+                        setTrackHeightPx((prev) => ({ ...prev, [tr.id]: 200 }));
+                      }
                       setSelectedTrackId(tr.id);
                       if (tr.kind === "vocal") setArmedTrackId(tr.id);
                     }}
@@ -6435,6 +6474,44 @@ export function ProducerView({
                   >
                     S
                   </button>
+                    <div
+                      role="separator"
+                      aria-label="Resize track height"
+                      title="Drag to resize track height"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const startH = trackHeightPx[tr.id] || rowH;
+                        heightDragRef.current = { id: tr.id, startY: e.clientY, startH };
+                        const onMove = (ev: PointerEvent) => {
+                          const d = heightDragRef.current;
+                          if (!d) return;
+                          const next = d.startH + (ev.clientY - d.startY);
+                          setTrackHeightPx((prev) => ({
+                            ...prev,
+                            [d.id]: Math.max(64, Math.min(560, next)),
+                          }));
+                        };
+                        const onUp = () => {
+                          heightDragRef.current = null;
+                          window.removeEventListener("pointermove", onMove);
+                          window.removeEventListener("pointerup", onUp);
+                        };
+                        window.addEventListener("pointermove", onMove);
+                        window.addEventListener("pointerup", onUp);
+                      }}
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: 12,
+                        cursor: "ns-resize",
+                        touchAction: "none",
+                        zIndex: 6,
+                        background: "linear-gradient(180deg, transparent, rgba(255,255,255,0.08))",
+                      }}
+                    />
                   {/* ⋮ overflow — opens fixed menu (not clipped by row) */}
                   <button
                     type="button"
@@ -8803,7 +8880,18 @@ export function ProducerView({
                   }
                 }
               }}
-              onCommit={(fx) => void persistFx(fxOpenId, fx)}
+              onCommit={(fx) => {
+                void persistFx(fxOpenId, fx);
+                // Buffer-based preview FX — re-cue so gate/denoise is audible
+                if (
+                  playingRef.current &&
+                  ((Number(fx.gate) || 0) > 0.02 ||
+                    (Number(fx.noiseReduce) || 0) > 0.02)
+                ) {
+                  const tMs = playheadMsRef.current;
+                  void startPlayback(tMs);
+                }
+              }}
               rack={fxRackById[fxOpenId] || []}
               onRackChange={(rack) =>
                 setFxRackById((prev) => ({ ...prev, [fxOpenId]: rack }))
@@ -10538,9 +10626,9 @@ function TrackFxPanel({
                 {modalDef.id === "voice"
                   ? "Voice changer applies on Produce"
                   : modalDef.id === "denoise"
-                  ? "Noise remover applies on Produce (spectral)"
+                  ? "Noise remover applies in preview, Export, and Produce"
                   : modalDef.id === "gate"
-                  ? "Noise gate applies on Produce"
+                  ? "Noise gate applies in preview, Export, and Produce"
                   : "Creative effect applies on Produce"}
               </p>
             )}

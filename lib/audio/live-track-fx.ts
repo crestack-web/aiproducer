@@ -6,7 +6,8 @@
  * - Approximate live: saturation (WaveShaper), de-ess (static HF peak cut),
  *   plate (extra multi-tap), chorus/doubler (LFO delay), limiter (soft-clip + compressor),
  *   width (stereo pan spread proxy, NOT true mid/side)
- * - Produce-only (ignored in live apply): gate, rotor*, spring*
+ * - Live buffer preprocess (startPlayback): gate, noiseReduce
+ * - Produce-only (ignored in live apply): rotor*, spring*
  */
 
 export type LiveFxParams = {
@@ -68,8 +69,8 @@ export const LIVE_FX_CAPABILITY: Record<string, LiveFxCapability> = {
   doubler: "approximate",
   limiter: "approximate", // soft-clip + compressor, not brick-wall look-ahead
   width: "approximate", // stereo balance proxy, not M/S
-  gate: "produce_only",
-  noiseReduce: "produce_only",
+  gate: "live",
+  noiseReduce: "live",
   phraseCleanup: "produce_only",
   voiceChanger: "produce_only",
   voicePitchSemis: "produce_only",
@@ -435,7 +436,7 @@ export function createLiveTrackFxGraph(
     }
     setP(pan.pan, clamp(safe(fx.pan), -1, 1), now, true);
 
-    // gate ignored in live — produce_only
+    // gate + noiseReduce applied via buffer preprocess in producer-view startPlayback
     void fx.gate;
     void fx.noiseReduce;
     void fx.phraseCleanup;
