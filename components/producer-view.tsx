@@ -2766,15 +2766,22 @@ export function ProducerView({
           const leftSaved: ProducerClip = {
             ...leftClip,
             id: leftUp.recordingId || leftClip.id,
-            audioUrl: leftUp.audioUrl || leftLocalUrl,
+            // Prefer same-origin proxy so leaving Console does not lose the waveform
+            audioUrl: leftUp.recordingId
+              ? `/api/recordings/${leftUp.recordingId}/audio`
+              : leftUp.audioUrl || leftLocalUrl,
             recordingId: leftUp.recordingId,
           };
           const rightSaved: ProducerClip = {
             ...rightClip,
             id: rightUp.recordingId || rightClip.id,
-            audioUrl: rightUp.audioUrl || rightLocalUrl,
+            audioUrl: rightUp.recordingId
+              ? `/api/recordings/${rightUp.recordingId}/audio`
+              : rightUp.audioUrl || rightLocalUrl,
             recordingId: rightUp.recordingId,
           };
+          if (leftSaved.audioUrl) bufferCache.set(leftSaved.audioUrl, left);
+          if (rightSaved.audioUrl) bufferCache.set(rightSaved.audioUrl, right);
           if (leftUp.audioUrl) bufferCache.set(leftUp.audioUrl, left);
           if (rightUp.audioUrl) bufferCache.set(rightUp.audioUrl, right);
 
@@ -3305,6 +3312,7 @@ export function ProducerView({
       endMs: number;
       sub?: string;
       url?: string | null;
+      recordingId?: string | null;
       clips?: ProducerClip[];
     }[] = [];
     list.push({
@@ -3315,6 +3323,7 @@ export function ProducerView({
       startMs: 0,
       endMs: totalMs,
       url: beatUrl,
+      recordingId: null,
     });
     for (const l of layers) {
       const multi = (l.clips && l.clips.length > 1) || false;
@@ -3347,6 +3356,7 @@ export function ProducerView({
         endMs: spanEnd,
         sub: l.sectionLabel || l.label,
         url: clips[0]?.audioUrl || l.audioUrl,
+        recordingId: clips[0]?.recordingId || l.recordingId || null,
         clips,
       });
     }
@@ -3381,16 +3391,19 @@ export function ProducerView({
             ? tr.clips.map((c) => ({
                 id: c.id,
                 url: c.audioUrl || null,
+                recordingId: c.recordingId || null,
               }))
-            : [{ id: tr.id, url: tr.url || null }];
+            : [{
+                id: tr.id,
+                url: tr.url || null,
+                recordingId: tr.recordingId || null,
+              }];
         for (const part of parts) {
-          if (!part.url) {
-            next[part.id] = null;
-            continue;
-          }
-          // Same-origin fallback: R2 signed URLs often fail CORS in the browser.
-          // Beats → /beat/download; vocals → /recording-tasks/:taskId/audio
-          // Always use the track (task) id for the proxy — clip id may be recordingId.
+          // Prefer clip recording proxy, then task proxy, then signed URL
+          const recordingProxy =
+            tr.kind === "vocal" && part.recordingId
+              ? `/api/recordings/${part.recordingId}/audio`
+              : null;
           const vocalProxy =
             tr.kind === "vocal" && tr.id
               ? `/api/recording-tasks/${tr.id}/audio`
@@ -3399,10 +3412,20 @@ export function ProducerView({
             tr.kind === "beat" && projectId
               ? `/api/projects/${projectId}/beat/download`
               : null;
+          const primary =
+            recordingProxy ||
+            part.url ||
+            vocalProxy ||
+            beatProxy ||
+            null;
+          if (!primary) {
+            // Keep any previous peaks — never blank a track when URL is still hydrating
+            continue;
+          }
           const buf = await fetchDecode(
             ctx,
-            part.url,
-            vocalProxy || beatProxy
+            primary,
+            recordingProxy || vocalProxy || beatProxy
           );
           if (cancelled) return;
           if (buf) {
@@ -3411,11 +3434,14 @@ export function ProducerView({
               setDurationMs((d) => Math.max(d, durMs));
             }
             durs[part.id] = durMs;
-            peaksForUrl(part.url, buf, 2048);
-            next[part.id] = peaksForUrl(part.url, buf, peakBuckets);
-          } else {
-            next[part.id] = null;
+            peaksForUrl(primary, buf, 2048);
+            next[part.id] = peaksForUrl(primary, buf, peakBuckets);
+            // Also key peaks by track id for single-clip rows
+            if (!tr.clips || tr.clips.length <= 1) {
+              next[tr.id] = next[part.id];
+            }
           }
+          // On decode failure: leave previous peaks in place (do not write null)
         }
       }
       if (!cancelled) {

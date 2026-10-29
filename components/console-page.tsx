@@ -176,16 +176,30 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
             const clips =
               rawClips && rawClips.length > 0
                 ? rawClips
-                    .map((c) => ({
-                      id: String(c.id || c.recording_id || ""),
-                      startMs: Number(c.start_ms) || resolvedStart,
-                      endMs: Number(c.end_ms) || resolvedEnd,
-                      recordingId:
-                        typeof c.recording_id === "string" ? c.recording_id : null,
-                      audioUrl: null as string | null,
-                    }))
+                    .map((c) => {
+                      const rid =
+                        typeof c.recording_id === "string" && c.recording_id
+                          ? c.recording_id
+                          : typeof c.id === "string" && c.id.length > 8
+                            ? c.id
+                            : null;
+                      // Stable same-origin URL so waveforms survive Console remounts
+                      const proxy = rid ? `/api/recordings/${rid}/audio` : null;
+                      return {
+                        id: String(c.id || c.recording_id || ""),
+                        startMs: Number(c.start_ms) || resolvedStart,
+                        endMs: Number(c.end_ms) || resolvedEnd,
+                        recordingId: rid,
+                        audioUrl: proxy,
+                      };
+                    })
                     .filter((c) => c.id)
                 : undefined;
+            // Prefer task audio; fall back to first clip proxy so uploaded tracks still draw
+            const taskAudio =
+              audioByTask.get(tk.id) ||
+              (clips && clips[0]?.audioUrl) ||
+              null;
             return {
               id: tk.id,
               label: ((typeof tk.title === "string" && tk.title.trim()) || tk.type || "lead").replace(/_/g, " "),
@@ -193,8 +207,8 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               sectionLabel,
               startMs: clips ? Math.min(...clips.map((c) => c.startMs)) : resolvedStart,
               endMs: clips ? Math.max(...clips.map((c) => c.endMs)) : resolvedEnd,
-              audioUrl: audioByTask.get(tk.id) || null,
-              recordingId: recordingIdByTask.get(tk.id) || null,
+              audioUrl: taskAudio,
+              recordingId: recordingIdByTask.get(tk.id) || clips?.[0]?.recordingId || null,
               clips,
               color: colorRaw,
               trackFx: tfRaw
