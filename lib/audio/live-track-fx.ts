@@ -427,8 +427,12 @@ export function createLiveTrackFxGraph(
     const gLin = audible
       ? Math.pow(10, clamp(safe(fx.gainDb), -12, 12) / 20)
       : 0;
-    // Safety ceiling on output gain — smooth only mute/unmute
-    setP(gain.gain, Math.min(gLin, 2.5), now, true);
+    // Instant mute (no slow setTarget ramp); smooth only when opening
+    if (!audible) {
+      setP(gain.gain, 0, now, false);
+    } else {
+      setP(gain.gain, Math.min(gLin, 2.5), now, true);
+    }
     setP(pan.pan, clamp(safe(fx.pan), -1, 1), now, true);
 
     // gate ignored in live — produce_only

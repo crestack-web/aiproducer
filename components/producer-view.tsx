@@ -872,6 +872,15 @@ export function ProducerView({
   }
   const [soloId, setSoloId] = useState<string | null>(null);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
+  /** RAF playback closes over render-time applyGains — always read latest mute/solo from refs */
+  const mutedRef = useRef<Record<string, boolean>>({});
+  const soloIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+  useEffect(() => {
+    soloIdRef.current = soloId;
+  }, [soloId]);
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
   /** Decoded audio duration (ms) — source of truth for clip length on timeline */
   const [durationById, setDurationById] = useState<Record<string, number>>({});
@@ -1067,10 +1076,17 @@ export function ProducerView({
   async function runDawAction(action: DawAction) {
     switch (action.type) {
       case "mute":
-        setMuted((m) => ({ ...m, [action.trackId]: action.value }));
+        setMuted((m) => {
+          const next = { ...m, [action.trackId]: action.value };
+          mutedRef.current = next;
+          queueMicrotask(() => applyGains(undefined, true));
+          return next;
+        });
         break;
       case "solo":
+        soloIdRef.current = action.trackId;
         setSoloId(action.trackId);
+        queueMicrotask(() => applyGains(undefined, true));
         break;
       case "pan":
         setPan(action.trackId, action.value, true);
@@ -3445,13 +3461,14 @@ export function ProducerView({
   }, [peakBuckets, tracks]);
 
   function isAudible(id: string, kind: "beat" | "vocal") {
-    // Solo = selected track + beat for context (producer checking a layer against the beat)
-    if (soloId) {
-      if (id === soloId) return true;
-      if (kind === "beat") return true;
-      return false;
-    }
-    return !muted[id];
+    const solo = soloIdRef.current;
+    const mutes = mutedRef.current;
+    // Explicit mute always wins (including beat)
+    if (mutes[id]) return false;
+    // Solo: only the soloed track is audible (true DAW solo — beat is not forced on)
+    if (solo) return id === solo;
+    void kind;
+    return true;
   }
 
   function applyGains(atMs?: number, force = false) {
@@ -3480,7 +3497,12 @@ export function ProducerView({
         try {
           const now = audioCtxRef.current?.currentTime ?? 0;
           graph.gain.gain.cancelScheduledValues(now);
-          graph.gain.gain.setTargetAtTime(Math.min(gLin, 2.5), now, 0.02);
+          // setValueAtTime for mute so RAF cannot leave a slow setTarget ramp audible
+          if (!on) {
+            graph.gain.gain.setValueAtTime(0, now);
+          } else {
+            graph.gain.gain.setTargetAtTime(Math.min(gLin, 2.5), now, 0.02);
+          }
         } catch {
           /* */
         }
@@ -3501,6 +3523,19 @@ export function ProducerView({
         const p = Math.max(-1, Math.min(1, Number(fx.pan) || 0));
         panNode.pan.setTargetAtTime(p, audioCtxRef.current?.currentTime || 0, 0.02);
       }
+    }
+    // HTMLAudio beat fallback (CORS) — not on the WebAudio gain graph
+    try {
+      const htmlBeat = monitorAudioRef.current;
+      if (htmlBeat) {
+        const beatOn = isAudible("beat", "beat");
+        const bfx = fxByIdRef.current["beat"] || DEFAULT_TRACK_FX;
+        const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
+        htmlBeat.volume = beatOn ? Math.max(0, Math.min(1, lin)) : 0;
+        htmlBeat.muted = !beatOn;
+      }
+    } catch {
+      /* */
     }
   }
 
@@ -6348,7 +6383,13 @@ export function ProducerView({
                     title={isMuted ? "Unmute" : "Mute"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setMuted((m) => ({ ...m, [tr.id]: !m[tr.id] }));
+                      setMuted((m) => {
+                        const next = { ...m, [tr.id]: !m[tr.id] };
+                        mutedRef.current = next;
+                        // Apply immediately so the in-flight RAF loop cannot un-mute
+                        queueMicrotask(() => applyGains(undefined, true));
+                        return next;
+                      });
                     }}
                     style={{ ...miniChip(border, brass, isMuted, text, true), fontSize: 10 }}
                   >
@@ -6359,7 +6400,10 @@ export function ProducerView({
                     title="Solo"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSoloId(soloId === tr.id ? null : tr.id);
+                      const next = soloIdRef.current === tr.id ? null : tr.id;
+                      soloIdRef.current = next;
+                      setSoloId(next);
+                      queueMicrotask(() => applyGains(undefined, true));
                     }}
                     style={miniChip(border, brass, isSolo, text, true)}
                   >
