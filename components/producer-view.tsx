@@ -6254,7 +6254,7 @@ export function ProducerView({
               colorOpen,
               takeEditing: isTakeEditingSide,
               isNarrow,
-              customHeight: trackHeightPx[tr.id] ?? (isExpanded ? 160 : null),
+              customHeight: trackHeightPx[tr.id] ?? null,
             });
             return (
               <div
@@ -6359,9 +6359,11 @@ export function ProducerView({
                   <button
                     type="button"
                     onClick={() => {
-                      setExpandedId(isExpanded ? null : tr.id);
-                      if (!isExpanded && !trackHeightPx[tr.id]) {
-                        setTrackHeightPx((prev) => ({ ...prev, [tr.id]: 200 }));
+                      // Toggle expand for sidebar + timeline together (same rowH)
+                      if (isExpanded) {
+                        setExpandedId(null);
+                      } else {
+                        setExpandedId(tr.id);
                       }
                       setSelectedTrackId(tr.id);
                       if (tr.kind === "vocal") setArmedTrackId(tr.id);
@@ -6870,12 +6872,12 @@ export function ProducerView({
                 colorOpen,
                 takeEditing: isTakeEditing,
                 isNarrow,
+                customHeight: trackHeightPx[tr.id] ?? null,
               });
+              // Waveform/clip fills most of the row — expand grows the visual, not empty chrome
               const clipH = isTakeEditing
-                ? Math.min(88, Math.max(48, rowH - 16))
-                : expanded
-                  ? Math.min(72, Math.max(40, rowH - 16))
-                  : Math.min(44, Math.max(28, rowH - 14));
+                ? Math.min(Math.max(48, rowH - 16), rowH - 12)
+                : Math.min(Math.max(expanded || trackHeightPx[tr.id] ? 40 : 28, rowH - 14), rowH - 10);
               return (
                 <div
                   key={`tl-${tr.id}`}
@@ -9098,23 +9100,52 @@ export function ProducerView({
               {tr.kind === "vocal" && tr.url
                 ? item("Edit take", () => void beginTakeEdit(tr.id, tr.url))
                 : null}
-              {item("Expand track", () => {
+              {item(expandedId === tr.id ? "Collapse track" : "Expand track", () => {
+                if (expandedId === tr.id) {
+                  setExpandedId(null);
+                  setTrackHeightPx((prev) => {
+                    const n = { ...prev };
+                    delete n[tr.id];
+                    return n;
+                  });
+                } else {
+                  setExpandedId(tr.id);
+                  // Clear forced height so default expanded size applies to both lanes
+                  setTrackHeightPx((prev) => {
+                    const n = { ...prev };
+                    delete n[tr.id];
+                    return n;
+                  });
+                }
+              })}
+              {item("Taller track", () => {
                 setExpandedId(tr.id);
                 setTrackHeightPx((prev) => ({
                   ...prev,
-                  [tr.id]: Math.min(560, Math.max(200, (prev[tr.id] || 120) + 80)),
+                  [tr.id]: Math.min(
+                    560,
+                    (prev[tr.id] || trackRowHeight({
+                      expanded: true,
+                      stackOpen: false,
+                      colorOpen: false,
+                      takeEditing: false,
+                      isNarrow,
+                    })) + 48
+                  ),
                 }));
               })}
-              {item("Taller waveform", () => {
-                setExpandedId(tr.id);
-                setTrackHeightPx((prev) => ({
-                  ...prev,
-                  [tr.id]: Math.min(560, (prev[tr.id] || 160) + 60),
-                }));
-              })}
-              {item("Shorter waveform", () => {
+              {item("Shorter track", () => {
                 setTrackHeightPx((prev) => {
-                  const next = Math.max(64, (prev[tr.id] || 160) - 60);
+                  const base =
+                    prev[tr.id] ||
+                    trackRowHeight({
+                      expanded: expandedId === tr.id,
+                      stackOpen: false,
+                      colorOpen: false,
+                      takeEditing: false,
+                      isNarrow,
+                    });
+                  const next = Math.max(64, base - 48);
                   return { ...prev, [tr.id]: next };
                 });
               })}
