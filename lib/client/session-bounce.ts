@@ -1,6 +1,11 @@
 /**
  * Client-side session bounce — offline mix of timeline layers + track FX + automation.
  * Traditional DAW export of the current edit (not the AP Produce job).
+ *
+ * Reliability contract (Phase 1):
+ * - Never silently omit a non-muted layer that was requested for export.
+ * - Decode failures surface actionable errors (label + reason).
+ * - Duration includes effect-tail pad so reverb/delay are not truncated.
  */
 "use client";
 
@@ -17,7 +22,6 @@ import {
 } from "@/lib/ap-engine/fx-automation";
 import { cleanVocalChannelInPlace } from "@/lib/audio/preview-clean";
 
-
 /** Ensure Float32Array is ArrayBuffer-backed for AudioBuffer.copyToChannel (TS 5.x DOM types). */
 function toArrayBufferF32(src: Float32Array): Float32Array<ArrayBuffer> {
   const out = new Float32Array(new ArrayBuffer(src.byteLength));
@@ -32,10 +36,24 @@ export type BounceLayer = {
   kind: "beat" | "vocal";
   startMs: number;
   audioUrl: string;
+  /** Human-readable name for error messages */
+  label?: string;
+  /** Same-origin fallback when signed URL fails (CORS / expired) */
+  fallbackUrl?: string | null;
   /** Full track FX baseline (gain, pan, reverb, telephone, …) */
   fx?: BounceFx;
   muted?: boolean;
   phraseCleanup?: number;
+};
+
+export type BounceResult = {
+  blob: Blob;
+  /** Layers that decoded and mixed successfully */
+  included: string[];
+  /** Non-fatal notes (e.g. muted layers skipped intentionally) */
+  notes: string[];
+  durationMs: number;
+  sampleRate: number;
 };
 
 function encodeWavStereo(left: Float32Array, right: Float32Array, sampleRate: number): Blob {
@@ -76,9 +94,47 @@ async function decodeUrl(
   url: string
 ): Promise<AudioBuffer> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to load audio for export");
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} loading audio`);
+  }
   const ab = await res.arrayBuffer();
-  return await ctx.decodeAudioData(ab.slice(0));
+  if (ab.byteLength < 64) {
+    throw new Error("Audio file is empty or too small");
+  }
+  try {
+    return await ctx.decodeAudioData(ab.slice(0));
+  } catch {
+    throw new Error("Browser could not decode this audio format");
+  }
+}
+
+/** Try primary URL, then same-origin fallback (recording/beat proxy). */
+async function decodeLayerAudio(
+  ctx: BaseAudioContext,
+  layer: BounceLayer
+): Promise<AudioBuffer> {
+  const candidates = [layer.audioUrl, layer.fallbackUrl].filter(
+    (u): u is string => typeof u === "string" && u.length > 0
+  );
+  // De-dupe
+  const seen = new Set<string>();
+  const unique = candidates.filter((u) => {
+    if (seen.has(u)) return false;
+    seen.add(u);
+    return true;
+  });
+  if (!unique.length) {
+    throw new Error("No audio URL");
+  }
+  const errors: string[] = [];
+  for (const url of unique) {
+    try {
+      return await decodeUrl(ctx, url);
+    } catch (e) {
+      errors.push(`${url.slice(0, 80)}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  throw new Error(errors.join(" | ") || "Could not decode audio");
 }
 
 function mergeFx(
@@ -107,14 +163,21 @@ function automationBreakpoints(
       }
     }
   }
-  // Dense sample for smooth curves (~50ms)
   for (let t = startMs; t <= endMs; t += 50) times.add(t);
   return Array.from(times).sort((a, b) => a - b);
 }
 
+/** Estimate reverb/delay tail padding from FX amounts (ms). */
+function tailPadMs(fx: BounceFx | undefined): number {
+  if (!fx) return 400;
+  const rev = Math.max(Number(fx.reverb) || 0, Number(fx.plateReverb) || 0);
+  const del = Math.max(Number(fx.delay) || 0, Number(fx.slapDelay) || 0);
+  return Math.round(400 + rev * 2800 + del * 1200);
+}
+
 /**
- * Bounce layers to a stereo WAV blob using the same FX graph as Console live
- * playback, with automation scheduled offline over the song timeline.
+ * Bounce layers to a stereo WAV.
+ * Throws if any non-muted layer fails to decode — never omits tracks silently.
  */
 export async function bounceSessionToWav(opts: {
   layers: BounceLayer[];
@@ -122,26 +185,63 @@ export async function bounceSessionToWav(opts: {
   sampleRate?: number;
   automation?: FxAutomationDoc;
   onProgress?: (p: number) => void;
+  /** When true (default), fail if any active layer cannot be decoded */
+  strict?: boolean;
 }): Promise<Blob> {
-  const sr = opts.sampleRate || 44100;
-  const totalSamples = Math.max(sr, Math.ceil((opts.durationMs / 1000) * sr));
-  const durationSec = totalSamples / sr;
-  const autoDoc = opts.automation || emptyAutomation();
-  const layers = opts.layers.filter((l) => l.audioUrl && !l.muted);
+  const result = await bounceSessionToWavDetailed(opts);
+  return result.blob;
+}
 
-  if (!layers.length) {
-    throw new Error("Nothing to export — add a beat or vocal first.");
+export async function bounceSessionToWavDetailed(opts: {
+  layers: BounceLayer[];
+  durationMs: number;
+  sampleRate?: number;
+  automation?: FxAutomationDoc;
+  onProgress?: (p: number) => void;
+  strict?: boolean;
+}): Promise<BounceResult> {
+  const strict = opts.strict !== false;
+  const sr = opts.sampleRate || 44100;
+  const autoDoc = opts.automation || emptyAutomation();
+  const notes: string[] = [];
+
+  const mutedSkipped = opts.layers.filter((l) => l.muted);
+  for (const m of mutedSkipped) {
+    notes.push(`Skipped muted track: ${m.label || m.id}`);
   }
 
-  // Decode with a temporary Online context (Offline cannot always decode in all browsers)
+  const active = opts.layers.filter((l) => !l.muted);
+  if (!active.length) {
+    throw new Error("Nothing to export — all tracks are muted, or no audio was added.");
+  }
+
+  const missingUrl = active.filter((l) => !l.audioUrl && !l.fallbackUrl);
+  if (missingUrl.length) {
+    const names = missingUrl.map((l) => l.label || l.id).join(", ");
+    throw new Error(
+      `Cannot export — missing audio for: ${names}. Re-open Console or re-upload those tracks.`
+    );
+  }
+
+  // Duration: requested length + max FX tail so space is not cut off
+  let maxTail = 400;
+  let contentEnd = opts.durationMs;
+  for (const l of active) {
+    maxTail = Math.max(maxTail, tailPadMs(l.fx));
+  }
+  const durationMs = Math.max(1000, Math.ceil(contentEnd + maxTail));
+  const totalSamples = Math.max(sr, Math.ceil((durationMs / 1000) * sr));
+
   const decodeCtx = new AudioContext({ sampleRate: sr });
   const decoded: { layer: BounceLayer; buffer: AudioBuffer }[] = [];
+  const failures: { layer: BounceLayer; reason: string }[] = [];
+
   try {
-    let i = 0;
-    for (const layer of layers) {
-      opts.onProgress?.(0.05 + (i / Math.max(1, layers.length)) * 0.25);
+    for (let i = 0; i < active.length; i++) {
+      const layer = active[i];
+      opts.onProgress?.(0.05 + (i / Math.max(1, active.length)) * 0.25);
       try {
-        let buf = await decodeUrl(decodeCtx, layer.audioUrl);
+        let buf = await decodeLayerAudio(decodeCtx, layer);
         if (layer.kind === "vocal") {
           const fx = layer.fx || {};
           const nr = Number(fx.noiseReduce) || 0;
@@ -153,7 +253,6 @@ export async function bounceSessionToWav(opts: {
             const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
             const left = new Float32Array(ch0);
             const right = new Float32Array(ch1);
-            // Full Produce-like chain: HPF, denoise, de-click, de-ess, gate
             cleanVocalChannelInPlace(left, buf.sampleRate, {
               noiseReduce: nr,
               gate: gt,
@@ -182,10 +281,12 @@ export async function bounceSessionToWav(opts: {
           }
         }
         decoded.push({ layer, buffer: buf });
-      } catch {
-        /* skip failed layer */
+      } catch (e) {
+        failures.push({
+          layer,
+          reason: e instanceof Error ? e.message : String(e),
+        });
       }
-      i++;
     }
   } finally {
     try {
@@ -193,6 +294,18 @@ export async function bounceSessionToWav(opts: {
     } catch {
       /* */
     }
+  }
+
+  if (failures.length) {
+    const detail = failures
+      .map((f) => `• ${f.layer.label || f.layer.id}: ${f.reason}`)
+      .join("\n");
+    if (strict || !decoded.length) {
+      throw new Error(
+        `Export failed — could not load ${failures.length} track(s):\n${detail}\n\nTry re-opening Console, or re-upload the failed track.`
+      );
+    }
+    notes.push(`Loaded without: ${failures.map((f) => f.layer.label || f.layer.id).join(", ")}`);
   }
 
   if (!decoded.length) {
@@ -215,50 +328,84 @@ export async function bounceSessionToWav(opts: {
     const baseFx = { ...(layer.fx || {}) };
     const startMs = Math.max(0, layer.startMs || 0);
     const startSec = startMs / 1000;
-    const layerEndMs = startMs + (buffer.duration * 1000);
-    const endMs = Math.min(opts.durationMs, layerEndMs);
+    const layerEndMs = startMs + buffer.duration * 1000;
+    const endMs = Math.min(durationMs, layerEndMs + tailPadMs(baseFx));
 
     const times = automationBreakpoints(autoDoc, layer.id, startMs, endMs);
-    // Apply at t=0 (graph default) then at each breakpoint in song time
-    const baseParams = trackFxToLiveParams(baseFx as LiveFxParams as unknown as Record<string, number>);
+    const baseParams = trackFxToLiveParams(
+      baseFx as LiveFxParams as unknown as Record<string, number>
+    );
     graph.apply(baseParams, true, 0);
 
     for (const tMs of times) {
       const auto = sampleTrackAutomation(autoDoc, layer.id, tMs);
       const merged = mergeFx(baseFx, auto);
       const params = trackFxToLiveParams(merged as unknown as Record<string, number>);
-      // Schedule at absolute offline time = song position
       graph.apply(params, true, tMs / 1000);
     }
 
+    // Schedule buffer at timeline position; allow full buffer + graph tails
     try {
+      if (startSec >= durationMs / 1000) {
+        throw new Error("Clip starts after export end");
+      }
       src.start(startSec);
-    } catch {
-      /* */
+    } catch (e) {
+      throw new Error(
+        `Could not place track "${layer.label || layer.id}" on the timeline: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
     }
   }
 
   opts.onProgress?.(0.8);
-  const rendered = await offline.startRendering();
+  let rendered: AudioBuffer;
+  try {
+    rendered = await offline.startRendering();
+  } catch (e) {
+    throw new Error(
+      `Export render failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
   const left = rendered.getChannelData(0);
   const right =
     rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : left;
 
-  // Soft limit
   const outL = new Float32Array(left.length);
   const outR = new Float32Array(right.length);
   let peak = 1e-6;
   for (let s = 0; s < left.length; s++) {
     peak = Math.max(peak, Math.abs(left[s] || 0), Math.abs(right[s] || 0));
   }
+  // Prevent digital clip without changing quiet mixes much
   const g = peak > 0.99 ? 0.99 / peak : 1;
   for (let s = 0; s < left.length; s++) {
     outL[s] = (left[s] || 0) * g;
     outR[s] = (right[s] || 0) * g;
   }
 
+  // Sanity: near-silent export usually means something went wrong
+  if (peak < 1e-5) {
+    throw new Error(
+      "Export produced near-silent audio. Check that tracks are not muted and audio loaded correctly."
+    );
+  }
+
   opts.onProgress?.(1);
-  return encodeWavStereo(outL, outR, sr);
+  const blob = encodeWavStereo(outL, outR, sr);
+  if (blob.size < 1000) {
+    throw new Error("Export file is invalid (too small). Please try again.");
+  }
+
+  return {
+    blob,
+    included: decoded.map((d) => d.layer.label || d.layer.id),
+    notes,
+    durationMs,
+    sampleRate: sr,
+  };
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

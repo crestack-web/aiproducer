@@ -210,8 +210,9 @@ export function applyConsoleTrackFx(
   }
   if (n(fx, "gate") > 0.02) {
     const gt = n(fx, "gate");
-    const thr = -48 + gt * 28;
-    const residual = Math.max(0.05, 0.22 - gt * 0.15);
+    // Align closer to client preview-clean residual (was leaving ~10–20% noise in gaps)
+    const thr = -52 + gt * 34;
+    const residual = Math.max(0.008, 0.14 * (1 - gt));
     gateInPlace(pcm.left, pcm.sampleRate, thr, residual);
     gateInPlace(pcm.right, pcm.sampleRate, thr, residual);
   }

@@ -517,13 +517,27 @@ export async function runFastArrangement(opts: {
       const role = layerRole(v);
       const type = role; // keep string field for diagnostics / arrangement
 
-      lightCleanVocal(pcm);
-      // Choir / background: tighter gate so room noise isn't amplified into the master
-      if (role === "background" || role.startsWith("harmony")) {
-        gateInPlace(pcm.left, pcm.sampleRate, -38);
-        gateInPlace(pcm.right, pcm.sampleRate, -38);
-        highPassInPlace(pcm.left, pcm.sampleRate, role === "background" ? 160 : 120);
-        highPassInPlace(pcm.right, pcm.sampleRate, role === "background" ? 160 : 120);
+      // Avoid double-cleaning when Console already has strong cleanup FX
+      // (console-fx-offline will apply noiseReduce/gate/phraseCleanup later).
+      const tf = (v.trackFx || {}) as Record<string, number>;
+      const artistCleanup =
+        (Number(tf.noiseReduce) || 0) > 0.2 ||
+        (Number(tf.gate) || 0) > 0.2 ||
+        (Number(tf.phraseCleanup) || 0) > 0.2 ||
+        (Number(tf.deEss) || 0) > 0.25;
+      if (!artistCleanup) {
+        lightCleanVocal(pcm);
+        // Choir / background: tighter gate so room noise isn't amplified into the master
+        if (role === "background" || role.startsWith("harmony")) {
+          gateInPlace(pcm.left, pcm.sampleRate, -38);
+          gateInPlace(pcm.right, pcm.sampleRate, -38);
+          highPassInPlace(pcm.left, pcm.sampleRate, role === "background" ? 160 : 120);
+          highPassInPlace(pcm.right, pcm.sampleRate, role === "background" ? 160 : 120);
+        }
+      } else {
+        // Minimal rumble only — full cleanup owned by console FX path
+        highPassInPlace(pcm.left, pcm.sampleRate, 70);
+        highPassInPlace(pcm.right, pcm.sampleRate, 70);
       }
       const rmsAfterClean = Math.max(rmsOf(pcm.left), rmsOf(pcm.right));
 

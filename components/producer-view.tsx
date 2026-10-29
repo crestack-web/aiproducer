@@ -57,7 +57,7 @@ import {
   type AutomationPoint,
 } from "@/lib/ap-engine/fx-automation";
 import { forceDownloadFromApi } from "@/lib/download-audio";
-import { bounceSessionToWav, downloadBlob } from "@/lib/client/session-bounce";
+import { bounceSessionToWavDetailed, downloadBlob } from "@/lib/client/session-bounce";
 import { processPreviewBuffer } from "@/lib/audio/preview-clean";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
@@ -4553,59 +4553,133 @@ export function ProducerView({
   }
 
 
-  /** Traditional DAW export — bounce timeline + FX (phrase cleanup) without Produce */
+  /** Artist finish: bounce timeline + FX + automation to WAV (does not run Produce). */
   async function exportSessionBounce() {
     if (exportBusy) return;
     setExportBusy(true);
-    setEditMsg("Exporting session (timeline + FX)…");
+    setEditMsg("Exporting your mix…");
     try {
-      const bounceLayers = layers
-        .filter((l) => l.audioUrl)
-        .map((l) => {
-          const fx = fxById[l.id] || DEFAULT_TRACK_FX;
-          const isBeat =
-            l.id === "beat" ||
-            /beat|instrumental/i.test(l.role || "") ||
-            /beat|instrumental/i.test(l.label || "");
-          return {
-            id: l.id,
-            kind: (isBeat ? "beat" : "vocal") as "beat" | "vocal",
-            startMs: l.startMs || 0,
-            audioUrl: l.audioUrl as string,
-            fx: { ...(fx as unknown as Record<string, number>) },
-            muted: !!(l as { muted?: boolean }).muted,
-            phraseCleanup: fx.phraseCleanup || 0,
-          };
-        });
-      // Include beat track if present on project
-      if (beatUrl && !bounceLayers.some((x) => x.kind === "beat")) {
+      const mutes = mutedRef.current;
+      const solo = soloIdRef.current;
+      const bounceLayers: {
+        id: string;
+        kind: "beat" | "vocal";
+        startMs: number;
+        audioUrl: string;
+        label?: string;
+        fallbackUrl?: string | null;
+        fx?: Record<string, number>;
+        muted?: boolean;
+        phraseCleanup?: number;
+      }[] = [];
+
+      // Beat
+      if (beatUrl) {
+        const beatMuted =
+          !!mutes["beat"] || (!!solo && solo !== "beat");
         const fx = fxById["beat"] || DEFAULT_TRACK_FX;
-        bounceLayers.unshift({
+        bounceLayers.push({
           id: "beat",
           kind: "beat",
           startMs: 0,
           audioUrl: beatUrl,
+          label: "Beat",
+          fallbackUrl: projectId
+            ? `/api/projects/${projectId}/beat/download`
+            : null,
           fx: { ...(fx as unknown as Record<string, number>) },
-          muted: false,
+          muted: beatMuted,
           phraseCleanup: 0,
         });
       }
+
+      // Vocals — expand multi-clip tracks so splits are not dropped
+      for (const l of layers) {
+        const fx = fxById[l.id] || DEFAULT_TRACK_FX;
+        const trackMuted =
+          !!mutes[l.id] || (!!solo && solo !== l.id);
+        const taskProxy = `/api/recording-tasks/${l.id}/audio`;
+        const clips =
+          l.clips && l.clips.length > 0
+            ? l.clips
+            : [
+                {
+                  id: l.id,
+                  startMs: l.startMs || 0,
+                  endMs: l.endMs,
+                  audioUrl: l.audioUrl,
+                  recordingId: l.recordingId,
+                },
+              ];
+        for (const c of clips) {
+          const recProxy =
+            c.recordingId != null
+              ? `/api/recordings/${c.recordingId}/audio`
+              : null;
+          const primary =
+            c.audioUrl || recProxy || l.audioUrl || taskProxy || "";
+          if (!primary && !recProxy && !taskProxy) {
+            // Surface missing audio rather than silent omit
+            bounceLayers.push({
+              id: `${l.id}::${c.id}`,
+              kind: "vocal",
+              startMs: c.startMs || 0,
+              audioUrl: "",
+              label: `${l.label || l.id}${clips.length > 1 ? ` (${c.id.slice(0, 6)})` : ""}`,
+              fallbackUrl: null,
+              fx: { ...(fx as unknown as Record<string, number>) },
+              muted: trackMuted,
+              phraseCleanup: fx.phraseCleanup || 0,
+            });
+            continue;
+          }
+          bounceLayers.push({
+            id: clips.length > 1 ? `${l.id}::${c.id}` : l.id,
+            kind: "vocal",
+            startMs: c.startMs || 0,
+            audioUrl: primary,
+            label: `${l.label || l.id}${clips.length > 1 ? ` clip` : ""}`,
+            fallbackUrl: recProxy || taskProxy,
+            fx: { ...(fx as unknown as Record<string, number>) },
+            muted: trackMuted,
+            phraseCleanup: fx.phraseCleanup || 0,
+          });
+        }
+      }
+
       if (!bounceLayers.length) {
         setEditMsg("Nothing to export — add a beat or vocal first.");
         setExportBusy(false);
         return;
       }
-      const blob = await bounceSessionToWav({
+
+      // Content length: farthest clip end (not just totalMs scroll width)
+      let contentEnd = Math.max(totalMs || 0, durationMs || 0, 5000);
+      for (const l of layers) {
+        contentEnd = Math.max(contentEnd, Number(l.endMs) || 0);
+        if (l.clips) {
+          for (const c of l.clips) {
+            contentEnd = Math.max(contentEnd, Number(c.endMs) || 0);
+          }
+        }
+      }
+
+      const result = await bounceSessionToWavDetailed({
         layers: bounceLayers,
-        durationMs: Math.max(totalMs || 0, durationMs || 0, 5000),
+        durationMs: contentEnd,
         automation: automationDocRef.current,
+        strict: true,
         onProgress: (p) => {
-          if (p < 1) setEditMsg(`Exporting session… ${Math.round(p * 100)}%`);
+          if (p < 1) setEditMsg(`Exporting your mix… ${Math.round(p * 100)}%`);
         },
       });
       const name = `${(titleDraft || projectTitle || "session").replace(/[^\w\-]+/g, "_")}-export.wav`;
-      downloadBlob(blob, name);
-      setEditMsg("Session exported (edit + effects). Use Produce for AP mix/master.");
+      downloadBlob(result.blob, name);
+      const note =
+        result.notes.length > 0 ? ` (${result.notes[0]})` : "";
+      setEditMsg(
+        `Mix exported — ${result.included.length} track(s) rendered.${note}`
+      );
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Export failed");
     } finally {
@@ -5287,7 +5361,7 @@ export function ProducerView({
             type="button"
             onClick={() => void exportSessionBounce()}
             disabled={exportBusy || produceUi === "producing" || produceUi === "starting"}
-            title="Bounce the current edit with track FX and automation (WAV). Does not run Produce."
+            title="Finish and download your mix (timeline, effects, automation). WAV — does not run Produce."
             style={{
               flexShrink: 0,
               height: 36,
@@ -5315,7 +5389,7 @@ export function ProducerView({
             type="button"
             onClick={() => void startConsoleProduce()}
             disabled={produceUi === "producing" || produceUi === "starting"}
-            title="Produce finished song with AP"
+            title="Let AP produce your song — analysis, mix, and master"
             style={{
               flexShrink: 0,
               height: 36,
