@@ -80,6 +80,13 @@ function spectralNoiseReduceInPlace(buf: Float32Array, sampleRate: number, amoun
   }
 }
 
+/** Ensure Float32Array is ArrayBuffer-backed for AudioBuffer.copyToChannel (TS 5.x DOM types). */
+function toArrayBufferF32(src: Float32Array): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(new ArrayBuffer(src.byteLength));
+  out.set(src);
+  return out;
+}
+
 export type BounceFx = Record<string, number>;
 
 export type BounceLayer = {
@@ -224,12 +231,12 @@ export async function bounceSessionToWav(opts: {
               }
               const cleaned = closePhraseGapsMono(mono, buf.sampleRate, { amount: pc });
               const monoBuf = decodeCtx.createBuffer(1, cleaned.length, buf.sampleRate);
-              monoBuf.copyToChannel(cleaned, 0);
+              monoBuf.copyToChannel(toArrayBufferF32(cleaned), 0);
               buf = monoBuf;
             } else {
               const out = decodeCtx.createBuffer(2, left.length, buf.sampleRate);
-              out.copyToChannel(left, 0);
-              out.copyToChannel(right, 1);
+              out.copyToChannel(toArrayBufferF32(left), 0);
+              out.copyToChannel(toArrayBufferF32(right), 1);
               buf = out;
             }
           }
