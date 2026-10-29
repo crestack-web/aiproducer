@@ -40,6 +40,12 @@ export type BounceLayer = {
   label?: string;
   /** Same-origin fallback when signed URL fails (CORS / expired) */
   fallbackUrl?: string | null;
+  /**
+   * Track id used for automation / FX lane lookup.
+   * Split clips use a unique `id` for scheduling but inherit the parent task id here
+   * so automation does not miss the clip.
+   */
+  automationTrackId?: string;
   /** Full track FX baseline (gain, pan, reverb, telephone, …) */
   fx?: BounceFx;
   muted?: boolean;
@@ -331,14 +337,15 @@ export async function bounceSessionToWavDetailed(opts: {
     const layerEndMs = startMs + buffer.duration * 1000;
     const endMs = Math.min(durationMs, layerEndMs + tailPadMs(baseFx));
 
-    const times = automationBreakpoints(autoDoc, layer.id, startMs, endMs);
+    const autoTrackId = layer.automationTrackId || layer.id;
+    const times = automationBreakpoints(autoDoc, autoTrackId, startMs, endMs);
     const baseParams = trackFxToLiveParams(
       baseFx as LiveFxParams as unknown as Record<string, number>
     );
     graph.apply(baseParams, true, 0);
 
     for (const tMs of times) {
-      const auto = sampleTrackAutomation(autoDoc, layer.id, tMs);
+      const auto = sampleTrackAutomation(autoDoc, autoTrackId, tMs);
       const merged = mergeFx(baseFx, auto);
       const params = trackFxToLiveParams(merged as unknown as Record<string, number>);
       graph.apply(params, true, tMs / 1000);
@@ -386,16 +393,28 @@ export async function bounceSessionToWavDetailed(opts: {
     outR[s] = (right[s] || 0) * g;
   }
 
-  // Sanity: near-silent export usually means something went wrong
-  if (peak < 1e-5) {
+  // Near-silent mix: only fail when decoded layers had audible content but the mix is empty
+  // (bug). Quiet/intentional silence and soft vocals must still export.
+  let sourcePeak = 0;
+  for (const d of decoded) {
+    const ch = d.buffer.getChannelData(0);
+    for (let i = 0; i < ch.length; i += Math.max(1, Math.floor(ch.length / 4000))) {
+      sourcePeak = Math.max(sourcePeak, Math.abs(ch[i] || 0));
+    }
+  }
+  if (sourcePeak > 0.02 && peak < 1e-5) {
     throw new Error(
-      "Export produced near-silent audio. Check that tracks are not muted and audio loaded correctly."
+      "Export produced silence even though tracks contain audio. Check mute/solo and try again."
     );
+  }
+  if (peak < 1e-5) {
+    notes.push("Export is very quiet (possible intentional silence or soft take).");
   }
 
   opts.onProgress?.(1);
   const blob = encodeWavStereo(outL, outR, sr);
-  if (blob.size < 1000) {
+  // WAV header alone is 44 bytes; allow short intentional silence clips
+  if (blob.size < 44 + 64) {
     throw new Error("Export file is invalid (too small). Please try again.");
   }
 
@@ -406,6 +425,16 @@ export async function bounceSessionToWavDetailed(opts: {
     durationMs,
     sampleRate: sr,
   };
+}
+
+/** @internal exported for regression tests */
+export function __testTailPadMs(fx: BounceFx | undefined): number {
+  return tailPadMs(fx);
+}
+
+/** @internal */
+export function __testResolveAutoTrackId(layer: BounceLayer): string {
+  return layer.automationTrackId || layer.id;
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

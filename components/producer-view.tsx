@@ -3816,6 +3816,7 @@ export function ProducerView({
             gate: Number(fx.gate) || 0,
             noiseReduce: Number(fx.noiseReduce) || 0,
             deEss: Number(fx.deEss) || 0,
+            phraseCleanup: Number(fx.phraseCleanup) || 0,
           });
         }
       } catch {
@@ -4584,6 +4585,7 @@ export function ProducerView({
           startMs: 0,
           audioUrl: beatUrl,
           label: "Beat",
+          automationTrackId: "beat",
           fallbackUrl: projectId
             ? `/api/projects/${projectId}/beat/download`
             : null,
@@ -4626,6 +4628,7 @@ export function ProducerView({
               startMs: c.startMs || 0,
               audioUrl: "",
               label: `${l.label || l.id}${clips.length > 1 ? ` (${c.id.slice(0, 6)})` : ""}`,
+              automationTrackId: l.id,
               fallbackUrl: null,
               fx: { ...(fx as unknown as Record<string, number>) },
               muted: trackMuted,
@@ -4639,6 +4642,8 @@ export function ProducerView({
             startMs: c.startMs || 0,
             audioUrl: primary,
             label: `${l.label || l.id}${clips.length > 1 ? ` clip` : ""}`,
+            // Parent task id so split clips still receive track automation / FX rides
+            automationTrackId: l.id,
             fallbackUrl: recProxy || taskProxy,
             fx: { ...(fx as unknown as Record<string, number>) },
             muted: trackMuted,

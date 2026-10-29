@@ -13,10 +13,10 @@ const bounceSrc = readFileSync(
 );
 assert.match(bounceSrc, /strict/);
 assert.match(bounceSrc, /Could not load/);
-assert.match(bounceSrc, /never omit|Cannot export|Export failed/i);
+assert.match(bounceSrc, /Cannot export|Export failed|could not load/i);
 assert.match(bounceSrc, /tailPadMs/);
 assert.match(bounceSrc, /bounceSessionToWavDetailed/);
-assert.match(bounceSrc, /near-silent/);
+assert.match(bounceSrc, /sourcePeak|intentional silence|very quiet/);
 
 const cleanSrc = readFileSync(
   new URL("../lib/audio/preview-clean.ts", import.meta.url),

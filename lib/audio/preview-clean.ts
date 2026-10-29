@@ -1,3 +1,4 @@
+import { closePhraseGapsMono } from "@/lib/audio/phrase-cleanup";
 /**
  * Client-safe vocal cleanup for Console preview + Export.
  * Closer parity with Produce: spectral denoise, de-click, de-ess, HPF, gate.
@@ -343,13 +344,17 @@ export function processPreviewBuffer(
     noiseReduce?: number;
     deEss?: number;
     deClick?: number;
+    phraseCleanup?: number;
   }
 ): AudioBuffer {
   const gate = opts.gate || 0;
   const nr = opts.noiseReduce || 0;
   const de = opts.deEss || 0;
   const dc = opts.deClick || 0;
-  if (gate < 0.02 && nr < 0.02 && de < 0.04 && dc < 0.05) return source;
+  const pc = opts.phraseCleanup || 0;
+  if (gate < 0.02 && nr < 0.02 && de < 0.04 && dc < 0.05 && pc < 0.02) {
+    return source;
+  }
 
   const out = ctx.createBuffer(
     source.numberOfChannels,
@@ -367,6 +372,21 @@ export function processPreviewBuffer(
     const ab = new Float32Array(data.length);
     ab.set(data);
     out.copyToChannel(ab as unknown as Float32Array<ArrayBuffer>, c);
+  }
+  // Phrase cleanup (same stage as Export) — applied on mono mix of channels
+  if (pc > 0.02) {
+    const mono = new Float32Array(out.length);
+    const ch0 = out.getChannelData(0);
+    const ch1 = out.numberOfChannels > 1 ? out.getChannelData(1) : ch0;
+    for (let i = 0; i < mono.length; i++) {
+      mono[i] = 0.5 * ((ch0[i] || 0) + (ch1[i] || 0));
+    }
+    const cleaned = closePhraseGapsMono(mono, out.sampleRate, { amount: pc });
+    const monoBuf = ctx.createBuffer(1, cleaned.length, out.sampleRate);
+    const ab = new Float32Array(cleaned.length);
+    ab.set(cleaned);
+    monoBuf.copyToChannel(ab as unknown as Float32Array<ArrayBuffer>, 0);
+    return monoBuf;
   }
   return out;
 }
