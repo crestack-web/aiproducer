@@ -91,7 +91,7 @@ export type LiveFxHandles = {
   output: AudioNode;
   gain: GainNode;
   pan: StereoPannerNode;
-  apply: (fx: LiveFxParams, audible: boolean) => void;
+  apply: (fx: LiveFxParams, audible: boolean, atTime?: number) => void;
   dispose: () => void;
 };
 
@@ -327,11 +327,11 @@ export function createLiveTrackFxGraph(
   ];
 
   /** Set AudioParam to an exact value without continuous re-ramp fighting. */
-  function setParam(p: AudioParam, value: number, now: number, smooth = false) {
+  function setParam(p: AudioParam, value: number, now: number, smooth = false, allowCancel = true) {
     const v = Number.isFinite(value) ? value : 0;
     try {
-      p.cancelScheduledValues(now);
-      if (smooth) {
+      if (allowCancel) p.cancelScheduledValues(now);
+      if (smooth && allowCancel) {
         p.setTargetAtTime(v, now, 0.02);
       } else {
         p.setValueAtTime(v, now);
@@ -345,8 +345,11 @@ export function createLiveTrackFxGraph(
     }
   }
 
-  function apply(fx: LiveFxParams, audible: boolean) {
-    const now = ctx.currentTime;
+  function apply(fx: LiveFxParams, audible: boolean, atTime?: number) {
+    const now = typeof atTime === "number" && Number.isFinite(atTime) ? atTime : ctx.currentTime;
+    const offlineSchedule = typeof atTime === "number" && Number.isFinite(atTime);
+    const setP = (p: AudioParam, value: number, t: number, smooth = false) =>
+      setParam(p, value, t, smooth, !offlineSchedule);
 
     // Sanitize
     const safe = (v: number, d = 0) =>
@@ -356,24 +359,24 @@ export function createLiveTrackFxGraph(
       safe(fx.highPassHz) > 20 ? clamp(safe(fx.highPassHz), 20, 400) : 20;
     const tel = clamp(safe(fx.telephone), 0, 1);
     if (tel > 0.02) {
-      setParam(hpf.frequency, 400 + tel * 450, now);
-      setParam(lpf.frequency, 2500 + (1 - tel) * 3500, now);
+      setP(hpf.frequency, 400 + tel * 450, now);
+      setP(lpf.frequency, 2500 + (1 - tel) * 3500, now);
     } else {
-      setParam(hpf.frequency, hp, now);
+      setP(hpf.frequency, hp, now);
       const lp =
         safe(fx.lowPassHz) > 500
           ? clamp(safe(fx.lowPassHz), 800, 18000)
           : 18000;
-      setParam(lpf.frequency, lp, now);
+      setP(lpf.frequency, lp, now);
     }
 
-    setParam(low.gain, clamp(safe(fx.eqLowDb), -12, 12), now);
-    setParam(mid.gain, clamp(safe(fx.eqMidDb), -12, 12), now);
-    setParam(high.gain, clamp(safe(fx.eqHighDb), -12, 12), now);
-    setParam(airF.gain, clamp(safe(fx.air) * 5.5, 0, 6), now);
+    setP(low.gain, clamp(safe(fx.eqLowDb), -12, 12), now);
+    setP(mid.gain, clamp(safe(fx.eqMidDb), -12, 12), now);
+    setP(high.gain, clamp(safe(fx.eqHighDb), -12, 12), now);
+    setP(airF.gain, clamp(safe(fx.air) * 5.5, 0, 6), now);
 
     // Static HF cut — not dynamic de-ess
-    setParam(deess.gain, -14 * clamp(safe(fx.deEss), 0, 1), now);
+    setP(deess.gain, -14 * clamp(safe(fx.deEss), 0, 1), now);
 
     const satAmt = clamp(safe(fx.saturation), 0, 1);
     try {
@@ -382,31 +385,31 @@ export function createLiveTrackFxGraph(
       /* */
     }
     // Makeup compensation so sat doesn't explode level
-    setParam(satDrive.gain, 1 + satAmt * 0.8, now);
-    setParam(satPost.gain, 1 / (1 + satAmt * 0.55), now);
+    setP(satDrive.gain, 1 + satAmt * 0.8, now);
+    setP(satPost.gain, 1 / (1 + satAmt * 0.55), now);
 
     const cAmt = clamp(safe(fx.compress), 0, 1);
     if (cAmt > 0.02) {
-      setParam(comp.threshold, -12 - cAmt * 28, now);
-      setParam(comp.ratio, 1 + cAmt * 10, now);
-      setParam(comp.knee, 10, now);
+      setP(comp.threshold, -12 - cAmt * 28, now);
+      setP(comp.ratio, 1 + cAmt * 10, now);
+      setP(comp.knee, 10, now);
     } else {
-      setParam(comp.threshold, 0, now);
-      setParam(comp.ratio, 1, now);
-      setParam(comp.knee, 0, now);
+      setP(comp.threshold, 0, now);
+      setP(comp.ratio, 1, now);
+      setP(comp.knee, 0, now);
     }
 
     const del = clamp(safe(fx.delay), 0, 1);
-    setParam(delayGain.gain, del * 0.42, now);
+    setP(delayGain.gain, del * 0.42, now);
     // Kill feedback hard when delay is off so tails don't stick across plays
-    setParam(delayFb.gain, del > 0.02 ? 0.2 : 0, now);
-    setParam(slapGain.gain, clamp(safe(fx.slapDelay), 0, 1) * 0.32, now);
-    setParam(revGain.gain, clamp(safe(fx.reverb), 0, 1) * 0.32, now);
-    setParam(plateGain.gain, clamp(safe(fx.plateReverb), 0, 1) * 0.38, now);
+    setP(delayFb.gain, del > 0.02 ? 0.2 : 0, now);
+    setP(slapGain.gain, clamp(safe(fx.slapDelay), 0, 1) * 0.32, now);
+    setP(revGain.gain, clamp(safe(fx.reverb), 0, 1) * 0.32, now);
+    setP(plateGain.gain, clamp(safe(fx.plateReverb), 0, 1) * 0.38, now);
 
     const chAmt = Math.max(safe(fx.chorus), safe(fx.doubler) * 0.75);
-    setParam(chGain.gain, clamp(chAmt, 0, 1) * 0.32, now);
-    setParam(
+    setP(chGain.gain, clamp(chAmt, 0, 1) * 0.32, now);
+    setP(
       chLfo.frequency,
       safe(fx.doubler) > safe(fx.chorus) ? 0.32 : 0.85,
       now
@@ -414,19 +417,19 @@ export function createLiveTrackFxGraph(
 
     // Soft limiter engagement
     const lim = clamp(safe(fx.limiter), 0, 1);
-    setParam(limComp.threshold, lim > 0.05 ? -2 - lim * 8 : 0, now);
+    setP(limComp.threshold, lim > 0.05 ? -2 - lim * 8 : 0, now);
 
     // Width proxy — neutral at 0 (no phantom gain)
     const w = clamp(safe(fx.width), 0, 1);
-    setParam(widthL.gain, 1 + w * 0.12, now);
-    setParam(widthR.gain, 1 + w * 0.12, now);
+    setP(widthL.gain, 1 + w * 0.12, now);
+    setP(widthR.gain, 1 + w * 0.12, now);
 
     const gLin = audible
       ? Math.pow(10, clamp(safe(fx.gainDb), -12, 12) / 20)
       : 0;
     // Safety ceiling on output gain — smooth only mute/unmute
-    setParam(gain.gain, Math.min(gLin, 2.5), now, true);
-    setParam(pan.pan, clamp(safe(fx.pan), -1, 1), now, true);
+    setP(gain.gain, Math.min(gLin, 2.5), now, true);
+    setP(pan.pan, clamp(safe(fx.pan), -1, 1), now, true);
 
     // gate ignored in live — produce_only
     void fx.gate;

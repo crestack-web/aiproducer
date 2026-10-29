@@ -4483,7 +4483,7 @@ export function ProducerView({
   async function exportSessionBounce() {
     if (exportBusy) return;
     setExportBusy(true);
-    setEditMsg("Exporting session…");
+    setEditMsg("Exporting session (timeline + FX)…");
     try {
       const bounceLayers = layers
         .filter((l) => l.audioUrl)
@@ -4494,8 +4494,7 @@ export function ProducerView({
             kind: (l.kind === "beat" ? "beat" : "vocal") as "beat" | "vocal",
             startMs: l.startMs || 0,
             audioUrl: l.audioUrl as string,
-            gainDb: fx.gainDb || 0,
-            pan: fx.pan || 0,
+            fx: { ...(fx as unknown as Record<string, number>) },
             muted: !!(l as { muted?: boolean }).muted,
             phraseCleanup: fx.phraseCleanup || 0,
           };
@@ -4508,8 +4507,7 @@ export function ProducerView({
           kind: "beat",
           startMs: 0,
           audioUrl: beatUrl,
-          gainDb: fx.gainDb || 0,
-          pan: fx.pan || 0,
+          fx: { ...(fx as unknown as Record<string, number>) },
           muted: false,
           phraseCleanup: 0,
         });
@@ -4522,13 +4520,14 @@ export function ProducerView({
       const blob = await bounceSessionToWav({
         layers: bounceLayers,
         durationMs: Math.max(totalMs || 0, durationMs || 0, 5000),
+        automation: automationDocRef.current,
         onProgress: (p) => {
           if (p < 1) setEditMsg(`Exporting session… ${Math.round(p * 100)}%`);
         },
       });
       const name = `${(titleDraft || projectTitle || "session").replace(/[^\w\-]+/g, "_")}-export.wav`;
       downloadBlob(blob, name);
-      setEditMsg("Session exported.");
+      setEditMsg("Session exported (edit + effects). Use Produce for AP mix/master.");
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Export failed");
     } finally {
@@ -5257,7 +5256,7 @@ export function ProducerView({
             type="button"
             onClick={() => void exportSessionBounce()}
             disabled={exportBusy || produceUi === "producing" || produceUi === "starting"}
-            title="Export the current session (timeline + effects) as WAV — traditional DAW bounce"
+            title="Bounce the current edit with track FX and automation (WAV). Does not run Produce."
             style={{
               flexShrink: 0,
               height: 36,

@@ -1,18 +1,30 @@
 /**
- * Client-side session bounce — offline mix of timeline layers + track FX.
+ * Client-side session bounce — offline mix of timeline layers + track FX + automation.
  * Traditional DAW export of the current edit (not the AP Produce job).
  */
 "use client";
 
 import { closePhraseGapsMono } from "@/lib/audio/phrase-cleanup";
+import {
+  createLiveTrackFxGraph,
+  trackFxToLiveParams,
+  type LiveFxParams,
+} from "@/lib/audio/live-track-fx";
+import {
+  sampleTrackAutomation,
+  emptyAutomation,
+  type FxAutomationDoc,
+} from "@/lib/ap-engine/fx-automation";
+
+export type BounceFx = Record<string, number>;
 
 export type BounceLayer = {
   id: string;
   kind: "beat" | "vocal";
   startMs: number;
   audioUrl: string;
-  gainDb?: number;
-  pan?: number;
+  /** Full track FX baseline (gain, pan, reverb, telephone, …) */
+  fx?: BounceFx;
   muted?: boolean;
   phraseCleanup?: number;
 };
@@ -50,98 +62,165 @@ function encodeWavStereo(left: Float32Array, right: Float32Array, sampleRate: nu
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-async function decodeUrl(ctx: AudioContext | OfflineAudioContext, url: string): Promise<AudioBuffer> {
+async function decodeUrl(
+  ctx: BaseAudioContext,
+  url: string
+): Promise<AudioBuffer> {
   const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to load audio for export");
   const ab = await res.arrayBuffer();
   return await ctx.decodeAudioData(ab.slice(0));
 }
 
+function mergeFx(
+  base: BounceFx,
+  auto: Partial<Record<string, number>>
+): BounceFx {
+  return { ...base, ...auto };
+}
+
+function automationBreakpoints(
+  doc: FxAutomationDoc,
+  trackId: string,
+  startMs: number,
+  endMs: number
+): number[] {
+  const times = new Set<number>([startMs, endMs]);
+  for (const lane of doc.lanes) {
+    if (lane.trackId !== trackId || lane.enabled === false) continue;
+    for (const pt of lane.points) {
+      if (pt.timeMs >= startMs - 1 && pt.timeMs <= endMs + 1) {
+        times.add(Math.max(startMs, Math.min(endMs, pt.timeMs)));
+      }
+    }
+  }
+  // Dense sample for smooth curves (~50ms)
+  for (let t = startMs; t <= endMs; t += 50) times.add(t);
+  return Array.from(times).sort((a, b) => a - b);
+}
+
 /**
- * Bounce layers to a stereo WAV blob.
- * Applies phrase cleanup when set; gain/pan from track settings.
+ * Bounce layers to a stereo WAV blob using the same FX graph as Console live
+ * playback, with automation scheduled offline over the song timeline.
  */
 export async function bounceSessionToWav(opts: {
   layers: BounceLayer[];
   durationMs: number;
   sampleRate?: number;
+  automation?: FxAutomationDoc;
   onProgress?: (p: number) => void;
 }): Promise<Blob> {
   const sr = opts.sampleRate || 44100;
   const totalSamples = Math.max(sr, Math.ceil((opts.durationMs / 1000) * sr));
-  const left = new Float32Array(totalSamples);
-  const right = new Float32Array(totalSamples);
-  const actx = new AudioContext({ sampleRate: sr });
+  const durationSec = totalSamples / sr;
+  const autoDoc = opts.automation || emptyAutomation();
+  const layers = opts.layers.filter((l) => l.audioUrl && !l.muted);
+
+  if (!layers.length) {
+    throw new Error("Nothing to export — add a beat or vocal first.");
+  }
+
+  // Decode with a temporary Online context (Offline cannot always decode in all browsers)
+  const decodeCtx = new AudioContext({ sampleRate: sr });
+  const decoded: { layer: BounceLayer; buffer: AudioBuffer }[] = [];
   try {
-    const layers = opts.layers.filter((l) => l.audioUrl && !l.muted);
     let i = 0;
     for (const layer of layers) {
-      opts.onProgress?.(i / Math.max(1, layers.length));
-      let buf: AudioBuffer;
+      opts.onProgress?.(0.05 + (i / Math.max(1, layers.length)) * 0.25);
       try {
-        buf = await decodeUrl(actx, layer.audioUrl);
+        let buf = await decodeUrl(decodeCtx, layer.audioUrl);
+        if ((layer.phraseCleanup || 0) > 0.02 && layer.kind === "vocal") {
+          const ch0 = buf.getChannelData(0);
+          const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
+          const mono = new Float32Array(ch0.length);
+          for (let s = 0; s < ch0.length; s++) {
+            mono[s] = 0.5 * ((ch0[s] || 0) + (ch1[s] || 0));
+          }
+          const cleaned = closePhraseGapsMono(mono, buf.sampleRate, {
+            amount: layer.phraseCleanup || 0,
+          });
+          const monoBuf = decodeCtx.createBuffer(1, cleaned.length, buf.sampleRate);
+          monoBuf.copyToChannel(cleaned, 0);
+          buf = monoBuf;
+        }
+        decoded.push({ layer, buffer: buf });
       } catch {
-        i++;
-        continue;
-      }
-      const gain = Math.pow(10, ((layer.gainDb || 0) / 20));
-      const pan = Math.max(-1, Math.min(1, layer.pan || 0));
-      const gL = gain * Math.min(1, 1 - pan);
-      const gR = gain * Math.min(1, 1 + pan);
-      const start = Math.floor((layer.startMs / 1000) * sr);
-
-      let ch0 = buf.getChannelData(0);
-      let ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
-      if ((layer.phraseCleanup || 0) > 0.02 && layer.kind === "vocal") {
-        const mono = new Float32Array(ch0.length);
-        for (let s = 0; s < ch0.length; s++) {
-          mono[s] = 0.5 * ((ch0[s] || 0) + (ch1[s] || 0));
-        }
-        const cleaned = closePhraseGapsMono(mono, buf.sampleRate, {
-          amount: layer.phraseCleanup || 0,
-        });
-        // Resample cleaned to mix rate if needed (simple if rates match)
-        if (buf.sampleRate === sr) {
-          ch0 = cleaned;
-          ch1 = cleaned;
-        } else {
-          ch0 = cleaned;
-          ch1 = cleaned;
-        }
-      }
-
-      const ratio = sr / buf.sampleRate;
-      const n = Math.floor(ch0.length * ratio);
-      for (let s = 0; s < n; s++) {
-        const srcIdx = Math.min(ch0.length - 1, Math.floor(s / ratio));
-        const di = start + s;
-        if (di < 0 || di >= totalSamples) continue;
-        left[di] += (ch0[srcIdx] || 0) * gL;
-        right[di] += (ch1[srcIdx] || 0) * gR;
+        /* skip failed layer */
       }
       i++;
     }
-    // Soft limit
-    let peak = 1e-6;
-    for (let s = 0; s < totalSamples; s++) {
-      peak = Math.max(peak, Math.abs(left[s]), Math.abs(right[s]));
-    }
-    if (peak > 0.99) {
-      const g = 0.99 / peak;
-      for (let s = 0; s < totalSamples; s++) {
-        left[s] *= g;
-        right[s] *= g;
-      }
-    }
-    opts.onProgress?.(1);
-    return encodeWavStereo(left, right, sr);
   } finally {
     try {
-      await actx.close();
+      await decodeCtx.close();
     } catch {
       /* */
     }
   }
+
+  if (!decoded.length) {
+    throw new Error("Could not load any audio for export.");
+  }
+
+  opts.onProgress?.(0.35);
+  const offline = new OfflineAudioContext(2, totalSamples, sr);
+
+  for (let li = 0; li < decoded.length; li++) {
+    const { layer, buffer } = decoded[li];
+    opts.onProgress?.(0.35 + (li / decoded.length) * 0.4);
+
+    const src = offline.createBufferSource();
+    src.buffer = buffer;
+    const graph = createLiveTrackFxGraph(offline);
+    src.connect(graph.input);
+    graph.output.connect(offline.destination);
+
+    const baseFx = { ...(layer.fx || {}) };
+    const startMs = Math.max(0, layer.startMs || 0);
+    const startSec = startMs / 1000;
+    const layerEndMs = startMs + (buffer.duration * 1000);
+    const endMs = Math.min(opts.durationMs, layerEndMs);
+
+    const times = automationBreakpoints(autoDoc, layer.id, startMs, endMs);
+    // Apply at t=0 (graph default) then at each breakpoint in song time
+    const baseParams = trackFxToLiveParams(baseFx as LiveFxParams as unknown as Record<string, number>);
+    graph.apply(baseParams, true, 0);
+
+    for (const tMs of times) {
+      const auto = sampleTrackAutomation(autoDoc, layer.id, tMs);
+      const merged = mergeFx(baseFx, auto);
+      const params = trackFxToLiveParams(merged as unknown as Record<string, number>);
+      // Schedule at absolute offline time = song position
+      graph.apply(params, true, tMs / 1000);
+    }
+
+    try {
+      src.start(startSec);
+    } catch {
+      /* */
+    }
+  }
+
+  opts.onProgress?.(0.8);
+  const rendered = await offline.startRendering();
+  const left = rendered.getChannelData(0);
+  const right =
+    rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : left;
+
+  // Soft limit
+  const outL = new Float32Array(left.length);
+  const outR = new Float32Array(right.length);
+  let peak = 1e-6;
+  for (let s = 0; s < left.length; s++) {
+    peak = Math.max(peak, Math.abs(left[s] || 0), Math.abs(right[s] || 0));
+  }
+  const g = peak > 0.99 ? 0.99 / peak : 1;
+  for (let s = 0; s < left.length; s++) {
+    outL[s] = (left[s] || 0) * g;
+    outR[s] = (right[s] || 0) * g;
+  }
+
+  opts.onProgress?.(1);
+  return encodeWavStereo(outL, outR, sr);
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
