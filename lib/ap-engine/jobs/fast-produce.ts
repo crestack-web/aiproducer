@@ -37,6 +37,11 @@ import {
 } from "@/lib/ap-engine/master/loudness";
 import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
 import { closePhraseGapsStereo } from "@/lib/audio/phrase-cleanup";
+import {
+  applyConsoleFxWithAutomation,
+  applyConsoleTrackFx as applyConsoleTrackFxShared,
+  type ConsoleTrackFx,
+} from "@/lib/audio/console-fx-offline";
 import { resolveMasterContext } from "@/lib/ap-engine/master/context";
 import { resolveVibeDeltas, applyVibeSectionRide } from "@/lib/ap-engine/vibe";
 import type { MasterDecision } from "@/lib/ap-engine/types";
@@ -213,265 +218,9 @@ function applySpringShimmer(
 /** Apply Console Track FX on top of role processing (matches producer-view intent). */
 
 /** Offline automation: re-apply key params in ~50ms blocks along the timeline. */
-function applyFxAutomationToPcm(
-  pcm: PcmStereo,
-  doc: FxAutomationDoc,
-  trackId: string,
-  layerStartMs: number,
-  baseFx: FastTrackFx | null
-): void {
-  const sr = pcm.sampleRate;
-  const n = pcm.left.length;
-  const block = Math.max(64, Math.floor(sr * 0.05));
-  for (let i = 0; i < n; i += block) {
-    const timeMs = layerStartMs + (i / sr) * 1000;
-    const overlay = sampleTrackAutomation(doc, trackId, timeMs);
-    if (!Object.keys(overlay).length) continue;
-    const end = Math.min(n, i + block);
-    // Relative gain vs base gainDb
-    const baseG = Number(baseFx?.gainDb) || 0;
-    if (overlay.gainDb !== undefined) {
-      const deltaDb = overlay.gainDb - baseG;
-      const g = Math.pow(10, deltaDb / 20);
-      for (let j = i; j < end; j++) {
-        pcm.left[j] *= g;
-        pcm.right[j] *= g;
-      }
-    }
-    // Pan as L/R balance for this block
-    if (overlay.pan !== undefined) {
-      const pan = Math.max(-1, Math.min(1, overlay.pan));
-      const lG = pan <= 0 ? 1 : 1 - pan;
-      const rG = pan >= 0 ? 1 : 1 + pan;
-      for (let j = i; j < end; j++) {
-        pcm.left[j] *= lG;
-        pcm.right[j] *= rG;
-      }
-    }
-    // Scale wet FX intensity vs baseline (section automation like telephone on chorus)
-    const wetKeys = [
-      "reverb",
-      "delay",
-      "plateReverb",
-      "telephone",
-      "chorus",
-      "doubler",
-      "slapDelay",
-      "compress",
-      "saturation",
-    ] as const;
-    for (const k of wetKeys) {
-      if (overlay[k] === undefined) continue;
-      const base = Number((baseFx as Record<string, number> | null)?.[k]) || 0;
-      const target = Number(overlay[k]) || 0;
-      // When automation raises a send above baseline, boost level slightly as proxy
-      // (full re-EQ per block is too heavy; gain proxy keeps section moves audible)
-      if (target > base + 0.05) {
-        const lift = 1 + Math.min(0.35, (target - base) * 0.4);
-        for (let j = i; j < end; j++) {
-          pcm.left[j] *= lift;
-          pcm.right[j] *= lift;
-        }
-      } else if (base > target + 0.05) {
-        const cut = Math.max(0.65, 1 - (base - target) * 0.35);
-        for (let j = i; j < end; j++) {
-          pcm.left[j] *= cut;
-          pcm.right[j] *= cut;
-        }
-      }
-    }
-  }
-}
-
+/** @deprecated use applyConsoleFxWithAutomation — kept for any residual refs */
 function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined): void {
-  if (!fx) return;
-  const has =
-    (fx.gainDb && Math.abs(fx.gainDb) > 0.05) ||
-    (fx.eqLowDb && Math.abs(fx.eqLowDb) > 0.05) ||
-    (fx.eqMidDb && Math.abs(fx.eqMidDb) > 0.05) ||
-    (fx.eqHighDb && Math.abs(fx.eqHighDb) > 0.05) ||
-    (fx.compress && fx.compress > 0.02) ||
-    (fx.reverb && fx.reverb > 0.02) ||
-    (fx.delay && fx.delay > 0.02) ||
-    (fx.saturation && fx.saturation > 0.02) ||
-    (fx.pan && Math.abs(fx.pan) > 0.02) ||
-    (fx.width && fx.width > 0.02) ||
-    (fx.air && fx.air > 0.02) ||
-    (fx.rotorMix && fx.rotorMix > 0.02) ||
-    (fx.springMix && fx.springMix > 0.02) ||
-    (fx.deEss && fx.deEss > 0.02) ||
-    (fx.gate && fx.gate > 0.02) ||
-    (fx.noiseReduce && fx.noiseReduce > 0.02) ||
-    (fx.phraseCleanup && fx.phraseCleanup > 0.02) ||
-    (fx.voiceChanger && fx.voiceChanger > 0.02) ||
-    (fx.highPassHz && fx.highPassHz > 20) ||
-    (fx.chorus && fx.chorus > 0.02) ||
-    (fx.doubler && fx.doubler > 0.02) ||
-    (fx.plateReverb && fx.plateReverb > 0.02) ||
-    (fx.slapDelay && fx.slapDelay > 0.02) ||
-    (fx.telephone && fx.telephone > 0.02) ||
-    (fx.limiter && fx.limiter > 0.02);
-  if (!has) return;
-
-  const bands: { type: "lowshelf" | "peak" | "highshelf"; freq: number; gainDb: number; q: number }[] =
-    [];
-  if (fx.eqLowDb && Math.abs(fx.eqLowDb) > 0.05) {
-    bands.push({ type: "lowshelf", freq: 200, gainDb: Math.max(-12, Math.min(12, fx.eqLowDb)), q: 0.7 });
-  }
-  if (fx.eqMidDb && Math.abs(fx.eqMidDb) > 0.05) {
-    bands.push({ type: "peak", freq: 1200, gainDb: Math.max(-12, Math.min(12, fx.eqMidDb)), q: 0.9 });
-  }
-  if (fx.eqHighDb && Math.abs(fx.eqHighDb) > 0.05) {
-    bands.push({
-      type: "highshelf",
-      freq: 6000,
-      gainDb: Math.max(-12, Math.min(12, fx.eqHighDb)),
-      q: 0.7,
-    });
-  }
-  if (fx.air && fx.air > 0.02) {
-    bands.push({
-      type: "highshelf",
-      freq: 10000,
-      gainDb: Math.min(6, fx.air * 5.5),
-      q: 0.7,
-    });
-  }
-  if (bands.length) applyEqStereo(pcm, bands);
-
-  if (fx.highPassHz && fx.highPassHz > 20) {
-    highPassInPlace(pcm.left, pcm.sampleRate, Math.min(400, fx.highPassHz));
-    highPassInPlace(pcm.right, pcm.sampleRate, Math.min(400, fx.highPassHz));
-  }
-  if (fx.lowPassHz && fx.lowPassHz > 500) {
-    applyEqStereo(pcm, [
-      { type: "lowpass", freq: Math.min(16000, fx.lowPassHz), gainDb: 0, q: 0.7 },
-    ]);
-  }
-  if (fx.telephone && fx.telephone > 0.02) {
-    const a = Math.min(1, fx.telephone);
-    highPassInPlace(pcm.left, pcm.sampleRate, 400 + a * 400);
-    highPassInPlace(pcm.right, pcm.sampleRate, 400 + a * 400);
-    applyEqStereo(pcm, [{ type: "highshelf", freq: 2800, gainDb: -8 * a, q: 0.7 }]);
-  }
-  // Spectral denoise first (stationary traffic/room under quieter speech)
-  if (fx.noiseReduce && fx.noiseReduce > 0.02) {
-    spectralNoiseReduceInPlace(pcm.left, pcm.sampleRate, fx.noiseReduce);
-    spectralNoiseReduceInPlace(pcm.right, pcm.sampleRate, fx.noiseReduce);
-  }
-  if (fx.phraseCleanup && fx.phraseCleanup > 0.02) {
-    const cleaned = closePhraseGapsStereo(
-      pcm.left,
-      pcm.right,
-      pcm.sampleRate,
-      fx.phraseCleanup
-    );
-    const n = pcm.left.length;
-    pcm.left.fill(0);
-    pcm.right.fill(0);
-    pcm.left.set(cleaned.left.subarray(0, Math.min(n, cleaned.left.length)));
-    pcm.right.set(cleaned.right.subarray(0, Math.min(n, cleaned.right.length)));
-  }
-  if (fx.voiceChanger && fx.voiceChanger > 0.02) {
-    applyVoiceChangerStereo(pcm.left, pcm.right, pcm.sampleRate, {
-      mix: fx.voiceChanger,
-      pitchSemis: fx.voicePitchSemis ?? 0,
-      character: fx.voiceCharacter ?? 0,
-    });
-  }
-  if (fx.gate && fx.gate > 0.02) {
-    // Stronger residual floor drop as gate amount rises
-    const thr = -52 + fx.gate * 22;
-    const residual = Math.max(0.03, 0.18 - fx.gate * 0.12);
-    gateInPlace(pcm.left, pcm.sampleRate, thr, residual);
-    gateInPlace(pcm.right, pcm.sampleRate, thr, residual);
-  }
-  if (fx.deEss && fx.deEss > 0.02) {
-    deEssInPlace(pcm.left, pcm.sampleRate, fx.deEss);
-    deEssInPlace(pcm.right, pcm.sampleRate, fx.deEss);
-  }
-
-  if (fx.compress && fx.compress > 0.02) {
-    const amt = Math.max(0, Math.min(1, fx.compress));
-    compressStereo(pcm, {
-      thresholdDb: -18 - amt * 8,
-      ratio: 1.5 + amt * 3.5,
-      attackMs: 12,
-      releaseMs: 90,
-      makeupDb: amt * 2.5,
-    });
-  }
-
-  if (fx.saturation && fx.saturation > 0.02) {
-    const amt = Math.max(0, Math.min(1, fx.saturation)) * 0.35;
-    saturateInPlace(pcm.left, amt);
-    saturateInPlace(pcm.right, amt);
-  }
-
-  if (fx.rotorMix && fx.rotorMix > 0.02) {
-    applyRotorGlow(pcm, {
-      mix: fx.rotorMix,
-      speed: fx.rotorSpeed ?? 0.35,
-      depth: fx.rotorDepth ?? 0.45,
-      warmth: fx.rotorWarmth ?? 0.4,
-      fast: fx.rotorFast ?? 0,
-    });
-  }
-
-  if (fx.springMix && fx.springMix > 0.02) {
-    applySpringShimmer(pcm, {
-      mix: fx.springMix,
-      delay: fx.springDelay ?? 0.25,
-      tension: fx.springTension ?? 0.4,
-      damp: fx.springDamp ?? 0.35,
-      mod: fx.springMod ?? 0.2,
-    });
-  }
-
-  if (fx.reverb && fx.reverb > 0.02) {
-    addReverbStereo(pcm, Math.max(0, Math.min(0.55, fx.reverb * 0.4)));
-  }
-  if (fx.delay && fx.delay > 0.02) {
-    addDelayStereo(pcm, Math.max(0, Math.min(0.45, fx.delay * 0.35)));
-  }
-  if (fx.slapDelay && fx.slapDelay > 0.02) {
-    addDelayStereo(pcm, Math.max(0, Math.min(0.35, fx.slapDelay * 0.28)), 75);
-  }
-  if (fx.plateReverb && fx.plateReverb > 0.02) {
-    addReverbStereo(pcm, Math.max(0, Math.min(0.5, fx.plateReverb * 0.42)));
-  }
-  if (fx.chorus && fx.chorus > 0.02) {
-    applyRotorGlow(pcm, {
-      mix: fx.chorus * 0.55,
-      speed: 0.4,
-      depth: 0.35,
-      warmth: 0.25,
-      fast: 0,
-    });
-  }
-  if (fx.doubler && fx.doubler > 0.02) {
-    applyRotorGlow(pcm, {
-      mix: fx.doubler * 0.4,
-      speed: 0.15,
-      depth: 0.5,
-      warmth: 0.2,
-      fast: 0,
-    });
-    applyWidth(pcm, Math.min(0.7, 0.25 + fx.doubler * 0.4), 0);
-  }
-  if (fx.limiter && fx.limiter > 0.02) {
-    limitStereo(pcm, -1.2 - (1 - fx.limiter) * 2);
-  }
-
-  if (fx.gainDb && Math.abs(fx.gainDb) > 0.05) {
-    applyGainStereo(pcm, dbToGain(Math.max(-12, Math.min(12, fx.gainDb))));
-  }
-
-  const w = Math.max(0, Math.min(1, fx.width || 0));
-  const pan = Math.max(-1, Math.min(1, fx.pan || 0));
-  if (w > 0.02 || Math.abs(pan) > 0.02) {
-    applyWidth(pcm, Math.max(0.05, w * 0.85), pan);
-  }
+  applyConsoleTrackFxShared(pcm, fx as ConsoleTrackFx | null);
 }
 
 export type FastVocalLayer = {
@@ -1000,19 +749,14 @@ export async function runFastArrangement(opts: {
         spaceNotes = ["space_skipped"];
       }
 
-      // Console Track FX (user sliders) — after role chain so artist intent wins on top
-      applyConsoleTrackFx(pcm, v.trackFx || null);
-
-      // Timeline FX automation (gain + key sends sampled in blocks)
-      if (opts.fxAutomation && v.taskId) {
-        applyFxAutomationToPcm(
-          pcm,
-          opts.fxAutomation,
-          v.taskId,
-          Math.max(0, Number(v.startMs) || 0),
-          v.trackFx || null
-        );
-      }
+      // Console Track FX + automation — same artist intent as Export bounce
+      applyConsoleFxWithAutomation(
+        pcm,
+        (v.trackFx || null) as ConsoleTrackFx | null,
+        opts.fxAutomation || null,
+        v.taskId || "",
+        Math.max(0, Number(v.startMs) || 0)
+      );
 
       // Vibe + section dynamic riding (verse intimate / chorus open)
       let sectionRideNotes: string[] = [];
