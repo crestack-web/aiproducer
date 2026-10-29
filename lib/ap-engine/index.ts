@@ -86,6 +86,7 @@ export type TrackFxInput = {
   deEss?: number;
   gate?: number;
   noiseReduce?: number;
+  phraseCleanup?: number;
   voiceChanger?: number;
   voicePitchSemis?: number;
   voiceCharacter?: number;
