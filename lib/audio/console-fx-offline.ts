@@ -15,7 +15,7 @@ import {
   deEssInPlace,
   saturateInPlace,
 } from "@/lib/ap-engine/dsp";
-import type { PcmStereo } from "@/lib/ap-engine/types";
+import type { PcmStereo, EqBand } from "@/lib/ap-engine/types";
 import { closePhraseGapsStereo } from "@/lib/audio/phrase-cleanup";
 import {
   sampleTrackAutomation,
@@ -223,12 +223,7 @@ export function applyConsoleTrackFx(
     });
   }
 
-  const bands: {
-    type: "lowshelf" | "peak" | "highshelf" | "lowpass";
-    freq: number;
-    gainDb: number;
-    q: number;
-  }[] = [];
+  const bands: EqBand[] = [];
   if (Math.abs(n(fx, "eqLowDb")) > 0.05) {
     bands.push({
       type: "lowshelf",
@@ -261,7 +256,7 @@ export function applyConsoleTrackFx(
       q: 0.7,
     });
   }
-  if (bands.length) applyEqStereo(pcm, bands as Parameters<typeof applyEqStereo>[1]);
+  if (bands.length) applyEqStereo(pcm, bands);
 
   if (n(fx, "highPassHz") > 20) {
     highPassInPlace(pcm.left, pcm.sampleRate, Math.min(400, n(fx, "highPassHz")));
@@ -270,7 +265,7 @@ export function applyConsoleTrackFx(
   if (n(fx, "lowPassHz") > 500) {
     applyEqStereo(pcm, [
       { type: "lowpass", freq: Math.min(16000, n(fx, "lowPassHz")), gainDb: 0, q: 0.7 },
-    ] as Parameters<typeof applyEqStereo>[1]);
+    ]);
   }
   if (n(fx, "telephone") > 0.02) {
     const a = Math.min(1, n(fx, "telephone"));
@@ -278,7 +273,7 @@ export function applyConsoleTrackFx(
     highPassInPlace(pcm.right, pcm.sampleRate, 400 + a * 400);
     applyEqStereo(pcm, [
       { type: "highshelf", freq: 2800, gainDb: -8 * a, q: 0.7 },
-    ] as Parameters<typeof applyEqStereo>[1]);
+    ]);
   }
 
   if (n(fx, "deEss") > 0.02) {
@@ -291,6 +286,7 @@ export function applyConsoleTrackFx(
       ratio: 1 + n(fx, "compress") * 10,
       attackMs: 12,
       releaseMs: 80,
+      makeupDb: 0,
     });
   }
   if (n(fx, "saturation") > 0.02) {

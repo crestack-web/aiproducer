@@ -68,11 +68,6 @@ import {
   type ProductionDirection,
 } from "@/lib/ap-engine/direction";
 import {
-  VIBE_PROFILE_LIST,
-  vibeToDirectionPatch,
-  type VibeProfileKey,
-} from "@/lib/ap-engine/vibe";
-import {
   decodeAudioUrl,
   deleteRegionFromBuffer,
   keepRegionFromBuffer,
@@ -4323,23 +4318,6 @@ export function ProducerView({
     }
   }
 
-  async function selectVibe(key: VibeProfileKey) {
-    if (!projectId) return;
-    const patch = vibeToDirectionPatch(key);
-    const merged = mergeProductionDirection(productionDirection, patch);
-    setProductionDirection(merged);
-    setDirectionNote(patch.plainSummary || key);
-    try {
-      await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ production_direction: merged }),
-      });
-    } catch {
-      /* local state still applies on next produce if server lags */
-    }
-  }
-
   async function startConsoleProduce() {
 
     if (!projectId) return;
@@ -5176,53 +5154,6 @@ export function ProducerView({
         </div>
         )}
 
-        {projectId && !isNarrow ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              maxWidth: 220,
-              overflowX: "auto",
-              flexShrink: 0,
-              scrollbarWidth: "none",
-            }}
-            title="Song vibe — shapes how AP mixes and masters"
-          >
-            {VIBE_PROFILE_LIST.map((v) => {
-              const active =
-                (productionDirection?.vibe as string | undefined) === v.vibeKey;
-              return (
-                <button
-                  key={v.vibeKey}
-                  type="button"
-                  title={v.description}
-                  onClick={() => void selectVibe(v.vibeKey)}
-                  style={{
-                    flexShrink: 0,
-                    height: 28,
-                    padding: "0 10px",
-                    borderRadius: 999,
-                    border: active
-                      ? `1px solid ${brass}`
-                      : `1px solid ${border}`,
-                    background: active
-                      ? "rgba(240,188,128,0.18)"
-                      : "rgba(255,255,255,0.04)",
-                    color: active ? brass : mutedText,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {v.displayName.split(" ")[0]}
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
 
         {projectId && !isNarrow ? (
           <button
@@ -5740,35 +5671,6 @@ export function ProducerView({
               Library
             </a>
           </div>
-          {projectId ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {VIBE_PROFILE_LIST.map((v) => {
-                const active =
-                  (productionDirection?.vibe as string | undefined) === v.vibeKey;
-                return (
-                  <button
-                    key={v.vibeKey}
-                    type="button"
-                    onClick={() => void selectVibe(v.vibeKey)}
-                    style={{
-                      height: 28,
-                      padding: "0 10px",
-                      borderRadius: 999,
-                      border: active ? `1px solid ${brass}` : `1px solid ${border}`,
-                      background: active ? "rgba(240,188,128,0.18)" : "rgba(255,255,255,0.04)",
-                      color: active ? brass : mutedText,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {v.displayName.split(" ")[0]}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
         </div>
       )}
 
