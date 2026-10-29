@@ -41,6 +41,7 @@ export type TrackFxShape = {
   doubler: number;
   slapDelay: number;
   plateReverb: number;
+  phraseCleanup: number;
 };
 
 export const FX_DEFAULTS: TrackFxShape = {
@@ -79,6 +80,7 @@ export const FX_DEFAULTS: TrackFxShape = {
   doubler: 0,
   slapDelay: 0,
   plateReverb: 0,
+  phraseCleanup: 0,
 };
 
 export type FxPresetId =
@@ -345,6 +347,11 @@ export const EFFECT_PLUGIN_PRESETS: Record<string, EffectPluginPreset[]> = {
     { id: "gate_light", label: "Light", fx: { gate: 0.25 } },
     { id: "gate_tight", label: "Tight", fx: { gate: 0.55 } },
     { id: "gate_hard", label: "Hard", fx: { gate: 0.85 } },
+  ],
+  cleanup: [
+    { id: "clean_light", label: "Light", fx: { phraseCleanup: 0.35 } },
+    { id: "clean_tight", label: "Tight", fx: { phraseCleanup: 0.6 } },
+    { id: "clean_close", label: "Close gaps", fx: { phraseCleanup: 0.85 } },
   ],
   denoise: [
     { id: "nr_light", label: "Light", fx: { noiseReduce: 0.3 } },

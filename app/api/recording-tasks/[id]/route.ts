@@ -42,6 +42,7 @@ const TrackFxSchema = z.object({
   doubler: z.number().min(0).max(1).optional(),
   slapDelay: z.number().min(0).max(1).optional(),
   plateReverb: z.number().min(0).max(1).optional(),
+  phraseCleanup: z.number().min(0).max(1).optional(),
 }).passthrough();
 
 const ConsoleClipSchema = z.object({

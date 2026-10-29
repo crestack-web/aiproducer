@@ -323,6 +323,29 @@ export function parseConsoleCommands(opts: {
   }
 
 
+
+  // —— Phrase cleanup (close gaps) — static FX, not timeline automation ——
+  if (/\b(phrase\s*)?cleanup\b/.test(p) || /\bclose\s+gaps?\b/.test(p) || /\btighten\s+(the\s+)?phrases?\b/.test(p) || /\bremove\s+gaps?\b/.test(p)) {
+    let amount = 0.6;
+    if (/\b(a little|slight|subtle|light)\b/.test(p)) amount = 0.35;
+    else if (/\b(heavy|hard|full|max|tight)\b/.test(p)) amount = 0.85;
+    const fxTargets =
+      targets.length > 0
+        ? targets
+        : defaultTarget
+          ? [defaultTarget]
+          : opts.tracks.filter((x) => x.kind === "vocal");
+    for (const tr of fxTargets) {
+      if (tr.kind === "beat") continue;
+      actions.push({
+        type: "fx_set",
+        trackId: tr.id,
+        patch: { phraseCleanup: amount },
+        label: `Phrase cleanup on ${tr.label}`,
+      });
+    }
+  }
+
   // —— Choir / stack (uses selected vocal + same-section placement on server) ——
   if (
     /\b(make (this |it |the vocal )?(a |into )?(full )?choir|turn (this |it )?into (a )?choir|add (a )?choir|choir (stack|layers)|stack (this |it )?(as |into )?(a )?choir|build (a )?choir)\b/.test(
@@ -1048,6 +1071,7 @@ export const AP_SUGGESTIONS = [
   "Pan harmony left",
   "More reverb on lead",
   "Add telephone to the chorus",
+  "Phrase cleanup on lead",
   "Plate on the verse",
   "Go to chorus",
 ] as const;

@@ -57,6 +57,7 @@ import {
   type AutomationPoint,
 } from "@/lib/ap-engine/fx-automation";
 import { forceDownloadFromApi } from "@/lib/download-audio";
+import { bounceSessionToWav, downloadBlob } from "@/lib/client/session-bounce";
 import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
@@ -132,6 +133,8 @@ export type TrackFx = {
   doubler: number; // 0–1 tight double feel
   slapDelay: number; // 0–1 short slap
   plateReverb: number; // 0–1 denser plate-style send
+  /** Close gaps between phrases 0–1 (Produce + Export bounce) */
+  phraseCleanup: number;
 };
 
 export const DEFAULT_TRACK_FX: TrackFx = {
@@ -170,6 +173,7 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   doubler: 0,
   slapDelay: 0,
   plateReverb: 0,
+  phraseCleanup: 0,
 };
 
 /** Rebuild plugin rack chips from non-zero TrackFx values (after reload / presets). */
@@ -180,6 +184,7 @@ export function rackFromFx(fx: TrackFx): string[] {
   if (n(fx.deEss) > 0.02) out.push("deess");
   if (n(fx.gate) > 0.02) out.push("gate");
   if (n(fx.noiseReduce) > 0.02) out.push("denoise");
+  if (n(fx.phraseCleanup) > 0.02) out.push("cleanup");
   if (n(fx.voiceChanger) > 0.02) out.push("voice");
   if (n(fx.limiter) > 0.02) out.push("limiter");
   if (n(fx.saturation) > 0.02) out.push("sat");
@@ -1018,6 +1023,7 @@ export function ProducerView({
   const [masterJobId, setMasterJobId] = useState<string | null>(null);
   const [produceError, setProduceError] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const producePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const produceStartedAtRef = useRef(0);
@@ -4472,6 +4478,64 @@ export function ProducerView({
     setProduceError(null);
   }
 
+
+  /** Traditional DAW export — bounce timeline + FX (phrase cleanup) without Produce */
+  async function exportSessionBounce() {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setEditMsg("Exporting session…");
+    try {
+      const bounceLayers = layers
+        .filter((l) => l.audioUrl)
+        .map((l) => {
+          const fx = fxById[l.id] || DEFAULT_TRACK_FX;
+          return {
+            id: l.id,
+            kind: (l.kind === "beat" ? "beat" : "vocal") as "beat" | "vocal",
+            startMs: l.startMs || 0,
+            audioUrl: l.audioUrl as string,
+            gainDb: fx.gainDb || 0,
+            pan: fx.pan || 0,
+            muted: !!(l as { muted?: boolean }).muted,
+            phraseCleanup: fx.phraseCleanup || 0,
+          };
+        });
+      // Include beat track if present on project
+      if (beatUrl && !bounceLayers.some((x) => x.kind === "beat")) {
+        const fx = fxById["beat"] || DEFAULT_TRACK_FX;
+        bounceLayers.unshift({
+          id: "beat",
+          kind: "beat",
+          startMs: 0,
+          audioUrl: beatUrl,
+          gainDb: fx.gainDb || 0,
+          pan: fx.pan || 0,
+          muted: false,
+          phraseCleanup: 0,
+        });
+      }
+      if (!bounceLayers.length) {
+        setEditMsg("Nothing to export — add a beat or vocal first.");
+        setExportBusy(false);
+        return;
+      }
+      const blob = await bounceSessionToWav({
+        layers: bounceLayers,
+        durationMs: Math.max(totalMs || 0, durationMs || 0, 5000),
+        onProgress: (p) => {
+          if (p < 1) setEditMsg(`Exporting session… ${Math.round(p * 100)}%`);
+        },
+      });
+      const name = `${(titleDraft || projectTitle || "session").replace(/[^\w\-]+/g, "_")}-export.wav`;
+      downloadBlob(blob, name);
+      setEditMsg("Session exported.");
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   async function downloadMaster(format: "wav" | "mp3" = "wav") {
     if (!projectId) return;
     setDownloadBusy(true);
@@ -5185,6 +5249,34 @@ export function ProducerView({
             }}
           >
             Sessions
+          </button>
+        ) : null}
+
+        {projectId ? (
+          <button
+            type="button"
+            onClick={() => void exportSessionBounce()}
+            disabled={exportBusy || produceUi === "producing" || produceUi === "starting"}
+            title="Export the current session (timeline + effects) as WAV — traditional DAW bounce"
+            style={{
+              flexShrink: 0,
+              height: 36,
+              minHeight: 36,
+              maxHeight: 36,
+              padding: isNarrow ? "0 10px" : "0 12px",
+              borderRadius: 999,
+              border: `1px solid ${border}`,
+              boxSizing: "border-box",
+              background: "rgba(255,255,255,0.06)",
+              color: text,
+              fontWeight: 700,
+              fontSize: isNarrow ? 11 : 12,
+              cursor: exportBusy ? "default" : "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {exportBusy ? "Exporting…" : "Export"}
           </button>
         ) : null}
 
@@ -9146,6 +9238,7 @@ function TrackFxPanel({
     { id: "deess", label: "De-esser", group: "dynamics", accent: "#A78BFA", keys: ["deEss"] },
     { id: "gate", label: "Noise gate", group: "dynamics", accent: "#94A3B8", keys: ["gate"] },
     { id: "denoise", label: "Noise remover", group: "dynamics", accent: "#67E8F9", keys: ["noiseReduce"] },
+    { id: "cleanup", label: "Phrase cleanup", group: "dynamics", accent: "#FBBF24", keys: ["phraseCleanup"] },
     { id: "limiter", label: "Soft limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"] },
     { id: "sat", label: "Saturation", group: "dynamics", accent: "#FBBF24", keys: ["saturation"] },
     { id: "eq", label: "EQ", group: "tone", accent: "#38BDF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"] },
@@ -9198,6 +9291,11 @@ function TrackFxPanel({
         return { gate: 0.25 };
       case "denoise":
         return { noiseReduce: 0.55 };
+      case "cleanup":
+        return wrap(
+          null,
+          <>{knob("phraseCleanup", "Close gaps", 0, 1, 0.01, accent, "lg")}</>
+        );
       case "voice":
         return { voiceChanger: 0.85, voicePitchSemis: 4, voiceCharacter: 1 };
       case "limiter":

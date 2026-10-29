@@ -33,6 +33,8 @@ export type LiveFxParams = {
   /** Produce-only — ignored in live graph */
   gate: number;
   noiseReduce: number;
+  /** Produce/Export — close gaps between phrases */
+  phraseCleanup: number;
   voiceChanger: number;
   voicePitchSemis: number;
   voiceCharacter: number;
@@ -68,6 +70,7 @@ export const LIVE_FX_CAPABILITY: Record<string, LiveFxCapability> = {
   width: "approximate", // stereo balance proxy, not M/S
   gate: "produce_only",
   noiseReduce: "produce_only",
+  phraseCleanup: "produce_only",
   voiceChanger: "produce_only",
   voicePitchSemis: "produce_only",
   voiceCharacter: "produce_only",
@@ -428,6 +431,7 @@ export function createLiveTrackFxGraph(
     // gate ignored in live — produce_only
     void fx.gate;
     void fx.noiseReduce;
+    void fx.phraseCleanup;
     void fx.voiceChanger;
     void fx.voicePitchSemis;
     void fx.voiceCharacter;
@@ -496,6 +500,7 @@ export function trackFxToLiveParams(fx: Record<string, number>): LiveFxParams {
     limiter: n("limiter"),
     gate: n("gate"),
     noiseReduce: n("noiseReduce"),
+    phraseCleanup: n("phraseCleanup"),
     voiceChanger: n("voiceChanger"),
     voicePitchSemis: n("voicePitchSemis"),
     voiceCharacter: n("voiceCharacter"),

@@ -36,6 +36,7 @@ import {
   estimateLoudnessProxyDb,
 } from "@/lib/ap-engine/master/loudness";
 import { runMasteringAgent } from "@/lib/ap-engine/master/agent";
+import { closePhraseGapsStereo } from "@/lib/audio/phrase-cleanup";
 import { resolveMasterContext } from "@/lib/ap-engine/master/context";
 import { resolveVibeDeltas, applyVibeSectionRide } from "@/lib/ap-engine/vibe";
 import type { MasterDecision } from "@/lib/ap-engine/types";
@@ -87,6 +88,7 @@ export type FastTrackFx = {
   deEss?: number;
   gate?: number;
   noiseReduce?: number;
+  phraseCleanup?: number;
   voiceChanger?: number;
   voicePitchSemis?: number;
   voiceCharacter?: number;
@@ -268,6 +270,7 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
     (fx.deEss && fx.deEss > 0.02) ||
     (fx.gate && fx.gate > 0.02) ||
     (fx.noiseReduce && fx.noiseReduce > 0.02) ||
+    (fx.phraseCleanup && fx.phraseCleanup > 0.02) ||
     (fx.voiceChanger && fx.voiceChanger > 0.02) ||
     (fx.highPassHz && fx.highPassHz > 20) ||
     (fx.chorus && fx.chorus > 0.02) ||
@@ -323,6 +326,19 @@ function applyConsoleTrackFx(pcm: PcmStereo, fx: FastTrackFx | null | undefined)
   if (fx.noiseReduce && fx.noiseReduce > 0.02) {
     spectralNoiseReduceInPlace(pcm.left, pcm.sampleRate, fx.noiseReduce);
     spectralNoiseReduceInPlace(pcm.right, pcm.sampleRate, fx.noiseReduce);
+  }
+  if (fx.phraseCleanup && fx.phraseCleanup > 0.02) {
+    const cleaned = closePhraseGapsStereo(
+      pcm.left,
+      pcm.right,
+      pcm.sampleRate,
+      fx.phraseCleanup
+    );
+    const n = pcm.left.length;
+    pcm.left.fill(0);
+    pcm.right.fill(0);
+    pcm.left.set(cleaned.left.subarray(0, Math.min(n, cleaned.left.length)));
+    pcm.right.set(cleaned.right.subarray(0, Math.min(n, cleaned.right.length)));
   }
   if (fx.voiceChanger && fx.voiceChanger > 0.02) {
     applyVoiceChangerStereo(pcm.left, pcm.right, pcm.sampleRate, {

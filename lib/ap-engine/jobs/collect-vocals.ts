@@ -380,6 +380,7 @@ export async function collectVocalsForProduce(
             deEss: Number(fxRaw.deEss) || 0,
             gate: Number(fxRaw.gate) || 0,
             noiseReduce: Number(fxRaw.noiseReduce) || 0,
+            phraseCleanup: Number(fxRaw.phraseCleanup) || 0,
             voiceChanger: Number(fxRaw.voiceChanger) || 0,
             voicePitchSemis: Number(fxRaw.voicePitchSemis) || 0,
             voiceCharacter: Number(fxRaw.voiceCharacter) || 0,
