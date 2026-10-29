@@ -6274,7 +6274,6 @@ export function ProducerView({
                       ? "visible"
                       : "hidden",
                   zIndex: stackOpen || colorOpen || trackMenu?.trackId === tr.id ? 12 : 1,
-                  position: "relative",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: "center",
@@ -6556,35 +6555,46 @@ export function ProducerView({
                       onPointerDown={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
+                        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
                         const startH = trackHeightPx[tr.id] || rowH;
                         heightDragRef.current = { id: tr.id, startY: e.clientY, startH };
                         const onMove = (ev: PointerEvent) => {
                           const d = heightDragRef.current;
                           if (!d) return;
+                          ev.preventDefault();
                           const next = d.startH + (ev.clientY - d.startY);
                           setTrackHeightPx((prev) => ({
                             ...prev,
                             [d.id]: Math.max(64, Math.min(560, next)),
                           }));
                         };
-                        const onUp = () => {
+                        const onUp = (ev: PointerEvent) => {
                           heightDragRef.current = null;
+                          try {
+                            (e.currentTarget as HTMLElement).releasePointerCapture?.(ev.pointerId);
+                          } catch {
+                            /* */
+                          }
                           window.removeEventListener("pointermove", onMove);
                           window.removeEventListener("pointerup", onUp);
+                          window.removeEventListener("pointercancel", onUp);
                         };
-                        window.addEventListener("pointermove", onMove);
+                        window.addEventListener("pointermove", onMove, { passive: false });
                         window.addEventListener("pointerup", onUp);
+                        window.addEventListener("pointercancel", onUp);
                       }}
                       style={{
                         position: "absolute",
                         left: 0,
                         right: 0,
                         bottom: 0,
-                        height: 12,
+                        height: isNarrow ? 22 : 14,
                         cursor: "ns-resize",
                         touchAction: "none",
-                        zIndex: 6,
-                        background: "linear-gradient(180deg, transparent, rgba(255,255,255,0.08))",
+                        zIndex: 8,
+                        background: isNarrow
+                          ? "linear-gradient(180deg, transparent, rgba(240,188,128,0.18))"
+                          : "linear-gradient(180deg, transparent, rgba(255,255,255,0.08))",
                       }}
                     />
                   {/* ⋮ overflow — opens fixed menu (not clipped by row) */}
@@ -9014,23 +9024,59 @@ export function ProducerView({
             />
             <div
               role="menu"
-              style={{
-                position: "fixed",
-                left: trackMenu.x,
-                top: trackMenu.y,
-                zIndex: 211,
-                minWidth: 196,
-                maxWidth: 240,
-                maxHeight: "min(70vh, 420px)",
-                overflowY: "auto",
-                borderRadius: 12,
-                border: `1px solid ${border}`,
-                background: "rgba(18,16,14,0.98)",
-                boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
-                padding: "6px 0",
-              }}
+              style={
+                isNarrow
+                  ? {
+                      position: "fixed",
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 211,
+                      width: "100%",
+                      maxHeight: "min(78dvh, 560px)",
+                      overflowY: "auto",
+                      WebkitOverflowScrolling: "touch",
+                      overscrollBehavior: "contain",
+                      touchAction: "pan-y",
+                      borderRadius: "16px 16px 0 0",
+                      border: `1px solid ${border}`,
+                      borderBottom: "none",
+                      background: "rgba(18,16,14,0.98)",
+                      boxShadow: "0 -12px 48px rgba(0,0,0,0.55)",
+                      padding: "8px 0 max(16px, env(safe-area-inset-bottom))",
+                    }
+                  : {
+                      position: "fixed",
+                      left: trackMenu.x,
+                      top: trackMenu.y,
+                      zIndex: 211,
+                      minWidth: 196,
+                      maxWidth: 240,
+                      maxHeight: "min(70vh, 420px)",
+                      overflowY: "auto",
+                      WebkitOverflowScrolling: "touch",
+                      overscrollBehavior: "contain",
+                      borderRadius: 12,
+                      border: `1px solid ${border}`,
+                      background: "rgba(18,16,14,0.98)",
+                      boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+                      padding: "6px 0",
+                    }
+              }
               onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
+              {isNarrow ? (
+                <div
+                  style={{
+                    width: 36,
+                    height: 4,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.2)",
+                    margin: "4px auto 10px",
+                  }}
+                />
+              ) : null}
               <div
                 style={{
                   padding: "6px 12px 8px",
@@ -9046,6 +9092,26 @@ export function ProducerView({
               {tr.kind === "vocal" && tr.url
                 ? item("Edit take", () => void beginTakeEdit(tr.id, tr.url))
                 : null}
+              {item("Expand track", () => {
+                setExpandedId(tr.id);
+                setTrackHeightPx((prev) => ({
+                  ...prev,
+                  [tr.id]: Math.min(560, Math.max(200, (prev[tr.id] || 120) + 80)),
+                }));
+              })}
+              {item("Taller waveform", () => {
+                setExpandedId(tr.id);
+                setTrackHeightPx((prev) => ({
+                  ...prev,
+                  [tr.id]: Math.min(560, (prev[tr.id] || 160) + 60),
+                }));
+              })}
+              {item("Shorter waveform", () => {
+                setTrackHeightPx((prev) => {
+                  const next = Math.max(64, (prev[tr.id] || 160) - 60);
+                  return { ...prev, [tr.id]: next };
+                });
+              })}
               {tr.kind === "vocal"
                 ? item("Split at playhead", () => {
                     setSelectedTrackId(tr.id);
