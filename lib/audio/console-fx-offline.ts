@@ -399,7 +399,7 @@ export function applyConsoleFxWithAutomation(
   for (const lane of autoDoc.lanes) {
     if (lane.trackId !== trackId || lane.enabled === false) continue;
     const key = lane.param as keyof ConsoleTrackFx;
-    if (!peakKeys.includes(key)) continue;
+    if (!(peakKeys as string[]).includes(key as string)) continue;
     let maxV = n(base, key);
     for (const pt of lane.points) {
       if (typeof pt.value === "number") maxV = Math.max(maxV, pt.value);

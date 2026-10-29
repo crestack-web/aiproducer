@@ -57,10 +57,7 @@ import {
 } from "@/lib/ap-engine/roles";
 import { applyWidth } from "@/lib/ap-engine/mix/width";
 import { polishVocalLayer } from "@/lib/ap-engine/pitch";
-import {
-  parseFxAutomation,
-  type FxAutomationDoc,
-} from "@/lib/ap-engine/fx-automation";
+import type { FxAutomationDoc } from "@/lib/ap-engine/fx-automation";
 
 export type FastTrackFx = {
   gainDb?: number;
