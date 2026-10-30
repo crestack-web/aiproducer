@@ -208,6 +208,8 @@ export type ProducerClip = {
   endMs: number;
   audioUrl?: string | null;
   recordingId?: string | null;
+  /** Non-destructive crop into source audio (Voice Memo–style) */
+  offsetMs?: number;
 };
 
 export type ProducerLayer = {
@@ -224,6 +226,8 @@ export type ProducerLayer = {
   trackFx?: TrackFx | null;
   /** When set, track shows multiple clips (DAW-style split) on the same lane */
   clips?: ProducerClip[];
+  /** Non-destructive crop into source when no multi-clip list */
+  mediaOffsetMs?: number;
 };
 
 function clipsForLayer(l: ProducerLayer): ProducerClip[] {
@@ -235,6 +239,7 @@ function clipsForLayer(l: ProducerLayer): ProducerClip[] {
       endMs: l.endMs,
       audioUrl: l.audioUrl,
       recordingId: l.recordingId,
+      offsetMs: l.mediaOffsetMs || 0,
     },
   ];
 }
@@ -1078,8 +1083,10 @@ export function ProducerView({
     originX: number;
     originStart: number;
     originEnd: number;
+    originOffset: number;
     lastStart: number;
     lastEnd: number;
+    lastOffset: number;
   } | null>(null);
 
   async function runDawAction(action: DawAction) {
@@ -1620,7 +1627,12 @@ export function ProducerView({
     }
   }
 
-  function updateLocalLayer(id: string, startMs: number, endMs: number) {
+  function updateLocalLayer(
+    id: string,
+    startMs: number,
+    endMs: number,
+    offsetMs?: number
+  ) {
     const sep = id.indexOf("::");
     const layerId = sep >= 0 ? id.slice(0, sep) : id;
     const clipId = sep >= 0 ? id.slice(sep + 2) : null;
@@ -1628,10 +1640,24 @@ export function ProducerView({
       prev.map((l) => {
         if (l.id !== layerId) return l;
         if (!clipId || !l.clips || l.clips.length === 0) {
-          return { ...l, startMs, endMs };
+          return {
+            ...l,
+            startMs,
+            endMs,
+            mediaOffsetMs:
+              offsetMs != null ? Math.max(0, offsetMs) : l.mediaOffsetMs || 0,
+          };
         }
         const clips = l.clips.map((c) =>
-          c.id === clipId ? { ...c, startMs, endMs } : c
+          c.id === clipId
+            ? {
+                ...c,
+                startMs,
+                endMs,
+                offsetMs:
+                  offsetMs != null ? Math.max(0, offsetMs) : c.offsetMs || 0,
+              }
+            : c
         );
         return {
           ...l,
@@ -1641,6 +1667,19 @@ export function ProducerView({
         };
       })
     );
+  }
+
+  function resolveClipOffset(id: string): number {
+    const sep = id.indexOf("::");
+    const layerId = sep >= 0 ? id.slice(0, sep) : id;
+    const clipId = sep >= 0 ? id.slice(sep + 2) : null;
+    const layer = layers.find((l) => l.id === layerId);
+    if (!layer) return 0;
+    if (clipId && layer.clips?.length) {
+      const c = layer.clips.find((x) => x.id === clipId);
+      return Math.max(0, Number(c?.offsetMs) || 0);
+    }
+    return Math.max(0, Number(layer.mediaOffsetMs) || 0);
   }
 
   function onClipPointerDown(
@@ -1653,6 +1692,7 @@ export function ProducerView({
     if (id === "beat") return;
     e.stopPropagation();
     e.preventDefault();
+    const originOffset = resolveClipOffset(id);
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -1664,34 +1704,63 @@ export function ProducerView({
       originX: e.clientX,
       originStart: startMs,
       originEnd: endMs,
+      originOffset,
       lastStart: startMs,
       lastEnd: endMs,
+      lastOffset: originOffset,
     };
+
+    const onMove = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dxMs = ((ev.clientX - d.originX) / pxPerSec) * 1000;
+      const minLen = 200;
+      let start = d.originStart;
+      let end = d.originEnd;
+      let offset = d.originOffset;
+      if (d.mode === "move") {
+        const dur = Math.max(minLen, d.originEnd - d.originStart);
+        start = Math.max(0, d.originStart + dxMs);
+        end = start + dur;
+        // Move keeps the same audio region
+        offset = d.originOffset;
+      } else if (d.mode === "trim-start") {
+        // Voice Memo: drag left edge — crop into audio, keep right edge fixed
+        const nextStart = Math.max(
+          0,
+          Math.min(d.originEnd - minLen, d.originStart + dxMs)
+        );
+        const delta = nextStart - d.originStart;
+        offset = Math.max(0, d.originOffset + delta);
+        start = nextStart;
+        end = d.originEnd;
+      } else {
+        // Trim end — shorten/lengthen without changing audio offset
+        end = Math.max(d.originStart + minLen, d.originEnd + dxMs);
+        start = d.originStart;
+        offset = d.originOffset;
+      }
+      const s = Math.round(start);
+      const en = Math.round(end);
+      const off = Math.round(offset);
+      d.lastStart = s;
+      d.lastEnd = en;
+      d.lastOffset = off;
+      updateLocalLayer(d.id, s, en, off);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      onClipPointerUp();
+    };
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
-  function onClipPointerMove(e: React.PointerEvent) {
-    const d = dragRef.current;
-    if (!d) return;
-    const dxMs = ((e.clientX - d.originX) / pxPerSec) * 1000;
-    let start = d.originStart;
-    let end = d.originEnd;
-    const minLen = 400;
-    if (d.mode === "move") {
-      const dur = Math.max(400, d.originEnd - d.originStart);
-      // Free placement along the song — do not clamp to known totalMs
-      // (beat duration may still be loading; uploads must be movable past 0).
-      start = Math.max(0, d.originStart + dxMs);
-      end = start + dur;
-    } else if (d.mode === "trim-start") {
-      start = Math.max(0, Math.min(d.originEnd - minLen, d.originStart + dxMs));
-    } else {
-      end = Math.min(totalMs, Math.max(d.originStart + minLen, d.originEnd + dxMs));
-    }
-    const s = Math.round(start);
-    const en = Math.round(end);
-    d.lastStart = s;
-    d.lastEnd = en;
-    updateLocalLayer(d.id, s, en);
+  function onClipPointerMove(_e: React.PointerEvent) {
+    // Window-level listeners handle drag (more reliable on iOS)
   }
 
   function onClipPointerUp() {
@@ -1700,12 +1769,16 @@ export function ProducerView({
       dragRef.current = null;
       return;
     }
-    const { id, lastStart, lastEnd, originStart, originEnd } = d;
+    const { id, lastStart, lastEnd, lastOffset, originStart, originEnd, originOffset } = d;
     dragRef.current = null;
-    if (lastStart !== originStart || lastEnd !== originEnd) {
+    if (
+      lastStart !== originStart ||
+      lastEnd !== originEnd ||
+      lastOffset !== originOffset
+    ) {
       pushConsoleHistory({
         kind: "layer-geo",
-        label: d.mode === "move" ? "Move clip" : "Trim clip",
+        label: d.mode === "move" ? "Move clip" : "Crop clip",
         id,
         before: { startMs: originStart, endMs: originEnd },
         after: { startMs: lastStart, endMs: lastEnd },
@@ -1717,7 +1790,9 @@ export function ProducerView({
     const layer = layers.find((l) => l.id === layerId);
     if (clipId && layer?.clips && layer.clips.length > 0) {
       const clips = layer.clips.map((c) =>
-        c.id === clipId ? { ...c, startMs: lastStart, endMs: lastEnd } : c
+        c.id === clipId
+          ? { ...c, startMs: lastStart, endMs: lastEnd, offsetMs: lastOffset }
+          : c
       );
       void fetch(`/api/recording-tasks/${layerId}`, {
         method: "PATCH",
@@ -1730,11 +1805,22 @@ export function ProducerView({
             start_ms: c.startMs,
             end_ms: c.endMs,
             recording_id: c.recordingId || null,
+            offset_ms: c.offsetMs || 0,
           })),
         }),
-      }).then(() => onLayersChanged?.());
+      });
     } else {
-      void persistLayer(layerId, { start_ms: lastStart, end_ms: lastEnd });
+      void fetch(`/api/recording-tasks/${layerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_ms: lastStart,
+          end_ms: lastEnd,
+          metadata: { media_offset_ms: lastOffset },
+        }),
+      }).catch(() => {
+        void persistLayer(layerId, { start_ms: lastStart, end_ms: lastEnd });
+      });
     }
   }
 
@@ -3857,21 +3943,24 @@ export function ProducerView({
       graph.output.connect(ctx.destination);
       src.connect(graph.input);
 
-      // Vocals: offset by section start on the timeline
+      // Vocals: timeline placement + non-destructive crop (mediaOffsetMs)
       if (tr.kind === "vocal") {
         const layerStart = tr.startMs / 1000;
-        // Buffer sample 0 maps to layerStart on the project timeline
+        const layerEnd = tr.endMs / 1000;
+        const mediaOff = Math.max(0, (Number(tr.mediaOffsetMs) || 0) / 1000);
+        const clipDur = Math.max(0.05, layerEnd - layerStart);
         const localOffset = startSec - layerStart;
-        if (localOffset >= buf.duration) {
-          // playhead is past this clip's audio
-          continue;
-        }
+        if (localOffset >= clipDur) continue;
         if (localOffset >= 0) {
-          // Start now, offset into the take
-          src.start(ctx.currentTime, localOffset);
+          // Into the clip: start further into the cropped region
+          const into = mediaOff + localOffset;
+          const remain = Math.max(0.05, mediaOff + clipDur - into);
+          if (into >= buf.duration) continue;
+          src.start(ctx.currentTime, into, Math.min(remain, buf.duration - into));
         } else {
-          // Playhead before clip — schedule buffer start at the right context time
-          src.start(ctx.currentTime - localOffset, 0);
+          // Playhead before clip — schedule at clip start
+          const when = ctx.currentTime - localOffset;
+          src.start(when, mediaOff, Math.min(clipDur, buf.duration - mediaOff));
         }
       } else {
         // Beat (and other full-timeline assets): buffer time == project timeline
@@ -6948,6 +7037,7 @@ export function ProducerView({
                             : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
                       cursor: tr.kind === "vocal" ? (isTakeEditing ? "col-resize" : "grab") : "default",
+                      touchAction: tr.kind === "vocal" ? "none" : undefined,
                       touchAction: "none",
                       opacity: dimmed ? 0.4 : 1,
                       outline: isTakeEditing
@@ -7109,10 +7199,12 @@ export function ProducerView({
                             left: 0,
                             top: 0,
                             bottom: 0,
-                            width: 14,
-                            background: "rgba(255,255,255,0.35)",
+                            width: isNarrow ? 28 : 18,
+                            background: "linear-gradient(90deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
+                            borderRadius: "10px 0 0 10px",
                             cursor: "ew-resize",
                             touchAction: "none",
+                            zIndex: 4,
                           }}
                         />
                         <div
@@ -7124,10 +7216,12 @@ export function ProducerView({
                             right: 0,
                             top: 0,
                             bottom: 0,
-                            width: 14,
-                            background: "rgba(255,255,255,0.35)",
+                            width: isNarrow ? 28 : 18,
+                            background: "linear-gradient(270deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
+                            borderRadius: "0 10px 10px 0",
                             cursor: "ew-resize",
                             touchAction: "none",
+                            zIndex: 4,
                           }}
                         />
                       </>
@@ -7205,10 +7299,12 @@ export function ProducerView({
                                 left: 0,
                                 top: 0,
                                 bottom: 0,
-                                width: 14,
-                                background: "rgba(255,255,255,0.35)",
+                                width: isNarrow ? 28 : 18,
+                                background: "linear-gradient(90deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
+                                borderRadius: "10px 0 0 10px",
                                 cursor: "ew-resize",
                                 touchAction: "none",
+                                zIndex: 4,
                               }}
                             />
                             <div
@@ -7227,10 +7323,12 @@ export function ProducerView({
                                 right: 0,
                                 top: 0,
                                 bottom: 0,
-                                width: 14,
-                                background: "rgba(255,255,255,0.35)",
+                                width: isNarrow ? 28 : 18,
+                                background: "linear-gradient(270deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
+                                borderRadius: "0 10px 10px 0",
                                 cursor: "ew-resize",
                                 touchAction: "none",
+                                zIndex: 4,
                               }}
                             />
                           </div>

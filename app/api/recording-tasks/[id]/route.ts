@@ -50,6 +50,8 @@ const ConsoleClipSchema = z.object({
   start_ms: z.number().min(0),
   end_ms: z.number().min(0),
   recording_id: z.string().nullable().optional(),
+  /** Non-destructive crop: ms into the source audio where playback begins */
+  offset_ms: z.number().min(0).optional(),
 });
 
 const PatchSchema = z.object({

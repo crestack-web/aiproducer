@@ -191,6 +191,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
                         endMs: Number(c.end_ms) || resolvedEnd,
                         recordingId: rid,
                         audioUrl: proxy,
+                        offsetMs: Math.max(0, Number((c as { offset_ms?: number }).offset_ms) || 0),
                       };
                     })
                     .filter((c) => c.id)
@@ -211,6 +212,10 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               recordingId: recordingIdByTask.get(tk.id) || clips?.[0]?.recordingId || null,
               clips,
               color: colorRaw,
+              mediaOffsetMs: Math.max(
+                0,
+                Number((meta as { media_offset_ms?: number }).media_offset_ms) || 0
+              ),
               trackFx: tfRaw
                 ? ({
                     ...DEFAULT_TRACK_FX,
