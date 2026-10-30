@@ -9566,7 +9566,7 @@ function TrackFxPanel({
       case "denoise":
         return { noiseReduce: 0.65 };
       case "cleanup":
-        return { phraseCleanup: 0.45 };
+        return { phraseCleanup: 0.4 };
       case "voice":
         return { voiceChanger: 0.85, voicePitchSemis: 4, voiceCharacter: 1 };
       case "limiter":
@@ -10449,7 +10449,7 @@ function TrackFxPanel({
               {fxEditMode === "presets" && (
                 <div>
                   <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
-                    Starting points only. Switch to Custom to shape the amount and draw automation on the curve.
+                    Starting points only. Quiets noise between phrases without removing rests. Switch to Custom to fine-tune.
                   </p>
                   {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).length === 0 ? (
                     <p style={{ margin: 0, fontSize: 13, color: muted }}>No presets for this effect yet.</p>
@@ -10854,7 +10854,7 @@ function TrackFxPanel({
                   : modalDef.id === "gate"
                   ? "Noise gate applies in preview, Export, and Produce"
                   : modalDef.id === "cleanup"
-                  ? "Phrase cleanup applies in preview, Export, and Produce"
+                  ? "Quiets hum/noise between phrases — keeps timing and vocals (preview, Export, Produce)"
                   : "Creative effect applies on Produce"}
               </p>
             )}

@@ -349,9 +349,9 @@ export const EFFECT_PLUGIN_PRESETS: Record<string, EffectPluginPreset[]> = {
     { id: "gate_hard", label: "Hard", fx: { gate: 0.85 } },
   ],
   cleanup: [
-    { id: "clean_light", label: "Light", fx: { phraseCleanup: 0.35 } },
-    { id: "clean_tight", label: "Tight", fx: { phraseCleanup: 0.6 } },
-    { id: "clean_close", label: "Close gaps", fx: { phraseCleanup: 0.85 } },
+    { id: "clean_light", label: "Light", fx: { phraseCleanup: 0.3 } },
+    { id: "clean_tight", label: "Tight", fx: { phraseCleanup: 0.55 } },
+    { id: "clean_close", label: "Quiet gaps", fx: { phraseCleanup: 0.8 } },
   ],
   denoise: [
     { id: "nr_light", label: "Light", fx: { noiseReduce: 0.4 } },
