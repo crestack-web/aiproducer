@@ -10374,7 +10374,16 @@ function TrackFxPanel({
                     letterSpacing: "0.04em",
                   }}
                 >
-                  CUSTOM
+                  {(() => {
+                    const presets = EFFECT_PLUGIN_PRESETS[modalDef.id] || [];
+                    const match = presets.find((pr) =>
+                      Object.entries(pr.fx).every(([k, v]) => {
+                        const cur = Number((fx as Record<string, number>)[k]) || 0;
+                        return Math.abs(cur - Number(v)) < 0.03;
+                      })
+                    );
+                    return match ? match.label.toUpperCase() : "CUSTOM";
+                  })()}
                 </span>
               </div>
               <button
@@ -10458,13 +10467,25 @@ function TrackFxPanel({
                             ) as TrackFx;
                             onChange(next);
                             onCommit(next);
-                            setFxEditMode("custom");
+                            setFxEditMode("presets");
                           }}
                           style={{
                             padding: "10px 14px",
                             borderRadius: 12,
-                            border: `1px solid ${border}`,
-                            background: "rgba(0,0,0,0.28)",
+                            border: `1.5px solid ${
+                              Object.entries(pr.fx).every(([k, v]) => {
+                                const cur = Number((fx as Record<string, number>)[k]) || 0;
+                                return Math.abs(cur - Number(v)) < 0.03;
+                              })
+                                ? modalDef.accent
+                                : border
+                            }`,
+                            background: Object.entries(pr.fx).every(([k, v]) => {
+                              const cur = Number((fx as Record<string, number>)[k]) || 0;
+                              return Math.abs(cur - Number(v)) < 0.03;
+                            })
+                              ? `${modalDef.accent}22`
+                              : "rgba(0,0,0,0.28)",
                             color: "#F5F0E8",
                             fontSize: 13,
                             fontWeight: 650,

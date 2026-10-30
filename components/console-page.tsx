@@ -214,48 +214,19 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
               trackFx: tfRaw
                 ? ({
                     ...DEFAULT_TRACK_FX,
-                    gainDb: Number(tfRaw.gainDb) || 0,
-                    eqLowDb: Number(tfRaw.eqLowDb) || 0,
-                    eqMidDb: Number(tfRaw.eqMidDb) || 0,
-                    eqHighDb: Number(tfRaw.eqHighDb) || 0,
-                    compress: Number(tfRaw.compress) || 0,
-                    reverb: Number(tfRaw.reverb) || 0,
-                    delay: Number(tfRaw.delay) || 0,
-                    saturation: Number(tfRaw.saturation) || 0,
-                    pan: Number(tfRaw.pan) || 0,
-                    width: Number(tfRaw.width) || 0,
-                    air: Number(tfRaw.air) || 0,
-                    rotorMix: Number(tfRaw.rotorMix) || 0,
-                    rotorSpeed:
-                      tfRaw.rotorSpeed != null
-                        ? Number(tfRaw.rotorSpeed)
-                        : DEFAULT_TRACK_FX.rotorSpeed,
-                    rotorDepth:
-                      tfRaw.rotorDepth != null
-                        ? Number(tfRaw.rotorDepth)
-                        : DEFAULT_TRACK_FX.rotorDepth,
-                    rotorWarmth:
-                      tfRaw.rotorWarmth != null
-                        ? Number(tfRaw.rotorWarmth)
-                        : DEFAULT_TRACK_FX.rotorWarmth,
-                    rotorFast: Number(tfRaw.rotorFast) || 0,
-                    springMix: Number(tfRaw.springMix) || 0,
-                    springDelay:
-                      tfRaw.springDelay != null
-                        ? Number(tfRaw.springDelay)
-                        : DEFAULT_TRACK_FX.springDelay,
-                    springTension:
-                      tfRaw.springTension != null
-                        ? Number(tfRaw.springTension)
-                        : DEFAULT_TRACK_FX.springTension,
-                    springDamp:
-                      tfRaw.springDamp != null
-                        ? Number(tfRaw.springDamp)
-                        : DEFAULT_TRACK_FX.springDamp,
-                    springMod:
-                      tfRaw.springMod != null
-                        ? Number(tfRaw.springMod)
-                        : DEFAULT_TRACK_FX.springMod,
+                    // Preserve every TrackFx field from DB (gate/denoise/cleanup were previously dropped)
+                    ...Object.fromEntries(
+                      (Object.keys(DEFAULT_TRACK_FX) as (keyof typeof DEFAULT_TRACK_FX)[]).map(
+                        (k) => {
+                          const raw = (tfRaw as Record<string, unknown>)[k as string];
+                          if (raw == null || raw === "") {
+                            return [k, DEFAULT_TRACK_FX[k]];
+                          }
+                          const n = Number(raw);
+                          return [k, Number.isFinite(n) ? n : DEFAULT_TRACK_FX[k]];
+                        }
+                      )
+                    ),
                   } satisfies TrackFx)
                 : null,
             };
