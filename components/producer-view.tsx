@@ -1583,9 +1583,9 @@ export function ProducerView({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setEditMsg(typeof j.error === "string" ? j.error : "Could not save FX");
-      } else {
-        onLayersChanged?.();
       }
+      // Do not call onLayersChanged here — parent refresh can race and overwrite
+      // local noiseReduce/phraseCleanup before the PATCH is visible on the next fetch.
     } catch {
       setEditMsg("Network error saving FX");
     } finally {
@@ -2330,9 +2330,12 @@ export function ProducerView({
     if (
       persist &&
       playingRef.current &&
-      ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02 ||
+      ((Number(fx.gate) || 0) > 0.02 ||
+        (Number(fx.noiseReduce) || 0) > 0.02 ||
+        (Number(fx.phraseCleanup) || 0) > 0.02 ||
         (Number((fxByIdRef.current[id] || {}).gate) || 0) > 0.02 ||
-        (Number((fxByIdRef.current[id] || {}).noiseReduce) || 0) > 0.02)
+        (Number((fxByIdRef.current[id] || {}).noiseReduce) || 0) > 0.02 ||
+        (Number((fxByIdRef.current[id] || {}).phraseCleanup) || 0) > 0.02)
     ) {
       const t = playheadMsRef.current;
       queueMicrotask(() => {
@@ -3238,8 +3241,28 @@ export function ProducerView({
     setFxById((prev) => {
       const next = { ...prev };
       for (const l of layersProp) {
-        if (l.trackFx) next[l.id] = { ...DEFAULT_TRACK_FX, ...l.trackFx };
-        else if (!next[l.id]) next[l.id] = { ...DEFAULT_TRACK_FX };
+        if (l.trackFx) {
+          const server = { ...DEFAULT_TRACK_FX, ...l.trackFx } as TrackFx;
+          const local = next[l.id];
+          // Prefer server as base, but keep local values that server dropped (0) while local is active
+          if (local) {
+            const merged = { ...server } as TrackFx;
+            for (const k of Object.keys(DEFAULT_TRACK_FX) as (keyof TrackFx)[]) {
+              const lv = Number(local[k]) || 0;
+              const sv = Number(server[k]) || 0;
+              if (Math.abs(lv) > 0.02 && Math.abs(sv) < 0.005) {
+                (merged as any)[k] = local[k];
+              }
+            }
+            next[l.id] = merged;
+            fxByIdRef.current = { ...fxByIdRef.current, [l.id]: merged };
+          } else {
+            next[l.id] = server;
+            fxByIdRef.current = { ...fxByIdRef.current, [l.id]: server };
+          }
+        } else if (!next[l.id]) {
+          next[l.id] = { ...DEFAULT_TRACK_FX };
+        }
       }
       return next;
     });
@@ -8975,12 +8998,13 @@ export function ProducerView({
               }}
               onCommit={(fx) => {
                 void persistFx(fxOpenId, fx);
-                // Buffer-based preview FX — re-cue so gate/denoise is audible
+                // Buffer-based preview FX — re-cue so gate/denoise/cleanup is audible
                 if (
                   playingRef.current &&
                   ((Number(fx.gate) || 0) > 0.02 ||
                     (Number(fx.noiseReduce) || 0) > 0.02 ||
-                    (Number(fx.deEss) || 0) > 0.04)
+                    (Number(fx.deEss) || 0) > 0.04 ||
+                    (Number(fx.phraseCleanup) || 0) > 0.02)
                 ) {
                   const tMs = playheadMsRef.current;
                   void startPlayback(tMs);
@@ -10800,7 +10824,7 @@ function TrackFxPanel({
               </div>
             )}
 
-            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise" || modalDef.id === "voice") && (
+            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise" || modalDef.id === "cleanup" || modalDef.id === "voice") && (
               <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, textAlign: "center" }}>
                 {modalDef.id === "voice"
                   ? "Voice changer applies on Produce"
@@ -10808,6 +10832,8 @@ function TrackFxPanel({
                   ? "Noise remover applies in preview, Export, and Produce"
                   : modalDef.id === "gate"
                   ? "Noise gate applies in preview, Export, and Produce"
+                  : modalDef.id === "cleanup"
+                  ? "Phrase cleanup applies in preview, Export, and Produce"
                   : "Creative effect applies on Produce"}
               </p>
             )}
