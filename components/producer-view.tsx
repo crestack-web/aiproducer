@@ -635,18 +635,42 @@ function LiveClipWave({
   );
 }
 
+function slicePeaksForCrop(
+  peaks: Float32Array,
+  offsetMs: number,
+  durationMs: number,
+  sourceDurationMs: number
+): Float32Array {
+  if (!peaks.length || sourceDurationMs <= 0) return peaks;
+  const dur = Math.max(50, durationMs);
+  const off = Math.max(0, Math.min(offsetMs, Math.max(0, sourceDurationMs - 50)));
+  const a = Math.floor((off / sourceDurationMs) * peaks.length);
+  const b = Math.ceil(((off + dur) / sourceDurationMs) * peaks.length);
+  const i0 = Math.max(0, Math.min(peaks.length - 1, a));
+  const i1 = Math.max(i0 + 1, Math.min(peaks.length, b));
+  return peaks.subarray(i0, i1) as Float32Array;
+}
+
 function WaveformCanvas({
   peaks,
   color,
   width,
   height,
   dimmed,
+  offsetMs = 0,
+  durationMs,
+  sourceDurationMs,
+  selected,
 }: {
   peaks: Float32Array | null;
   color: string;
   width: number;
   height: number;
   dimmed?: boolean;
+  offsetMs?: number;
+  durationMs?: number;
+  sourceDurationMs?: number;
+  selected?: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -661,66 +685,126 @@ function WaveformCanvas({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    if (!peaks || peaks.length === 0) {
+
+    let drawPeaks = peaks;
+    if (
+      peaks &&
+      peaks.length > 4 &&
+      sourceDurationMs &&
+      sourceDurationMs > 0 &&
+      durationMs != null &&
+      durationMs > 0
+    ) {
+      drawPeaks = slicePeaksForCrop(
+        peaks,
+        offsetMs || 0,
+        durationMs,
+        sourceDurationMs
+      );
+    }
+
+    if (!drawPeaks || drawPeaks.length === 0) {
       ctx.fillStyle = dimmed ? color + "33" : color + "55";
       ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = "rgba(255,255,255,0.25)";
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(0, height / 2);
-      ctx.lineTo(width, height / 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
       return;
     }
-    // Soft normalize: boost quiet takes without turning true silence into solid bars.
-    // Floor at 0.12 so relative dynamics / gaps remain visible.
     let peakMax = 0;
-    for (let i = 0; i < peaks.length; i++) {
-      if (peaks[i] > peakMax) peakMax = peaks[i];
+    for (let i = 0; i < drawPeaks.length; i++) {
+      if (drawPeaks[i] > peakMax) peakMax = drawPeaks[i];
     }
     const norm = peakMax > 1e-4 ? 1 / Math.max(peakMax, 0.12) : 1;
     const mid = height / 2;
-    // Bold solid clip body (same language as beat)
     ctx.fillStyle = dimmed ? color + "55" : color + "DD";
     ctx.fillRect(0, 0, width, height);
-    // Soft top sheen
     const grad = ctx.createLinearGradient(0, 0, 0, height);
     grad.addColorStop(0, "rgba(255,255,255,0.14)");
     grad.addColorStop(0.5, "rgba(255,255,255,0)");
     grad.addColorStop(1, "rgba(0,0,0,0.18)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
-    // Center reference (helps spot silence / clipping)
-    ctx.strokeStyle = "rgba(0,0,0,0.2)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, mid);
-    ctx.lineTo(width, mid);
-    ctx.stroke();
-    const n = peaks.length;
+    const n = drawPeaks.length;
     const barW = Math.max(1.5, width / n);
     for (let i = 0; i < n; i++) {
-      const raw = peaks[i] * norm;
-      // floor so true silence is a hairline; loud is full height
+      const raw = drawPeaks[i] * norm;
       const amp = Math.min(1, raw * 1.05);
       const h = Math.max(amp < 0.04 ? 1.5 : 3, amp * (height * 0.88));
       const x = i * barW;
       const bw = Math.max(1.4, barW - 0.4);
-      // Near-silence: dim so dropouts read as gaps
-      if (amp < 0.04) {
-        ctx.fillStyle = dimmed ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.2)";
-      } else {
-        ctx.fillStyle = dimmed ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.95)";
-      }
+      ctx.fillStyle =
+        amp < 0.04
+          ? "rgba(255,255,255,0.2)"
+          : dimmed
+            ? "rgba(255,255,255,0.4)"
+            : "rgba(255,255,255,0.95)";
       ctx.fillRect(x, mid - h / 2, bw, h);
     }
-  }, [peaks, color, width, height, dimmed]);
+  }, [peaks, color, width, height, dimmed, offsetMs, durationMs, sourceDurationMs]);
   return (
     <canvas
       ref={ref}
-      style={{ display: "block", width, height, borderRadius: 6 }}
+      style={{
+        display: "block",
+        width,
+        height,
+        borderRadius: 8,
+        pointerEvents: "none",
+      }}
     />
+  );
+}
+
+/** CapCut-style edge handle */
+function ClipEdgeHandle({
+  side,
+  wide,
+  onPointerDown,
+}: {
+  side: "start" | "end";
+  wide: boolean;
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  const w = wide ? 26 : 16;
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        [side === "start" ? "left" : "right"]: 0,
+        width: w,
+        zIndex: 5,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "ew-resize",
+        touchAction: "none",
+        background:
+          side === "start"
+            ? "linear-gradient(90deg, rgba(255,255,255,0.92), rgba(255,255,255,0.2))"
+            : "linear-gradient(270deg, rgba(255,255,255,0.92), rgba(255,255,255,0.2))",
+        borderRadius: side === "start" ? "10px 0 0 10px" : "0 10px 10px 0",
+      }}
+    >
+      <span
+        style={{
+          width: 14,
+          height: 22,
+          borderRadius: 6,
+          background: "#fff",
+          color: "#111",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 11,
+          fontWeight: 900,
+          boxShadow: "0 1px 4px rgba(0,0,0,0.35)",
+          pointerEvents: "none",
+        }}
+      >
+        {side === "start" ? "‹" : "›"}
+      </span>
+    </div>
   );
 }
 
@@ -3445,6 +3529,7 @@ export function ProducerView({
       url?: string | null;
       recordingId?: string | null;
       clips?: ProducerClip[];
+      mediaOffsetMs?: number;
     }[] = [];
     list.push({
       id: "beat",
@@ -3489,6 +3574,7 @@ export function ProducerView({
         url: clips[0]?.audioUrl || l.audioUrl,
         recordingId: clips[0]?.recordingId || l.recordingId || null,
         clips,
+        mediaOffsetMs: l.mediaOffsetMs || clips[0]?.offsetMs || 0,
       });
     }
     return list;
@@ -7037,7 +7123,6 @@ export function ProducerView({
                             : `0 1px 0 rgba(0,0,0,0.35)`,
                       overflow: "hidden",
                       cursor: tr.kind === "vocal" ? (isTakeEditing ? "col-resize" : "grab") : "default",
-                      touchAction: tr.kind === "vocal" ? "none" : undefined,
                       touchAction: "none",
                       opacity: dimmed ? 0.4 : 1,
                       outline: isTakeEditing
@@ -7140,6 +7225,22 @@ export function ProducerView({
                         width={clipW}
                         height={clipH}
                         dimmed={dimmed}
+                        offsetMs={
+                          primaryClip?.offsetMs ?? tr.mediaOffsetMs ?? 0
+                        }
+                        durationMs={Math.max(50, clipEndMs - clipStartMs)}
+                        sourceDurationMs={(() => {
+                          const url = primaryClip?.audioUrl || tr.url;
+                          const buf = url ? bufferCache.get(url) : null;
+                          if (buf && buf.duration > 0.05)
+                            return Math.round(buf.duration * 1000);
+                          const off = primaryClip?.offsetMs ?? tr.mediaOffsetMs ?? 0;
+                          return Math.max(off + (clipEndMs - clipStartMs), 1000);
+                        })()}
+                        selected={
+                          selectedTrackId === tr.id ||
+                          selectedClipId === (primaryClip?.id || null)
+                        }
                       />
                     )}
                     {/* Name on clip only when side editor is open (collapsed uses vertical rail name) */}
@@ -7190,39 +7291,19 @@ export function ProducerView({
                     ) : null}
                     {tr.kind === "vocal" && !isTakeEditing && (
                       <>
-                        <div
+                        <ClipEdgeHandle
+                          side="start"
+                          wide={isNarrow}
                           onPointerDown={(e) =>
                             onClipPointerDown(e, dragKey, "trim-start", clipStartMs, clipEndMs)
                           }
-                          style={{
-                            position: "absolute",
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: isNarrow ? 28 : 18,
-                            background: "linear-gradient(90deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
-                            borderRadius: "10px 0 0 10px",
-                            cursor: "ew-resize",
-                            touchAction: "none",
-                            zIndex: 4,
-                          }}
                         />
-                        <div
+                        <ClipEdgeHandle
+                          side="end"
+                          wide={isNarrow}
                           onPointerDown={(e) =>
                             onClipPointerDown(e, dragKey, "trim-end", clipStartMs, clipEndMs)
                           }
-                          style={{
-                            position: "absolute",
-                            right: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: isNarrow ? 28 : 18,
-                            background: "linear-gradient(270deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
-                            borderRadius: "0 10px 10px 0",
-                            cursor: "ew-resize",
-                            touchAction: "none",
-                            zIndex: 4,
-                          }}
                         />
                       </>
                     )}
@@ -7277,13 +7358,28 @@ export function ProducerView({
                             onPointerCancel={onClipPointerUp}
                           >
                             <WaveformCanvas
-                              peaks={peaksById[clip.id] || null}
+                              peaks={peaksById[clip.id] || peaksById[tr.id] || null}
                               color={tr.color}
                               width={cW}
                               height={clipH}
                               dimmed={dimmed}
+                              offsetMs={clip.offsetMs || 0}
+                              durationMs={Math.max(50, clip.endMs - clip.startMs)}
+                              sourceDurationMs={(() => {
+                                const url = clip.audioUrl || tr.url;
+                                const buf = url ? bufferCache.get(url) : null;
+                                if (buf && buf.duration > 0.05)
+                                  return Math.round(buf.duration * 1000);
+                                return Math.max(
+                                  (clip.offsetMs || 0) + (clip.endMs - clip.startMs),
+                                  1000
+                                );
+                              })()}
+                              selected={selectedClipId === clip.id}
                             />
-                            <div
+                            <ClipEdgeHandle
+                              side="start"
+                              wide={isNarrow}
                               onPointerDown={(e) => {
                                 e.stopPropagation();
                                 onClipPointerDown(
@@ -7294,20 +7390,10 @@ export function ProducerView({
                                   clip.endMs
                                 );
                               }}
-                              style={{
-                                position: "absolute",
-                                left: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: isNarrow ? 28 : 18,
-                                background: "linear-gradient(90deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
-                                borderRadius: "10px 0 0 10px",
-                                cursor: "ew-resize",
-                                touchAction: "none",
-                                zIndex: 4,
-                              }}
                             />
-                            <div
+                            <ClipEdgeHandle
+                              side="end"
+                              wide={isNarrow}
                               onPointerDown={(e) => {
                                 e.stopPropagation();
                                 onClipPointerDown(
@@ -7317,18 +7403,6 @@ export function ProducerView({
                                   clip.startMs,
                                   clip.endMs
                                 );
-                              }}
-                              style={{
-                                position: "absolute",
-                                right: 0,
-                                top: 0,
-                                bottom: 0,
-                                width: isNarrow ? 28 : 18,
-                                background: "linear-gradient(270deg, rgba(255,255,255,0.55), rgba(255,255,255,0.15))",
-                                borderRadius: "0 10px 10px 0",
-                                cursor: "ew-resize",
-                                touchAction: "none",
-                                zIndex: 4,
                               }}
                             />
                           </div>
