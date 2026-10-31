@@ -228,6 +228,8 @@ export type ProducerLayer = {
   clips?: ProducerClip[];
   /** Non-destructive crop into source when no multi-clip list */
   mediaOffsetMs?: number;
+  /** Local take still in browser memory — server upload did not complete */
+  uploadFailed?: boolean;
 };
 
 function clipsForLayer(l: ProducerLayer): ProducerClip[] {
@@ -1024,6 +1026,11 @@ export function ProducerView({
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
+
+  /** Takes that play locally but failed server upload — keep Blob until retry succeeds */
+  const pendingTakeBlobsRef = useRef<
+    Map<string, { blob: Blob; name: string; durationMs: number }>
+  >(new Map());
     recorder: MediaRecorder;
     chunks: BlobPart[];
     stream: MediaStream;
@@ -2193,7 +2200,111 @@ export function ProducerView({
     return task.id as string;
   }
 
+  async function retryPendingUpload(taskId: string) {
+    const pending = pendingTakeBlobsRef.current.get(taskId);
+    if (!pending) {
+      // Try recover from blob: audioUrl on the layer
+      const layer = layers.find((l) => l.id === taskId);
+      const url = layer?.audioUrl;
+      if (url && url.startsWith("blob:")) {
+        try {
+          const res = await fetch(url);
+          const blob = await res.blob();
+          pendingTakeBlobsRef.current.set(taskId, {
+            blob,
+            name: "take-retry.wav",
+            durationMs: Math.max(500, (layer?.endMs || 0) - (layer?.startMs || 0)),
+          });
+        } catch {
+          setEditMsg("Could not recover take from memory — re-record this part");
+          return;
+        }
+      } else {
+        setEditMsg("No pending take to upload for this track");
+        return;
+      }
+    }
+    const pack = pendingTakeBlobsRef.current.get(taskId);
+    if (!pack) return;
+    setEditMsg("Retrying upload…");
+    try {
+      const fd = new FormData();
+      fd.append("file", pack.blob, pack.name || "take.wav");
+      fd.append("duration_ms", String(pack.durationMs));
+      fd.append("source", "record");
+      const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+        method: "POST",
+        body: fd,
+      });
+      const uj = await up.json().catch(() => ({}));
+      if (!up.ok) {
+        setEditMsg(
+          (typeof uj.error === "string" ? uj.error : "Upload failed again") +
+            " — Download take to keep a local copy"
+        );
+        return;
+      }
+      pendingTakeBlobsRef.current.delete(taskId);
+      await fetch(`/api/recording-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "completed",
+          end_ms: Math.round(
+            (layers.find((l) => l.id === taskId)?.startMs || 0) + pack.durationMs
+          ),
+        }),
+      }).catch(() => null);
+      const audioUrl =
+        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === taskId
+            ? {
+                ...l,
+                audioUrl: audioUrl || l.audioUrl,
+                uploadFailed: false,
+                recordingId: (uj.recording?.id as string) || l.recordingId,
+              }
+            : l
+        )
+      );
+      setEditMsg("Upload succeeded — take is saved to the project");
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Retry upload failed");
+    }
+  }
+
+  function downloadPendingTake(taskId: string) {
+    const pending = pendingTakeBlobsRef.current.get(taskId);
+    const layer = layers.find((l) => l.id === taskId);
+    const run = async () => {
+      let blob = pending?.blob;
+      if (!blob && layer?.audioUrl?.startsWith("blob:")) {
+        try {
+          blob = await (await fetch(layer.audioUrl)).blob();
+        } catch {
+          setEditMsg("Could not download — blob already cleared");
+          return;
+        }
+      }
+      if (!blob) {
+        setEditMsg("No local take data to download");
+        return;
+      }
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download = `${(layer?.label || "take").replace(/[^\w\-]+/g, "_")}-${taskId.slice(0, 8)}.wav`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setEditMsg("Downloaded local copy — keep this file safe, then Retry upload");
+    };
+    void run();
+  }
+
   async function stopConsoleRecord() {
+
     const rec = consoleRecRef.current;
     if (!rec) {
       setIsConsoleRecording(false);
@@ -2318,9 +2429,35 @@ export function ProducerView({
       });
       const uj = await up.json().catch(() => ({}));
       if (!up.ok) {
-        setEditMsg(typeof uj.error === "string" ? uj.error : "Upload failed");
+        pendingTakeBlobsRef.current.set(taskId, {
+          blob: uploadBlob,
+          name: uploadName,
+          durationMs,
+        });
+        setLayers((prev) =>
+          prev.map((l) =>
+            l.id === taskId
+              ? {
+                  ...l,
+                  audioUrl: l.audioUrl || localUrl,
+                  uploadFailed: true,
+                  endMs: Math.max(l.endMs, l.startMs + durationMs),
+                }
+              : l
+          )
+        );
+        const detail =
+          typeof uj.error === "string"
+            ? uj.error
+            : typeof uj.message === "string"
+              ? uj.message
+              : "Upload failed";
+        setEditMsg(
+          `${detail} — take still plays here. Use Retry upload or Download take before closing this tab.`
+        );
         return;
       }
+      pendingTakeBlobsRef.current.delete(taskId);
       await fetch(`/api/recording-tasks/${taskId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2351,6 +2488,7 @@ export function ProducerView({
                   ...l,
                   audioUrl,
                   endMs: Math.max(l.endMs, l.startMs + durationMs),
+                  uploadFailed: false,
                 }
               : l
           )
@@ -6126,9 +6264,55 @@ export function ProducerView({
             color: "#E8756A",
             background: "rgba(232,117,106,0.1)",
             borderBottom: `1px solid ${border}`,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
           }}
         >
-          {editMsg}
+          <span style={{ flex: "1 1 200px", lineHeight: 1.4 }}>{editMsg}</span>
+          {layers.some((l) => l.uploadFailed) && (
+            <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {layers
+                .filter((l) => l.uploadFailed)
+                .map((l) => (
+                  <span key={l.id} style={{ display: "flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => void retryPendingUpload(l.id)}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#E7A961",
+                        color: "#1A1208",
+                        fontWeight: 700,
+                        fontSize: 11,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Retry upload · {l.label}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadPendingTake(l.id)}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(231,169,97,0.5)",
+                        background: "transparent",
+                        color: "#E7A961",
+                        fontWeight: 700,
+                        fontSize: 11,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Download · {l.label}
+                    </button>
+                  </span>
+                ))}
+            </span>
+          )}
         </div>
       )}
       {savingId && (
