@@ -1026,18 +1026,19 @@ export function ProducerView({
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
   const consoleRecRef = useRef<{
-
-  /** Takes that play locally but failed server upload — keep Blob until retry succeeds */
-  const pendingTakeBlobsRef = useRef<
-    Map<string, { blob: Blob; name: string; durationMs: number }>
-  >(new Map());
     recorder: MediaRecorder;
     chunks: BlobPart[];
     stream: MediaStream;
     dispose: () => void;
     taskId: string;
     startedAt: number;
+    /** Timeline ms where this take should sit (playhead at record start) */
+    recordStartMs: number;
   } | null>(null);
+  /** Takes that play locally but failed server upload — keep Blob until retry succeeds */
+  const pendingTakeBlobsRef = useRef<
+    Map<string, { blob: Blob; name: string; durationMs: number; placementStartMs?: number }>
+  >(new Map());
   const recordTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const liveMeterRafRef = useRef<number | null>(null);
   const liveMeterCtxRef = useRef<AudioContext | null>(null);
@@ -2228,16 +2229,53 @@ export function ProducerView({
     if (!pack) return;
     setEditMsg("Retrying upload…");
     try {
-      const fd = new FormData();
-      fd.append("file", pack.blob, pack.name || "take.wav");
-      fd.append("duration_ms", String(pack.durationMs));
-      fd.append("source", "record");
-      const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
-        method: "POST",
-        body: fd,
-      });
-      const uj = await up.json().catch(() => ({}));
-      if (!up.ok) {
+      const placeMs = pack.placementStartMs ?? layers.find((l) => l.id === taskId)?.startMs ?? 0;
+      let uj: Record<string, unknown> = {};
+      let upOk = false;
+      if (pack.blob.size <= 3_200_000) {
+        const fd = new FormData();
+        fd.append("file", pack.blob, pack.name || "take.wav");
+        fd.append("duration_ms", String(pack.durationMs));
+        fd.append("source", "record");
+        fd.append("placement_start_ms", String(placeMs));
+        const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+          method: "POST",
+          body: fd,
+        });
+        uj = await up.json().catch(() => ({}));
+        upOk = up.ok;
+      } else {
+        const signRes = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            duration_ms: pack.durationMs,
+            content_type: pack.blob.type || "audio/wav",
+            placement_start_ms: placeMs,
+            source: "record",
+          }),
+        });
+        const signJ = await signRes.json().catch(() => ({}));
+        if (!signRes.ok) {
+          uj = signJ;
+        } else {
+          const signedUrl = signJ.upload?.signedUrl || signJ.signedUrl;
+          if (!signedUrl) {
+            uj = { error: "No signed upload URL" };
+          } else {
+            const put = await fetch(signedUrl, {
+              method: "PUT",
+              headers: (signJ.upload?.headers as Record<string, string>) || {
+                "Content-Type": pack.blob.type || "audio/wav",
+              },
+              body: pack.blob,
+            });
+            upOk = put.ok;
+            uj = put.ok ? signJ : { error: `Storage PUT ${put.status}` };
+          }
+        }
+      }
+      if (!upOk) {
         setEditMsg(
           (typeof uj.error === "string" ? uj.error : "Upload failed again") +
             " — Download take to keep a local copy"
@@ -2342,6 +2380,7 @@ export function ProducerView({
     const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
     const wallClockMs = Math.max(500, Date.now() - rec.startedAt);
     const taskId = rec.taskId;
+    const placementStartMs = Math.max(0, Math.round(rec.recordStartMs ?? playheadMs));
     consoleRecRef.current = null;
     setIsConsoleRecording(false);
     setRecordSeconds(0);
@@ -2419,20 +2458,103 @@ export function ProducerView({
         console.warn("[console] WAV conversion failed — uploading original", convErr);
       }
 
-      const fd = new FormData();
-      fd.append("file", uploadBlob, uploadName);
-      fd.append("duration_ms", String(durationMs));
-      fd.append("source", "record");
-      const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
-        method: "POST",
-        body: fd,
-      });
-      const uj = await up.json().catch(() => ({}));
-      if (!up.ok) {
+      // Place take at playhead where recording started (DAW-style free record)
+      const placeMs = placementStartMs;
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === taskId
+            ? {
+                ...l,
+                audioUrl: localUrl || l.audioUrl,
+                startMs: placeMs,
+                endMs: placeMs + durationMs,
+              }
+            : l
+        )
+      );
+
+      /**
+       * Upload strategy:
+       * - Small files: multipart through API (simple)
+       * - Larger files: signed URL → PUT straight to R2 (avoids Vercel ~4.5MB body limit — common "Upload failed" cause)
+       */
+      const DIRECT_THRESHOLD = 3_200_000; // bytes
+      let uj: Record<string, unknown> = {};
+      let upOk = false;
+
+      try {
+        if (uploadBlob.size <= DIRECT_THRESHOLD) {
+          const fd = new FormData();
+          fd.append("file", uploadBlob, uploadName);
+          fd.append("duration_ms", String(durationMs));
+          fd.append("source", "record");
+          fd.append("placement_start_ms", String(placeMs));
+          fd.append("recording_offset_ms", String(0));
+          const up = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+            method: "POST",
+            body: fd,
+          });
+          uj = await up.json().catch(() => ({}));
+          upOk = up.ok;
+        } else {
+          // 1) Create row + signed PUT URL (no audio body through Vercel)
+          const signRes = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              duration_ms: durationMs,
+              content_type: uploadBlob.type || "audio/wav",
+              placement_start_ms: placeMs,
+              recording_offset_ms: 0,
+              source: "record",
+            }),
+          });
+          const signJ = await signRes.json().catch(() => ({}));
+          if (!signRes.ok) {
+            uj = signJ;
+            upOk = false;
+          } else {
+            const signedUrl =
+              signJ.upload?.signedUrl || signJ.signedUrl || signJ.upload_url || null;
+            const putHeaders =
+              (signJ.upload?.headers as Record<string, string> | undefined) || {
+                "Content-Type": uploadBlob.type || "audio/wav",
+              };
+            if (!signedUrl) {
+              uj = { error: "No signed upload URL returned" };
+              upOk = false;
+            } else {
+              const put = await fetch(signedUrl, {
+                method: "PUT",
+                headers: putHeaders,
+                body: uploadBlob,
+              });
+              if (!put.ok) {
+                const putText = await put.text().catch(() => "");
+                uj = {
+                  error: `Direct storage upload failed (${put.status})${putText ? `: ${putText.slice(0, 120)}` : ""}`,
+                };
+                upOk = false;
+              } else {
+                uj = signJ;
+                upOk = true;
+              }
+            }
+          }
+        }
+      } catch (netErr) {
+        uj = {
+          error: netErr instanceof Error ? netErr.message : "Network error during upload",
+        };
+        upOk = false;
+      }
+
+      if (!upOk) {
         pendingTakeBlobsRef.current.set(taskId, {
           blob: uploadBlob,
           name: uploadName,
           durationMs,
+          placementStartMs: placeMs,
         });
         setLayers((prev) =>
           prev.map((l) =>
@@ -2441,7 +2563,8 @@ export function ProducerView({
                   ...l,
                   audioUrl: l.audioUrl || localUrl,
                   uploadFailed: true,
-                  endMs: Math.max(l.endMs, l.startMs + durationMs),
+                  startMs: placeMs,
+                  endMs: placeMs + durationMs,
                 }
               : l
           )
@@ -2463,9 +2586,8 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "completed",
-          end_ms: Math.round(
-            (layers.find((l) => l.id === taskId)?.startMs || playheadMs) + durationMs
-          ),
+          start_ms: Math.round(placementStartMs),
+          end_ms: Math.round(placementStartMs + durationMs),
         }),
       }).catch(() => null);
 
@@ -2487,7 +2609,8 @@ export function ProducerView({
               ? {
                   ...l,
                   audioUrl,
-                  endMs: Math.max(l.endMs, l.startMs + durationMs),
+                  startMs: placementStartMs,
+                  endMs: placementStartMs + durationMs,
                   uploadFailed: false,
                 }
               : l
@@ -2530,6 +2653,8 @@ export function ProducerView({
       recorder.ondataavailable = (ev) => {
         if (ev.data && ev.data.size > 0) chunks.push(ev.data);
       };
+      // DAW-style: record from the current playhead, not forced to section/clip start
+      const fromMs = Math.max(0, Math.round(playheadMs));
       consoleRecRef.current = {
         recorder,
         chunks,
@@ -2537,6 +2662,7 @@ export function ProducerView({
         dispose: opened.dispose,
         taskId,
         startedAt: Date.now(),
+        recordStartMs: fromMs,
       };
       recorder.start(250);
       setIsConsoleRecording(true);
@@ -2547,10 +2673,19 @@ export function ProducerView({
         setRecordSeconds((s) => s + 1);
       }, 1000);
 
-      // Monitor beat on a separate <audio> (never connected to MediaRecorder)
-      const layer = layers.find((l) => l.id === taskId);
-      const fromMs = layer?.startMs ?? playheadMs;
+      // Monitor beat from playhead (never connected to MediaRecorder)
       setPlayheadMs(fromMs);
+      setLayers((prev) =>
+        prev.map((l) =>
+          l.id === taskId
+            ? {
+                ...l,
+                // Expand lane so the new take can land at playhead
+                startMs: Math.min(l.startMs, fromMs),
+              }
+            : l
+        )
+      );
       if (beatUrl) {
         try {
           const a = new Audio(beatUrl);
@@ -2576,7 +2711,7 @@ export function ProducerView({
         }
       }
       const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
-      setEditMsg(`Recording into track… (${mimeType.split(";")[0]}) · ${micNote}`);
+      setEditMsg(`Recording from playhead (${Math.round(fromMs / 100) / 10}s) · ${mimeType.split(";")[0]} · ${micNote}`);
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
       setIsConsoleRecording(false);
