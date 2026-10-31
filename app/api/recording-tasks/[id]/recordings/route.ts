@@ -488,10 +488,18 @@ export async function POST(req: Request, ctx: Ctx) {
 
   let duration_ms: number | undefined;
   let content_type = "audio/webm";
+  let clientPlacementMs: number | undefined;
+  let clientOffsetMs = 0;
   try {
     const json = await req.json();
     duration_ms = typeof json.duration_ms === "number" ? json.duration_ms : undefined;
     if (typeof json.content_type === "string") content_type = json.content_type;
+    if (typeof json.placement_start_ms === "number" && Number.isFinite(json.placement_start_ms)) {
+      clientPlacementMs = Math.max(0, Math.round(json.placement_start_ms));
+    }
+    if (typeof json.recording_offset_ms === "number" && Number.isFinite(json.recording_offset_ms)) {
+      clientOffsetMs = Math.round(json.recording_offset_ms);
+    }
   } catch {
     /* empty body ok */
   }
@@ -538,6 +546,11 @@ export async function POST(req: Request, ctx: Ctx) {
       end_bar: ctxData.end_bar,
       timeline_start_ms: ctxData.timeline_start_ms,
       timeline_end_ms: ctxData.timeline_end_ms,
+      placement_start_ms:
+        clientPlacementMs != null
+          ? clientPlacementMs
+          : Math.max(0, Math.round(ctxData.timeline_start_ms + clientOffsetMs)),
+      recording_offset_ms: clientOffsetMs,
       role: ctxData.role,
       alignment,
       alignment_status: alignment.status,
