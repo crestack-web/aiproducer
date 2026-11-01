@@ -212,6 +212,24 @@ export type ProducerClip = {
   offsetMs?: number;
 };
 
+/** JSON body from POST /api/recording-tasks/:id/recordings (or signed upload). */
+type RecordingUploadJson = {
+  error?: string;
+  message?: string;
+  audio_url?: string;
+  recording?: {
+    id?: string;
+    audio_url?: string;
+    url?: string;
+  } | null;
+  upload?: {
+    signedUrl?: string;
+    headers?: Record<string, string>;
+  };
+  signedUrl?: string;
+  upload_url?: string;
+};
+
 export type ProducerLayer = {
   id: string;
   label: string;
@@ -2231,7 +2249,7 @@ export function ProducerView({
     setEditMsg("Retrying upload…");
     try {
       const placeMs = pack.placementStartMs ?? layers.find((l) => l.id === taskId)?.startMs ?? 0;
-      let uj: Record<string, unknown> = {};
+      let uj: RecordingUploadJson = {};
       let upOk = false;
       if (pack.blob.size <= 3_200_000) {
         const fd = new FormData();
@@ -2243,7 +2261,7 @@ export function ProducerView({
           method: "POST",
           body: fd,
         });
-        uj = await up.json().catch(() => ({}));
+        uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
         upOk = up.ok;
       } else {
         const signRes = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
@@ -2256,7 +2274,7 @@ export function ProducerView({
             source: "record",
           }),
         });
-        const signJ = await signRes.json().catch(() => ({}));
+        const signJ = (await signRes.json().catch(() => ({}))) as RecordingUploadJson;
         if (!signRes.ok) {
           uj = signJ;
         } else {
@@ -2480,7 +2498,7 @@ export function ProducerView({
        * - Larger files: signed URL → PUT straight to R2 (avoids Vercel ~4.5MB body limit — common "Upload failed" cause)
        */
       const DIRECT_THRESHOLD = 3_200_000; // bytes
-      let uj: Record<string, unknown> = {};
+      let uj: RecordingUploadJson = {};
       let upOk = false;
 
       try {
@@ -2495,7 +2513,7 @@ export function ProducerView({
             method: "POST",
             body: fd,
           });
-          uj = await up.json().catch(() => ({}));
+          uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
           upOk = up.ok;
         } else {
           // 1) Create row + signed PUT URL (no audio body through Vercel)
@@ -2510,7 +2528,7 @@ export function ProducerView({
               source: "record",
             }),
           });
-          const signJ = await signRes.json().catch(() => ({}));
+          const signJ = (await signRes.json().catch(() => ({}))) as RecordingUploadJson;
           if (!signRes.ok) {
             uj = signJ;
             upOk = false;
@@ -3164,7 +3182,7 @@ export function ProducerView({
         method: "POST",
         body: fd,
       });
-      const uj = await up.json().catch(() => ({}));
+      const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
       if (!up.ok) {
         throw new Error(
           typeof uj.error === "string" ? uj.error : "Could not save edited take"
@@ -3235,7 +3253,7 @@ export function ProducerView({
       method: "POST",
       body: fd,
     });
-    const uj = await up.json().catch(() => ({}));
+    const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
     if (!up.ok) {
       throw new Error(typeof uj.error === "string" ? uj.error : "Upload failed");
     }
@@ -3602,7 +3620,7 @@ export function ProducerView({
       const fd = new FormData();
       fd.append("file", file);
       const up = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: fd });
-      const uj = await up.json().catch(() => ({}));
+      const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
       if (!up.ok) {
         setEditMsg(typeof uj.error === "string" ? uj.error : "Beat upload failed");
         return;
@@ -3764,7 +3782,7 @@ export function ProducerView({
           method: "POST",
           body: fd,
         });
-        const uj = await up.json().catch(() => ({}));
+        const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
         if (!up.ok) {
           setEditMsg(
             typeof uj.error === "string"
