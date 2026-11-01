@@ -20,6 +20,8 @@ type TaskRow = {
   type?: string | null;
   title?: string | null;
   status?: string | null;
+  selected_in_plan?: boolean | null;
+  active?: boolean | null;
   start_ms?: number | null;
   end_ms?: number | null;
   /** Canonical Producer View FX (column). Prefer over metadata.track_fx. */
@@ -132,6 +134,8 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
           .filter((tk) => {
             const st = (tk.status || "").toLowerCase();
             if (st === "skipped" || st === "cancelled") return false;
+            if (tk.selected_in_plan === false) return false;
+            if (tk.active === false && st !== "completed") return false;
             return tk.start_ms != null || st === "completed" || st === "pending";
           })
           .map((tk) => {

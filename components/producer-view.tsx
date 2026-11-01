@@ -1802,7 +1802,14 @@ export function ProducerView({
 
   async function persistLayer(
     id: string,
-    patch: { start_ms?: number; end_ms?: number; status?: string; title?: string }
+    patch: {
+      start_ms?: number;
+      end_ms?: number;
+      status?: string;
+      title?: string;
+      selected_in_plan?: boolean;
+      active?: boolean;
+    }
   ) {
     setSavingId(id);
     setEditMsg(null);
@@ -3024,20 +3031,40 @@ export function ProducerView({
     if (id === "beat") return;
     if (!window.confirm("Remove this track from the plan? Your take stays in the library — you can undo this.")) return;
     const before = cloneLayersSnap(layers);
-    const ok = await persistLayer(id, { status: "skipped" });
-    if (ok) {
-      const after = before.filter((l) => l.id !== id);
-      setLayers(after);
-      pushConsoleHistory({
-        kind: "layers",
-        label: "Remove track",
-        before,
-        after: cloneLayersSnap(after),
+    // Optimistic remove so AI plan slots cannot flash back while PATCH is in flight
+    const after = before.filter((l) => l.id !== id);
+    setLayers(after);
+    if (selectedTrackId === id) setSelectedTrackId(null);
+    if (armedTrackId === id) setArmedTrackId(null);
+    setSelectedClipId(null);
+    pushConsoleHistory({
+      kind: "layers",
+      label: "Remove track",
+      before,
+      after: cloneLayersSnap(after),
+    });
+    try {
+      const res = await fetch(`/api/recording-tasks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "skipped",
+          selected_in_plan: false,
+          active: false,
+        }),
       });
-      if (selectedTrackId === id) setSelectedTrackId(null);
-      if (armedTrackId === id) setArmedTrackId(null);
-      setSelectedClipId(null);
-      setEditMsg("Track removed — Undo to restore");
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({})) as ApiJson;
+        // Roll back if server refused
+        setLayers(before);
+        setEditMsg(typeof j.error === "string" ? j.error : "Could not remove track");
+        return;
+      }
+      setEditMsg("Track removed from plan");
+      onLayersChanged?.();
+    } catch {
+      setLayers(before);
+      setEditMsg("Network error — track not removed");
     }
   }
 
@@ -3982,13 +4009,41 @@ export function ProducerView({
   useEffect(() => {
     // Soft parent refresh: keep audioUrls already resolved from session-preview
     setLayers((prev) => {
-      const urlById = new Map(prev.map((l) => [l.id, l.audioUrl]));
-      const clipsById = new Map(prev.map((l) => [l.id, l.clips]));
-      return layersProp.map((l) => ({
-        ...l,
-        audioUrl: l.audioUrl || urlById.get(l.id) || null,
-        clips: l.clips || clipsById.get(l.id),
-      }));
+      const prevById = new Map(prev.map((l) => [l.id, l]));
+      return layersProp.map((l) => {
+        const local = prevById.get(l.id);
+        const audioUrl = l.audioUrl || local?.audioUrl || null;
+        const clips =
+          l.clips && l.clips.length > 0 ? l.clips : local?.clips;
+        // Keep free-record playhead placement when server still has plan window
+        let startMs = l.startMs;
+        let endMs = l.endMs;
+        if (
+          local &&
+          audioUrl &&
+          !l.audioUrl &&
+          (local.startMs !== l.startMs || local.endMs !== l.endMs)
+        ) {
+          startMs = local.startMs;
+          endMs = local.endMs;
+        } else if (
+          local &&
+          local.clips &&
+          local.clips.length > 0 &&
+          !(l.clips && l.clips.length > 0)
+        ) {
+          startMs = local.startMs;
+          endMs = local.endMs;
+        }
+        return {
+          ...l,
+          audioUrl,
+          clips,
+          startMs,
+          endMs,
+          recordingId: l.recordingId || local?.recordingId || null,
+        };
+      });
     });
     setFxById((prev) => {
       const next = { ...prev };
@@ -4566,6 +4621,113 @@ export function ProducerView({
     let beatStartedInGraph = false;
 
     for (const tr of tracks) {
+      const on = isAudible(tr.id, tr.kind);
+      const fx = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
+
+      // —— Vocal tracks: schedule EACH clip at its own playhead placement ——
+      if (tr.kind === "vocal") {
+        const parts =
+          tr.clips && tr.clips.length > 0
+            ? tr.clips
+            : tr.url
+              ? [
+                  {
+                    id: tr.id,
+                    startMs: tr.startMs,
+                    endMs: tr.endMs,
+                    audioUrl: tr.url,
+                    recordingId: tr.recordingId,
+                    offsetMs: tr.mediaOffsetMs || 0,
+                  },
+                ]
+              : [];
+        if (parts.length === 0) continue;
+
+        let graph: ReturnType<typeof createLiveTrackFxGraph> | null = null;
+        for (const clip of parts) {
+          const clipUrl = clip.audioUrl || null;
+          if (!clipUrl && !clip.recordingId) continue;
+          const recordingProxy = clip.recordingId
+            ? `/api/recordings/${clip.recordingId}/audio`
+            : null;
+          const vocalProxy = `/api/recording-tasks/${tr.id}/audio`;
+          let buf =
+            (clipUrl && bufferCache.get(clipUrl)) ||
+            (recordingProxy && bufferCache.get(recordingProxy)) ||
+            null;
+          if (!buf) {
+            buf = await fetchDecode(
+              ctx,
+              clipUrl || recordingProxy || vocalProxy || "",
+              recordingProxy || vocalProxy
+            );
+          }
+          if (gen !== playbackGenRef.current) return;
+          if (!buf) continue;
+
+          if (!graph) {
+            graph = createLiveTrackFxGraph(ctx);
+            graph.apply(
+              trackFxToLiveParams(fx as unknown as Record<string, number>),
+              on
+            );
+            fxGraphRef.current.set(tr.id, graph);
+            gainsRef.current.set(tr.id, graph.gain);
+            panNodesRef.current.set(tr.id, graph.pan);
+            graph.output.connect(ctx.destination);
+          }
+
+          const src = ctx.createBufferSource();
+          let playBuf = buf;
+          try {
+            if ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02) {
+              playBuf = processPreviewBuffer(ctx, buf, {
+                gate: Number(fx.gate) || 0,
+                noiseReduce: Number(fx.noiseReduce) || 0,
+                deEss: Number(fx.deEss) || 0,
+                phraseCleanup: Number(fx.phraseCleanup) || 0,
+              });
+            }
+          } catch {
+            playBuf = buf;
+          }
+          src.buffer = playBuf;
+          src.connect(graph.input);
+
+          const layerStart = (Number(clip.startMs) || 0) / 1000;
+          const layerEnd = Math.max(
+            layerStart + 0.05,
+            (Number(clip.endMs) || tr.endMs) / 1000
+          );
+          const mediaOff = Math.max(0, (Number(clip.offsetMs) || 0) / 1000);
+          const clipDur = Math.max(0.05, layerEnd - layerStart);
+          const localOffset = startSec - layerStart;
+          if (localOffset >= clipDur) {
+            continue;
+          }
+          if (localOffset >= 0) {
+            const into = mediaOff + localOffset;
+            const remain = Math.max(0.05, mediaOff + clipDur - into);
+            if (into >= playBuf.duration) continue;
+            src.start(
+              ctx.currentTime,
+              into,
+              Math.min(remain, playBuf.duration - into)
+            );
+          } else {
+            const when = ctx.currentTime - localOffset;
+            src.start(
+              when,
+              mediaOff,
+              Math.min(clipDur, playBuf.duration - mediaOff)
+            );
+          }
+          sourcesRef.current.push(src);
+        }
+        continue;
+      }
+
+      // —— Beat (and non-vocal) ——
       if (!tr.url) continue;
       let buf = bufferCache.get(tr.url) || bufferCache.get(beatProxy || "") || null;
       if (!buf) {
@@ -4573,7 +4735,6 @@ export function ProducerView({
           tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null;
         buf = await fetchDecode(ctx, tr.url, fallback);
       }
-      // Stale startPlayback after pause/stop — do not attach a new FX graph
       if (gen !== playbackGenRef.current) return;
       if (!buf) {
         if (tr.kind === "beat") {
@@ -4582,10 +4743,7 @@ export function ProducerView({
         continue;
       }
 
-      const on = isAudible(tr.id, tr.kind);
-      const fx = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
       const src = ctx.createBufferSource();
-      // Live preview: gate + noise remover on the buffer (true clean, not just UI labels)
       let playBuf = buf;
       try {
         if ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02) {
@@ -4601,8 +4759,6 @@ export function ProducerView({
       }
       src.buffer = playBuf;
 
-      // Always use the live FX graph so knob changes apply mid-playback.
-      // Graph is transparent when amounts are ~0 (no robotic color on clean tracks).
       const graph = createLiveTrackFxGraph(ctx);
       graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
       fxGraphRef.current.set(tr.id, graph);
@@ -4611,31 +4767,8 @@ export function ProducerView({
       graph.output.connect(ctx.destination);
       src.connect(graph.input);
 
-      // Vocals: timeline placement + non-destructive crop (mediaOffsetMs)
-      if (tr.kind === "vocal") {
-        const layerStart = tr.startMs / 1000;
-        const layerEnd = tr.endMs / 1000;
-        const mediaOff = Math.max(0, (Number(tr.mediaOffsetMs) || 0) / 1000);
-        const clipDur = Math.max(0.05, layerEnd - layerStart);
-        const localOffset = startSec - layerStart;
-        if (localOffset >= clipDur) continue;
-        if (localOffset >= 0) {
-          // Into the clip: start further into the cropped region
-          const into = mediaOff + localOffset;
-          const remain = Math.max(0.05, mediaOff + clipDur - into);
-          if (into >= buf.duration) continue;
-          src.start(ctx.currentTime, into, Math.min(remain, buf.duration - into));
-        } else {
-          // Playhead before clip — schedule at clip start
-          const when = ctx.currentTime - localOffset;
-          src.start(when, mediaOff, Math.min(clipDur, buf.duration - mediaOff));
-        }
-      } else {
-        // Beat (and other full-timeline assets): buffer time == project timeline
-        if (startSec >= buf.duration) continue;
-        src.start(ctx.currentTime, startSec);
-        if (tr.kind === "beat") beatStartedInGraph = true;
-      }
+      if (startSec >= playBuf.duration) continue;
+      src.start(ctx.currentTime, startSec);
       sourcesRef.current.push(src);
       if (tr.kind === "beat") beatStartedInGraph = true;
     }

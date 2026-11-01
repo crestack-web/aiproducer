@@ -58,6 +58,9 @@ const PatchSchema = z.object({
   start_ms: z.number().min(0).optional(),
   end_ms: z.number().min(0).optional(),
   status: z.enum(["completed", "pending", "skipped", "cancelled"]).optional(),
+  /** Hide from active plan / Console without hard-deleting history */
+  selected_in_plan: z.boolean().optional(),
+  active: z.boolean().optional(),
   /** Display name in Console — optional custom track title */
   title: z.string().trim().min(1).max(80).optional(),
   track_fx: TrackFxSchema.optional(),
@@ -149,6 +152,12 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (parsed.data.start_ms !== undefined) patch.start_ms = Math.round(parsed.data.start_ms);
   if (parsed.data.end_ms !== undefined) patch.end_ms = Math.round(parsed.data.end_ms);
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+  if (parsed.data.selected_in_plan !== undefined) {
+    (patch as Record<string, unknown>).selected_in_plan = parsed.data.selected_in_plan;
+  }
+  if (parsed.data.active !== undefined) {
+    (patch as Record<string, unknown>).active = parsed.data.active;
+  }
   if (parsed.data.title !== undefined) patch.title = parsed.data.title;
 
   const prevMeta =
@@ -228,6 +237,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
     console.error("[recording-tasks PATCH]", upErr);
     return NextResponse.json({ error: "Could not update task" }, { status: 500 });
   }
+  if (
+    upErr &&
+    (parsed.data.selected_in_plan !== undefined || parsed.data.active !== undefined)
+  ) {
+    const slim = { ...patch };
+    delete slim.selected_in_plan;
+    delete slim.active;
+    const res3 = await service
+      .from("recording_tasks")
+      .update(slim)
+      .eq("id", id)
+      .select("id, start_ms, end_ms, status, type, title, metadata, track_fx, track_color")
+      .single();
+    if (!res3.error) {
+      updated = res3.data as Record<string, unknown> | null;
+      upErr = null;
+    }
+  }
+
   if (upErr) {
     console.error("[recording-tasks PATCH]", upErr);
     return NextResponse.json({ error: "Could not update task" }, { status: 500 });
