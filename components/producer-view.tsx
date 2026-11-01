@@ -212,6 +212,10 @@ export type ProducerClip = {
   offsetMs?: number;
 };
 
+/** Loose API JSON — use any for response bodies so optional fields typecheck. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ApiJson = any;
+
 /** JSON body from POST /api/recording-tasks/:id/recordings (or signed upload). */
 type RecordingUploadJson = {
   error?: string;
@@ -992,7 +996,7 @@ export function ProducerView({
         body: JSON.stringify({ title: next }),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
+        const j = await res.json().catch(() => ({})) as ApiJson;
         throw new Error(typeof j.error === "string" ? j.error : "Could not save title");
       }
       setTitleDraft(next);
@@ -1492,7 +1496,7 @@ export function ProducerView({
                 playbackMs: playheadMs,
               }),
             });
-            const j = await res.json().catch(() => ({}));
+            const j = await res.json().catch(() => ({})) as ApiJson;
             if (!res.ok) {
               setApLastResult("err");
               setEditMsg(
@@ -1558,7 +1562,7 @@ export function ProducerView({
               playbackMs: playheadMs,
             }),
           });
-          const j = await res.json().catch(() => ({}));
+          const j = await res.json().catch(() => ({})) as ApiJson;
           if (!res.ok) {
             setApLastResult("err");
             setEditMsg(
@@ -1634,7 +1638,7 @@ export function ProducerView({
         body: JSON.stringify({ track_color: color }),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
+        const j = await res.json().catch(() => ({})) as ApiJson;
         setEditMsg(typeof j.error === "string" ? j.error : "Could not save color");
       } else {
         onLayersChanged?.();
@@ -1654,7 +1658,7 @@ export function ProducerView({
     (async () => {
       try {
         const res = await fetch(`/api/projects/${projectId}`);
-        const j = await res.json().catch(() => ({}));
+        const j = await res.json().catch(() => ({})) as ApiJson;
         if (cancelled || !res.ok) return;
         const meta = j.project?.metadata || j.metadata || {};
         const doc = parseFxAutomation(meta.fx_automation);
@@ -1702,7 +1706,7 @@ export function ProducerView({
           body: JSON.stringify({ metadata: { beat_track_fx: fx } }),
         });
         if (!res.ok) {
-          const j = await res.json().catch(() => ({}));
+          const j = await res.json().catch(() => ({})) as ApiJson;
           setEditMsg(typeof j.error === "string" ? j.error : "Could not save beat volume");
         }
         setSavingId(null);
@@ -1714,7 +1718,7 @@ export function ProducerView({
         body: JSON.stringify({ track_fx: fx }),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
+        const j = await res.json().catch(() => ({})) as ApiJson;
         setEditMsg(typeof j.error === "string" ? j.error : "Could not save FX");
       }
       // Do not call onLayersChanged here — parent refresh can race and overwrite
@@ -1739,7 +1743,7 @@ export function ProducerView({
         body: JSON.stringify(patch),
       });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
+        const j = await res.json().catch(() => ({})) as ApiJson;
         setEditMsg(typeof j.error === "string" ? j.error : "Could not save edit");
         return false;
       }
@@ -2012,7 +2016,7 @@ export function ProducerView({
           }),
         });
       }
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         const hint =
           typeof j.error === "string"
@@ -2073,7 +2077,7 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ duplicate_from: id }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         setEditMsg(typeof j.error === "string" ? j.error : "Could not duplicate track");
         return;
@@ -2208,7 +2212,7 @@ export function ProducerView({
         plan_source: "console",
       }),
     });
-    const j = await res.json().catch(() => ({}));
+    const j = await res.json().catch(() => ({})) as ApiJson;
     if (!res.ok || !j.task?.id) {
       setEditMsg(typeof j.error === "string" ? j.error : "Could not create record target");
       return null;
@@ -2270,7 +2274,7 @@ export function ProducerView({
           method: "POST",
           body: fd,
         });
-        uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+        uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
         upOk = up.ok;
       } else {
         const signRes = await fetch(`/api/recording-tasks/${taskId}/recordings`, {
@@ -2283,7 +2287,7 @@ export function ProducerView({
             source: "record",
           }),
         });
-        const signJ = (await signRes.json().catch(() => ({}))) as RecordingUploadJson;
+        const signJ = (await signRes.json().catch(() => ({})) as RecordingUploadJson;
         if (!signRes.ok) {
           uj = signJ;
         } else {
@@ -2293,7 +2297,7 @@ export function ProducerView({
           } else {
             const put = await fetch(signedUrl, {
               method: "PUT",
-              headers: (signJ.upload?.headers as Record<string, string>) || {
+              headers: (signJ.upload?.headers as Record<string, string> | undefined) || {
                 "Content-Type": pack.blob.type || "audio/wav",
               },
               body: pack.blob,
@@ -2522,7 +2526,7 @@ export function ProducerView({
             method: "POST",
             body: fd,
           });
-          uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+          uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
           upOk = up.ok;
         } else {
           // 1) Create row + signed PUT URL (no audio body through Vercel)
@@ -2537,7 +2541,7 @@ export function ProducerView({
               source: "record",
             }),
           });
-          const signJ = (await signRes.json().catch(() => ({}))) as RecordingUploadJson;
+          const signJ = (await signRes.json().catch(() => ({})) as RecordingUploadJson;
           if (!signRes.ok) {
             uj = signJ;
             upOk = false;
@@ -3191,7 +3195,7 @@ export function ProducerView({
         method: "POST",
         body: fd,
       });
-      const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+      const uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
       if (!up.ok) {
         throw new Error(
           typeof uj.error === "string" ? uj.error : "Could not save edited take"
@@ -3262,7 +3266,7 @@ export function ProducerView({
       method: "POST",
       body: fd,
     });
-    const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+    const uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
     if (!up.ok) {
       throw new Error(typeof uj.error === "string" ? uj.error : "Upload failed");
     }
@@ -3629,14 +3633,14 @@ export function ProducerView({
       const fd = new FormData();
       fd.append("file", file);
       const up = await fetch(`/api/projects/${projectId}/beat`, { method: "POST", body: fd });
-      const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+      const uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
       if (!up.ok) {
         setEditMsg(typeof uj.error === "string" ? uj.error : "Beat upload failed");
         return;
       }
       setEditMsg("Building producer plan (same as Booth)…");
       const ar = await fetch(`/api/projects/${projectId}/analyze`, { method: "POST" });
-      const aj = await ar.json().catch(() => ({}));
+      const aj = await ar.json().catch(() => ({})) as ApiJson;
       if (!ar.ok) {
         setEditMsg(typeof aj.error === "string" ? aj.error : "Plan generation failed");
         return;
@@ -3664,7 +3668,7 @@ export function ProducerView({
     setEditMsg("Building producer plan (same as Booth)…");
     try {
       const ar = await fetch(`/api/projects/${projectId}/analyze`, { method: "POST" });
-      const aj = await ar.json().catch(() => ({}));
+      const aj = await ar.json().catch(() => ({})) as ApiJson;
       if (!ar.ok) {
         setEditMsg(typeof aj.error === "string" ? aj.error : "Plan generation failed");
         return;
@@ -3766,7 +3770,7 @@ export function ProducerView({
           end_ms: startMs + 8000,
         }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         setEditMsg(typeof j.error === "string" ? j.error : "Could not create track");
         return;
@@ -3791,7 +3795,7 @@ export function ProducerView({
           method: "POST",
           body: fd,
         });
-        const uj = (await up.json().catch(() => ({}))) as RecordingUploadJson;
+        const uj = (await up.json().catch(() => ({})) as RecordingUploadJson;
         if (!up.ok) {
           setEditMsg(
             typeof uj.error === "string"
@@ -4659,7 +4663,7 @@ export function ProducerView({
       if (pollJobId) {
         try {
           const jr = await fetch(`/api/jobs/${pollJobId}`);
-          const jj = await jr.json().catch(() => ({}));
+          const jj = await jr.json().catch(() => ({})) as ApiJson;
           if (jr.ok) {
             const stGate = String(jj.status || "").toLowerCase();
             if (jj.status) setProduceJobStatus(String(jj.status));
@@ -4751,7 +4755,7 @@ export function ProducerView({
       }
 
       const sr = await fetch(`/api/projects/${projectId}/status`);
-      const st = await sr.json().catch(() => ({}));
+      const st = await sr.json().catch(() => ({})) as ApiJson;
       if (!sr.ok) return "error";
 
       const jobs = (st.jobs || []) as {
@@ -4965,7 +4969,7 @@ export function ProducerView({
       try {
         const sr = await fetch(`/api/projects/${projectId}/status`);
         if (!sr.ok || cancelled) return;
-        const st = await sr.json().catch(() => ({}));
+        const st = await sr.json().catch(() => ({})) as ApiJson;
         const jobs = (st.jobs || []) as {
           id?: string;
           type?: string;
@@ -5037,7 +5041,7 @@ export function ProducerView({
     for (let i = 0; i < 6; i++) {
       try {
         const sr = await fetch(`/api/projects/${projectId}/status`);
-        const st = await sr.json().catch(() => ({}));
+        const st = await sr.json().catch(() => ({})) as ApiJson;
         if (!sr.ok) break;
         if (st.master_url && typeof st.master_url === "string") {
           return st.master_url;
@@ -5098,7 +5102,7 @@ export function ProducerView({
     let planTasks: PlanTaskRow[] = [];
     try {
       const tr = await fetch(`/api/projects/${projectId}/recording-tasks?all=1`);
-      const tj = await tr.json().catch(() => ({}));
+      const tj = await tr.json().catch(() => ({})) as ApiJson;
       if (tr.ok && Array.isArray(tj.tasks)) {
         planTasks = (tj.tasks as Record<string, unknown>[]).map((tk) => ({
           id: String(tk.id),
@@ -5160,7 +5164,7 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force: true }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         const msg =
           typeof j.error === "string"
@@ -5711,7 +5715,7 @@ export function ProducerView({
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const res = await fetch(`/api/music/generate/${jobId}`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         throw new Error(typeof j.error === "string" ? j.error : "Generation failed");
       }
@@ -5735,7 +5739,7 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instrument }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         throw new Error(typeof j.error === "string" ? j.error : "Could not start instrument generation");
       }
@@ -5773,7 +5777,7 @@ export function ProducerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(recordingId ? { recordingId } : {}),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = await res.json().catch(() => ({})) as ApiJson;
       if (!res.ok) {
         throw new Error(typeof j.error === "string" ? j.error : "Could not build around vocal");
       }
