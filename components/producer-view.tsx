@@ -917,6 +917,13 @@ export function ProducerView({
         id: string;
         before: TrackFx;
         after: TrackFx;
+      }
+    | {
+        /** Structural edit: split / delete clip / clear recording / remove track */
+        kind: "layers";
+        label: string;
+        before: ProducerLayer[];
+        after: ProducerLayer[];
       };
   const consoleUndoRef = useRef<ConsoleHistoryEntry[]>([]);
   const consoleRedoRef = useRef<ConsoleHistoryEntry[]>([]);
@@ -2125,9 +2132,107 @@ export function ProducerView({
 
   async function deleteLayer(id: string) {
     if (id === "beat") return;
-    if (!window.confirm("Remove this layer from the plan? The recorded take stays saved.")) return;
+    if (!window.confirm("Remove this track from the plan? Your take stays in the library — you can undo this.")) return;
+    const before = cloneLayersSnap(layers);
     const ok = await persistLayer(id, { status: "skipped" });
-    if (ok) setLayers((prev) => prev.filter((l) => l.id !== id));
+    if (ok) {
+      const after = before.filter((l) => l.id !== id);
+      setLayers(after);
+      pushConsoleHistory({
+        kind: "layers",
+        label: "Remove track",
+        before,
+        after: cloneLayersSnap(after),
+      });
+      if (selectedTrackId === id) setSelectedTrackId(null);
+      if (armedTrackId === id) setArmedTrackId(null);
+      setSelectedClipId(null);
+      setEditMsg("Track removed — Undo to restore");
+    }
+  }
+
+  /**
+   * Delete selected split clip, or clear the take without removing the track.
+   * Empty lane stays on plan for a retake. Undo restores the recording.
+   */
+  async function deleteSelectedClipOrRecording() {
+    const trackId = selectedTrackId;
+    if (!trackId || trackId === "beat") {
+      setEditMsg("Select a vocal clip or track to delete");
+      return;
+    }
+    const layer = layers.find((l) => l.id === trackId);
+    if (!layer) return;
+
+    const before = cloneLayersSnap(layers);
+    const multi = layer.clips && layer.clips.length > 1 ? layer.clips : null;
+    const clipId = selectedClipId;
+
+    if (multi && clipId && multi.some((c) => c.id === clipId)) {
+      const nextClips = multi.filter((c) => c.id !== clipId);
+      if (nextClips.length > 0) {
+        const nextLayer: ProducerLayer = {
+          ...layer,
+          clips: nextClips,
+          startMs: Math.min(...nextClips.map((c) => c.startMs)),
+          endMs: Math.max(...nextClips.map((c) => c.endMs)),
+          audioUrl: nextClips[0]?.audioUrl ?? layer.audioUrl,
+          recordingId: nextClips[0]?.recordingId ?? layer.recordingId,
+        };
+        const after = layers.map((l) => (l.id === trackId ? nextLayer : l));
+        setLayers(cloneLayersSnap(after));
+        setSelectedClipId(nextClips[0]?.id ?? null);
+        persistLayerStructure(nextLayer);
+        pushConsoleHistory({
+          kind: "layers",
+          label: "Delete clip",
+          before,
+          after: cloneLayersSnap(after),
+        });
+        setEditMsg("Clip deleted — Undo to restore");
+        return;
+      }
+    }
+
+    const hasAudio =
+      Boolean(layer.audioUrl) ||
+      Boolean(layer.recordingId) ||
+      Boolean(layer.clips && layer.clips.length);
+
+    if (hasAudio) {
+      const cleared: ProducerLayer = {
+        ...layer,
+        audioUrl: null,
+        recordingId: null,
+        clips: undefined,
+        endMs: Math.max(layer.startMs + 500, layer.startMs + 1000),
+      };
+      const after = layers.map((l) => (l.id === trackId ? cleared : l));
+      setLayers(cloneLayersSnap(after));
+      setSelectedClipId(null);
+      void fetch(`/api/recording-tasks/${trackId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_ms: cleared.startMs,
+          end_ms: cleared.endMs,
+          status: "pending",
+          console_clips: [],
+        }),
+      })
+        .then(() => onLayersChanged?.())
+        .catch(() => null);
+      pushConsoleHistory({
+        kind: "layers",
+        label: "Clear recording",
+        before,
+        after: cloneLayersSnap(after),
+      });
+      setEditMsg("Recording cleared — track kept for retake. Undo to restore.");
+      return;
+    }
+
+    await deleteLayer(trackId);
   }
 
   function openTrackContextMenu(
@@ -2788,6 +2893,51 @@ export function ProducerView({
     if (persist) void persistFx(id, fx);
   }
 
+  function cloneLayersSnap(list: ProducerLayer[]): ProducerLayer[] {
+    return list.map((l) => ({
+      ...l,
+      clips: l.clips ? l.clips.map((c) => ({ ...c })) : undefined,
+    }));
+  }
+
+  function persistLayerStructure(layer: ProducerLayer) {
+    const clips = layer.clips && layer.clips.length > 0 ? layer.clips : null;
+    const body: Record<string, unknown> = {
+      start_ms: layer.startMs,
+      end_ms: layer.endMs,
+      status:
+        layer.audioUrl || layer.recordingId || (clips && clips.length)
+          ? "completed"
+          : "pending",
+    };
+    if (clips) {
+      body.console_clips = clips.map((c) => ({
+        id: c.id,
+        start_ms: c.startMs,
+        end_ms: c.endMs,
+        recording_id: c.recordingId || null,
+      }));
+    } else {
+      body.console_clips = [];
+    }
+    void fetch(`/api/recording-tasks/${layer.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+  }
+
+  function applyLayersSnapshot(snap: ProducerLayer[], persist: boolean) {
+    const next = cloneLayersSnap(snap);
+    setLayers(next);
+    if (persist) {
+      for (const l of next) {
+        persistLayerStructure(l);
+      }
+      onLayersChanged?.();
+    }
+  }
+
   function consoleUndo() {
     // Prefer take-edit stack while a take is open
     if (takeEditId && takeUndoStackRef.current.length) {
@@ -2801,6 +2951,10 @@ export function ProducerView({
       applyLayerGeo(entry.id, entry.before.startMs, entry.before.endMs, true);
     } else if (entry.kind === "fx") {
       applyFxSnapshot(entry.id, entry.before, true);
+    } else if (entry.kind === "layers") {
+      applyLayersSnapshot(entry.before, true);
+      setSelectedClipId(null);
+      setEditMsg(`Undid: ${entry.label}`);
     }
     bumpHistory();
   }
@@ -2817,6 +2971,10 @@ export function ProducerView({
       applyLayerGeo(entry.id, entry.after.startMs, entry.after.endMs, true);
     } else if (entry.kind === "fx") {
       applyFxSnapshot(entry.id, entry.after, true);
+    } else if (entry.kind === "layers") {
+      applyLayersSnapshot(entry.after, true);
+      setSelectedClipId(null);
+      setEditMsg(`Redid: ${entry.label}`);
     }
     bumpHistory();
   }
@@ -3179,8 +3337,8 @@ export function ProducerView({
         rightClip,
       ].sort((a, b) => a.startMs - b.startMs);
 
-      setLayers((prev) =>
-        prev.map((l) => {
+      const beforeSplit = cloneLayersSnap(layers);
+      const afterSplitLocal = layers.map((l) => {
           if (l.id !== id) return l;
           return {
             ...l,
@@ -3191,8 +3349,14 @@ export function ProducerView({
             audioUrl: leftLocalUrl,
             recordingId: l.recordingId,
           };
-        })
-      );
+        });
+      setLayers(afterSplitLocal);
+      pushConsoleHistory({
+        kind: "layers",
+        label: "Split clip",
+        before: beforeSplit,
+        after: cloneLayersSnap(afterSplitLocal),
+      });
       setSelectedClipId(rightClip.id);
       setDurationById((d) => {
         const next = { ...d, [leftClip.id]: leftDur, [rightClip.id]: rightDur };
@@ -5417,6 +5581,11 @@ export function ProducerView({
         if (fxOpenId) setFxOpenId(null);
         else if (colorPickerId) setColorPickerId(null);
         else if (promptBarOpen) setPromptBarOpen(false);
+        return;
+      }
+      if (key === "Delete" || key === "Backspace") {
+        e.preventDefault();
+        void deleteSelectedClipOrRecording();
         return;
       }
       if (!sel) return;
@@ -9752,6 +9921,12 @@ export function ProducerView({
                 />
               </div>
               {tr.kind === "vocal" && tr.id !== "beat"
+                ? item("Delete clip / recording", () => {
+                    setSelectedTrackId(tr.id);
+                    void deleteSelectedClipOrRecording();
+                  }, { danger: true })
+                : null}
+              {tr.kind === "vocal" && tr.id !== "beat"
                 ? item("Remove track", () => void deleteLayer(tr.id), { danger: true })
                 : null}
             </div>
@@ -9907,7 +10082,17 @@ export function ProducerView({
               ) : null}
               {!isBeat &&
                 item(
-                  "Remove from plan",
+                  "Delete clip / recording",
+                  () => {
+                    setSelectedTrackId(ctxMenu.trackId);
+                    if (ctxMenu.clipId) setSelectedClipId(ctxMenu.clipId);
+                    void deleteSelectedClipOrRecording();
+                  },
+                  { danger: true, shortcut: "⌫" }
+                )}
+              {!isBeat &&
+                item(
+                  "Remove track from plan",
                   () => {
                     void deleteLayer(ctxMenu.trackId);
                   },
