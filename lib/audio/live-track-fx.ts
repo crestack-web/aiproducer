@@ -100,10 +100,12 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
-/** Soft-clip waveshaper curve for genuine nonlinear saturation */
-function makeSatCurve(amount: number): Float32Array {
+/** Soft-clip waveshaper curve for genuine nonlinear saturation.
+ * Returns ArrayBuffer-backed curve so WaveShaperNode.curve typechecks under TS 5.x DOM.
+ */
+function makeSatCurve(amount: number): Float32Array<ArrayBuffer> {
   const n = 256;
-  const curve = new Float32Array(n);
+  const curve = new Float32Array(new ArrayBuffer(n * 4)) as Float32Array<ArrayBuffer>;
   const a = Math.max(0, Math.min(1, amount));
   const k = a * 12;
   for (let i = 0; i < n; i++) {

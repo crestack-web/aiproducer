@@ -23,8 +23,8 @@ import {
 import { cleanVocalChannelInPlace } from "@/lib/audio/preview-clean";
 
 /** Ensure Float32Array is ArrayBuffer-backed for AudioBuffer.copyToChannel (TS 5.x DOM types). */
-function toArrayBufferF32(src: Float32Array): Float32Array {
-  const out = new Float32Array(src.length);
+function toArrayBufferF32(src: Float32Array): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(new ArrayBuffer(src.byteLength)) as Float32Array<ArrayBuffer>;
   out.set(src);
   return out;
 }
