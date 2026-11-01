@@ -31,9 +31,11 @@ create index if not exists credit_ledger_user_created_idx
 alter table public.credit_wallets enable row level security;
 alter table public.credit_ledger enable row level security;
 
+drop policy if exists "credit_wallets_select_own" on public.credit_wallets;
 create policy "credit_wallets_select_own" on public.credit_wallets
   for select using (auth.uid() = user_id);
 
+drop policy if exists "credit_ledger_select_own" on public.credit_ledger;
 create policy "credit_ledger_select_own" on public.credit_ledger
   for select using (auth.uid() = user_id);
 

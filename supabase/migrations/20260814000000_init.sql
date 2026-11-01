@@ -12,10 +12,13 @@ create table if not exists public.profiles (
 
 alter table public.profiles enable row level security;
 
+drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles
   for select using (auth.uid() = id);
+drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles
   for update using (auth.uid() = id);
+drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own" on public.profiles
   for insert with check (auth.uid() = id);
 
@@ -43,6 +46,7 @@ create table if not exists public.projects (
 create index projects_user_id_idx on public.projects(user_id);
 alter table public.projects enable row level security;
 
+drop policy if exists "projects_all_own" on public.projects;
 create policy "projects_all_own" on public.projects
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
@@ -66,6 +70,7 @@ create table if not exists public.beats (
 create index beats_project_id_idx on public.beats(project_id);
 alter table public.beats enable row level security;
 
+drop policy if exists "beats_via_project" on public.beats;
 create policy "beats_via_project" on public.beats
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
@@ -90,6 +95,7 @@ create table if not exists public.song_sections (
 create index song_sections_project_id_idx on public.song_sections(project_id);
 alter table public.song_sections enable row level security;
 
+drop policy if exists "sections_via_project" on public.song_sections;
 create policy "sections_via_project" on public.song_sections
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
@@ -119,6 +125,7 @@ create table if not exists public.recording_tasks (
 create index recording_tasks_project_id_idx on public.recording_tasks(project_id);
 alter table public.recording_tasks enable row level security;
 
+drop policy if exists "tasks_via_project" on public.recording_tasks;
 create policy "tasks_via_project" on public.recording_tasks
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
@@ -146,6 +153,7 @@ create index recordings_task_id_idx on public.recordings(task_id);
 create index recordings_project_id_idx on public.recordings(project_id);
 alter table public.recordings enable row level security;
 
+drop policy if exists "recordings_via_project" on public.recordings;
 create policy "recordings_via_project" on public.recordings
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
@@ -170,6 +178,7 @@ create table if not exists public.songs (
 create index songs_project_id_idx on public.songs(project_id);
 alter table public.songs enable row level security;
 
+drop policy if exists "songs_via_project" on public.songs;
 create policy "songs_via_project" on public.songs
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
@@ -208,6 +217,7 @@ create index jobs_project_id_idx on public.jobs(project_id);
 create index jobs_status_idx on public.jobs(status);
 alter table public.jobs enable row level security;
 
+drop policy if exists "jobs_via_project" on public.jobs;
 create policy "jobs_via_project" on public.jobs
   for all using (
     exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())

@@ -26,6 +26,7 @@ create index if not exists try_it_sessions_expires_at_idx on public.try_it_sessi
 
 alter table public.try_it_sessions enable row level security;
 
+drop policy if exists "try_it_own_rows" on public.try_it_sessions;
 create policy "try_it_own_rows" on public.try_it_sessions
   for all
   using (auth.uid() = user_id)

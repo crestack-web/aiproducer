@@ -165,6 +165,7 @@ as $$
 $$;
 
 -- Sessions: project owner can create; members can select active
+drop policy if exists "ap_sessions_select_member" on public.ap_sessions;
 create policy "ap_sessions_select_member" on public.ap_sessions
   for select using (
     public.is_ap_session_member(id)
@@ -172,30 +173,36 @@ create policy "ap_sessions_select_member" on public.ap_sessions
     or exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
   );
 
+drop policy if exists "ap_sessions_insert_owner" on public.ap_sessions;
 create policy "ap_sessions_insert_owner" on public.ap_sessions
   for insert with check (
     created_by = auth.uid()
     and exists (select 1 from public.projects p where p.id = project_id and p.user_id = auth.uid())
   );
 
+drop policy if exists "ap_sessions_update_owner_producer" on public.ap_sessions;
 create policy "ap_sessions_update_owner_producer" on public.ap_sessions
   for update using (
     created_by = auth.uid()
     or public.ap_session_role_of(id) in ('owner', 'producer')
   );
 
+drop policy if exists "ap_session_members_select" on public.ap_session_members;
 create policy "ap_session_members_select" on public.ap_session_members
   for select using (public.is_ap_session_member(session_id) or user_id = auth.uid());
 
+drop policy if exists "ap_session_members_update_self" on public.ap_session_members;
 create policy "ap_session_members_update_self" on public.ap_session_members
   for update using (user_id = auth.uid() or public.ap_session_role_of(session_id) = 'owner');
 
+drop policy if exists "ap_session_invites_select" on public.ap_session_invites;
 create policy "ap_session_invites_select" on public.ap_session_invites
   for select using (
     public.ap_session_role_of(session_id) in ('owner', 'producer')
     or created_by = auth.uid()
   );
 
+drop policy if exists "ap_session_invites_insert" on public.ap_session_invites;
 create policy "ap_session_invites_insert" on public.ap_session_invites
   for insert with check (
     public.ap_session_role_of(session_id) in ('owner', 'producer')
@@ -205,24 +212,29 @@ create policy "ap_session_invites_insert" on public.ap_session_invites
     )
   );
 
+drop policy if exists "ap_session_messages_select" on public.ap_session_messages;
 create policy "ap_session_messages_select" on public.ap_session_messages
   for select using (public.is_ap_session_member(session_id));
 
+drop policy if exists "ap_session_messages_insert" on public.ap_session_messages;
 create policy "ap_session_messages_insert" on public.ap_session_messages
   for insert with check (
     public.is_ap_session_member(session_id)
     and (user_id is null or user_id = auth.uid())
   );
 
+drop policy if exists "ap_session_contributions_select" on public.ap_session_contributions;
 create policy "ap_session_contributions_select" on public.ap_session_contributions
   for select using (public.is_ap_session_member(session_id));
 
+drop policy if exists "ap_session_contributions_insert" on public.ap_session_contributions;
 create policy "ap_session_contributions_insert" on public.ap_session_contributions
   for insert with check (
     public.is_ap_session_member(session_id)
     and contributor_id = auth.uid()
   );
 
+drop policy if exists "ap_session_events_select" on public.ap_session_events;
 create policy "ap_session_events_select" on public.ap_session_events
   for select using (public.is_ap_session_member(session_id));
 

@@ -20,6 +20,7 @@ create index if not exists try_it_usage_log_event_idx
 alter table public.try_it_usage_log enable row level security;
 
 -- Service role writes; users can read their own for transparency
+drop policy if exists "try_it_usage_own_select" on public.try_it_usage_log;
 create policy "try_it_usage_own_select" on public.try_it_usage_log
   for select using (auth.uid() = user_id);
 

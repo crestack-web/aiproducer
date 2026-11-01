@@ -18,7 +18,7 @@ export type PlanEditorTask = {
   selected_in_plan?: boolean | null;
   plan_source?: string | null;
   recommendation?: string | null;
-  metadata?: { section_label?: string; section_type?: string; plan_source?: string; [key: string]: unknown } | null;
+  metadata?: Record<string, unknown> | null;
   song_sections?: { label?: string | null; type?: string | null } | null;
 };
 
@@ -243,11 +243,12 @@ export function PlanEditor({
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {visible.map((t) => {
           const selected = t.active !== false && t.selected_in_plan !== false;
-          const section =
+          const section = String(
             t.metadata?.section_label ||
-            t.song_sections?.label ||
-            t.metadata?.section_type ||
-            "Section";
+              t.song_sections?.label ||
+              t.metadata?.section_type ||
+              "Section"
+          );
           const recorded = t.status === "completed";
           const editing = editingId === t.id;
 
