@@ -230,6 +230,15 @@ type RecordingUploadJson = {
   upload_url?: string;
 };
 
+
+function audioUrlFromUploadJson(uj: RecordingUploadJson): string | null {
+  const rec = uj.recording;
+  if (rec && typeof rec.audio_url === "string" && rec.audio_url) return rec.audio_url;
+  if (typeof uj.audio_url === "string" && uj.audio_url) return uj.audio_url;
+  if (rec && typeof rec.url === "string" && rec.url) return rec.url;
+  return null;
+}
+
 export type ProducerLayer = {
   id: string;
   label: string;
@@ -2313,7 +2322,7 @@ export function ProducerView({
         }),
       }).catch(() => null);
       const audioUrl =
-        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+        audioUrlFromUploadJson(uj);
       setLayers((prev) =>
         prev.map((l) =>
           l.id === taskId
@@ -2611,7 +2620,7 @@ export function ProducerView({
       }).catch(() => null);
 
       const audioUrl =
-        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+        audioUrlFromUploadJson(uj);
       if (audioUrl) {
         // Prefer server URL; carry local peaks over by seeding cache under the new URL
         if (localUrl) {
@@ -3201,7 +3210,7 @@ export function ProducerView({
       }).catch(() => null);
 
       const audioUrl =
-        uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+        audioUrlFromUploadJson(uj);
       if (audioUrl) {
         setLayers((prev) =>
           prev.map((l) =>
@@ -3276,7 +3285,7 @@ export function ProducerView({
       }
     }
     const audioUrl =
-      uj.recording?.audio_url || uj.audio_url || uj.recording?.url || null;
+      audioUrlFromUploadJson(uj);
     return { audioUrl: audioUrl ? String(audioUrl) : null, recordingId: newId };
   }
 
@@ -3791,10 +3800,7 @@ export function ProducerView({
           );
         } else {
           audioUrl =
-            uj.recording?.audio_url ||
-            uj.audio_url ||
-            uj.recording?.url ||
-            null;
+            audioUrlFromUploadJson(uj);
           // mark completed if upload ok
           await fetch(`/api/recording-tasks/${task.id}`, {
             method: "PATCH",
