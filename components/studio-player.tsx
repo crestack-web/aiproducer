@@ -359,12 +359,12 @@ export function RecordingVisualizer({
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        minHeight: 280,
-        padding: "28px 16px 8px",
+        minHeight: 320,
+        padding: "32px 16px 12px",
         borderRadius: 24,
         overflow: "hidden",
         background:
-          "radial-gradient(ellipse 80% 55% at 50% 42%, rgba(180,40,20,0.22) 0%, rgba(0,0,0,0) 70%), #050506",
+          "radial-gradient(ellipse 90% 60% at 50% 38%, rgba(231,169,97,0.12) 0%, rgba(0,0,0,0) 68%), #050506",
       }}
     >
       {/* Soft vignette */}
@@ -424,11 +424,11 @@ export function RecordingVisualizer({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          gap: 3,
-          height: 120,
+          gap: 2.5,
+          height: 148,
           width: "100%",
-          maxWidth: 360,
-          filter: "drop-shadow(0 0 18px rgba(231,169,97,0.35))",
+          maxWidth: 380,
+          filter: "drop-shadow(0 0 22px rgba(231,169,97,0.4))",
         }}
         aria-hidden
       >
@@ -450,23 +450,71 @@ export function RecordingVisualizer({
         })}
       </div>
 
+      {/* Primary timer — immersive, not secondary chrome */}
       <div
         style={{
           position: "relative",
           zIndex: 1,
-          marginTop: 36,
-          fontSize: 15,
-          fontWeight: 500,
-          color: "rgba(244,241,236,0.72)",
-          letterSpacing: 0.02,
+          marginTop: 28,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
         }}
       >
-        {label} · {Math.floor(seconds)}s{maxLabel ? maxLabel : ""}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "4px 12px",
+            borderRadius: 999,
+            background: "rgba(240,113,103,0.18)",
+            border: "1px solid rgba(240,113,103,0.45)",
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#F07167",
+              boxShadow: "0 0 0 3px rgba(240,113,103,0.28)",
+            }}
+          />
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.12em",
+              color: "#F07167",
+            }}
+          >
+            REC
+          </span>
+        </div>
+        <div
+          style={{
+            fontVariantNumeric: "tabular-nums",
+            fontSize: 42,
+            fontWeight: 500,
+            letterSpacing: "-0.02em",
+            color: "#F4F1EC",
+            fontFamily: "system-ui, -apple-system, sans-serif",
+            lineHeight: 1,
+          }}
+        >
+          {mm}:{ss}
+          {maxLabel ? (
+            <span style={{ fontSize: 16, color: "rgba(244,241,236,0.4)", fontWeight: 500 }}>
+              {maxLabel}
+            </span>
+          ) : null}
+        </div>
+        <div style={{ fontSize: 13, color: "rgba(244,241,236,0.55)", fontWeight: 500 }}>
+          {label}
+        </div>
       </div>
-      {/* Keep mm:ss for a11y */}
-      <span className="sr-only">
-        {mm}:{ss}
-      </span>
     </div>
   );
 }

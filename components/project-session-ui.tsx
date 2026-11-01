@@ -3258,11 +3258,19 @@ export default function ProjectDetailPage() {
                 </ul>
               </div>
             )}
-            {currentIsLayer ? (
-              <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: `1px solid ${C.signal}`, background: C.surface }}>
-                <div style={{ fontSize: 11, letterSpacing: "0.08em", fontWeight: 700, color: C.signal }}>
-                  <img src={STUDIO_LOGO_URL} alt="" width={18} height={18} style={{ borderRadius: 4, marginRight: 8, verticalAlign: "middle", objectFit: "cover" }} />
-                  BOOTH
+            {phase !== "recording" && phase !== "countdown" && (currentIsLayer ? (
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: "12px 8px 4px",
+                  textAlign: "center",
+                  maxWidth: 400,
+                  marginLeft: "auto",
+                  marginRight: "auto",
+                }}
+              >
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 700, color: C.brass }}>
+                  {sectionLabel(current)} · LAYER
                 </div>
                 <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
                   {sectionLabel(current)} · optional layer
@@ -3290,19 +3298,64 @@ export default function ProjectDetailPage() {
                 )}
               </div>
             ) : (
-              <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: `1px solid ${C.brass}`, background: C.brassSoft }}>
-                <div style={{ fontSize: 12, color: C.brass, fontWeight: 600 }}>{sectionLabel(current)}</div>
-                <h1 style={{ ...titleStyle, fontSize: "1.35rem", marginTop: 4 }}>{humanTitle(current.type)}</h1>
-                <p style={{ color: C.textMuted, fontSize: 14 }}>{current.instruction}</p>
+              <div
+                style={{
+                  marginTop: 20,
+                  padding: "8px 4px 4px",
+                  textAlign: "center",
+                  maxWidth: 400,
+                  marginLeft: "auto",
+                  marginRight: "auto",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.14em",
+                    textTransform: "uppercase",
+                    color: C.brass,
+                  }}
+                >
+                  {sectionLabel(current)}
+                </div>
+                <h1
+                  style={{
+                    ...titleStyle,
+                    fontSize: "1.5rem",
+                    marginTop: 8,
+                    marginBottom: 0,
+                    fontWeight: 500,
+                  }}
+                >
+                  {humanTitle(current.type)}
+                </h1>
+                {current.instruction ? (
+                  <p
+                    style={{
+                      color: C.text,
+                      fontSize: 15,
+                      lineHeight: 1.5,
+                      marginTop: 12,
+                      fontFamily: "Georgia, 'Times New Roman', serif",
+                      fontStyle: "italic",
+                      opacity: 0.92,
+                    }}
+                  >
+                    “{current.instruction}”
+                  </p>
+                ) : null}
                 {(current.start_ms != null || current.end_ms != null) && (
-                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
-                    Section: {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
-                    {sectionMs != null ? ` · records ${Math.round(sectionMs / 1000)}s` : ""}
+                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 10 }}>
+                    {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
+                    {sectionMs != null ? ` · ${Math.round(sectionMs / 1000)}s` : ""}
                   </p>
                 )}
               </div>
+            ))}
+            {error && phase !== "recording" && phase !== "countdown" && (
+              <p style={{ color: C.danger }}>{error}</p>
             )}
-            {error && <p style={{ color: C.danger }}>{error}</p>}
 
             {phase === "ready" && (
               <div style={{ marginTop: 20 }}>
@@ -3461,20 +3514,21 @@ export default function ProjectDetailPage() {
                           : "Record"
                     }
                     style={{
-                      width: 76,
-                      height: 76,
+                      width: 84,
+                      height: 84,
                       borderRadius: "50%",
-                      border: "3px solid rgba(255,255,255,0.92)",
+                      border: "3px solid rgba(255,255,255,0.95)",
                       background: "linear-gradient(180deg, #F07167 0%, #C93B3B 100%)",
                       boxShadow:
-                        "0 0 0 6px rgba(201,59,59,0.2), 0 12px 32px rgba(201,59,59,0.4)",
+                        "0 0 0 8px rgba(201,59,59,0.16), 0 0 0 16px rgba(201,59,59,0.06), 0 16px 40px rgba(201,59,59,0.35)",
                       cursor: "pointer",
                       padding: 0,
+                      transition: "transform 120ms ease, box-shadow 120ms ease",
                     }}
                   />
                   <div
                     style={{
-                      marginTop: 12,
+                      marginTop: 14,
                       fontSize: 13,
                       color: C.textMuted,
                       fontWeight: 500,
