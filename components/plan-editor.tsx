@@ -18,7 +18,7 @@ export type PlanEditorTask = {
   selected_in_plan?: boolean | null;
   plan_source?: string | null;
   recommendation?: string | null;
-  metadata?: { section_label?: string; section_type?: string } | null;
+  metadata?: { section_label?: string; section_type?: string; plan_source?: string; [key: string]: unknown } | null;
   song_sections?: { label?: string | null; type?: string | null } | null;
 };
 
@@ -93,11 +93,7 @@ export function PlanEditor({
         // Always keep completed + artist/console tracks visible so scratch work persists
         if (String(t.status || "").toLowerCase() === "completed") return true;
         const src = String(
-          (t as { plan_source?: string }).plan_source ||
-            (t.metadata && typeof t.metadata === "object"
-              ? (t.metadata as { plan_source?: string }).plan_source
-              : "") ||
-            ""
+          t.plan_source || t.metadata?.plan_source || ""
         ).toLowerCase();
         if (src === "scratch" || src === "console" || src === "artist") return true;
         return t.active !== false && t.selected_in_plan !== false;

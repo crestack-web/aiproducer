@@ -76,7 +76,7 @@ async function updateTaskPlanFlags(
       }
       return { data: row, error: null };
     }
-    lastErr = error;
+    lastErr = error ? { message: error.message || "update failed" } : lastErr;
     const msg = (error?.message || "").toLowerCase();
     // Only retry on missing-column schema errors
     if (!/column|schema cache|does not exist|active|selected_in_plan|plan_source/i.test(msg)) {
@@ -119,7 +119,7 @@ async function updateTaskPlanFlags(
       row.active = flags.selected ?? true;
       return { data: row, error: null };
     }
-    lastErr = error || lastErr;
+    lastErr = error ? { message: error.message || "update failed" } : lastErr;
   }
 
   return { data: null, error: lastErr };

@@ -1275,7 +1275,7 @@ export default function ProjectDetailPage() {
           if (res.ok) {
             const j = await res.json().catch(() => ({}));
             if (j.plan_mode) setPlanMode(j.plan_mode);
-            if (Array.isArray(j.tasks)) setPlanTasks(j.tasks);
+            if (Array.isArray(j.tasks)) setPlanTasks(j.tasks as PlanEditorTask[]);
           }
         } catch {
           /* ignore */
