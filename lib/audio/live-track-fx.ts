@@ -101,9 +101,9 @@ function clamp(n: number, a: number, b: number) {
 }
 
 /** Soft-clip waveshaper curve for genuine nonlinear saturation */
-function makeSatCurve(amount: number): Float32Array<ArrayBuffer> {
+function makeSatCurve(amount: number): Float32Array {
   const n = 256;
-  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  const curve = new Float32Array(n);
   const a = Math.max(0, Math.min(1, amount));
   const k = a * 12;
   for (let i = 0; i < n; i++) {
