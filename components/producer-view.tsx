@@ -2178,6 +2178,7 @@ export function ProducerView({
         title: "Lead (Console)",
         start_ms: startMs,
         end_ms: startMs + 30000,
+        plan_source: "console",
       }),
     });
     const j = await res.json().catch(() => ({}));

@@ -1249,11 +1249,38 @@ export default function ProjectDetailPage() {
       void generateAiPlan("ai");
     } else if (planQ === "scratch") {
       setPlanMode("scratch");
-      void fetch(`/api/projects/${id}/plan`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "clear_to_scratch" }),
-      }).catch(() => undefined);
+      // If already in scratch (or has completed takes), only sticky-set mode.
+      // clear_to_scratch is safe for unfinished AI slots but must not wipe progress.
+      void (async () => {
+        try {
+          const planRes = await fetch(`/api/projects/${id}/plan`);
+          const pj = planRes.ok ? await planRes.json().catch(() => ({})) : {};
+          const already = String(pj.plan_mode || "") === "scratch";
+          const hasDone = Array.isArray(pj.tasks)
+            ? pj.tasks.some(
+                (x: { status?: string }) =>
+                  String(x.status || "").toLowerCase() === "completed"
+              )
+            : false;
+          const action = already || hasDone ? "set_mode" : "clear_to_scratch";
+          const body =
+            action === "set_mode"
+              ? { action: "set_mode", mode: "scratch" }
+              : { action: "clear_to_scratch" };
+          const res = await fetch(`/api/projects/${id}/plan`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            const j = await res.json().catch(() => ({}));
+            if (j.plan_mode) setPlanMode(j.plan_mode);
+            if (Array.isArray(j.tasks)) setPlanTasks(j.tasks);
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
       openPlanner();
     }
     // strip query so refresh does not re-fire
@@ -3038,7 +3065,7 @@ export default function ProjectDetailPage() {
               projectId={id}
               tasks={(planTasks.length > 0 ? planTasks : (tasks as PlanEditorTask[]))}
               planMode={planMode}
-              onModeChange={setPlanMode}
+              onModeChange={(m) => { setPlanMode(m); void fetch(`/api/projects/${id}/plan`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_mode", mode: m }) }).catch(() => undefined); }}
               onTasksChange={(next) => {
                 setPlanTasks(next);
                 const active = next

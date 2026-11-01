@@ -82,6 +82,7 @@ const CreateTrackSchema = z.object({
   instruction: z.string().max(500).optional(),
   /** Clone an existing task (+ take when present) */
   duplicate_from: z.string().uuid().optional(),
+  plan_source: z.enum(["scratch", "console", "artist", "ai"]).optional(),
 });
 
 /**
@@ -98,12 +99,14 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, user_id")
+    .select("id, user_id, metadata")
     .eq("id", projectId)
     .maybeSingle();
   if (!project || project.user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const projectMeta = (project.metadata || {}) as Record<string, unknown>;
+  const projectPlanMode = String(projectMeta.plan_mode || "");
 
   let body: unknown;
   try {
@@ -221,6 +224,10 @@ export async function POST(req: Request, ctx: Ctx) {
     parsed.data.title ||
     (type === "custom" ? "Custom track" : type.replace(/_/g, " "));
 
+  const planSource =
+    parsed.data.plan_source ||
+    (projectPlanMode === "scratch" ? "scratch" : "console");
+
   const row: Record<string, unknown> = {
     project_id: projectId,
     type,
@@ -235,11 +242,12 @@ export async function POST(req: Request, ctx: Ctx) {
     // Must be active so session-preview / Produce keep the track after refresh.
     // active:false caused uploaded vocals to vanish on reload (beat-only playback).
     active: true,
+    plan_source: planSource,
     start_ms: start,
     end_ms: end,
     priority: 0,
     // Drive yellow section banners from the name the artist typed
-    metadata: { section_label: title },
+    metadata: { section_label: title, plan_source: planSource },
   };
 
   // Schema-resilient insert

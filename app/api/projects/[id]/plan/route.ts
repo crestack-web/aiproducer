@@ -46,12 +46,7 @@ async function updateTaskPlanFlags(
     attempts.push({ selected_in_plan: flags.selected });
   }
 
-  // No plan columns at all — soft-skip via status + metadata
-  if (flags.selected === false) {
-    attempts.push({ status: "skipped" });
-  } else if (flags.selected === true) {
-    attempts.push({ status: "pending" });
-  }
+  // Avoid status rewrites here — completed takes must stay completed in scratch mode.
 
   let lastErr: { message: string } | null = null;
   for (const patch of attempts) {
@@ -89,7 +84,8 @@ async function updateTaskPlanFlags(
     }
   }
 
-  // Last resort: merge flags into metadata so UI can still filter
+  // Last resort: merge flags into metadata so UI can still filter.
+  // Never force status "skipped" on completed takes — that wiped Build-from-scratch recordings.
   const { data: existing } = await supabase
     .from("recording_tasks")
     .select("id, metadata, status")
@@ -103,8 +99,13 @@ async function updateTaskPlanFlags(
       m.active = flags.selected;
     }
     const statusPatch: Record<string, unknown> = { metadata: m };
-    if (flags.selected === false) statusPatch.status = "skipped";
-    if (flags.selected === true && existing.status === "skipped") statusPatch.status = "pending";
+    const st = String(existing.status || "");
+    if (flags.selected === false && st !== "completed") {
+      statusPatch.status = "skipped";
+    }
+    if (flags.selected === true && st === "skipped") {
+      statusPatch.status = "pending";
+    }
     const { data, error } = await supabase
       .from("recording_tasks")
       .update(statusPatch)
@@ -135,10 +136,9 @@ async function bulkUpdatePlanFlags(
   if (flags.selected !== undefined) full.selected_in_plan = flags.selected;
   if (flags.active !== undefined) full.active = flags.active;
   if (flags.plan_source) full.plan_source = flags.plan_source;
-  patches.push(full);
+  if (Object.keys(full).length) patches.push(full);
   if (flags.selected !== undefined) patches.push({ selected_in_plan: flags.selected });
-  if (flags.selected === false) patches.push({ status: "skipped" });
-  if (flags.selected === true) patches.push({ status: "pending" });
+  // Never rewrite status here — "skipped"/"pending" destroyed completed takes in scratch mode.
 
   for (const patch of patches) {
     let q = supabase.from("recording_tasks").update(patch).eq("project_id", projectId);
@@ -438,7 +438,45 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   if (action === "clear_to_scratch") {
-    await bulkUpdatePlanFlags(supabase, projectId, { selected: false, active: false });
+    // Persist mode. Only drop incomplete AI-plan slots — keep completed takes
+    // so Build-from-scratch stays persistent across reload and re-entry.
+    const { data: allTasks } = await supabase
+      .from("recording_tasks")
+      .select("id, status, plan_source, selected_in_plan, active")
+      .eq("project_id", projectId);
+    const dropIds = (allTasks || [])
+      .filter((row) => {
+        const st = String(row.status || "").toLowerCase();
+        if (st === "completed") return false;
+        // Keep artist-created / console tracks even if still pending empty lanes
+        const src = String(row.plan_source || "").toLowerCase();
+        if (src === "scratch" || src === "console" || src === "artist") return false;
+        return true;
+      })
+      .map((row) => row.id as string);
+
+    if (dropIds.length) {
+      await bulkUpdatePlanFlags(
+        supabase,
+        projectId,
+        { selected: false, active: false },
+        { ids: dropIds }
+      );
+    }
+
+    // Ensure completed takes stay on the active plan
+    const keepIds = (allTasks || [])
+      .filter((row) => String(row.status || "").toLowerCase() === "completed")
+      .map((row) => row.id as string);
+    if (keepIds.length) {
+      await bulkUpdatePlanFlags(
+        supabase,
+        projectId,
+        { selected: true, active: true },
+        { ids: keepIds }
+      );
+    }
+
     await supabase
       .from("projects")
       .update({ metadata: { ...meta, plan_mode: "scratch" } })

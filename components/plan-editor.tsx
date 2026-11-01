@@ -89,7 +89,19 @@ export function PlanEditor({
 
   const visible = useMemo(() => {
     if (planMode === "scratch") {
-      return tasks.filter((t) => t.active !== false && t.selected_in_plan !== false);
+      return tasks.filter((t) => {
+        // Always keep completed + artist/console tracks visible so scratch work persists
+        if (String(t.status || "").toLowerCase() === "completed") return true;
+        const src = String(
+          (t as { plan_source?: string }).plan_source ||
+            (t.metadata && typeof t.metadata === "object"
+              ? (t.metadata as { plan_source?: string }).plan_source
+              : "") ||
+            ""
+        ).toLowerCase();
+        if (src === "scratch" || src === "console" || src === "artist") return true;
+        return t.active !== false && t.selected_in_plan !== false;
+      });
     }
     return tasks;
   }, [tasks, planMode]);
@@ -131,6 +143,12 @@ export function PlanEditor({
   function setMode(mode: PlanMode) {
     if (mode === planMode) return;
     onModeChange(mode);
+    // Sticky plan mode — persist immediately so refresh / Console stay in scratch
+    void fetch(`/api/projects/${projectId}/plan`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_mode", mode }),
+    }).catch(() => undefined);
   }
 
   function startEdit(t: PlanEditorTask) {
