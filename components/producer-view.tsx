@@ -277,6 +277,73 @@ function clipsForLayer(l: ProducerLayer): ProducerClip[] {
   ];
 }
 
+
+/** DAW-style: place a new take at playhead on a track without wiping existing regions. */
+function mergeTakeOntoLayer(
+  layer: ProducerLayer,
+  take: {
+    id: string;
+    startMs: number;
+    endMs: number;
+    audioUrl?: string | null;
+    recordingId?: string | null;
+    uploadFailed?: boolean;
+  }
+): ProducerLayer {
+  const startMs = Math.max(0, Math.round(take.startMs));
+  const endMs = Math.max(startMs + 50, Math.round(take.endMs));
+  const newClip: ProducerClip = {
+    id: take.id,
+    startMs,
+    endMs,
+    audioUrl: take.audioUrl ?? null,
+    recordingId: take.recordingId ?? null,
+    offsetMs: 0,
+  };
+  const prior = (layer.clips && layer.clips.length > 0
+    ? layer.clips
+    : layer.audioUrl || layer.recordingId
+      ? [
+          {
+            id: layer.recordingId || layer.id,
+            startMs: layer.startMs,
+            endMs: layer.endMs,
+            audioUrl: layer.audioUrl,
+            recordingId: layer.recordingId,
+            offsetMs: layer.mediaOffsetMs || 0,
+          },
+        ]
+      : []
+  ).filter((c) => c.audioUrl || c.recordingId);
+
+  if (prior.length === 0) {
+    // First audio on this lane — single region at playhead (not forced to 0)
+    return {
+      ...layer,
+      audioUrl: take.audioUrl ?? layer.audioUrl,
+      recordingId: take.recordingId ?? layer.recordingId,
+      startMs,
+      endMs,
+      clips: undefined,
+      mediaOffsetMs: 0,
+      uploadFailed: take.uploadFailed ?? false,
+    };
+  }
+
+  const nextClips = [...prior, newClip].sort((a, b) => a.startMs - b.startMs);
+  return {
+    ...layer,
+    clips: nextClips,
+    startMs: nextClips[0].startMs,
+    endMs: nextClips[nextClips.length - 1].endMs,
+    // Keep first clip as legacy primary for APIs that still read layer.audioUrl
+    audioUrl: nextClips[0].audioUrl ?? layer.audioUrl,
+    recordingId: nextClips[0].recordingId ?? layer.recordingId,
+    uploadFailed: take.uploadFailed ?? false,
+  };
+}
+
+
 export type ProducerSection = {
   id: string;
   label: string;
@@ -2446,6 +2513,7 @@ export function ProducerView({
       let uploadName = `console-take-${Date.now()}.webm`;
       let durationMs = wallClockMs;
       let localUrl: string | null = null;
+      const takeClipId = `take-${Date.now()}`;
       try {
         const wav = await audioBlobToWavDetailed(blob);
         uploadBlob = wav.blob;
@@ -2465,23 +2533,16 @@ export function ProducerView({
             peaksForUrl(localUrl, audioBuf, 2048);
             const buckets = Math.min(2048, Math.max(64, Math.floor(timelineW || 800)));
             const hi = peaksForUrl(localUrl, audioBuf, buckets);
-            setPeaksById((prev) => ({ ...prev, [taskId]: hi }));
+            setPeaksById((prev) => ({
+              ...prev,
+              [taskId]: hi,
+              [takeClipId]: hi,
+            }));
             setDurationById((prev) => ({
               ...prev,
               [taskId]: Math.round(audioBuf.duration * 1000),
+              [takeClipId]: Math.round(audioBuf.duration * 1000),
             }));
-            // Show local WAV on the track right away so clip width + peaks match audio
-            setLayers((prev) =>
-              prev.map((l) =>
-                l.id === taskId
-                  ? {
-                      ...l,
-                      audioUrl: localUrl,
-                      endMs: Math.max(l.endMs, l.startMs + Math.round(audioBuf.duration * 1000)),
-                    }
-                  : l
-              )
-            );
           } catch {
             /* peaks still refresh after server URL */
           }
@@ -2495,15 +2556,16 @@ export function ProducerView({
       setLayers((prev) =>
         prev.map((l) =>
           l.id === taskId
-            ? {
-                ...l,
-                audioUrl: localUrl || l.audioUrl,
+            ? mergeTakeOntoLayer(l, {
+                id: takeClipId,
                 startMs: placeMs,
                 endMs: placeMs + durationMs,
-              }
+                audioUrl: localUrl || l.audioUrl,
+              })
             : l
         )
       );
+      setSelectedClipId(takeClipId);
 
       /**
        * Upload strategy:
@@ -2591,13 +2653,13 @@ export function ProducerView({
         setLayers((prev) =>
           prev.map((l) =>
             l.id === taskId
-              ? {
-                  ...l,
-                  audioUrl: l.audioUrl || localUrl,
-                  uploadFailed: true,
+              ? mergeTakeOntoLayer(l, {
+                  id: takeClipId,
                   startMs: placeMs,
                   endMs: placeMs + durationMs,
-                }
+                  audioUrl: localUrl || l.audioUrl,
+                  uploadFailed: true,
+                })
               : l
           )
         );
@@ -2613,16 +2675,6 @@ export function ProducerView({
         return;
       }
       pendingTakeBlobsRef.current.delete(taskId);
-      await fetch(`/api/recording-tasks/${taskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "completed",
-          start_ms: Math.round(placementStartMs),
-          end_ms: Math.round(placementStartMs + durationMs),
-        }),
-      }).catch(() => null);
-
       const audioUrl =
         audioUrlFromUploadJson(uj);
       if (audioUrl) {
@@ -2635,19 +2687,78 @@ export function ProducerView({
             if (hi) peakCache.set(`${audioUrl}::2048`, hi);
           }
         }
+        const serverClipId =
+          (typeof uj.recording?.id === "string" && uj.recording.id) || takeClipId;
         setLayers((prev) =>
-          prev.map((l) =>
-            l.id === taskId
-              ? {
+          prev.map((l) => {
+            if (l.id !== taskId) return l;
+            const clips = (l.clips && l.clips.length > 0
+              ? l.clips
+              : l.audioUrl || l.recordingId
+                ? [
+                    {
+                      id: l.recordingId || l.id,
+                      startMs: l.startMs,
+                      endMs: l.endMs,
+                      audioUrl: l.audioUrl,
+                      recordingId: l.recordingId,
+                      offsetMs: l.mediaOffsetMs || 0,
+                    },
+                  ]
+                : []
+            ).map((c) =>
+              c.id === takeClipId
+                ? {
+                    ...c,
+                    id: serverClipId,
+                    audioUrl: audioUrl || c.audioUrl,
+                    recordingId:
+                      (typeof uj.recording?.id === "string" && uj.recording.id) ||
+                      c.recordingId ||
+                      null,
+                    startMs: placementStartMs,
+                    endMs: placementStartMs + durationMs,
+                  }
+                : c
+            );
+            const hasTake = clips.some((c) => c.id === serverClipId || c.id === takeClipId);
+            if (!hasTake) {
+              // Optimistic first take is a single region (no clips[]) — just stamp server URL
+              if (!l.clips?.length) {
+                return {
                   ...l,
-                  audioUrl,
+                  audioUrl: audioUrl || l.audioUrl,
+                  recordingId:
+                    (typeof uj.recording?.id === "string" && uj.recording.id) ||
+                    l.recordingId,
                   startMs: placementStartMs,
                   endMs: placementStartMs + durationMs,
                   uploadFailed: false,
-                }
-              : l
-          )
+                };
+              }
+              return mergeTakeOntoLayer(l, {
+                id: serverClipId,
+                startMs: placementStartMs,
+                endMs: placementStartMs + durationMs,
+                audioUrl: audioUrl,
+                recordingId:
+                  (typeof uj.recording?.id === "string" && uj.recording.id) || null,
+                uploadFailed: false,
+              });
+            }
+            const sorted = [...clips].sort((a, b) => a.startMs - b.startMs);
+            return {
+              ...l,
+              clips: sorted.length > 1 ? sorted : undefined,
+              startMs: sorted[0]?.startMs ?? placementStartMs,
+              endMs: sorted[sorted.length - 1]?.endMs ?? placementStartMs + durationMs,
+              audioUrl: sorted[0]?.audioUrl ?? audioUrl ?? l.audioUrl,
+              recordingId: sorted[0]?.recordingId ?? l.recordingId,
+              uploadFailed: false,
+            };
+          })
         );
+        setSelectedClipId(serverClipId);
         // Re-map peaks to task id under the server URL resolution
         setPeaksById((prev) => {
           const existing = prev[taskId];
@@ -2656,6 +2767,12 @@ export function ProducerView({
         });
       }
       // Keep local object URL until React swaps to server URL (revoke would break mid-frame)
+      // Persist multi-clip layout + take span for this track
+      setLayers((prev) => {
+        const layer = prev.find((l) => l.id === taskId);
+        if (layer) persistLayerStructure(layer);
+        return prev;
+      });
       setEditMsg("Take saved — shared with Booth (same recording_tasks)");
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
@@ -2706,18 +2823,10 @@ export function ProducerView({
       }, 1000);
 
       // Monitor beat from playhead (never connected to MediaRecorder)
+      // Do not move existing clip starts — new take is a separate region at fromMs
       setPlayheadMs(fromMs);
-      setLayers((prev) =>
-        prev.map((l) =>
-          l.id === taskId
-            ? {
-                ...l,
-                // Expand lane so the new take can land at playhead
-                startMs: Math.min(l.startMs, fromMs),
-              }
-            : l
-        )
-      );
+      setArmedTrackId(taskId);
+      setSelectedTrackId(taskId);
       if (beatUrl) {
         try {
           const a = new Audio(beatUrl);
@@ -2743,7 +2852,9 @@ export function ProducerView({
         }
       }
       const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
-      setEditMsg(`Recording from playhead (${Math.round(fromMs / 100) / 10}s) · ${mimeType.split(";")[0]} · ${micNote}`);
+      setEditMsg(
+        `Recording on selected track from ${Math.round(fromMs / 100) / 10}s (playhead) · ${mimeType.split(";")[0]} · ${micNote}`
+      );
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
       setIsConsoleRecording(false);
@@ -7563,21 +7674,30 @@ export function ProducerView({
                 isConsoleRecording &&
                 consoleRecRef.current?.taskId === tr.id &&
                 tr.kind === "vocal";
-              // Take length wins while recording: clip grows with elapsed time
+              // DAW-style: live region grows from playhead where Record was pressed
+              const liveRecStartMs = isLiveRec
+                ? Math.max(0, consoleRecRef.current?.recordStartMs ?? playheadMs)
+                : tr.startMs;
               const liveEndMs = isLiveRec
-                ? tr.startMs + Math.max(400, recordSeconds * 1000)
+                ? liveRecStartMs + Math.max(400, recordSeconds * 1000)
                 : tr.endMs;
-              const displayEndMs = isLiveRec ? Math.max(tr.endMs, liveEndMs) : tr.endMs;
+              const displayEndMs = isLiveRec ? liveEndMs : tr.endMs;
               const isTakeEditing = takeEditId === tr.id;
               const stackOpen = stackMenuId === tr.id;
               const colorOpen = colorPickerId === tr.id;
               const multiClips =
                 tr.kind === "vocal" && tr.clips && tr.clips.length > 1 ? tr.clips : null;
               const primaryClip = multiClips ? multiClips[0] : null;
-              const clipStartMs = primaryClip ? primaryClip.startMs : tr.startMs;
-              const clipEndMs = primaryClip
-                ? primaryClip.endMs
-                : displayEndMs;
+              const clipStartMs = isLiveRec
+                ? liveRecStartMs
+                : primaryClip
+                  ? primaryClip.startMs
+                  : tr.startMs;
+              const clipEndMs = isLiveRec
+                ? displayEndMs
+                : primaryClip
+                  ? primaryClip.endMs
+                  : displayEndMs;
               const dragKey =
                 multiClips && primaryClip
                   ? `${tr.id}::${primaryClip.id}`
