@@ -440,12 +440,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (action === "clear_to_scratch") {
     // Persist mode. Only drop incomplete AI-plan slots — keep completed takes
     // so Build-from-scratch stays persistent across reload and re-entry.
+    type TaskFlags = {
+      id: string;
+      status?: string | null;
+      plan_source?: string | null;
+      selected_in_plan?: boolean | null;
+      active?: boolean | null;
+    };
     const { data: allTasks } = await supabase
       .from("recording_tasks")
       .select("id, status, plan_source, selected_in_plan, active")
       .eq("project_id", projectId);
-    const dropIds = (allTasks || [])
-      .filter((row) => {
+    const rows = (allTasks || []) as TaskFlags[];
+    const dropIds = rows
+      .filter((row: TaskFlags) => {
         const st = String(row.status || "").toLowerCase();
         if (st === "completed") return false;
         // Keep artist-created / console tracks even if still pending empty lanes
@@ -453,7 +461,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
         if (src === "scratch" || src === "console" || src === "artist") return false;
         return true;
       })
-      .map((row) => row.id as string);
+      .map((row: TaskFlags) => row.id);
 
     if (dropIds.length) {
       await bulkUpdatePlanFlags(
@@ -465,9 +473,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
     }
 
     // Ensure completed takes stay on the active plan
-    const keepIds = (allTasks || [])
-      .filter((row) => String(row.status || "").toLowerCase() === "completed")
-      .map((row) => row.id as string);
+    const keepIds = rows
+      .filter((row: TaskFlags) => String(row.status || "").toLowerCase() === "completed")
+      .map((row: TaskFlags) => row.id);
     if (keepIds.length) {
       await bulkUpdatePlanFlags(
         supabase,
@@ -498,11 +506,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: listErr.message }, { status: 500 });
     }
     const coreIds = (allTasks || [])
-      .filter((t) => {
+      .filter((t: { id: string; type?: string | null }) => {
         const ty = String(t.type || "").toLowerCase();
         return ty.includes("lead") || ty === "main" || ty === "verse" || ty === "chorus";
       })
-      .map((t) => t.id as string);
+      .map((t: { id: string }) => t.id);
     if (coreIds.length) {
       const { error: upErr } = await supabase
         .from("recording_tasks")

@@ -46,17 +46,17 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   let list = tasks ?? [];
   if (!includeInactive) {
-    list = list.filter((t) => t.selected_in_plan !== false);
+    list = list.filter((t: { selected_in_plan?: boolean | null }) => t.selected_in_plan !== false);
   }
 
-  const ordered = [...list].sort((a, b) => {
-    const ts = (a.start_ms ?? 0) - (b.start_ms ?? 0);
+  const ordered = [...list].sort((a: Record<string, unknown>, b: Record<string, unknown>) => {
+    const ts = (Number(a.start_ms) || 0) - (Number(b.start_ms) || 0);
     if (ts !== 0) return ts;
     // AI-recommended first (legacy required or recommendation field)
     const ar = a.recommendation === "recommended" || a.required ? 0 : 1;
     const br = b.recommendation === "recommended" || b.required ? 0 : 1;
     if (ar !== br) return ar - br;
-    return (b.priority ?? 0) - (a.priority ?? 0);
+    return (Number(b.priority) || 0) - (Number(a.priority) || 0);
   });
 
   return NextResponse.json({ tasks: ordered });
