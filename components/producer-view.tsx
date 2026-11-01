@@ -1,12 +1,15 @@
 "use client";
 
 /**
- * Console — AI-DAW timeline for a project (/app/console/[id]).
+ * Studio (Console) — multitrack control environment (/app/console/[id]).
  *
- * Naming: Booth = guided record (/app/studio/[id]); Studio = hub (/app/studio).
- * Shared: same recording_tasks / takes as Booth. Capture uses Booth live pipeline
- * (openRecordingStream + createVocalRecorder) — never a parallel recorder.
- * Offline AP (restore/pitch/mix/master) only after save, same as Booth.
+ * Product split (same project data):
+ *   Booth  = Create  → guided section recording at /app/studio/[id]
+ *   Studio = Control → this timeline / FX / arrangement view
+ *   Hub    = /app/studio (library & project entry)
+ *
+ * Shared source of truth: recording_tasks, takes, track_fx, console_clips, produce jobs.
+ * Capture uses the same live pipeline as Booth (openRecordingStream + createVocalRecorder).
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -2773,7 +2776,7 @@ export function ProducerView({
         if (layer) persistLayerStructure(layer);
         return prev;
       });
-      setEditMsg("Take saved — shared with Booth (same recording_tasks)");
+      setEditMsg("Take saved — available in Booth and Studio");
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
       onLayersChanged?.();

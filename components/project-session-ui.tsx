@@ -3160,18 +3160,67 @@ export default function ProjectDetailPage() {
 
         {screen === "session" && current && (
           <div style={wrap}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-            <button type="button" style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer" }} onClick={() => setScreen("plan")} disabled={phase === "recording" || phase === "countdown"}>
-              ← Plan
-            </button>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                flexWrap: "wrap",
+                marginBottom: 4,
+              }}
+            >
+              <button
+                type="button"
+                style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", padding: 0, fontSize: 14 }}
+                onClick={() => setScreen("plan")}
+                disabled={phase === "recording" || phase === "countdown"}
+              >
+                ← Plan
+              </button>
+              <div
+                style={{
+                  flex: "1 1 120px",
+                  textAlign: "center",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: C.text,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={project?.title || "Booth"}
+              >
+                {project?.title || "Booth"}
+              </div>
+              <button
+                type="button"
+                disabled={phase === "recording" || phase === "countdown"}
+                onClick={() => {
+                  if (phase === "recording" || phase === "countdown") return;
+                  window.location.href = `/app/console/${id}`;
+                }}
+                style={{
+                  background: "none",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 999,
+                  color: C.brass,
+                  cursor: phase === "recording" || phase === "countdown" ? "not-allowed" : "pointer",
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  opacity: phase === "recording" || phase === "countdown" ? 0.5 : 1,
+                  fontFamily: "inherit",
+                }}
+                title="Same project — multitrack arrangement and FX"
+              >
+                Open in Studio
+              </button>
             </div>
-            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
-            <p style={{ textAlign: "center", fontSize: 12.5, color: C.textMuted, marginTop: 8 }}>
-              {coreDone(tasks).length}/{coreTasks(tasks).length} core sections
-              {productionLayersAdded(tasks).length > 0
-                ? ` · ${productionLayersAdded(tasks).length} production layer${productionLayersAdded(tasks).length === 1 ? "" : "s"} added`
-                : ""}
+            <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, margin: "2px 0 8px", letterSpacing: "0.06em" }}>
+              BOOTH · create
             </p>
+            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
             {sectionLayerStack.length > 1 && (
               <div
                 style={{
@@ -4057,7 +4106,7 @@ export default function ProjectDetailPage() {
               <>
                 <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song so far</h1>
                 <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14 }}>
-                  {coreDone(tasks).length} / {coreTasks(tasks).length} core sections recorded
+                  {coreDone(tasks).length} of {coreTasks(tasks).length} sections recorded
                   {productionLayersAdded(tasks).length > 0
                     ? ` · ${productionLayersAdded(tasks).length} layers`
                     : ""}
@@ -4175,7 +4224,7 @@ export default function ProjectDetailPage() {
                 fontFamily: "inherit",
               }}
             >
-              Open Console
+              Open in Studio
             </button>
             {masterUrl && (
               <div style={{ marginTop: 20 }}>

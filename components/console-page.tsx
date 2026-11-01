@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Console page loader — /app/console/[id]
- * Reads recording_tasks + beat; same source of truth as Booth (/app/studio/[id]).
+ * Studio (control) page — /app/console/[id]
+ * Same project as Booth (/app/studio/[id]): recording_tasks, takes, FX, clips.
  */
 
 import React, { useCallback, useEffect, useState } from "react";

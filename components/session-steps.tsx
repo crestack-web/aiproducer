@@ -394,7 +394,7 @@ export function SessionSteps({
           <span style={{ color: C.brass, fontWeight: 700 }}>
             {requiredDoneCount}/{requiredTasks.length || 0}
           </span>{" "}
-          core done
+          recorded
           {reqLeft.length > 0 ? (
             <span style={{ color: C.textFaint }}> · {reqLeft.length} left</span>
           ) : (
