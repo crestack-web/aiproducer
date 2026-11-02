@@ -3,7 +3,7 @@
  * Docs: https://gen.daydream.live/docs
  *
  * POST /v1/songs → poll GET /v1/songs/{id} → download takes[0].mp3_url
- * Env: DAYDREAM_API_KEY (Bearer)
+ * Env: DAYDREAM_API (preferred) or DAYDREAM_API_KEY (Bearer)
  */
 import type {
   MusicGenerationRequest,
@@ -25,13 +25,17 @@ const POLL_MAX_MS = 180_000;
 
 function apiKey(): string {
   const k =
+    process.env.DAYDREAM_API?.trim() ||
     process.env.DAYDREAM_API_KEY?.trim() ||
     process.env.DAYDREAM_KEY?.trim() ||
     "";
-  if (!k) throw new MusicGenerationError("AUTHENTICATION_ERROR", "DAYDREAM_API_KEY is not configured", {
-    provider: "daydream",
-    retryable: false,
-  });
+  if (!k) {
+    throw new MusicGenerationError(
+      "AUTHENTICATION_ERROR",
+      "DAYDREAM_API is not configured",
+      { provider: "daydream", retryable: false }
+    );
+  }
   return k;
 }
 
@@ -88,7 +92,7 @@ async function createSong(body: Record<string, unknown>): Promise<DaydreamSong> 
   if (res.status === 401 || res.status === 403) {
     throw new MusicGenerationError(
       "AUTHENTICATION_ERROR",
-      "Daydream API key was rejected. Check DAYDREAM_API_KEY on Vercel and redeploy.",
+      "Daydream API key was rejected. Check DAYDREAM_API on Vercel and redeploy.",
       { provider: "daydream", retryable: false, details: { httpStatus: res.status, body: text.slice(0, 300) } }
     );
   }
@@ -165,7 +169,11 @@ async function downloadUrl(url: string): Promise<Buffer> {
 }
 
 export function hasDaydreamKey(): boolean {
-  return Boolean(process.env.DAYDREAM_API_KEY?.trim() || process.env.DAYDREAM_KEY?.trim());
+  return Boolean(
+    process.env.DAYDREAM_API?.trim() ||
+    process.env.DAYDREAM_API_KEY?.trim() ||
+    process.env.DAYDREAM_KEY?.trim()
+  );
 }
 
 export class DaydreamMusicProvider implements MusicGenerationProvider {

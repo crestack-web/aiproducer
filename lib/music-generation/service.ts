@@ -24,6 +24,7 @@ export function getMusicGenerationMode(): "mock" | "provider" {
   if (m === "provider") return "provider";
   // Prefer real providers when keys exist
   if (
+    process.env.DAYDREAM_API?.trim() ||
     process.env.DAYDREAM_API_KEY?.trim() ||
     process.env.DAYDREAM_KEY?.trim() ||
     process.env.ELEVENLABS_API_KEY?.trim() ||
