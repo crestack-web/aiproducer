@@ -12,6 +12,7 @@ import {
   BeatMoreButton,
   BeatActionsSheet,
 } from "@/components/beat-preview-player";
+import { BeatStemsPanel } from "@/components/beat-stems-panel";
 import { analyzeAudioFile } from "@/lib/audio/beat-detect";
 import { waitForBeatReady } from "@/lib/studio/poll-beat-ready";
 import { useTheme } from "@/lib/theme";
@@ -1450,6 +1451,10 @@ function StudioPageInner() {
               onSeek={seek}
               onSkip={skip}
             />
+
+            {readyBeat.source === "ai" ? (
+              <BeatStemsPanel projectId={readyBeat.projectId} />
+            ) : null}
 
             {readyBeat.source === "upload" ? (
             <div

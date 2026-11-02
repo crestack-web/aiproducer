@@ -496,6 +496,53 @@ export async function tickMusicGenerationJob(jobId: string) {
     const path = beatPath(job.user_id, job.project_id, `generated-${job.kind}-${jobId.slice(0, 8)}.${storeExt}`);
     await uploadBuffer(path, storeBuf, storeCt);
 
+    // Daydream (and future providers): persist instrumental stems next to the mix
+    const stemPaths: Record<string, string> = {};
+    const resultMeta =
+      result.metadata && typeof result.metadata === "object"
+        ? (result.metadata as Record<string, unknown>)
+        : {};
+    const stemUrlsRaw = resultMeta.stemUrls;
+    if (stemUrlsRaw && typeof stemUrlsRaw === "object") {
+      await supabase
+        .from("music_generation_jobs")
+        .update({ stage: "store_stems", progress: 90 })
+        .eq("id", jobId);
+      for (const [stemName, stemUrl] of Object.entries(stemUrlsRaw as Record<string, unknown>)) {
+        if (typeof stemUrl !== "string" || !stemUrl.startsWith("http")) continue;
+        try {
+          const sRes = await fetch(stemUrl, { redirect: "follow" });
+          if (!sRes.ok) {
+            console.warn("[music-gen] stem download failed", stemName, sRes.status);
+            continue;
+          }
+          const sBuf = Buffer.from(await sRes.arrayBuffer());
+          if (sBuf.length < 500) continue;
+          const ct = (sRes.headers.get("content-type") || "").toLowerCase();
+          const ext = ct.includes("flac")
+            ? "flac"
+            : ct.includes("wav")
+              ? "wav"
+              : ct.includes("mpeg") || ct.includes("mp3")
+                ? "mp3"
+                : "flac";
+          const stemPath = beatPath(
+            job.user_id,
+            job.project_id,
+            `stem-${stemName}-${jobId.slice(0, 8)}.${ext}`
+          );
+          await uploadBuffer(
+            stemPath,
+            sBuf,
+            ct.includes("audio") ? ct.split(";")[0]! : `audio/${ext}`
+          );
+          stemPaths[stemName] = stemPath;
+        } catch (stemErr) {
+          console.warn("[music-gen] stem store skipped", stemName, stemErr);
+        }
+      }
+    }
+
     const beatPayload = {
       project_id: job.project_id,
       audio_path: path,
@@ -511,6 +558,13 @@ export async function tickMusicGenerationJob(jobId: string) {
         kind: job.kind,
         music_generation_job_id: jobId,
         provider_prediction_id: result.providerPredictionId,
+        ...(Object.keys(stemPaths).length
+          ? {
+              stems: stemPaths,
+              stems_provider: provider.name,
+              stems_ready: true,
+            }
+          : {}),
         ...(() => {
           const input =
             job.input_data && typeof job.input_data === "object"

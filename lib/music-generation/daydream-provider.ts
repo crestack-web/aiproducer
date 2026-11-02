@@ -73,8 +73,14 @@ type DaydreamSong = {
     duration?: number;
     mp3_url?: string;
     wav_url?: string;
+    stems_ready?: boolean;
+    stems?: Partial<Record<"drums" | "bass" | "guitar" | "keys" | "other", string>>;
   }>;
 };
+
+export const DAYDREAM_STEM_NAMES = ["drums", "bass", "guitar", "keys", "other"] as const;
+export type DaydreamStemName = (typeof DAYDREAM_STEM_NAMES)[number];
+
 
 async function createSong(body: Record<string, unknown>): Promise<DaydreamSong> {
   const res = await fetch(`${BASE}/songs`, {
@@ -274,6 +280,20 @@ export class DaydreamMusicProvider implements MusicGenerationProvider {
       );
     }
 
+    // Stems arrive shortly after the mix — poll a bit longer without failing the beat
+    const STEM_WAIT_MS = 45_000;
+    const stemDeadline = Date.now() + STEM_WAIT_MS;
+    while (Date.now() < stemDeadline) {
+      const take0 = song.takes?.[0];
+      if (take0?.stems_ready && take0.stems && Object.keys(take0.stems).length > 0) break;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      try {
+        song = await getSong(songId);
+      } catch {
+        break;
+      }
+    }
+
     const take = song.takes?.[0];
     const mp3 = take?.mp3_url;
     if (!mp3) {
@@ -290,6 +310,14 @@ export class DaydreamMusicProvider implements MusicGenerationProvider {
         ? take.duration
         : durationSec;
 
+    const stemUrls: Partial<Record<DaydreamStemName, string>> = {};
+    if (take?.stems && typeof take.stems === "object") {
+      for (const name of DAYDREAM_STEM_NAMES) {
+        const u = take.stems[name];
+        if (typeof u === "string" && u.startsWith("http")) stemUrls[name] = u;
+      }
+    }
+
     return {
       buffer,
       contentType: "audio/mpeg",
@@ -302,6 +330,8 @@ export class DaydreamMusicProvider implements MusicGenerationProvider {
         songId,
         bpm: song.bpm ?? req.bpm ?? null,
         prompt,
+        stemUrls,
+        stemsReady: Object.keys(stemUrls).length > 0,
       },
     };
   }
