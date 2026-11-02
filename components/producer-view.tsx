@@ -1376,16 +1376,26 @@ export function ProducerView({
           return next;
         });
         break;
-      case "solo":
+      case "solo": {
+        const soloTrackId = action.trackId;
+        if (soloTrackId == null) {
+          soloIdsRef.current = {};
+          setSoloIds({});
+          soloIdRef.current = null;
+          setSoloId(null);
+          queueMicrotask(() => applyGains(undefined, true));
+          break;
+        }
         setSoloIds((prev) => {
-          const next = { ...prev, [action.trackId]: true };
+          const next = { ...prev, [soloTrackId]: true };
           soloIdsRef.current = next;
-          soloIdRef.current = action.trackId;
-          setSoloId(action.trackId);
+          soloIdRef.current = soloTrackId;
+          setSoloId(soloTrackId);
           queueMicrotask(() => applyGains(undefined, true));
           return next;
         });
         break;
+      }
       case "pan":
         setPan(action.trackId, action.value, true);
         break;
