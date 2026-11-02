@@ -6,6 +6,7 @@ import { MockMusicProvider } from "./mock-provider";
 import { ReplicateMusicProvider } from "./replicate-provider";
 import { ElevenLabsMusicProvider } from "./elevenlabs-provider";
 import { MurekaMusicProvider } from "./mureka-provider";
+import { DaydreamMusicProvider, hasDaydreamKey } from "./daydream-provider";
 import type {
   GeneratedMusicAsset,
   GenerationKind,
@@ -23,9 +24,12 @@ export function getMusicGenerationMode(): "mock" | "provider" {
   if (m === "provider") return "provider";
   // Prefer real providers when keys exist
   if (
+    process.env.DAYDREAM_API_KEY?.trim() ||
+    process.env.DAYDREAM_KEY?.trim() ||
     process.env.ELEVENLABS_API_KEY?.trim() ||
     process.env.ELEVEN_API_KEY?.trim() ||
-    process.env.REPLICATE_API_TOKEN?.trim()
+    process.env.REPLICATE_API_TOKEN?.trim() ||
+    process.env.MUREKA_API_KEY?.trim()
   ) {
     return "provider";
   }
@@ -42,14 +46,18 @@ export function getMusicProvider(): MusicGenerationProvider {
     .toLowerCase()
     .trim();
   if (name === "mock") return new MockMusicProvider();
+  if (name === "daydream") return new DaydreamMusicProvider();
   if (name === "mureka") return new MurekaMusicProvider();
   if (name === "replicate") return new ReplicateMusicProvider();
   if (name === "elevenlabs" || name === "eleven") return new ElevenLabsMusicProvider();
-  // Auto: explicit keys — prefer Mureka when configured as primary test engine, else ElevenLabs, else Replicate
+  // Auto: Daydream first when key present (ElevenLabs Music alternative), then ElevenLabs, Mureka, Replicate
+  if (hasDaydreamKey()) {
+    return new DaydreamMusicProvider();
+  }
   if ((process.env.MUREKA_API_KEY || "").trim() && (process.env.MUSIC_PROVIDER_AUTO_PREFER || "").toLowerCase() === "mureka") {
     return new MurekaMusicProvider();
   }
-  if ((process.env.ELEVENLABS_API_KEY || "").trim()) {
+  if ((process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_API_KEY || "").trim()) {
     return new ElevenLabsMusicProvider();
   }
   if ((process.env.MUREKA_API_KEY || "").trim()) {
@@ -387,11 +395,27 @@ export async function tickMusicGenerationJob(jobId: string) {
       try {
         result = await provider.generate(genReq);
       } catch (genErr) {
-        const isAuth =
+        const isAuthOrBill =
           genErr instanceof MusicGenerationError &&
-          (genErr.errorType === "AUTHENTICATION_ERROR" || genErr.errorType === "NOT_CONFIGURED");
+          (genErr.errorType === "AUTHENTICATION_ERROR" ||
+            genErr.errorType === "NOT_CONFIGURED" ||
+            genErr.errorType === "BILLING_REQUIRED");
+        // Prefer Daydream when ElevenLabs fails (or the reverse is rare — Daydream is primary when keyed)
         if (
-          isAuth &&
+          isAuthOrBill &&
+          provider.name === "elevenlabs" &&
+          hasDaydreamKey() &&
+          process.env.MUSIC_GENERATION_FALLBACK_DAYDREAM !== "0"
+        ) {
+          console.warn("[music-gen] ElevenLabs failed; falling back to Daydream");
+          const fallback = new DaydreamMusicProvider();
+          await supabase
+            .from("music_generation_jobs")
+            .update({ provider: fallback.name, stage: "generate_fallback_daydream" })
+            .eq("id", jobId);
+          result = await fallback.generate!(genReq);
+        } else if (
+          isAuthOrBill &&
           provider.name === "elevenlabs" &&
           process.env.REPLICATE_API_TOKEN?.trim() &&
           process.env.MUSIC_GENERATION_FALLBACK_REPLICATE !== "0"

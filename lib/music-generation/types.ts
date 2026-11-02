@@ -5,7 +5,7 @@
 
 export type MusicGenerationMode = "mock" | "provider";
 
-export type MusicProviderName = "replicate" | "elevenlabs" | "mock" | "mureka" | "future_provider";
+export type MusicProviderName = "replicate" | "elevenlabs" | "daydream" | "mock" | "mureka" | "future_provider";
 
 export type MusicJobKind = "preview" | "full" | "section_edit" | "instrumental" | "around_vocal" | "add_instrument";
 
@@ -226,7 +226,7 @@ export function sanitizeClientErrorMessage(raw: string | null | undefined, fallb
   if (!s) return fb;
   // Known third-party / infra tokens — never show in the product UI
   const banned =
-    /\b(elevenlabs?|mureka|replicate|openai|anthropic|stability|suno|udio|roex|cloudflare|vercel|supabase|r2|s3|aws)\b/gi;
+    /\b(elevenlabs?|daydream|mureka|replicate|openai|anthropic|stability|suno|udio|roex|cloudflare|vercel|supabase|r2|s3|aws)\b/gi;
   if (banned.test(s)) {
     // Prefer typed public message patterns if recognizable
     if (/rate\s*limit/i.test(s)) return publicErrorMessage("RATE_LIMITED");
