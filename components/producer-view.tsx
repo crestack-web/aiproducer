@@ -4542,7 +4542,11 @@ export function ProducerView({
     if (htmlBeat && sourcesRef.current.length === 0 && !htmlBeat.paused) {
       elapsed = (htmlBeat.currentTime || 0) * 1000;
     } else {
-      elapsed = (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
+      // Clamp so lookahead (t0 > currentTime) does not pull the needle backwards
+      elapsed = Math.max(
+        offsetRef.current,
+        (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current
+      );
     }
     const songEnd = Math.max(totalMs || 0, 1);
     elapsed = Math.min(songEnd, Math.max(0, elapsed));
@@ -4606,25 +4610,56 @@ export function ProducerView({
     if (!ctx) return;
     // Invalidate any previous in-flight start; only this generation may finish
     const gen = ++playbackGenRef.current;
-    if (ctx.state === "suspended") await ctx.resume();
-    if (gen !== playbackGenRef.current) return;
+    // UI responds immediately — pause icon + armed transport (audio joins in one shot below)
+    setPlaying(true);
+    playingRef.current = true;
+    offsetRef.current = Math.max(0, fromMs);
+    applyPlayheadVisual(fromMs, true);
+
+    if (ctx.state === "suspended") {
+      try {
+        await ctx.resume();
+      } catch {
+        /* */
+      }
+    }
+    if (gen !== playbackGenRef.current || !playingRef.current) {
+      setPlaying(false);
+      return;
+    }
     stopSources();
     // stopSources clears playingRef — re-arm for this session
     playingRef.current = true;
-    // Anchor song time only; AudioContext clock is set AFTER buffers are ready
-    // so decode latency is not counted as playhead progress.
+    setPlaying(true);
     offsetRef.current = Math.max(0, fromMs);
+    applyPlayheadVisual(fromMs, true);
     const startSec = fromMs / 1000;
 
     const beatProxy =
       projectId && beatUrl ? `/api/projects/${projectId}/beat/download` : null;
-    let beatStartedInGraph = false;
+
+    type SchedClip = {
+      trackId: string;
+      kind: "beat" | "vocal";
+      startMs: number;
+      endMs: number;
+      offsetMs: number;
+      url: string | null;
+      recordingId?: string | null;
+      buf: AudioBuffer;
+      fx: TrackFx;
+      on: boolean;
+    };
+
+    // —— 1) Collect every region we need, decode in PARALLEL (no sequential await) ——
+    const jobs: Array<Promise<SchedClip | null>> = [];
 
     for (const tr of tracks) {
       const on = isAudible(tr.id, tr.kind);
-      const fx = fxByIdRef.current[tr.id] || fxById[tr.id] || DEFAULT_TRACK_FX;
+      const fx = (fxByIdRef.current[tr.id] ||
+        fxById[tr.id] ||
+        DEFAULT_TRACK_FX) as TrackFx;
 
-      // —— Vocal tracks: schedule EACH clip at its own playhead placement ——
       if (tr.kind === "vocal") {
         const parts =
           tr.clips && tr.clips.length > 0
@@ -4641,9 +4676,6 @@ export function ProducerView({
                   },
                 ]
               : [];
-        if (parts.length === 0) continue;
-
-        let graph: ReturnType<typeof createLiveTrackFxGraph> | null = null;
         for (const clip of parts) {
           const clipUrl = clip.audioUrl || null;
           if (!clipUrl && !clip.recordingId) continue;
@@ -4651,131 +4683,152 @@ export function ProducerView({
             ? `/api/recordings/${clip.recordingId}/audio`
             : null;
           const vocalProxy = `/api/recording-tasks/${tr.id}/audio`;
+          jobs.push(
+            (async (): Promise<SchedClip | null> => {
+              let buf =
+                (clipUrl && bufferCache.get(clipUrl)) ||
+                (recordingProxy && bufferCache.get(recordingProxy)) ||
+                null;
+              if (!buf) {
+                buf = await fetchDecode(
+                  ctx,
+                  clipUrl || recordingProxy || vocalProxy || "",
+                  recordingProxy || vocalProxy
+                );
+              }
+              if (!buf) return null;
+              return {
+                trackId: tr.id,
+                kind: "vocal",
+                startMs: Number(clip.startMs) || 0,
+                endMs: Number(clip.endMs) || tr.endMs,
+                offsetMs: Number(clip.offsetMs) || 0,
+                url: clipUrl,
+                recordingId: clip.recordingId,
+                buf,
+                fx,
+                on,
+              };
+            })()
+          );
+        }
+        continue;
+      }
+
+      // Beat
+      if (!tr.url) continue;
+      jobs.push(
+        (async (): Promise<SchedClip | null> => {
           let buf =
-            (clipUrl && bufferCache.get(clipUrl)) ||
-            (recordingProxy && bufferCache.get(recordingProxy)) ||
+            bufferCache.get(tr.url!) ||
+            (beatProxy ? bufferCache.get(beatProxy) : null) ||
             null;
           if (!buf) {
             buf = await fetchDecode(
               ctx,
-              clipUrl || recordingProxy || vocalProxy || "",
-              recordingProxy || vocalProxy
+              tr.url!,
+              tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null
             );
           }
-          if (gen !== playbackGenRef.current) return;
-          if (!buf) continue;
+          if (!buf) return null;
+          return {
+            trackId: tr.id,
+            kind: tr.kind,
+            startMs: 0,
+            endMs: Math.round(buf.duration * 1000),
+            offsetMs: 0,
+            url: tr.url!,
+            buf,
+            fx,
+            on,
+          };
+        })()
+      );
+    }
 
-          if (!graph) {
-            graph = createLiveTrackFxGraph(ctx);
-            graph.apply(
-              trackFxToLiveParams(fx as unknown as Record<string, number>),
-              on
-            );
-            fxGraphRef.current.set(tr.id, graph);
-            gainsRef.current.set(tr.id, graph.gain);
-            panNodesRef.current.set(tr.id, graph.pan);
-            graph.output.connect(ctx.destination);
-          }
+    const resolved = await Promise.all(jobs);
+    if (gen !== playbackGenRef.current || !playingRef.current) {
+      setPlaying(false);
+      return;
+    }
 
-          const src = ctx.createBufferSource();
-          let playBuf = buf;
-          try {
-            if ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02) {
-              playBuf = processPreviewBuffer(ctx, buf, {
-                gate: Number(fx.gate) || 0,
-                noiseReduce: Number(fx.noiseReduce) || 0,
-                deEss: Number(fx.deEss) || 0,
-                phraseCleanup: Number(fx.phraseCleanup) || 0,
-              });
-            }
-          } catch {
-            playBuf = buf;
-          }
-          src.buffer = playBuf;
-          src.connect(graph.input);
+    const clips = resolved.filter((c): c is SchedClip => Boolean(c));
+    let beatStartedInGraph = false;
 
-          const layerStart = (Number(clip.startMs) || 0) / 1000;
-          const layerEnd = Math.max(
-            layerStart + 0.05,
-            (Number(clip.endMs) || tr.endMs) / 1000
-          );
-          const mediaOff = Math.max(0, (Number(clip.offsetMs) || 0) / 1000);
-          const clipDur = Math.max(0.05, layerEnd - layerStart);
-          const localOffset = startSec - layerStart;
-          if (localOffset >= clipDur) {
-            continue;
-          }
-          if (localOffset >= 0) {
-            const into = mediaOff + localOffset;
-            const remain = Math.max(0.05, mediaOff + clipDur - into);
-            if (into >= playBuf.duration) continue;
-            src.start(
-              ctx.currentTime,
-              into,
-              Math.min(remain, playBuf.duration - into)
-            );
-          } else {
-            const when = ctx.currentTime - localOffset;
-            src.start(
-              when,
-              mediaOff,
-              Math.min(clipDur, playBuf.duration - mediaOff)
-            );
-          }
-          sourcesRef.current.push(src);
-        }
-        continue;
-      }
+    // —— 2) Single transport clock: schedule everything against one t0 ——
+    // Small lookahead so the first buffer-source callbacks are not late on mobile
+    const LOOKAHEAD = 0.04;
+    const t0 = ctx.currentTime + LOOKAHEAD;
 
-      // —— Beat (and non-vocal) ——
-      if (!tr.url) continue;
-      let buf = bufferCache.get(tr.url) || bufferCache.get(beatProxy || "") || null;
-      if (!buf) {
-        const fallback =
-          tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null;
-        buf = await fetchDecode(ctx, tr.url, fallback);
-      }
-      if (gen !== playbackGenRef.current) return;
-      if (!buf) {
-        if (tr.kind === "beat") {
-          console.warn("[producer-view] beat buffer missing — will try HTMLAudio fallback");
-        }
-        continue;
+    // One FX graph per track (shared by multiple clips on that lane)
+    const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
+
+    for (const clip of clips) {
+      let graph = graphs.get(clip.trackId);
+      if (!graph) {
+        graph = createLiveTrackFxGraph(ctx);
+        graph.apply(
+          trackFxToLiveParams(clip.fx as unknown as Record<string, number>),
+          clip.on
+        );
+        graphs.set(clip.trackId, graph);
+        fxGraphRef.current.set(clip.trackId, graph);
+        gainsRef.current.set(clip.trackId, graph.gain);
+        panNodesRef.current.set(clip.trackId, graph.pan);
+        graph.output.connect(ctx.destination);
       }
 
       const src = ctx.createBufferSource();
-      let playBuf = buf;
+      let playBuf = clip.buf;
       try {
-        if ((Number(fx.gate) || 0) > 0.02 || (Number(fx.noiseReduce) || 0) > 0.02) {
-          playBuf = processPreviewBuffer(ctx, buf, {
-            gate: Number(fx.gate) || 0,
-            noiseReduce: Number(fx.noiseReduce) || 0,
-            deEss: Number(fx.deEss) || 0,
-            phraseCleanup: Number(fx.phraseCleanup) || 0,
+        if (
+          (Number(clip.fx.gate) || 0) > 0.02 ||
+          (Number(clip.fx.noiseReduce) || 0) > 0.02
+        ) {
+          playBuf = processPreviewBuffer(ctx, clip.buf, {
+            gate: Number(clip.fx.gate) || 0,
+            noiseReduce: Number(clip.fx.noiseReduce) || 0,
+            deEss: Number(clip.fx.deEss) || 0,
+            phraseCleanup: Number(clip.fx.phraseCleanup) || 0,
           });
         }
       } catch {
-        playBuf = buf;
+        playBuf = clip.buf;
       }
       src.buffer = playBuf;
-
-      const graph = createLiveTrackFxGraph(ctx);
-      graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), on);
-      fxGraphRef.current.set(tr.id, graph);
-      gainsRef.current.set(tr.id, graph.gain);
-      panNodesRef.current.set(tr.id, graph.pan);
-      graph.output.connect(ctx.destination);
       src.connect(graph.input);
 
-      if (startSec >= playBuf.duration) continue;
-      src.start(ctx.currentTime, startSec);
+      if (clip.kind === "vocal") {
+        const layerStart = clip.startMs / 1000;
+        const layerEnd = Math.max(layerStart + 0.05, clip.endMs / 1000);
+        const mediaOff = Math.max(0, clip.offsetMs / 1000);
+        const clipDur = Math.max(0.05, layerEnd - layerStart);
+        const localOffset = startSec - layerStart;
+        if (localOffset >= clipDur) continue;
+        if (localOffset >= 0) {
+          const into = mediaOff + localOffset;
+          const remain = Math.max(0.05, mediaOff + clipDur - into);
+          if (into >= playBuf.duration) continue;
+          src.start(t0, into, Math.min(remain, playBuf.duration - into));
+        } else {
+          // Clip is later on the timeline — fire when playhead reaches it
+          src.start(
+            t0 - localOffset,
+            mediaOff,
+            Math.min(clipDur, playBuf.duration - mediaOff)
+          );
+        }
+      } else {
+        // Beat: buffer time == project timeline
+        if (startSec >= playBuf.duration) continue;
+        src.start(t0, startSec);
+        beatStartedInGraph = true;
+      }
       sourcesRef.current.push(src);
-      if (tr.kind === "beat") beatStartedInGraph = true;
     }
 
-    // Fallback: if beat URL exists but WebAudio decode failed (CORS), use HTMLAudioElement
-    // (same path that already works during Console recording monitor).
-    const beatTrack = tracks.find((t) => t.kind === "beat" && t.url);
+    // HTMLAudio beat fallback only if WebAudio beat never scheduled — still at t0
+    const beatTrack = tracks.find((x) => x.kind === "beat" && x.url);
     if (beatTrack?.url && !beatStartedInGraph && isAudible("beat", "beat")) {
       try {
         try {
@@ -4786,12 +4839,19 @@ export function ProducerView({
         const a = new Audio(beatTrack.url);
         a.currentTime = Math.max(0, startSec);
         {
-          const bfx = fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
+          const bfx =
+            fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
           const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
           a.volume = Math.max(0, Math.min(1, lin));
         }
         monitorAudioRef.current = a;
-        void a.play().catch((e) => console.warn("[producer-view] beat HTMLAudio play", e));
+        const delayMs = Math.max(0, (t0 - ctx.currentTime) * 1000);
+        window.setTimeout(() => {
+          if (gen !== playbackGenRef.current || !playingRef.current) return;
+          void a.play().catch((e) =>
+            console.warn("[producer-view] beat HTMLAudio play", e)
+          );
+        }, delayMs);
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio fallback", e);
       }
@@ -4800,17 +4860,19 @@ export function ProducerView({
     // User may have paused while buffers were decoding
     if (gen !== playbackGenRef.current || !playingRef.current) {
       stopSources();
+      setPlaying(false);
       return;
     }
-    // Clock starts when audio actually starts — not when we began loading
-    startedAtRef.current = ctx.currentTime;
+
+    // Transport clock matches audio start (t0), not decode start
+    startedAtRef.current = t0;
     offsetRef.current = Math.max(0, fromMs);
     playingRef.current = true;
     setPlaying(true);
     applyPlayheadVisual(fromMs, true);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(tickPlayhead);
   }
-
 
   function fitTimelineToView() {
     const el = timelineScrollRef.current;
