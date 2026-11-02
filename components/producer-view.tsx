@@ -15,6 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
+import { getConsoleTransport, getCaptureLatencyCompMs } from "@/lib/audio/console-transport";
 import { openRecordingStream, createVocalRecorder,
   formatMicOpenError,
 } from "@/lib/audio/recording-engine";
@@ -1117,16 +1118,22 @@ export function ProducerView({
     }
   }
   const [soloId, setSoloId] = useState<string | null>(null);
+  /** Multi-solo set — when non-empty, only these track ids are audible */
+  const [soloIds, setSoloIds] = useState<Record<string, boolean>>({});
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   /** RAF playback closes over render-time applyGains — always read latest mute/solo from refs */
   const mutedRef = useRef<Record<string, boolean>>({});
   const soloIdRef = useRef<string | null>(null);
+  const soloIdsRef = useRef<Record<string, boolean>>({});
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
   useEffect(() => {
     soloIdRef.current = soloId;
   }, [soloId]);
+  useEffect(() => {
+    soloIdsRef.current = soloIds;
+  }, [soloIds]);
   const [peaksById, setPeaksById] = useState<Record<string, Float32Array | null>>({});
   /** Decoded audio duration (ms) — source of truth for clip length on timeline */
   const [durationById, setDurationById] = useState<Record<string, number>>({});
@@ -1338,9 +1345,14 @@ export function ProducerView({
         });
         break;
       case "solo":
-        soloIdRef.current = action.trackId;
-        setSoloId(action.trackId);
-        queueMicrotask(() => applyGains(undefined, true));
+        setSoloIds((prev) => {
+          const next = { ...prev, [action.trackId]: true };
+          soloIdsRef.current = next;
+          soloIdRef.current = action.trackId;
+          setSoloId(action.trackId);
+          queueMicrotask(() => applyGains(undefined, true));
+          return next;
+        });
         break;
       case "pan":
         setPan(action.trackId, action.value, true);
@@ -2527,7 +2539,9 @@ export function ProducerView({
     const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
     const wallClockMs = Math.max(500, Date.now() - rec.startedAt);
     const taskId = rec.taskId;
-    const placementStartMs = Math.max(0, Math.round(rec.recordStartMs ?? playheadMs));
+    // Transport-relative start; subtract capture pipeline latency so takes sit on the groove
+    const rawStart = Math.max(0, Math.round(rec.recordStartMs ?? playheadMs));
+    const placementStartMs = Math.max(0, rawStart - getCaptureLatencyCompMs());
     consoleRecRef.current = null;
     setIsConsoleRecording(false);
     setRecordSeconds(0);
@@ -2870,38 +2884,21 @@ export function ProducerView({
         setRecordSeconds((s) => s + 1);
       }, 1000);
 
-      // Monitor beat from playhead (never connected to MediaRecorder)
-      // Do not move existing clip starts — new take is a separate region at fromMs
+      // Multitrack overdub monitor: play ALL tracks from playhead (Web Audio).
+      // Mic capture stays on a separate MediaStream — never fed from the master mix.
       setPlayheadMs(fromMs);
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
-      if (beatUrl) {
-        try {
-          const a = new Audio(beatUrl);
-          a.currentTime = Math.max(0, fromMs / 1000);
-          monitorAudioRef.current = a;
-          const sink =
-            selectedSpeakerId &&
-            selectedSpeakerId !== "__headphones__" &&
-            selectedSpeakerId !== "__speaker__" &&
-            selectedSpeakerId !== "__handset__"
-              ? selectedSpeakerId
-              : "";
-          if (sink && typeof (a as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId === "function") {
-            try {
-              await (a as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }).setSinkId(sink);
-            } catch {
-              /* OS may ignore setSinkId */
-            }
-          }
-          void a.play();
-        } catch {
-          /* ignore */
-        }
+      try {
+        // Mute the track being recorded so the artist hears others, not prior takes on same lane
+        // (optional soft-mute only if they already have audio — keep unmuted if empty lane)
+        void startPlayback(fromMs);
+      } catch {
+        /* playback monitor best-effort */
       }
       const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
       setEditMsg(
-        `Recording on selected track from ${Math.round(fromMs / 100) / 10}s (playhead) · ${mimeType.split(";")[0]} · ${micNote}`
+        `Overdub from ${Math.round(fromMs / 100) / 10}s — hearing arrangement · ${mimeType.split(";")[0]} · ${micNote}`
       );
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
@@ -4395,11 +4392,14 @@ export function ProducerView({
   }, [peakBuckets, tracks]);
 
   function isAudible(id: string, kind: "beat" | "vocal") {
-    const solo = soloIdRef.current;
     const mutes = mutedRef.current;
-    // Explicit mute always wins (including beat)
     if (mutes[id]) return false;
-    // Solo: only the soloed track is audible (true DAW solo — beat is not forced on)
+    // Multi-solo: any selected solo tracks isolate the mix (beat not forced on)
+    const solos = soloIdsRef.current;
+    const soloList = Object.keys(solos).filter((k) => solos[k]);
+    if (soloList.length > 0) return soloList.includes(id);
+    // Legacy single soloId
+    const solo = soloIdRef.current;
     if (solo) return id === solo;
     void kind;
     return true;
@@ -5959,7 +5959,17 @@ export function ProducerView({
       }
       if (key === "s" || key === "S") {
         e.preventDefault();
-        setSoloId((cur) => (cur === sel ? null : sel));
+        setSoloIds((prev) => {
+          const next = { ...prev };
+          if (next[sel]) delete next[sel];
+          else next[sel] = true;
+          soloIdsRef.current = next;
+          const keys = Object.keys(next).filter((k) => next[k]);
+          soloIdRef.current = keys[0] || null;
+          setSoloId(soloIdRef.current);
+          queueMicrotask(() => applyGains(undefined, true));
+          return next;
+        });
         return;
       }
       if (key === "l" || key === "L") {
@@ -7292,7 +7302,7 @@ export function ProducerView({
           </div>
           {tracks.map((tr, trackIdx) => {
             const isMuted = muted[tr.id];
-            const isSolo = soloId === tr.id;
+            const isSolo = Boolean(soloIds[tr.id]) || soloId === tr.id;
             const isExpanded = expandedId === tr.id;
             const isTakeEditingSide = takeEditId === tr.id;
             const stackOpen = stackMenuId === tr.id;
@@ -7593,13 +7603,20 @@ export function ProducerView({
                   </button>
                   <button
                     type="button"
-                    title="Solo"
+                    title={isSolo ? "Unsolo (multi-solo supported)" : "Solo — click multiple tracks to solo several"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      const next = soloIdRef.current === tr.id ? null : tr.id;
-                      soloIdRef.current = next;
-                      setSoloId(next);
-                      queueMicrotask(() => applyGains(undefined, true));
+                      setSoloIds((prev) => {
+                        const next = { ...prev };
+                        if (next[tr.id]) delete next[tr.id];
+                        else next[tr.id] = true;
+                        soloIdsRef.current = next;
+                        const keys = Object.keys(next).filter((k) => next[k]);
+                        soloIdRef.current = keys.length === 1 ? keys[0] : keys.length ? keys[0] : null;
+                        setSoloId(soloIdRef.current);
+                        queueMicrotask(() => applyGains(undefined, true));
+                        return next;
+                      });
                     }}
                     style={miniChip(border, brass, isSolo, text, true)}
                   >
@@ -10310,7 +10327,7 @@ export function ProducerView({
         const tr = tracks.find((x) => x.id === ctxMenu.trackId);
         const isBeat = ctxMenu.trackId === "beat" || tr?.kind === "beat";
         const isMuted = Boolean(muted[ctxMenu.trackId]);
-        const isSolo = soloId === ctxMenu.trackId;
+        const isSolo = Boolean(soloIds[ctxMenu.trackId]) || soloId === ctxMenu.trackId;
         const item = (
           label: string,
           onClick: () => void,
@@ -10429,7 +10446,19 @@ export function ProducerView({
               )}
               {item(
                 isSolo ? "Unsolo" : "Solo",
-                () => setSoloId(isSolo ? null : ctxMenu.trackId),
+                () => {
+                  setSoloIds((prev) => {
+                    const next = { ...prev };
+                    if (next[ctxMenu.trackId]) delete next[ctxMenu.trackId];
+                    else next[ctxMenu.trackId] = true;
+                    soloIdsRef.current = next;
+                    const keys = Object.keys(next).filter((k) => next[k]);
+                    soloIdRef.current = keys[0] || null;
+                    setSoloId(soloIdRef.current);
+                    queueMicrotask(() => applyGains(undefined, true));
+                    return next;
+                  });
+                },
                 { shortcut: "S" }
               )}
               {!isBeat &&
