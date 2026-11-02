@@ -1007,6 +1007,34 @@ export function ProducerView({
   const playbackGenRef = useRef(0);
   const pxPerSecRef = useRef(56);
 
+  useEffect(() => {
+    return () => {
+      try {
+        playbackGenRef.current += 1;
+        playingRef.current = false;
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        for (const s of sourcesRef.current) {
+          try {
+            s.stop();
+          } catch {
+            /* */
+          }
+        }
+        sourcesRef.current = [];
+        for (const g of fxGraphRef.current.values()) {
+          try {
+            g.dispose();
+          } catch {
+            /* */
+          }
+        }
+        fxGraphRef.current.clear();
+      } catch {
+        /* */
+      }
+    };
+  }, []);
+
   const [layers, setLayers] = useState(layersProp);
   const [durationMs, setDurationMs] = useState(durationProp || 0);
   const [playheadMs, setPlayheadMs] = useState(0);
@@ -1014,6 +1042,10 @@ export function ProducerView({
   const playheadElRef = useRef<HTMLDivElement | null>(null);
   const playheadStateThrottleRef = useRef(0);
   const [playing, setPlaying] = useState(false);
+  const [transportPhase, setTransportPhase] = useState<
+    "idle" | "preparing" | "ready" | "playing" | "paused" | "error"
+  >("idle");
+  const [muteArmedWhileRecord, setMuteArmedWhileRecord] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>("beat");
   /** User-dragged track lane height (px). Unbounded growth up to a soft max for usability. */
   const [trackHeightPx, setTrackHeightPx] = useState<Record<string, number>>({});
@@ -2516,8 +2548,12 @@ export function ProducerView({
         monitorAudioRef.current.pause();
         monitorAudioRef.current = null;
       }
-      stopSources();
-      setPlaying(false);
+      // Keep multitrack arrangement playing after punch-out (DAW-style).
+      // User can pause with transport if they want silence.
+      if (isConsoleRecording) {
+        // Re-apply gains so soft-muted armed track becomes audible again
+        queueMicrotask(() => applyGains(undefined, true));
+      }
     } catch {
       /* ignore */
     }
@@ -4478,7 +4514,12 @@ export function ProducerView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, soloId, tracks, fxById]);
 
-  function stopSources() {
+  /**
+   * Stop buffer sources + RAF. By default KEEP live FX graphs so pause/resume
+   * does not rebuild the mixer (AudioBufferSourceNodes are one-shot; graphs are not).
+   * Pass disposeGraphs=true on project leave / hard reset.
+   */
+  function stopSources(opts?: { disposeGraphs?: boolean }) {
     playingRef.current = false;
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
@@ -4490,28 +4531,37 @@ export function ProducerView({
       } catch {
         /* already stopped */
       }
-    }
-    sourcesRef.current = [];
-    for (const g of fxGraphRef.current.values()) {
       try {
-        g.dispose();
+        s.disconnect();
       } catch {
         /* */
       }
     }
-    fxGraphRef.current.clear();
-    gainsRef.current.clear();
-    panNodesRef.current.clear();
-    // Stop HTMLAudio beat fallback (used when WebAudio decode fails)
+    sourcesRef.current = [];
+    if (opts?.disposeGraphs) {
+      for (const g of fxGraphRef.current.values()) {
+        try {
+          g.dispose();
+        } catch {
+          /* */
+        }
+      }
+      fxGraphRef.current.clear();
+      gainsRef.current.clear();
+      panNodesRef.current.clear();
+    }
     try {
       if (monitorAudioRef.current && !isConsoleRecording) {
         monitorAudioRef.current.pause();
-        // Keep element for resume position only if we need it — null so clock cannot advance
         monitorAudioRef.current = null;
       }
     } catch {
       /* */
     }
+  }
+
+  function disposeAllAudioGraphs() {
+    stopSources({ disposeGraphs: true });
   }
 
   useEffect(() => {
@@ -4664,7 +4714,7 @@ export function ProducerView({
     if (!ctx) return;
     const gen = ++playbackGenRef.current;
 
-    // Resume graph under the same user gesture as Play (required on iOS)
+    // Resume under the same user gesture as Play (required on iOS)
     if (ctx.state === "suspended") {
       try {
         await ctx.resume();
@@ -4674,17 +4724,14 @@ export function ProducerView({
     }
     if (gen !== playbackGenRef.current) return;
 
+    // Stop prior sources only — keep live FX graphs for resume
     stopSources();
-    playingRef.current = true;
-    setPlaying(true);
+    setTransportPhase("preparing");
     offsetRef.current = Math.max(0, fromMs);
+    // Pin playhead visually without advancing until essential audio is ready
     applyPlayheadVisual(fromMs, true);
-
-    // Transport clock starts NOW — playhead moves immediately; audio joins as buffers ready
-    const t0 = ctx.currentTime;
-    startedAtRef.current = t0;
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tickPlayhead);
+    playingRef.current = false;
+    setPlaying(false);
 
     const startSec = fromMs / 1000;
     const beatProxy =
@@ -4770,7 +4817,52 @@ export function ProducerView({
     // Prefer beat first so groove starts ASAP
     specs.sort((a, b) => (a.kind === "beat" ? -1 : 0) - (b.kind === "beat" ? -1 : 0));
 
+    // Soft-mute armed track during overdub so the artist hears the arrangement, not prior take
+    if (isConsoleRecording && muteArmedWhileRecord) {
+      const armed = armedTrackId || consoleRecRef.current?.taskId;
+      if (armed) {
+        for (const s of specs) {
+          if (s.trackId === armed) s.on = false;
+        }
+      }
+    }
+
+    // Essential = beat + clips that cover the current playhead (not entire project)
+    const essential = specs.filter((s) => {
+      if (s.kind === "beat") return true;
+      return s.startMs <= fromMs + 50 && s.endMs >= fromMs - 50;
+    });
+    for (const s of essential) {
+      if (gen !== playbackGenRef.current) return;
+      let buf =
+        bufferCache.get(s.loadUrl) ||
+        (s.fallback ? bufferCache.get(s.fallback) : null) ||
+        null;
+      if (!buf) buf = await fetchDecode(ctx, s.loadUrl, s.fallback);
+      if (!buf) {
+        // Beat missing is hard failure for readiness; continue for vocals
+        if (s.kind === "beat") {
+          setTransportPhase("error");
+          setEditMsg("Could not load beat for playback");
+        }
+      }
+    }
+    if (gen !== playbackGenRef.current) return;
+
+    // Authoritative clock starts only after essential prepare
+    playingRef.current = true;
+    setPlaying(true);
+    setTransportPhase("playing");
+    const t0 = ctx.currentTime;
+    startedAtRef.current = t0;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(tickPlayhead);
+
     const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
+    // Rehydrate from existing live graphs (pause/resume)
+    for (const [id, g] of fxGraphRef.current) {
+      graphs.set(id, g);
+    }
     let beatStartedInGraph = false;
 
     const scheduleBuf = (
@@ -4845,7 +4937,7 @@ export function ProducerView({
         }
         if (!buf || gen !== playbackGenRef.current || !playingRef.current) return;
 
-        let graph = graphs.get(spec.trackId);
+        let graph = graphs.get(spec.trackId) || fxGraphRef.current.get(spec.trackId);
         if (!graph) {
           graph = createLiveTrackFxGraph(ctx);
           graph.apply(
@@ -4856,7 +4948,18 @@ export function ProducerView({
           fxGraphRef.current.set(spec.trackId, graph);
           gainsRef.current.set(spec.trackId, graph.gain);
           panNodesRef.current.set(spec.trackId, graph.pan);
-          graph.output.connect(ctx.destination);
+          try {
+            graph.output.connect(ctx.destination);
+          } catch {
+            /* already connected */
+          }
+        } else {
+          graph.apply(
+            trackFxToLiveParams(spec.fx as unknown as Record<string, number>),
+            spec.on
+          );
+          gainsRef.current.set(spec.trackId, graph.gain);
+          panNodesRef.current.set(spec.trackId, graph.pan);
         }
         scheduleBuf(spec, buf, graph);
       })
@@ -4865,6 +4968,7 @@ export function ProducerView({
     if (gen !== playbackGenRef.current || !playingRef.current) {
       stopSources();
       setPlaying(false);
+      setTransportPhase("paused");
       return;
     }
 
@@ -4953,21 +5057,20 @@ export function ProducerView({
   }, []);
 
   function togglePlay() {
-
-    if (playingRef.current || playing) {
+    if (playingRef.current || playing || transportPhase === "preparing") {
       const ctx = audioCtxRef.current;
       if (ctx && playingRef.current) {
-        // Freeze displayed time at the true audio position
         const frozen =
           (ctx.currentTime - startedAtRef.current) * 1000 + offsetRef.current;
         const clamped = Math.min(Math.max(totalMs || 0, 1), Math.max(0, frozen));
         offsetRef.current = clamped;
         applyPlayheadVisual(clamped, true);
       }
-      playbackGenRef.current += 1; // cancel in-flight startPlayback
+      playbackGenRef.current += 1;
       playingRef.current = false;
-      stopSources();
+      stopSources(); // keep FX graphs
       setPlaying(false);
+      setTransportPhase("paused");
     } else {
       void startPlayback(playheadMs);
     }
@@ -6563,10 +6666,37 @@ export function ProducerView({
             padding: 0,
             boxShadow: isNarrow ? `0 0 0 3px rgba(231,169,97,0.25)` : undefined,
           }}
-          aria-label={playing ? "Pause" : "Play"}
+          aria-label={
+            transportPhase === "preparing"
+              ? "Preparing"
+              : playing
+                ? "Pause"
+                : "Play"
+          }
+          disabled={transportPhase === "preparing"}
+          title={
+            transportPhase === "preparing"
+              ? "Loading essential audio…"
+              : playing
+                ? "Pause"
+                : "Play"
+          }
         >
-          {playing ? "❚❚" : "▶"}
+          {transportPhase === "preparing" ? "…" : playing ? "❚❚" : "▶"}
         </button>
+        {transportPhase === "preparing" ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: brass,
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Preparing…
+          </span>
+        ) : null}
 
         <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: mutedText, minWidth: 88, fontWeight: 600 }}>
           {formatPlayhead(playheadMs)}
