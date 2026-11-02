@@ -599,6 +599,36 @@ function formatMs(ms: number) {
 const peakCache = new Map<string, Float32Array>();
 const bufferCache = new Map<string, AudioBuffer>();
 
+async function decodeAudioArrayBuffer(
+  arr: ArrayBuffer,
+  liveCtx?: AudioContext | null
+): Promise<AudioBuffer | null> {
+  // OfflineAudioContext decodes without a user-gesture resume (critical on iOS Safari
+  // where the live AudioContext stays suspended until Play — peaks were blank).
+  try {
+    const AC =
+      typeof window !== "undefined"
+        ? (window.OfflineAudioContext ||
+            (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext })
+              .webkitOfflineAudioContext)
+        : null;
+    if (AC) {
+      const off = new AC(2, 128, 44100);
+      return await off.decodeAudioData(arr.slice(0));
+    }
+  } catch {
+    /* fall through to live context */
+  }
+  if (liveCtx) {
+    try {
+      return await liveCtx.decodeAudioData(arr.slice(0));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 async function fetchDecode(
   ctx: AudioContext,
   url: string,
@@ -606,11 +636,16 @@ async function fetchDecode(
   sameOriginFallback?: string | null
 ): Promise<AudioBuffer | null> {
   if (bufferCache.has(url)) return bufferCache.get(url)!;
-  // Prefer caching under the primary url key even if we load via proxy
-  const candidates: string[] = [url];
-  if (sameOriginFallback && sameOriginFallback !== url) {
-    candidates.push(sameOriginFallback);
+  if (sameOriginFallback && bufferCache.has(sameOriginFallback)) {
+    const b = bufferCache.get(sameOriginFallback)!;
+    bufferCache.set(url, b);
+    return b;
   }
+  // Prefer same-origin proxy first (avoids CORS blanks on mobile), then signed URL
+  const candidates: string[] = [];
+  if (sameOriginFallback) candidates.push(sameOriginFallback);
+  if (url && url !== sameOriginFallback) candidates.push(url);
+  if (!candidates.length && url) candidates.push(url);
   let lastErr: unknown = null;
   for (const candidate of candidates) {
     try {
@@ -627,13 +662,16 @@ async function fetchDecode(
         lastErr = new Error("empty body");
         continue;
       }
-      const buf = await ctx.decodeAudioData(arr.slice(0));
+      const buf = await decodeAudioArrayBuffer(arr, ctx);
+      if (!buf) {
+        lastErr = new Error("decode returned null");
+        continue;
+      }
       bufferCache.set(url, buf);
       if (candidate !== url) bufferCache.set(candidate, buf);
       return buf;
     } catch (e) {
       lastErr = e;
-      // try next candidate (typically same-origin beat proxy)
     }
   }
   console.warn("[producer-view] decode failed", url, lastErr);
@@ -4237,8 +4275,15 @@ export function ProducerView({
     if (!ctx) return;
     (async () => {
       setDecodeStatus("Loading waveforms…");
-      const next: Record<string, Float32Array | null> = {};
-      const durs: Record<string, number> = {};
+      type PeakJob = {
+        partId: string;
+        trackId: string;
+        primary: string;
+        fallback: string | null;
+        isBeat: boolean;
+        singleClipTrack: boolean;
+      };
+      const jobs: PeakJob[] = [];
       for (const tr of tracks) {
         const parts =
           tr.kind === "vocal" && tr.clips && tr.clips.length > 0
@@ -4247,13 +4292,14 @@ export function ProducerView({
                 url: c.audioUrl || null,
                 recordingId: c.recordingId || null,
               }))
-            : [{
-                id: tr.id,
-                url: tr.url || null,
-                recordingId: tr.recordingId || null,
-              }];
+            : [
+                {
+                  id: tr.id,
+                  url: tr.url || null,
+                  recordingId: tr.recordingId || null,
+                },
+              ];
         for (const part of parts) {
-          // Prefer clip recording proxy, then task proxy, then signed URL
           const recordingProxy =
             tr.kind === "vocal" && part.recordingId
               ? `/api/recordings/${part.recordingId}/audio`
@@ -4266,43 +4312,51 @@ export function ProducerView({
             tr.kind === "beat" && projectId
               ? `/api/projects/${projectId}/beat/download`
               : null;
+          // Prefer same-origin proxies so waveforms load on mobile Safari
           const primary =
             recordingProxy ||
-            part.url ||
             vocalProxy ||
             beatProxy ||
+            part.url ||
             null;
-          if (!primary) {
-            // Keep any previous peaks — never blank a track when URL is still hydrating
-            continue;
-          }
-          const buf = await fetchDecode(
-            ctx,
+          if (!primary) continue;
+          jobs.push({
+            partId: part.id,
+            trackId: tr.id,
             primary,
-            recordingProxy || vocalProxy || beatProxy
-          );
-          if (cancelled) return;
-          if (buf) {
-            const durMs = Math.round(buf.duration * 1000);
-            if (tr.id === "beat") {
-              setDurationMs((d) => Math.max(d, durMs));
-            }
-            durs[part.id] = durMs;
-            peaksForUrl(primary, buf, 2048);
-            next[part.id] = peaksForUrl(primary, buf, peakBuckets);
-            // Also key peaks by track id for single-clip rows
-            if (!tr.clips || tr.clips.length <= 1) {
-              next[tr.id] = next[part.id];
-            }
-          }
-          // On decode failure: leave previous peaks in place (do not write null)
+            fallback: part.url && part.url !== primary ? part.url : null,
+            isBeat: tr.kind === "beat",
+            singleClipTrack: !(tr.clips && tr.clips.length > 1),
+          });
         }
       }
-      if (!cancelled) {
-        setPeaksById((prev) => ({ ...prev, ...next }));
-        setDurationById((prev) => ({ ...prev, ...durs }));
-        setDecodeStatus("");
+      const results = await Promise.all(
+        jobs.map(async (job) => {
+          const buf = await fetchDecode(ctx, job.primary, job.fallback);
+          if (!buf) return null;
+          return { job, buf };
+        })
+      );
+      if (cancelled) return;
+      const next: Record<string, Float32Array | null> = {};
+      const durs: Record<string, number> = {};
+      for (const row of results) {
+        if (!row) continue;
+        const { job, buf } = row;
+        const durMs = Math.round(buf.duration * 1000);
+        if (job.isBeat) {
+          setDurationMs((d) => Math.max(d, durMs));
+        }
+        durs[job.partId] = durMs;
+        peaksForUrl(job.primary, buf, 2048);
+        next[job.partId] = peaksForUrl(job.primary, buf, peakBuckets);
+        if (job.singleClipTrack) {
+          next[job.trackId] = next[job.partId];
+        }
       }
+      setPeaksById((prev) => ({ ...prev, ...next }));
+      setDurationById((prev) => ({ ...prev, ...durs }));
+      setDecodeStatus("");
     })();
     return () => {
       cancelled = true;
@@ -4608,14 +4662,9 @@ export function ProducerView({
   async function startPlayback(fromMs: number) {
     const ctx = getCtx();
     if (!ctx) return;
-    // Invalidate any previous in-flight start; only this generation may finish
     const gen = ++playbackGenRef.current;
-    // UI responds immediately — pause icon + armed transport (audio joins in one shot below)
-    setPlaying(true);
-    playingRef.current = true;
-    offsetRef.current = Math.max(0, fromMs);
-    applyPlayheadVisual(fromMs, true);
 
+    // Resume graph under the same user gesture as Play (required on iOS)
     if (ctx.state === "suspended") {
       try {
         await ctx.resume();
@@ -4623,37 +4672,37 @@ export function ProducerView({
         /* */
       }
     }
-    if (gen !== playbackGenRef.current || !playingRef.current) {
-      setPlaying(false);
-      return;
-    }
+    if (gen !== playbackGenRef.current) return;
+
     stopSources();
-    // stopSources clears playingRef — re-arm for this session
     playingRef.current = true;
     setPlaying(true);
     offsetRef.current = Math.max(0, fromMs);
     applyPlayheadVisual(fromMs, true);
-    const startSec = fromMs / 1000;
 
+    // Transport clock starts NOW — playhead moves immediately; audio joins as buffers ready
+    const t0 = ctx.currentTime;
+    startedAtRef.current = t0;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(tickPlayhead);
+
+    const startSec = fromMs / 1000;
     const beatProxy =
       projectId && beatUrl ? `/api/projects/${projectId}/beat/download` : null;
 
-    type SchedClip = {
+    type ClipSpec = {
       trackId: string;
       kind: "beat" | "vocal";
       startMs: number;
       endMs: number;
       offsetMs: number;
-      url: string | null;
-      recordingId?: string | null;
-      buf: AudioBuffer;
+      loadUrl: string;
+      fallback: string | null;
       fx: TrackFx;
       on: boolean;
     };
 
-    // —— 1) Collect every region we need, decode in PARALLEL (no sequential await) ——
-    const jobs: Array<Promise<SchedClip | null>> = [];
-
+    const specs: ClipSpec[] = [];
     for (const tr of tracks) {
       const on = isAudible(tr.id, tr.kind);
       const fx = (fxByIdRef.current[tr.id] ||
@@ -4677,157 +4726,149 @@ export function ProducerView({
                 ]
               : [];
         for (const clip of parts) {
-          const clipUrl = clip.audioUrl || null;
-          if (!clipUrl && !clip.recordingId) continue;
           const recordingProxy = clip.recordingId
             ? `/api/recordings/${clip.recordingId}/audio`
             : null;
           const vocalProxy = `/api/recording-tasks/${tr.id}/audio`;
-          jobs.push(
-            (async (): Promise<SchedClip | null> => {
-              let buf =
-                (clipUrl && bufferCache.get(clipUrl)) ||
-                (recordingProxy && bufferCache.get(recordingProxy)) ||
-                null;
-              if (!buf) {
-                buf = await fetchDecode(
-                  ctx,
-                  clipUrl || recordingProxy || vocalProxy || "",
-                  recordingProxy || vocalProxy
-                );
-              }
-              if (!buf) return null;
-              return {
-                trackId: tr.id,
-                kind: "vocal",
-                startMs: Number(clip.startMs) || 0,
-                endMs: Number(clip.endMs) || tr.endMs,
-                offsetMs: Number(clip.offsetMs) || 0,
-                url: clipUrl,
-                recordingId: clip.recordingId,
-                buf,
-                fx,
-                on,
-              };
-            })()
-          );
+          const loadUrl =
+            recordingProxy ||
+            vocalProxy ||
+            clip.audioUrl ||
+            null;
+          if (!loadUrl) continue;
+          specs.push({
+            trackId: tr.id,
+            kind: "vocal",
+            startMs: Number(clip.startMs) || 0,
+            endMs: Number(clip.endMs) || tr.endMs,
+            offsetMs: Number(clip.offsetMs) || 0,
+            loadUrl,
+            fallback:
+              clip.audioUrl && clip.audioUrl !== loadUrl ? clip.audioUrl : null,
+            fx,
+            on,
+          });
         }
         continue;
       }
 
-      // Beat
       if (!tr.url) continue;
-      jobs.push(
-        (async (): Promise<SchedClip | null> => {
-          let buf =
-            bufferCache.get(tr.url!) ||
-            (beatProxy ? bufferCache.get(beatProxy) : null) ||
-            null;
-          if (!buf) {
-            buf = await fetchDecode(
-              ctx,
-              tr.url!,
-              tr.kind === "beat" || tr.url === beatUrl ? beatProxy : null
-            );
-          }
-          if (!buf) return null;
-          return {
-            trackId: tr.id,
-            kind: tr.kind,
-            startMs: 0,
-            endMs: Math.round(buf.duration * 1000),
-            offsetMs: 0,
-            url: tr.url!,
-            buf,
-            fx,
-            on,
-          };
-        })()
-      );
+      const loadUrl = beatProxy || tr.url;
+      specs.push({
+        trackId: tr.id,
+        kind: "beat",
+        startMs: 0,
+        endMs: 0,
+        offsetMs: 0,
+        loadUrl,
+        fallback: tr.url !== loadUrl ? tr.url : null,
+        fx,
+        on,
+      });
     }
 
-    const resolved = await Promise.all(jobs);
-    if (gen !== playbackGenRef.current || !playingRef.current) {
-      setPlaying(false);
-      return;
-    }
+    // Prefer beat first so groove starts ASAP
+    specs.sort((a, b) => (a.kind === "beat" ? -1 : 0) - (b.kind === "beat" ? -1 : 0));
 
-    const clips = resolved.filter((c): c is SchedClip => Boolean(c));
+    const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
     let beatStartedInGraph = false;
 
-    // —— 2) Single transport clock: schedule everything against one t0 ——
-    // Small lookahead so the first buffer-source callbacks are not late on mobile
-    const LOOKAHEAD = 0.04;
-    const t0 = ctx.currentTime + LOOKAHEAD;
-
-    // One FX graph per track (shared by multiple clips on that lane)
-    const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
-
-    for (const clip of clips) {
-      let graph = graphs.get(clip.trackId);
-      if (!graph) {
-        graph = createLiveTrackFxGraph(ctx);
-        graph.apply(
-          trackFxToLiveParams(clip.fx as unknown as Record<string, number>),
-          clip.on
-        );
-        graphs.set(clip.trackId, graph);
-        fxGraphRef.current.set(clip.trackId, graph);
-        gainsRef.current.set(clip.trackId, graph.gain);
-        panNodesRef.current.set(clip.trackId, graph.pan);
-        graph.output.connect(ctx.destination);
-      }
-
+    const scheduleBuf = (
+      spec: ClipSpec,
+      buf: AudioBuffer,
+      graph: ReturnType<typeof createLiveTrackFxGraph>
+    ) => {
+      if (gen !== playbackGenRef.current || !playingRef.current) return;
       const src = ctx.createBufferSource();
-      let playBuf = clip.buf;
+      let playBuf = buf;
       try {
         if (
-          (Number(clip.fx.gate) || 0) > 0.02 ||
-          (Number(clip.fx.noiseReduce) || 0) > 0.02
+          (Number(spec.fx.gate) || 0) > 0.02 ||
+          (Number(spec.fx.noiseReduce) || 0) > 0.02
         ) {
-          playBuf = processPreviewBuffer(ctx, clip.buf, {
-            gate: Number(clip.fx.gate) || 0,
-            noiseReduce: Number(clip.fx.noiseReduce) || 0,
-            deEss: Number(clip.fx.deEss) || 0,
-            phraseCleanup: Number(clip.fx.phraseCleanup) || 0,
+          playBuf = processPreviewBuffer(ctx, buf, {
+            gate: Number(spec.fx.gate) || 0,
+            noiseReduce: Number(spec.fx.noiseReduce) || 0,
+            deEss: Number(spec.fx.deEss) || 0,
+            phraseCleanup: Number(spec.fx.phraseCleanup) || 0,
           });
         }
       } catch {
-        playBuf = clip.buf;
+        playBuf = buf;
       }
       src.buffer = playBuf;
       src.connect(graph.input);
 
-      if (clip.kind === "vocal") {
-        const layerStart = clip.startMs / 1000;
-        const layerEnd = Math.max(layerStart + 0.05, clip.endMs / 1000);
-        const mediaOff = Math.max(0, clip.offsetMs / 1000);
+      // Song time (seconds) at this exact AudioContext moment
+      const songNow = startSec + Math.max(0, ctx.currentTime - t0);
+
+      if (spec.kind === "vocal") {
+        const layerStart = spec.startMs / 1000;
+        const layerEnd = Math.max(layerStart + 0.05, spec.endMs / 1000);
+        const mediaOff = Math.max(0, spec.offsetMs / 1000);
         const clipDur = Math.max(0.05, layerEnd - layerStart);
-        const localOffset = startSec - layerStart;
-        if (localOffset >= clipDur) continue;
-        if (localOffset >= 0) {
-          const into = mediaOff + localOffset;
-          const remain = Math.max(0.05, mediaOff + clipDur - into);
-          if (into >= playBuf.duration) continue;
-          src.start(t0, into, Math.min(remain, playBuf.duration - into));
-        } else {
-          // Clip is later on the timeline — fire when playhead reaches it
+        if (songNow >= layerEnd) return;
+        if (songNow >= layerStart) {
+          const into = mediaOff + (songNow - layerStart);
+          const remain = Math.max(0.05, layerEnd - songNow);
+          if (into >= playBuf.duration) return;
           src.start(
-            t0 - localOffset,
+            ctx.currentTime,
+            into,
+            Math.min(remain, playBuf.duration - into)
+          );
+        } else {
+          const when = t0 + (layerStart - startSec);
+          src.start(
+            Math.max(ctx.currentTime, when),
             mediaOff,
             Math.min(clipDur, playBuf.duration - mediaOff)
           );
         }
       } else {
-        // Beat: buffer time == project timeline
-        if (startSec >= playBuf.duration) continue;
-        src.start(t0, startSec);
+        if (songNow >= playBuf.duration) return;
+        src.start(ctx.currentTime, songNow);
         beatStartedInGraph = true;
       }
       sourcesRef.current.push(src);
+    };
+
+    // Progressive: each buffer starts the moment it is ready (beat prioritized)
+    await Promise.all(
+      specs.map(async (spec) => {
+        let buf =
+          bufferCache.get(spec.loadUrl) ||
+          (spec.fallback ? bufferCache.get(spec.fallback) : null) ||
+          null;
+        if (!buf) {
+          buf = await fetchDecode(ctx, spec.loadUrl, spec.fallback);
+        }
+        if (!buf || gen !== playbackGenRef.current || !playingRef.current) return;
+
+        let graph = graphs.get(spec.trackId);
+        if (!graph) {
+          graph = createLiveTrackFxGraph(ctx);
+          graph.apply(
+            trackFxToLiveParams(spec.fx as unknown as Record<string, number>),
+            spec.on
+          );
+          graphs.set(spec.trackId, graph);
+          fxGraphRef.current.set(spec.trackId, graph);
+          gainsRef.current.set(spec.trackId, graph.gain);
+          panNodesRef.current.set(spec.trackId, graph.pan);
+          graph.output.connect(ctx.destination);
+        }
+        scheduleBuf(spec, buf, graph);
+      })
+    );
+
+    if (gen !== playbackGenRef.current || !playingRef.current) {
+      stopSources();
+      setPlaying(false);
+      return;
     }
 
-    // HTMLAudio beat fallback only if WebAudio beat never scheduled — still at t0
+    // HTMLAudio fallback if beat never made it into the WebAudio graph
     const beatTrack = tracks.find((x) => x.kind === "beat" && x.url);
     if (beatTrack?.url && !beatStartedInGraph && isAudible("beat", "beat")) {
       try {
@@ -4837,7 +4878,9 @@ export function ProducerView({
           /* */
         }
         const a = new Audio(beatTrack.url);
-        a.currentTime = Math.max(0, startSec);
+        // Align element time to current song position
+        const songNow = startSec + Math.max(0, ctx.currentTime - t0);
+        a.currentTime = Math.max(0, songNow);
         {
           const bfx =
             fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
@@ -4845,33 +4888,13 @@ export function ProducerView({
           a.volume = Math.max(0, Math.min(1, lin));
         }
         monitorAudioRef.current = a;
-        const delayMs = Math.max(0, (t0 - ctx.currentTime) * 1000);
-        window.setTimeout(() => {
-          if (gen !== playbackGenRef.current || !playingRef.current) return;
-          void a.play().catch((e) =>
-            console.warn("[producer-view] beat HTMLAudio play", e)
-          );
-        }, delayMs);
+        void a.play().catch((e) =>
+          console.warn("[producer-view] beat HTMLAudio play", e)
+        );
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio fallback", e);
       }
     }
-
-    // User may have paused while buffers were decoding
-    if (gen !== playbackGenRef.current || !playingRef.current) {
-      stopSources();
-      setPlaying(false);
-      return;
-    }
-
-    // Transport clock matches audio start (t0), not decode start
-    startedAtRef.current = t0;
-    offsetRef.current = Math.max(0, fromMs);
-    playingRef.current = true;
-    setPlaying(true);
-    applyPlayheadVisual(fromMs, true);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tickPlayhead);
   }
 
   function fitTimelineToView() {
