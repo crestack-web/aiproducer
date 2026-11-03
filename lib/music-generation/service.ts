@@ -14,6 +14,7 @@ import type {
   MusicGenerationRequest,
   MusicJobStatus,
   MusicProviderName,
+  ProviderGenerateResult,
 } from "./types";
 import { MusicGenerationError, publicErrorMessage, sanitizeClientErrorMessage, publicBeatLimitMessage } from "./types";
 import { assertBeatGenAllowed, estimateBeatCostUsd, DEFAULT_FULL_BEAT_SEC, isPaidBeatSubscriber, FREE_BEAT_GEN_COUNT } from "./beat-quota";
@@ -391,7 +392,7 @@ export async function tickMusicGenerationJob(jobId: string) {
 
     await supabase.from("music_generation_jobs").update({ status: "GENERATING", progress: 30, stage: "generate" }).eq("id", jobId);
 
-    let result;
+    let result: ProviderGenerateResult;
     if (provider.generate) {
       try {
         result = await provider.generate(genReq);
