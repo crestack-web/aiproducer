@@ -175,23 +175,61 @@ function isHeadphonesOutputPreference(pref: string): boolean {
  * Sum all input channels to mono for MediaRecorder.
  * USB interfaces often expose stereo (In 1 / In 2); forcing mono at getUserMedia
  * can pick the empty side. Downmixing after capture keeps the live mic signal.
+ *
+ * CRITICAL: MediaStreamDestination is silent while AudioContext is suspended.
+ * We must await resume() before handing the stream to MediaRecorder — otherwise
+ * external interfaces "connect" in the UI but record pure silence.
  */
-function createMonoDownmixStream(source: MediaStream): {
+async function createMonoDownmixStream(source: MediaStream): Promise<{
   stream: MediaStream;
   dispose: () => void;
-} {
+}> {
+  const track = source.getAudioTracks()[0];
+  const settings = (track?.getSettings?.() || {}) as MediaTrackSettings;
+  const reportedCh =
+    typeof settings.channelCount === "number" && settings.channelCount > 0
+      ? settings.channelCount
+      : 0;
+
+  // True mono built-in mics: skip Web Audio graph (avoids silent-context path entirely)
+  if (reportedCh === 1) {
+    return { stream: source, dispose: () => undefined };
+  }
+
   const AC =
     window.AudioContext ||
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
   if (!AC) {
     return { stream: source, dispose: () => undefined };
   }
-  const ctx = new AC();
+  const ctx = new AC({ latencyHint: "interactive" });
+  try {
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+  } catch {
+    /* continue — some browsers still deliver after first graph connection */
+  }
+
+  // If still suspended, MediaStreamDestination will be silent — fall back to raw mic
+  if (ctx.state === "suspended") {
+    try {
+      void ctx.close();
+    } catch {
+      /* */
+    }
+    console.warn(
+      "[recording-engine] AudioContext stayed suspended — recording raw mic stream (no downmix)"
+    );
+    return { stream: source, dispose: () => undefined };
+  }
+
   const srcNode = ctx.createMediaStreamSource(source);
-  const ch = Math.max(1, Math.min(8, srcNode.channelCount || 2));
+  const ch = Math.max(1, Math.min(8, reportedCh || srcNode.channelCount || 2));
   const splitter = ctx.createChannelSplitter(ch);
   const sum = ctx.createGain();
-  sum.gain.value = 1;
+  // Slight boost when summing many quiet interface channels; clamp later in meter
+  sum.gain.value = ch > 1 ? Math.min(1.4, 1 + (ch - 1) * 0.15) : 1;
   srcNode.connect(splitter);
   for (let i = 0; i < ch; i++) {
     const g = ctx.createGain();
@@ -205,10 +243,27 @@ function createMonoDownmixStream(source: MediaStream): {
   }
   const dest = ctx.createMediaStreamDestination();
   sum.connect(dest);
-  // Suspended AudioContext → MediaStreamDestination is silent (empty recording).
-  if (ctx.state === "suspended") {
-    void ctx.resume();
+
+  // Ensure destination track is live before MediaRecorder attaches
+  const outTrack = dest.stream.getAudioTracks()[0];
+  if (outTrack && outTrack.enabled === false) {
+    outTrack.enabled = true;
   }
+  if (!outTrack || outTrack.readyState !== "live") {
+    try {
+      srcNode.disconnect();
+      sum.disconnect();
+      splitter.disconnect();
+      void ctx.close();
+    } catch {
+      /* */
+    }
+    console.warn(
+      "[recording-engine] Downmix destination not live — recording raw mic stream"
+    );
+    return { stream: source, dispose: () => undefined };
+  }
+
   return {
     stream: dest.stream,
     dispose: () => {
@@ -524,7 +579,7 @@ export async function openRecordingStream(opts: {
 
   // Downmix all channels → mono for MediaRecorder (interface In1/In2 safe).
   // Beat never enters this graph — only the mic MediaStream tracks.
-  const downmix = createMonoDownmixStream(stream);
+  const downmix = await createMonoDownmixStream(stream);
   const recordStream = downmix.stream;
 
   const info: RecordingDeviceInfo = {

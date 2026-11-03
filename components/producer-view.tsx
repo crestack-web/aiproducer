@@ -2943,8 +2943,16 @@ export function ProducerView({
         /* playback monitor best-effort */
       }
       const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
+      const routeWarn =
+        opened.fellBack || opened.info?.routingStatus === "FALLBACK"
+          ? " · Browser opened a different mic than selected — re-pick the interface"
+          : opened.info?.routingNote
+            ? ` · ${opened.info.routingNote}`
+            : opened.info?.routingStatus === "OS_OVERRIDE"
+              ? " · OS may be routing audio through another device"
+              : "";
       setEditMsg(
-        `Overdub from ${Math.round(fromMs / 100) / 10}s — hearing arrangement · ${mimeType.split(";")[0]} · ${micNote}`
+        `Overdub from ${Math.round(fromMs / 100) / 10}s — hearing arrangement · ${mimeType.split(";")[0]} · ${micNote}${routeWarn}`
       );
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
