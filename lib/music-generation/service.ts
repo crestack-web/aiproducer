@@ -396,42 +396,78 @@ export async function tickMusicGenerationJob(jobId: string) {
       try {
         result = await provider.generate(genReq);
       } catch (genErr) {
-        const isAuthOrBill =
+        const errType =
+          genErr instanceof MusicGenerationError ? genErr.errorType : "PROVIDER_ERROR";
+        const isFallbackable =
           genErr instanceof MusicGenerationError &&
-          (genErr.errorType === "AUTHENTICATION_ERROR" ||
-            genErr.errorType === "NOT_CONFIGURED" ||
-            genErr.errorType === "BILLING_REQUIRED");
-        // Prefer Daydream when ElevenLabs fails (or the reverse is rare — Daydream is primary when keyed)
-        if (
-          isAuthOrBill &&
-          provider.name === "elevenlabs" &&
-          hasDaydreamKey() &&
-          process.env.MUSIC_GENERATION_FALLBACK_DAYDREAM !== "0"
-        ) {
-          console.warn("[music-gen] ElevenLabs failed; falling back to Daydream");
-          const fallback = new DaydreamMusicProvider();
+          (errType === "AUTHENTICATION_ERROR" ||
+            errType === "NOT_CONFIGURED" ||
+            errType === "BILLING_REQUIRED" ||
+            errType === "MODEL_UNAVAILABLE" ||
+            errType === "RATE_LIMITED" ||
+            errType === "PROVIDER_ERROR" ||
+            errType === "TIMEOUT");
+        console.warn("[music-gen] primary generate failed", {
+          provider: provider.name,
+          errorType: errType,
+          message: genErr instanceof Error ? genErr.message.slice(0, 200) : String(genErr),
+          details:
+            genErr instanceof MusicGenerationError ? genErr.details : undefined,
+        });
+
+        const tryFallback = async (
+          name: string,
+          factory: () => MusicGenerationProvider,
+          stage: string
+        ): Promise<typeof result | null> => {
+          if (!isFallbackable) return null;
+          if (provider.name === name) return null;
+          const fb = factory();
+          if (!fb.generate) return null;
+          console.warn(`[music-gen] falling back to ${name}`);
           await supabase
             .from("music_generation_jobs")
-            .update({ provider: fallback.name, stage: "generate_fallback_daydream" })
+            .update({ provider: fb.name, stage })
             .eq("id", jobId);
-          result = await fallback.generate!(genReq);
-        } else if (
-          isAuthOrBill &&
-          provider.name === "elevenlabs" &&
+          return fb.generate(genReq);
+        };
+
+        // Chain: Daydream primary fails → ElevenLabs → Replicate (and the reverse order too)
+        let fbResult =
+          (await tryFallback(
+            "elevenlabs",
+            () => new ElevenLabsMusicProvider(),
+            "generate_fallback_elevenlabs"
+          ).catch((e) => {
+            console.warn("[music-gen] ElevenLabs fallback failed", e instanceof Error ? e.message : e);
+            return null;
+          })) ||
+          (await tryFallback(
+            "daydream",
+            () => new DaydreamMusicProvider(),
+            "generate_fallback_daydream"
+          ).catch((e) => {
+            console.warn("[music-gen] Daydream fallback failed", e instanceof Error ? e.message : e);
+            return null;
+          }));
+
+        if (
+          !fbResult &&
           process.env.REPLICATE_API_TOKEN?.trim() &&
           process.env.MUSIC_GENERATION_FALLBACK_REPLICATE !== "0"
         ) {
-          console.warn("[music-gen] ElevenLabs auth failed; falling back to Replicate");
-          const fallback = new ReplicateMusicProvider();
-          await supabase
-            .from("music_generation_jobs")
-            .update({ provider: fallback.name, stage: "generate_fallback" })
-            .eq("id", jobId);
-          if (!fallback.generate) throw genErr;
-          result = await fallback.generate(genReq);
-        } else {
-          throw genErr;
+          fbResult = await tryFallback(
+            "replicate",
+            () => new ReplicateMusicProvider(),
+            "generate_fallback_replicate"
+          ).catch((e) => {
+            console.warn("[music-gen] Replicate fallback failed", e instanceof Error ? e.message : e);
+            return null;
+          });
         }
+
+        if (!fbResult) throw genErr;
+        result = fbResult;
       }
     } else {
       const submitted = await provider.submitPrediction(genReq);

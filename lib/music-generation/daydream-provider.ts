@@ -24,11 +24,13 @@ const POLL_MS = 2000;
 const POLL_MAX_MS = 180_000;
 
 function apiKey(): string {
-  const k =
+  let k =
     process.env.DAYDREAM_API?.trim() ||
     process.env.DAYDREAM_API_KEY?.trim() ||
     process.env.DAYDREAM_KEY?.trim() ||
     "";
+  // Users sometimes paste "Bearer xxx" into the env value
+  if (/^bearer\s+/i.test(k)) k = k.replace(/^bearer\s+/i, "").trim();
   if (!k) {
     throw new MusicGenerationError(
       "AUTHENTICATION_ERROR",
@@ -96,13 +98,15 @@ async function createSong(body: Record<string, unknown>): Promise<DaydreamSong> 
     /* */
   }
   if (res.status === 401 || res.status === 403) {
+    console.error("[daydream] auth rejected", res.status, text.slice(0, 200));
     throw new MusicGenerationError(
       "AUTHENTICATION_ERROR",
       "Daydream API key was rejected. Check DAYDREAM_API on Vercel and redeploy.",
       { provider: "daydream", retryable: false, details: { httpStatus: res.status, body: text.slice(0, 300) } }
     );
   }
-  if (res.status === 402 || /credit|quota|billing|payment/i.test(text)) {
+  if (res.status === 402 || /credit|quota|billing|payment|pack_used/i.test(text)) {
+    console.error("[daydream] billing/credits", res.status, text.slice(0, 200));
     throw new MusicGenerationError(
       "BILLING_REQUIRED",
       "Daydream needs more song credits on this account.",
