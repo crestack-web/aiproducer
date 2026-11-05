@@ -10946,7 +10946,7 @@ function TrackFxPanel({
     { id: "slap", label: "Slap", group: "space", accent: "#FCD34D", keys: ["slapDelay"], blurb: "Short slapback" },
     { id: "chorus", label: "Chorus", group: "creative", accent: "#E879F9", keys: ["chorus"], blurb: "Width & movement" },
     { id: "doubler", label: "Doubler", group: "creative", accent: "#F472B6", keys: ["doubler"], blurb: "Stacked presence" },
-    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation", "satMode", "satTilt", "satBias", "satMix", "satCutoff", "satOut"], blurb: "Shape harmonics & grit" },,
+    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation", "satMode", "satTilt", "satBias", "satMix", "satCutoff", "satOut"], blurb: "Shape harmonics & grit" },
     { id: "width", label: "Width", group: "creative", accent: "#FB7185", keys: ["width"], blurb: "Stereo image" },
     {
       id: "voice",
