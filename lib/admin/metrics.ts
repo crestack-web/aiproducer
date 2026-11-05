@@ -336,9 +336,12 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
   }
 
   // Fill gaps: profiles without an email yet (listUsers page miss / transient error)
-  const missingIds = profileRows
-    .map((p) => (p as { id?: string }).id)
-    .filter((id): id is string => Boolean(id) && !emailById.get(id));
+  const missingIds: string[] = [];
+  for (const p of profileRows) {
+    const id = (p as { id?: string }).id;
+    if (!id) continue;
+    if (!emailById.get(id)) missingIds.push(id);
+  }
   for (const id of missingIds.slice(0, 200)) {
     try {
       const { data, error } = await supabase.auth.admin.getUserById(id);
