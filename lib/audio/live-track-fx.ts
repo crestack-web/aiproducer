@@ -19,6 +19,13 @@ export type LiveFxParams = {
   air: number;
   compress: number;
   saturation: number;
+  /** Distortion editor — mode 0 Soft … 5 Crush */
+  satMode: number;
+  satTilt: number;
+  satBias: number;
+  satMix: number;
+  satCutoff: number;
+  satOut: number;
   reverb: number;
   delay: number;
   plateReverb: number;
@@ -103,16 +110,59 @@ function clamp(n: number, a: number, b: number) {
 /** Soft-clip waveshaper curve for genuine nonlinear saturation.
  * Returns ArrayBuffer-backed curve so WaveShaperNode.curve typechecks under TS 5.x DOM.
  */
-function makeSatCurve(amount: number): Float32Array<ArrayBuffer> {
+/**
+ * Distortion transfer curves — Soft / Hard / Fold / Asym / Sine / Crush.
+ * amount = drive 0–1; mode 0–5; tilt/bias shape the transfer.
+ */
+function makeSatCurve(
+  amount: number,
+  mode = 0,
+  tilt = 0,
+  bias = 0
+): Float32Array<ArrayBuffer> {
   const n = 256;
   const curve = new Float32Array(new ArrayBuffer(n * 4)) as Float32Array<ArrayBuffer>;
   const a = Math.max(0, Math.min(1, amount));
-  const k = a * 12;
+  const m = Math.max(0, Math.min(5, Math.round(mode)));
+  const t = Math.max(-1, Math.min(1, tilt));
+  const b = Math.max(-1, Math.min(1, bias));
+  const drive = 1 + a * 14;
   for (let i = 0; i < n; i++) {
-    const x = (i * 2) / (n - 1) - 1;
+    let x = (i * 2) / (n - 1) - 1;
     // Linear when off — critical so clean tracks are not distorted
-    if (a < 0.02) curve[i] = x;
-    else curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
+    if (a < 0.02) {
+      curve[i] = x;
+      continue;
+    }
+    // Tilt: HF-ish emphasis on positive half (simple polarity weight)
+    x = x + t * 0.25 * x * x * Math.sign(x || 1);
+    x = x + b * 0.35;
+    let y: number;
+    switch (m) {
+      case 1: // Hard
+        y = Math.max(-1, Math.min(1, x * drive));
+        break;
+      case 2: // Fold
+        y = Math.sin(x * drive * Math.PI * 0.5);
+        break;
+      case 3: // Asym
+        y = x >= 0 ? Math.tanh(x * drive) : Math.tanh(x * drive * 0.55);
+        break;
+      case 4: // Sine
+        y = Math.sin(x * Math.PI * (0.5 + a * 1.2));
+        break;
+      case 5: // Crush (bitcrush-ish quantize)
+        {
+          const steps = Math.max(2, Math.round(16 - a * 12));
+          const crushed = Math.round(x * steps) / steps;
+          y = Math.tanh(crushed * drive);
+        }
+        break;
+      default: // Soft
+        y = Math.tanh(x * drive);
+        break;
+    }
+    curve[i] = Math.max(-1, Math.min(1, y));
   }
   return curve;
 }
@@ -382,14 +432,22 @@ export function createLiveTrackFxGraph(
     setP(deess.gain, -14 * clamp(safe(fx.deEss), 0, 1), now);
 
     const satAmt = clamp(safe(fx.saturation), 0, 1);
+    const satMode = safe(fx.satMode);
+    const satTilt = safe(fx.satTilt);
+    const satBias = safe(fx.satBias);
+    const satMix =
+      satAmt < 0.02
+        ? 0
+        : clamp(safe(fx.satMix) > 0.001 ? safe(fx.satMix) : 1, 0, 1);
+    const satOut = clamp(safe(fx.satOut) > 0.001 ? safe(fx.satOut) : 0.7, 0, 1.5);
     try {
-      shaper.curve = makeSatCurve(satAmt);
+      shaper.curve = makeSatCurve(satAmt, satMode, satTilt, satBias);
     } catch {
       /* */
     }
-    // Makeup compensation so sat doesn't explode level
-    setP(satDrive.gain, 1 + satAmt * 0.8, now);
-    setP(satPost.gain, 1 / (1 + satAmt * 0.55), now);
+    // Drive into shaper + wet/dry-ish makeup via satPost * satMix * satOut
+    setP(satDrive.gain, 1 + satAmt * 0.9, now);
+    setP(satPost.gain, (satMix * satOut) / (1 + satAmt * 0.45), now);
 
     const cAmt = clamp(safe(fx.compress), 0, 1);
     if (cAmt > 0.02) {
@@ -496,6 +554,12 @@ export function trackFxToLiveParams(fx: Record<string, number>): LiveFxParams {
     air: n("air"),
     compress: n("compress"),
     saturation: n("saturation"),
+    satMode: n("satMode"),
+    satTilt: n("satTilt"),
+    satBias: n("satBias"),
+    satMix: n("satMix"),
+    satCutoff: n("satCutoff"),
+    satOut: n("satOut"),
     reverb: n("reverb"),
     delay: n("delay"),
     plateReverb: n("plateReverb"),
