@@ -1347,6 +1347,19 @@ export function ProducerView({
   const addFileRef = useRef<HTMLInputElement | null>(null);
 
   const [savingId, setSavingId] = useState<string | null>(null);
+  /** Per-track busy overlay — FX / save / upload progress on the lane, not the header */
+  const [trackBusy, setTrackBusy] = useState<Record<string, string>>({});
+  const markTrackBusy = React.useCallback((id: string, label: string) => {
+    setTrackBusy((prev) => ({ ...prev, [id]: label }));
+  }, []);
+  const clearTrackBusy = React.useCallback((id: string) => {
+    setTrackBusy((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
   const [stackMenuId, setStackMenuId] = useState<string | null>(null);
   /** Suno-style ⋮ overflow menu — fixed so it is not clipped by track rows */
   const [trackMenu, setTrackMenu] = useState<{
@@ -1854,11 +1867,13 @@ export function ProducerView({
   async function persistFx(id: string, fx: TrackFx) {
     fxByIdRef.current = { ...fxByIdRef.current, [id]: fx };
     setFxById((prev) => ({ ...prev, [id]: fx }));
+    markTrackBusy(id, "Applying effects…");
     setSavingId(id);
     try {
       // Beat is not a recording_task — store on project.metadata.beat_track_fx
       if (id === "beat") {
         if (!projectId) {
+          clearTrackBusy(id);
           setSavingId(null);
           return;
         }
@@ -1871,7 +1886,6 @@ export function ProducerView({
           const j = await res.json().catch(() => ({})) as ApiJson;
           setEditMsg(typeof j.error === "string" ? j.error : "Could not save beat volume");
         }
-        setSavingId(null);
         return;
       }
       const res = await fetch(`/api/recording-tasks/${id}`, {
@@ -1888,6 +1902,7 @@ export function ProducerView({
     } catch {
       setEditMsg("Network error saving FX");
     } finally {
+      clearTrackBusy(id);
       setSavingId(null);
     }
   }
@@ -1903,6 +1918,7 @@ export function ProducerView({
       active?: boolean;
     }
   ) {
+    markTrackBusy(id, "Updating track…");
     setSavingId(id);
     setEditMsg(null);
     try {
@@ -1922,6 +1938,7 @@ export function ProducerView({
       setEditMsg("Network error saving edit");
       return false;
     } finally {
+      clearTrackBusy(id);
       setSavingId(null);
     }
   }
@@ -2428,7 +2445,8 @@ export function ProducerView({
     }
     const pack = pendingTakeBlobsRef.current.get(taskId);
     if (!pack) return;
-    setEditMsg("Retrying upload…");
+    markTrackBusy(taskId, "Retrying upload…");
+    setEditMsg(null);
     try {
       const placeMs = pack.placementStartMs ?? layers.find((l) => l.id === taskId)?.startMs ?? 0;
       let uj: RecordingUploadJson = {};
@@ -2508,7 +2526,8 @@ export function ProducerView({
             : l
         )
       );
-      setEditMsg("Upload succeeded — take is saved to the project");
+      clearTrackBusy(taskId);
+      setEditMsg(null);
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Retry upload failed");
     }
@@ -2613,7 +2632,8 @@ export function ProducerView({
       // fall through to normal save if merge failed
     }
 
-    setEditMsg("Saving take…");
+    markTrackBusy(taskId, "Saving take…");
+    setEditMsg(null);
     try {
       // Same as Booth: MediaRecorder blob → WAV so waveform + produce use decoded PCM.
       // Instant local peaks from the decoded buffer (same path as uploaded vocals).
@@ -2780,6 +2800,7 @@ export function ProducerView({
         setEditMsg(
           `${detail} — take still plays here. Use Retry upload or Download take before closing this tab.`
         );
+        clearTrackBusy(taskId);
         return;
       }
       pendingTakeBlobsRef.current.delete(taskId);
@@ -2881,12 +2902,13 @@ export function ProducerView({
         if (layer) persistLayerStructure(layer);
         return prev;
       });
-      setEditMsg("Take saved — available in Booth and Studio");
+      clearTrackBusy(taskId);
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
       onLayersChanged?.();
     } catch (e) {
       setEditMsg(e instanceof Error ? e.message : "Save failed");
+      clearTrackBusy(taskId);
     }
   }
 
@@ -7081,6 +7103,15 @@ export function ProducerView({
         </div>
       )}
       </div>
+      <style>{`
+        @keyframes apTrackShimmer {
+          0% { background-position: 100% 0; }
+          100% { background-position: -100% 0; }
+        }
+        @keyframes apTrackSpin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
       {editMsg && (
         <div
           style={{
@@ -7140,11 +7171,7 @@ export function ProducerView({
           )}
         </div>
       )}
-      {savingId && (
-        <div style={{ padding: "6px 14px", fontSize: 12, color: faint, borderBottom: `1px solid ${border}` }}>
-          Saving edit…
-        </div>
-      )}
+      {/* Track save/FX progress shows on the timeline lane — not in the header */}
 
 
       
@@ -8126,6 +8153,72 @@ export function ProducerView({
                     if (tr.kind === "vocal") setArmedTrackId(tr.id);
                   }}
                 >
+                  {trackBusy[tr.id] ? (
+                    <div
+                      aria-live="polite"
+                      aria-busy="true"
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        zIndex: 40,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        pointerEvents: "none",
+                        overflow: "hidden",
+                        borderRadius: 4,
+                        background:
+                          "linear-gradient(90deg, rgba(8,8,12,0.55) 0%, rgba(18,18,28,0.72) 50%, rgba(8,8,12,0.55) 100%)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          background:
+                            "linear-gradient(110deg, transparent 25%, rgba(231,169,97,0.14) 45%, rgba(123,235,212,0.12) 55%, transparent 75%)",
+                          backgroundSize: "200% 100%",
+                          animation: "apTrackShimmer 1.4s ease-in-out infinite",
+                        }}
+                      />
+                      <div
+                        style={{
+                          position: "relative",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "8px 14px",
+                          borderRadius: 999,
+                          background: "rgba(12,12,18,0.88)",
+                          border: `1px solid rgba(231,169,97,0.35)`,
+                          boxShadow: "0 8px 28px rgba(0,0,0,0.45)",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: "50%",
+                            border: "2px solid rgba(231,169,97,0.25)",
+                            borderTopColor: brass,
+                            animation: "apTrackSpin 0.7s linear infinite",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "#F4F1EC",
+                            letterSpacing: "0.02em",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {trackBusy[tr.id]}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
                   <div
                     data-layer-id={tr.id}
                     style={{
