@@ -98,6 +98,16 @@ export type TrackFx = {
   reverb: number;
   delay: number;
   saturation: number;
+  /** Distortion mode: 0 Soft, 1 Hard, 2 Fold, 3 Asym, 4 Sine, 5 Crush */
+  satMode: number;
+  satTilt: number;
+  satBias: number;
+  /** Wet mix 0–1 */
+  satMix: number;
+  /** Tone / cutoff feel 0–1 */
+  satCutoff: number;
+  /** Output level 0–1 */
+  satOut: number;
   /** Stereo pan: -1 = full left, 0 = center, 1 = full right */
   pan: number;
   /** Stereo width 0–1 (0 = mono-ish, 1 = wide) */
@@ -146,6 +156,12 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   reverb: 0,
   delay: 0,
   saturation: 0,
+  satMode: 0,
+  satTilt: 0,
+  satBias: 0,
+  satMix: 0,
+  satCutoff: 0.5,
+  satOut: 0.7,
   pan: 0,
   width: 0,
   air: 0,
@@ -10930,7 +10946,7 @@ function TrackFxPanel({
     { id: "slap", label: "Slap", group: "space", accent: "#FCD34D", keys: ["slapDelay"], blurb: "Short slapback" },
     { id: "chorus", label: "Chorus", group: "creative", accent: "#E879F9", keys: ["chorus"], blurb: "Width & movement" },
     { id: "doubler", label: "Doubler", group: "creative", accent: "#F472B6", keys: ["doubler"], blurb: "Stacked presence" },
-    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation"], blurb: "Warmth & edge" },
+    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation", "satMode", "satTilt", "satBias", "satMix", "satCutoff", "satOut"], blurb: "Shape harmonics & grit" },,
     { id: "width", label: "Width", group: "creative", accent: "#FB7185", keys: ["width"], blurb: "Stereo image" },
     {
       id: "voice",
@@ -10966,7 +10982,7 @@ function TrackFxPanel({
       case "denoise": return { noiseReduce: 0.25 };
       case "cleanup": return { phraseCleanup: 0.35 };
       case "limiter": return { limiter: 0.2 };
-      case "sat": return { saturation: 0.2 };
+      case "sat": return { saturation: 0.28, satMode: 0, satTilt: 0, satBias: 0, satMix: 0.8, satCutoff: 0.55, satOut: 0.7 };
       case "eq": return { eqLowDb: 0, eqMidDb: 0.5, eqHighDb: 1, air: 0.15 };
       case "hpf": return { highPassHz: 80 };
       case "lpf": return { lowPassHz: 14000 };
@@ -11254,23 +11270,47 @@ function TrackFxPanel({
   /** Distortion transfer */
   function DistGraph({ accent }: { accent: string }) {
     const s = Math.max(0, Math.min(1, Number(fx.saturation) || 0));
-    const w = 280;
-    const h = 120;
+    const mode = Math.round(Number(fx.satMode) || 0);
+    const tilt = Number(fx.satTilt) || 0;
+    const bias = Number(fx.satBias) || 0;
+    const w = 300;
+    const h = 130;
     const pts: string[] = [];
-    for (let i = 0; i <= 40; i++) {
-      const xIn = -1 + (i / 40) * 2;
-      const drive = 1 + s * 8;
-      const yOut = Math.tanh(xIn * drive) * (0.7 + s * 0.25);
-      const x = 12 + (i / 40) * (w - 24);
-      const y = h / 2 - yOut * (h / 2 - 10);
+    const drive = 1 + s * 14;
+    for (let i = 0; i <= 48; i++) {
+      let xIn = -1 + (i / 48) * 2;
+      xIn = xIn + tilt * 0.25 * xIn * xIn * Math.sign(xIn || 1) + bias * 0.35;
+      let yOut: number;
+      if (s < 0.02) yOut = xIn;
+      else if (mode === 1) yOut = Math.max(-1, Math.min(1, xIn * drive));
+      else if (mode === 2) yOut = Math.sin(xIn * drive * Math.PI * 0.5);
+      else if (mode === 3) yOut = xIn >= 0 ? Math.tanh(xIn * drive) : Math.tanh(xIn * drive * 0.55);
+      else if (mode === 4) yOut = Math.sin(xIn * Math.PI * (0.5 + s * 1.2));
+      else if (mode === 5) {
+        const steps = Math.max(2, Math.round(16 - s * 12));
+        yOut = Math.tanh((Math.round(xIn * steps) / steps) * drive);
+      } else yOut = Math.tanh(xIn * drive);
+      const x = 12 + (i / 48) * (w - 24);
+      const y = h / 2 - yOut * (h / 2 - 12);
       pts.push(`${x},${y}`);
     }
     return (
       <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 12, background: "rgba(0,0,0,0.4)" }}>
         <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.1)" />
         <line x1={w / 2} y1={8} x2={w / 2} y2={h - 8} stroke="rgba(255,255,255,0.08)" />
-        <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
+        <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.15)" strokeDasharray="3 3" />
         <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
+        {[0.25, 0.5, 0.75].map((t) => (
+          <circle
+            key={t}
+            cx={12 + t * (w - 24)}
+            cy={h / 2 - (Math.tanh((-1 + t * 2) * drive) * (h / 2 - 12)) * (s > 0.02 ? 1 : 0)}
+            r={4}
+            fill="#fff"
+            stroke={accent}
+            strokeWidth={1.5}
+          />
+        ))}
       </svg>
     );
   }
@@ -11366,13 +11406,64 @@ function TrackFxPanel({
             {k("noiseReduce", "Floor", 0, 1, 0.01)}
           </>
         );
-      case "sat":
+      case "sat": {
+        const modes = [
+          { id: 0, label: "Soft" },
+          { id: 1, label: "Hard" },
+          { id: 2, label: "Fold" },
+          { id: 3, label: "Asym" },
+          { id: 4, label: "Sine" },
+          { id: 5, label: "Crush" },
+        ] as const;
+        const mode = Math.round(Number(fx.satMode) || 0);
         return (
-          <>
-            {k("saturation", "Drive", 0, 1, 0.01, (n) => `${(n * 12).toFixed(1)} dB`)}
-            {k("saturation", "Mix", 0, 1, 0.01)}
-          </>
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+              {k("saturation", "Drive", 0, 1, 0.01, (n) => `${(n * 12).toFixed(1)} dB`)}
+              {k("satTilt", "Tilt", -1, 1, 0.01)}
+              {k("satBias", "Bias", -1, 1, 0.01)}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                justifyContent: "center",
+              }}
+            >
+              {modes.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    const next = { ...fx, satMode: m.id } as TrackFx;
+                    onChange(next);
+                    onCommit(next);
+                  }}
+                  style={{
+                    padding: "7px 12px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: mode === m.id ? accent : "rgba(255,255,255,0.06)",
+                    color: mode === m.id ? "#111" : "#F4F1EC",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+              {k("satMix", "Mix", 0, 1, 0.01)}
+              {k("satCutoff", "Cutoff", 0, 1, 0.01)}
+              {k("satOut", "Out", 0, 1, 0.01)}
+            </div>
+          </div>
         );
+      }
       case "reverb":
         return (
           <>
