@@ -14,6 +14,12 @@ export type TrackFxShape = {
   reverb: number;
   delay: number;
   saturation: number;
+  satMode: number;
+  satTilt: number;
+  satBias: number;
+  satMix: number;
+  satCutoff: number;
+  satOut: number;
   pan: number;
   width: number;
   air: number;
@@ -53,6 +59,12 @@ export const FX_DEFAULTS: TrackFxShape = {
   reverb: 0,
   delay: 0,
   saturation: 0,
+  satMode: 0,
+  satTilt: 0,
+  satBias: 0,
+  satMix: 0,
+  satCutoff: 0.5,
+  satOut: 0.7,
   pan: 0,
   width: 0,
   air: 0,
@@ -364,9 +376,12 @@ export const EFFECT_PLUGIN_PRESETS: Record<string, EffectPluginPreset[]> = {
     { id: "lim_brick", label: "Brick", fx: { limiter: 0.85 } },
   ],
   sat: [
-    { id: "sat_warm", label: "Warm", fx: { saturation: 0.25 } },
-    { id: "sat_tape", label: "Tape", fx: { saturation: 0.45 } },
-    { id: "sat_drive", label: "Drive", fx: { saturation: 0.7 } },
+    { id: "sat_soft", label: "Soft", fx: { saturation: 0.22, satMode: 0, satMix: 0.7, satOut: 0.7 } },
+    { id: "sat_warm", label: "Warm", fx: { saturation: 0.3, satMode: 0, satTilt: 0.1, satMix: 0.75 } },
+    { id: "sat_hard", label: "Hard", fx: { saturation: 0.4, satMode: 1, satMix: 0.8 } },
+    { id: "sat_fold", label: "Fold", fx: { saturation: 0.45, satMode: 2, satMix: 0.7 } },
+    { id: "sat_asym", label: "Asym", fx: { saturation: 0.38, satMode: 3, satBias: 0.15, satMix: 0.75 } },
+    { id: "sat_crush", label: "Crush", fx: { saturation: 0.55, satMode: 5, satMix: 0.65, satOut: 0.65 } },
   ],
   eq: [
     { id: "eq_flat", label: "Flat", fx: { eqLowDb: 0, eqMidDb: 0, eqHighDb: 0, air: 0 } },
