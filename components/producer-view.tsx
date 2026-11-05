@@ -10699,20 +10699,19 @@ function TrackFxPanel({
   onRackChange: (rack: string[]) => void;
 }) {
   const [addOpen, setAddOpen] = useState(false);
-  /** Effect currently open in its own modal */
   const [modalId, setModalId] = useState<string | null>(null);
-  /** Presets vs Custom knobs vs Keyframe automation */
   const [fxEditMode, setFxEditMode] = useState<"presets" | "custom">("custom");
-  const [autoParam, setAutoParam] = useState<AutomationParamKey | null>(null);
-  const laneSvgRef = React.useRef<SVGSVGElement | null>(null);
-  const dragPtRef = React.useRef<string | null>(null);
+  void playheadMs;
+  void totalMs;
+  void automationDoc;
+  void onAutomationChange;
+  void fxEditMode;
+  void setFxEditMode;
+  void color;
 
-  // If chips were lost (reload) but FX values exist, show derived rack
   const effectiveRack = rack.length > 0 ? rack : rackFromFx(fx);
   React.useEffect(() => {
-    if (rack.length === 0 && effectiveRack.length > 0) {
-      onRackChange(effectiveRack);
-    }
+    if (rack.length === 0 && effectiveRack.length > 0) onRackChange(effectiveRack);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fx]);
 
@@ -10722,128 +10721,62 @@ function TrackFxPanel({
     group: "dynamics" | "tone" | "space" | "creative";
     accent: string;
     keys: (keyof TrackFx)[];
+    blurb: string;
   };
 
   const PLUGINS: PluginDef[] = [
-    { id: "compress", label: "Compressor", group: "dynamics", accent: "#60A5FA", keys: ["compress"] },
-    { id: "deess", label: "De-esser", group: "dynamics", accent: "#A78BFA", keys: ["deEss"] },
-    { id: "gate", label: "Noise gate", group: "dynamics", accent: "#94A3B8", keys: ["gate"] },
-    { id: "denoise", label: "Noise remover", group: "dynamics", accent: "#67E8F9", keys: ["noiseReduce"] },
-    { id: "cleanup", label: "Phrase cleanup", group: "dynamics", accent: "#FBBF24", keys: ["phraseCleanup"] },
-    { id: "limiter", label: "Soft limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"] },
-    { id: "sat", label: "Saturation", group: "dynamics", accent: "#FBBF24", keys: ["saturation"] },
-    { id: "eq", label: "EQ", group: "tone", accent: "#38BDF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"] },
-    { id: "hpf", label: "High-pass", group: "tone", accent: "#2DD4BF", keys: ["highPassHz"] },
-    { id: "lpf", label: "Low-pass", group: "tone", accent: "#34D399", keys: ["lowPassHz"] },
-    { id: "telephone", label: "Telephone", group: "tone", accent: "#C084FC", keys: ["telephone"] },
-    { id: "reverb", label: "Room reverb", group: "space", accent: "#818CF8", keys: ["reverb"] },
-    { id: "plate", label: "Plate-style", group: "space", accent: "#E879F9", keys: ["plateReverb"] },
-    { id: "delay", label: "Echo delay", group: "space", accent: "#22D3EE", keys: ["delay"] },
-    { id: "slap", label: "Slapback", group: "space", accent: "#F472B6", keys: ["slapDelay"] },
-    { id: "chorus", label: "Chorus", group: "space", accent: "#A3E635", keys: ["chorus"] },
-    { id: "doubler", label: "Vocal doubler", group: "space", accent: "#4ADE80", keys: ["doubler"] },
-    {
-      id: "voice",
-      label: "Voice changer",
-      group: "creative",
-      accent: "#F472B6",
-      keys: ["voiceChanger", "voicePitchSemis", "voiceCharacter"],
-    },
-    {
-      id: "rotor",
-      label: "Rotor Glow",
-      group: "creative",
-      accent: "#4ADE80",
-      keys: ["rotorMix", "rotorSpeed", "rotorDepth", "rotorWarmth", "rotorFast"],
-    },
-    {
-      id: "spring",
-      label: "Spring Shimmer",
-      group: "creative",
-      accent: "#FF8A3D",
-      keys: ["springMix", "springDelay", "springTension", "springDamp", "springMod"],
-    },
+    { id: "compress", label: "Compressor", group: "dynamics", accent: "#F59E0B", keys: ["compress"], blurb: "Level out dynamics" },
+    { id: "gate", label: "Gate", group: "dynamics", accent: "#A78BFA", keys: ["gate"], blurb: "Cut noise between phrases" },
+    { id: "deess", label: "De-esser", group: "dynamics", accent: "#C4B5FD", keys: ["deEss"], blurb: "Tame harsh sibilance" },
+    { id: "denoise", label: "Denoise", group: "dynamics", accent: "#67E8F9", keys: ["noiseReduce"], blurb: "Reduce room noise" },
+    { id: "limiter", label: "Limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"], blurb: "Catch peaks softly" },
+    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation"], blurb: "Warmth & edge" },
+    { id: "eq", label: "EQ", group: "tone", accent: "#818CF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"], blurb: "Shape the tone" },
+    { id: "hpf", label: "High-pass", group: "tone", accent: "#38BDF8", keys: ["highPassHz"], blurb: "Remove low rumble" },
+    { id: "lpf", label: "Low-pass", group: "tone", accent: "#22D3EE", keys: ["lowPassHz"], blurb: "Soften highs" },
+    { id: "air", label: "Air", group: "tone", accent: "#7DD3FC", keys: ["air"], blurb: "Open top end" },
+    { id: "reverb", label: "Reverb", group: "space", accent: "#34D399", keys: ["reverb"], blurb: "Room & depth" },
+    { id: "plate", label: "Plate", group: "space", accent: "#6EE7B7", keys: ["plateReverb"], blurb: "Dense plate space" },
+    { id: "delay", label: "Delay", group: "space", accent: "#FBBF24", keys: ["delay"], blurb: "Echo repeats" },
+    { id: "slap", label: "Slap", group: "space", accent: "#FCD34D", keys: ["slapDelay"], blurb: "Short slapback" },
+    { id: "chorus", label: "Chorus", group: "creative", accent: "#E879F9", keys: ["chorus"], blurb: "Width & movement" },
+    { id: "doubler", label: "Doubler", group: "creative", accent: "#F472B6", keys: ["doubler"], blurb: "Stacked presence" },
+    { id: "width", label: "Width", group: "creative", accent: "#FB7185", keys: ["width"], blurb: "Stereo image" },
   ];
 
-  const commitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  function setKey<K extends keyof TrackFx>(key: K, value: TrackFx[K], commit = false) {
-    const next = { ...fx, [key]: value };
-    onChange(next);
-    // Always persist — mobile browsers often skip mouseup/touchend on range inputs
-    if (commit) {
-      if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
-      onCommit(next);
-      return;
-    }
-    if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
-    commitTimerRef.current = setTimeout(() => onCommit(next), 280);
-  }
-
-  /** Sensible defaults so "Add effect" is audible and survives reload via track_fx. */
   function defaultsForPlugin(id: string): Partial<TrackFx> {
     switch (id) {
-      case "compress":
-        return { compress: 0.35 };
-      case "deess":
-        return { deEss: 0.3 };
-      case "gate":
-        return { gate: 0.45 };
-      case "denoise":
-        return { noiseReduce: 0.65 };
-      case "cleanup":
-        return { phraseCleanup: 0.4 };
-      case "voice":
-        return { voiceChanger: 0.85, voicePitchSemis: 4, voiceCharacter: 1 };
-      case "limiter":
-        return { limiter: 0.25 };
-      case "sat":
-        return { saturation: 0.28 };
-      case "eq":
-        return { air: 0.2 };
-      case "hpf":
-        return { highPassHz: 80 };
-      case "lpf":
-        return { lowPassHz: 14000 };
-      case "telephone":
-        return { telephone: 0.45 };
-      case "reverb":
-        return { reverb: 0.28 };
-      case "plate":
-        return { plateReverb: 0.28 };
-      case "delay":
-        return { delay: 0.22 };
-      case "slap":
-        return { slapDelay: 0.25 };
-      case "chorus":
-        return { chorus: 0.28 };
-      case "doubler":
-        return { doubler: 0.3 };
-      case "rotor":
-        return {
-          rotorMix: 0.32,
-          rotorSpeed: 0.4,
-          rotorDepth: 0.45,
-          rotorWarmth: 0.4,
-          rotorFast: 0,
-        };
-      case "spring":
-        return {
-          springMix: 0.32,
-          springDelay: 0.25,
-          springTension: 0.4,
-          springDamp: 0.35,
-          springMod: 0.25,
-        };
-      default:
-        return {};
+      case "compress": return { compress: 0.35 };
+      case "gate": return { gate: 0.25 };
+      case "deess": return { deEss: 0.3 };
+      case "denoise": return { noiseReduce: 0.25 };
+      case "limiter": return { limiter: 0.2 };
+      case "sat": return { saturation: 0.2 };
+      case "eq": return { eqLowDb: 0, eqMidDb: 0.5, eqHighDb: 1, air: 0.15 };
+      case "hpf": return { highPassHz: 80 };
+      case "lpf": return { lowPassHz: 14000 };
+      case "air": return { air: 0.25 };
+      case "reverb": return { reverb: 0.22 };
+      case "plate": return { plateReverb: 0.2 };
+      case "delay": return { delay: 0.2 };
+      case "slap": return { slapDelay: 0.22 };
+      case "chorus": return { chorus: 0.25 };
+      case "doubler": return { doubler: 0.28 };
+      case "width": return { width: 0.35 };
+      default: return {};
     }
+  }
+
+  function setKey(key: keyof TrackFx, val: number, commit = false) {
+    const next = { ...fx, [key]: val } as TrackFx;
+    onChange(next);
+    if (commit) onCommit(next);
   }
 
   function addPlugin(id: string) {
     const base = rack.length > 0 ? rack : rackFromFx(fx);
     const nextRack = base.includes(id) ? base : [...base, id];
     onRackChange(nextRack);
-    // Seed non-zero params so the effect is real (live + Produce + save)
     const seeded = { ...fx, ...defaultsForPlugin(id) };
     onChange(seeded);
     onCommit(seeded);
@@ -10858,75 +10791,68 @@ function TrackFxPanel({
       for (const k of def.keys) {
         if (k === "eqLowDb" || k === "eqMidDb" || k === "eqHighDb") (nextFx as any)[k] = 0;
         else if (k === "highPassHz" || k === "lowPassHz") (nextFx as any)[k] = 0;
-        else if (k === "rotorSpeed") (nextFx as any)[k] = 0.35;
-        else if (k === "rotorDepth") (nextFx as any)[k] = 0.45;
-        else if (k === "rotorWarmth") (nextFx as any)[k] = 0.4;
-        else if (k === "springDelay") (nextFx as any)[k] = 0.25;
-        else if (k === "springTension") (nextFx as any)[k] = 0.4;
-        else if (k === "springDamp") (nextFx as any)[k] = 0.35;
-        else if (k === "springMod") (nextFx as any)[k] = 0.2;
         else (nextFx as any)[k] = 0;
       }
     }
     onChange(nextFx);
     onCommit(nextFx);
-    onRackChange(rack.filter((x) => x !== id));
+    onRackChange((rack.length ? rack : effectiveRack).filter((x) => x !== id));
     if (modalId === id) setModalId(null);
   }
 
-  /** Pro dial — large Musicwarp-style ring + value */
-  function knob(
-    key: keyof TrackFx,
-    label: string,
-    min: number,
-    max: number,
-    step: number,
-    accent: string,
-    size: "md" | "lg" = "md"
-  ) {
-    const v = Number(fx[key]) || 0;
-    const pct = max === min ? 0 : Math.max(0, Math.min(1, (v - min) / (max - min)));
+  /** Circular knob — Suno-style */
+  function Knob({
+    label,
+    value,
+    min,
+    max,
+    step,
+    accent,
+    onVal,
+    format,
+  }: {
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    accent: string;
+    onVal: (n: number, commit?: boolean) => void;
+    format?: (n: number) => string;
+  }) {
+    const pct = max === min ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min)));
     const deg = -135 + pct * 270;
-    const dim = size === "lg" ? 88 : 58;
-    const inner = size === "lg" ? 64 : 42;
-    const needle = size === "lg" ? 22 : 15;
-    const display = key.includes("Hz")
-      ? String(Math.round(v))
-      : key.includes("Db") || key === "gainDb"
-        ? `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}`
-        : Number(v).toFixed(2);
     return (
       <label
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: size === "lg" ? 8 : 6,
-          minWidth: size === "lg" ? 100 : 72,
-          flex: size === "lg" ? "1 1 100px" : "1 1 72px",
+          gap: 6,
+          minWidth: 64,
+          flex: "1 1 64px",
         }}
       >
         <div
           style={{
-            width: dim,
-            height: dim,
+            width: 56,
+            height: 56,
             borderRadius: "50%",
-            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.07) ${pct * 270}deg, rgba(255,255,255,0.07) 270deg, transparent 270deg)`,
+            background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.08) ${pct * 270}deg, rgba(255,255,255,0.08) 270deg, transparent 270deg)`,
             display: "grid",
             placeItems: "center",
-            boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 8px 24px rgba(0,0,0,0.35), inset 0 0 20px ${accent}18`,
             position: "relative",
+            boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 6px 20px rgba(0,0,0,0.4)`,
           }}
         >
           <div
             style={{
-              width: inner,
-              height: inner,
+              width: 40,
+              height: 40,
               borderRadius: "50%",
-              background: "radial-gradient(circle at 35% 30%, #2a2826 0%, #12100e 70%)",
+              background: "radial-gradient(circle at 35% 30%, #2a2a32 0%, #121218 75%)",
               border: "1px solid rgba(255,255,255,0.1)",
               position: "relative",
-              boxShadow: "inset 0 2px 8px rgba(0,0,0,0.5)",
             }}
           >
             <div
@@ -10934,15 +10860,15 @@ function TrackFxPanel({
                 position: "absolute",
                 left: "50%",
                 top: "50%",
-                width: size === "lg" ? 3 : 2,
-                height: needle,
-                marginLeft: size === "lg" ? -1.5 : -1,
-                marginTop: -needle,
+                width: 2,
+                height: 14,
+                marginLeft: -1,
+                marginTop: -14,
                 borderRadius: 2,
-                background: `linear-gradient(180deg, ${accent}, ${accent}99)`,
+                background: accent,
                 transformOrigin: "50% 100%",
                 transform: `rotate(${deg}deg)`,
-                boxShadow: `0 0 8px ${accent}88`,
+                boxShadow: `0 0 6px ${accent}`,
               }}
             />
           </div>
@@ -10951,528 +10877,347 @@ function TrackFxPanel({
             min={min}
             max={max}
             step={step}
-            value={v}
+            value={value}
             aria-label={label}
-            onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
-            onMouseUp={(e) => {
-              const val = parseFloat((e.target as HTMLInputElement).value);
-              const next = { ...fx, [key]: val } as TrackFx;
-              onChange(next);
-              onCommit(next);
-            }}
-            onTouchEnd={(e) => {
-              const val = parseFloat((e.target as HTMLInputElement).value);
-              const next = { ...fx, [key]: val } as TrackFx;
-              onChange(next);
-              onCommit(next);
-            }}
+            onChange={(e) => onVal(parseFloat(e.target.value))}
+            onMouseUp={(e) => onVal(parseFloat((e.target as HTMLInputElement).value), true)}
+            onTouchEnd={(e) => onVal(parseFloat((e.target as HTMLInputElement).value), true)}
             style={{
               position: "absolute",
-              width: dim,
-              height: dim,
+              inset: 0,
               opacity: 0,
               cursor: "pointer",
               margin: 0,
             }}
           />
         </div>
-        <span
-          style={{
-            fontSize: size === "lg" ? 12 : 11,
-            color: muted,
-            fontWeight: 650,
-            letterSpacing: "0.02em",
-          }}
-        >
-          {label}
-        </span>
-        <span
-          style={{
-            fontSize: size === "lg" ? 15 : 12,
-            color: accent,
-            fontWeight: 700,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {display}
+        <span style={{ fontSize: 10, fontWeight: 700, color: muted, letterSpacing: "0.02em" }}>{label}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#F4F1EC" }}>
+          {format ? format(value) : value.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0)}
         </span>
       </label>
     );
   }
 
-  function levelSlider(key: keyof TrackFx, label: string, min: number, max: number, step: number) {
-    const v = Number(fx[key]) || 0;
+  /** EQ frequency response sketch */
+  function EqGraph({ accent }: { accent: string }) {
+    const lo = Number(fx.eqLowDb) || 0;
+    const mid = Number(fx.eqMidDb) || 0;
+    const hi = Number(fx.eqHighDb) || 0;
+    const air = Number(fx.air) || 0;
+    const w = 320;
+    const h = 140;
+    const pts: string[] = [];
+    for (let i = 0; i <= 48; i++) {
+      const t = i / 48;
+      // rough three-band + air shape
+      const yDb =
+        lo * Math.exp(-Math.pow((t - 0.15) / 0.18, 2)) +
+        mid * Math.exp(-Math.pow((t - 0.45) / 0.14, 2)) +
+        hi * Math.exp(-Math.pow((t - 0.72) / 0.16, 2)) +
+        air * 6 * Math.exp(-Math.pow((t - 0.9) / 0.12, 2));
+      const y = h / 2 - (yDb / 18) * (h / 2 - 12);
+      pts.push(`${12 + t * (w - 24)},${Math.max(8, Math.min(h - 8, y))}`);
+    }
     return (
-      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: muted }}>
-          <span>{label}</span>
-          <span style={{ color: brass, fontVariantNumeric: "tabular-nums" }}>
-            {Number(v).toFixed(2)}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={v}
-          onChange={(e) => setKey(key, parseFloat(e.target.value) as never)}
-          onMouseUp={(e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            const next = { ...fx, [key]: val } as TrackFx;
-            onChange(next);
-            onCommit(next);
-          }}
-          onTouchEnd={(e) => {
-            const val = parseFloat((e.target as HTMLInputElement).value);
-            const next = { ...fx, [key]: val } as TrackFx;
-            onChange(next);
-            onCommit(next);
-          }}
-          style={{ width: "100%", accentColor: brass }}
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 12, background: "rgba(0,0,0,0.4)" }}>
+        {[0.25, 0.5, 0.75].map((g) => (
+          <line key={g} x1={12} y1={h * g} x2={w - 12} y2={h * g} stroke="rgba(255,255,255,0.06)" />
+        ))}
+        <polyline fill="none" stroke={accent} strokeWidth={2.5} strokeLinejoin="round" points={pts.join(" ")} />
+        <polygon
+          fill={`${accent}33`}
+          points={`12,${h - 8} ${pts.join(" ")} ${w - 12},${h - 8}`}
         />
-      </label>
+        {[0.15, 0.45, 0.72, 0.9].map((t, i) => (
+          <circle
+            key={i}
+            cx={12 + t * (w - 24)}
+            cy={h / 2 - ([lo, mid, hi, air * 6][i] / 18) * (h / 2 - 12)}
+            r={5}
+            fill="#fff"
+            stroke={accent}
+            strokeWidth={2}
+          />
+        ))}
+      </svg>
     );
   }
 
-  function renderKnobs(id: string, accent: string) {
-    /** Compressor-style transfer curve from amount 0–1 */
-    function CompCurve({ amount }: { amount: number }) {
-      const a = Math.max(0, Math.min(1, amount));
-      const w = 280;
-      const h = 120;
-      const pts: string[] = [];
-      for (let i = 0; i <= 40; i++) {
-        const x = i / 40;
-        // soft knee compression visualization
-        const thr = 0.55 - a * 0.25;
-        let y = x;
-        if (x > thr) {
-          const over = x - thr;
-          y = thr + over / (1 + a * 8);
-        }
-        pts.push(`${12 + x * (w - 24)},${h - 12 - y * (h - 24)}`);
-      }
-      return (
-        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
-          <defs>
-            <linearGradient id="compGrad" x1="0" y1="1" x2="1" y2="0">
-              <stop offset="0%" stopColor={accent} stopOpacity="0.15" />
-              <stop offset="100%" stopColor={accent} stopOpacity="0.5" />
-            </linearGradient>
-          </defs>
-          {[0.25, 0.5, 0.75].map((g) => (
-            <line
-              key={g}
-              x1={12}
-              y1={h - 12 - g * (h - 24)}
-              x2={w - 12}
-              y2={h - 12 - g * (h - 24)}
-              stroke="rgba(255,255,255,0.06)"
-              strokeWidth={1}
-            />
-          ))}
-          <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.12)" strokeDasharray="4 4" />
-          <polyline fill="none" stroke={accent} strokeWidth={2.5} strokeLinecap="round" points={pts.join(" ")} />
-          <circle
-            cx={12 + 0.7 * (w - 24)}
-            cy={h - 12 - (0.7 > 0.55 - a * 0.25 ? (0.55 - a * 0.25) + (0.7 - (0.55 - a * 0.25)) / (1 + a * 8) : 0.7) * (h - 24)}
-            r={5}
-            fill={accent}
-            stroke="#111"
-            strokeWidth={1}
-          />
-        </svg>
-      );
+  /** Compressor transfer curve */
+  function CompGraph({ accent }: { accent: string }) {
+    const c = Math.max(0, Math.min(1, Number(fx.compress) || 0));
+    const thresh = -12 - c * 20;
+    const ratio = 1 + c * 7;
+    const w = 280;
+    const h = 140;
+    const pts: string[] = [];
+    for (let i = 0; i <= 40; i++) {
+      const xin = -60 + (i / 40) * 60; // dB in
+      let xout = xin;
+      if (xin > thresh) xout = thresh + (xin - thresh) / ratio;
+      const x = 12 + ((xin + 60) / 60) * (w - 24);
+      const y = h - 12 - ((xout + 60) / 60) * (h - 24);
+      pts.push(`${x},${y}`);
     }
+    const tx = 12 + ((thresh + 60) / 60) * (w - 24);
+    return (
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 12, background: "rgba(0,0,0,0.4)" }}>
+        <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.12)" strokeDasharray="4 4" />
+        <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
+        <circle cx={tx} cy={h - 12 - ((thresh + 60) / 60) * (h - 24)} r={6} fill={accent} stroke="#111" strokeWidth={1} />
+      </svg>
+    );
+  }
 
-    /** EQ magnitude response sketch from low/mid/high/air */
-    function EqCurve() {
-      const lo = Number(fx.eqLowDb) || 0;
-      const mid = Number(fx.eqMidDb) || 0;
-      const hi = Number(fx.eqHighDb) || 0;
-      const air = (Number(fx.air) || 0) * 5;
-      const w = 280;
-      const h = 120;
-      const pts: string[] = [];
-      for (let i = 0; i <= 48; i++) {
-        const t = i / 48;
-        // log-ish bands
-        let db = 0;
-        if (t < 0.25) db = lo * (1 - t / 0.25) + mid * (t / 0.25) * 0.3;
-        else if (t < 0.55) db = mid * (1 - Math.abs(t - 0.4) / 0.2);
-        else if (t < 0.8) db = hi * ((t - 0.55) / 0.25) + mid * 0.2;
-        else db = hi * 0.6 + air * ((t - 0.8) / 0.2);
-        const yNorm = 0.5 - db / 24;
-        pts.push(`${12 + t * (w - 24)},${12 + Math.max(8, Math.min(h - 8, yNorm * (h - 24)))}`);
-      }
-      return (
-        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
-          <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.12)" strokeWidth={1} />
-          {[0.2, 0.4, 0.6, 0.8].map((g) => (
-            <line key={g} x1={12 + g * (w - 24)} y1={12} x2={12 + g * (w - 24)} y2={h - 12} stroke="rgba(255,255,255,0.05)" />
-          ))}
-          <polyline fill="none" stroke={accent} strokeWidth={2.5} strokeLinecap="round" points={pts.join(" ")} />
-          {[0.12, 0.4, 0.72, 0.9].map((t, i) => {
-            const dbs = [lo, mid, hi, air];
-            const db = dbs[i];
-            const yNorm = 0.5 - db / 24;
-            return (
-              <circle
-                key={i}
-                cx={12 + t * (w - 24)}
-                cy={12 + Math.max(8, Math.min(h - 8, yNorm * (h - 24)))}
-                r={4.5}
-                fill={accent}
-                stroke="#111"
-                strokeWidth={1}
-              />
-            );
-          })}
-        </svg>
-      );
+  /** Gate envelope sketch */
+  function GateGraph({ accent }: { accent: string }) {
+    const g = Math.max(0, Math.min(1, Number(fx.gate) || 0));
+    const floor = -48 + g * 8;
+    const open = -6;
+    const w = 280;
+    const h = 130;
+    // fake speech envelope vs gate
+    const env = [0.1, 0.15, 0.8, 0.9, 0.2, 0.15, 0.85, 0.95, 0.3, 0.1, 0.7, 0.8, 0.15, 0.9, 0.85, 0.2];
+    const envPts = env
+      .map((v, i) => {
+        const x = 12 + (i / (env.length - 1)) * (w - 24);
+        const y = h - 12 - v * (h - 28);
+        return `${x},${y}`;
+      })
+      .join(" ");
+    const gateY = h - 12 - ((open - (-60)) / 60) * (h - 28) * (0.4 + g * 0.5);
+    return (
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 12, background: "rgba(0,0,0,0.4)" }}>
+        <polyline fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={1.5} points={envPts} />
+        <line x1={12} y1={gateY} x2={w - 12} y2={gateY} stroke="rgba(255,255,255,0.35)" strokeWidth={1} />
+        <polyline
+          fill="none"
+          stroke={accent}
+          strokeWidth={2.5}
+          points={env
+            .map((v, i) => {
+              const x = 12 + (i / (env.length - 1)) * (w - 24);
+              const openAmt = v > 0.35 - g * 0.15 ? 1 : 0.15;
+              const y = h - 12 - openAmt * (0.55 + g * 0.35) * (h - 28);
+              return `${x},${y}`;
+            })
+            .join(" ")}
+        />
+      </svg>
+    );
+  }
+
+  /** Distortion transfer */
+  function DistGraph({ accent }: { accent: string }) {
+    const s = Math.max(0, Math.min(1, Number(fx.saturation) || 0));
+    const w = 280;
+    const h = 120;
+    const pts: string[] = [];
+    for (let i = 0; i <= 40; i++) {
+      const xIn = -1 + (i / 40) * 2;
+      const drive = 1 + s * 8;
+      const yOut = Math.tanh(xIn * drive) * (0.7 + s * 0.25);
+      const x = 12 + (i / 40) * (w - 24);
+      const y = h / 2 - yOut * (h / 2 - 10);
+      pts.push(`${x},${y}`);
     }
+    return (
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 12, background: "rgba(0,0,0,0.4)" }}>
+        <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.1)" />
+        <line x1={w / 2} y1={8} x2={w / 2} y2={h - 8} stroke="rgba(255,255,255,0.08)" />
+        <line x1={12} y1={h - 12} x2={w - 12} y2={12} stroke="rgba(255,255,255,0.12)" strokeDasharray="3 3" />
+        <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
+      </svg>
+    );
+  }
 
-    /** Simple waveform / space visualization for reverb-like effects */
-    function SpaceViz({ wet }: { wet: number }) {
-      const a = Math.max(0, Math.min(1, wet));
-      const bars = 24;
-      return (
-        <div
-          style={{
-            height: 72,
-            borderRadius: 10,
-            background: "rgba(0,0,0,0.35)",
-            display: "flex",
-            alignItems: "flex-end",
-            gap: 3,
-            padding: "10px 12px",
-          }}
-        >
-          {Array.from({ length: bars }).map((_, i) => {
-            const decay = Math.exp(-i * (0.08 + (1 - a) * 0.15));
-            const h = 12 + decay * a * 48 + Math.sin(i * 0.7) * 4 * a;
-            return (
-              <div
-                key={i}
-                style={{
-                  flex: 1,
-                  height: h,
-                  borderRadius: 2,
-                  background: `linear-gradient(180deg, ${accent}, ${accent}55)`,
-                  opacity: 0.35 + decay * 0.65,
-                }}
-              />
-            );
-          })}
-        </div>
-      );
-    }
-
-    function DelayViz({ amount }: { amount: number }) {
-      const a = Math.max(0, Math.min(1, amount));
-      return (
-        <svg width="100%" viewBox="0 0 280 72" style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
-          {[0, 1, 2, 3].map((i) => {
-            const x = 24 + i * (40 + a * 28);
-            const op = 1 - i * 0.22;
-            return (
-              <g key={i} opacity={op}>
-                <rect x={x} y={20 + i * 4} width={28} height={32 - i * 4} rx={4} fill={accent} opacity={0.35 + a * 0.4} />
-              </g>
-            );
-          })}
-          <text x={14} y={64} fill="rgba(255,255,255,0.35)" fontSize={10}>
-            echoes
-          </text>
-        </svg>
-      );
-    }
-
-    function FilterViz({ mode, hz }: { mode: "hpf" | "lpf" | "tel"; hz: number }) {
-      const w = 280;
-      const h = 80;
-      const pts: string[] = [];
-      for (let i = 0; i <= 40; i++) {
-        const t = i / 40;
-        let y = 0.85;
-        if (mode === "hpf") {
-          const cut = Math.min(1, hz / 300);
-          y = t < cut ? 0.15 + (t / Math.max(0.01, cut)) * 0.7 : 0.85;
-        } else if (mode === "lpf") {
-          const cut = Math.min(1, hz / 12000);
-          y = t > cut ? 0.85 - ((t - cut) / Math.max(0.01, 1 - cut)) * 0.7 : 0.85;
-        } else {
-          // telephone band
-          y = t > 0.25 && t < 0.65 ? 0.85 : 0.25;
-        }
-        pts.push(`${12 + t * (w - 24)},${h - 8 - y * (h - 16)}`);
-      }
-      return (
-        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
-          <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
-        </svg>
-      );
-    }
-
-    function SatViz({ amount }: { amount: number }) {
-      const a = Math.max(0, Math.min(1, amount));
-      const w = 280;
-      const h = 72;
-      const pts: string[] = [];
-      for (let i = 0; i <= 40; i++) {
-        const x = i / 40;
-        const xin = x * 2 - 1;
-        const k = 1 + a * 8;
-        const y = a < 0.02 ? xin : ((1 + k) * xin) / (1 + k * Math.abs(xin));
-        pts.push(`${12 + x * (w - 24)},${h / 2 - y * (h / 2 - 10)}`);
-      }
-      return (
-        <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: "block", borderRadius: 10, background: "rgba(0,0,0,0.35)" }}>
-          <line x1={12} y1={h / 2} x2={w - 12} y2={h / 2} stroke="rgba(255,255,255,0.1)" />
-          <polyline fill="none" stroke={accent} strokeWidth={2.5} points={pts.join(" ")} />
-        </svg>
-      );
-    }
-
-    // Decorative transfer curves removed — Custom mode shows interactive amount-over-time curve above
-    const wrap = (_viz: React.ReactNode, knobs: React.ReactNode) => (
+  function SpaceGraph({ wet, accent }: { wet: number; accent: string }) {
+    const a = Math.max(0, Math.min(1, wet));
+    return (
       <div
         style={{
+          height: 100,
+          borderRadius: 12,
+          background: "rgba(0,0,0,0.4)",
           display: "flex",
-          flexWrap: "wrap",
-          gap: 16,
-          justifyContent: "center",
-          padding: "8px 4px 4px",
-          borderRadius: 14,
-          border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(0,0,0,0.28)",
+          alignItems: "flex-end",
+          gap: 3,
+          padding: "12px 14px",
         }}
       >
-        {knobs}
+        {Array.from({ length: 28 }).map((_, i) => {
+          const decay = Math.exp(-i * (0.06 + (1 - a) * 0.12));
+          const hh = 10 + decay * a * 70 + Math.sin(i * 0.55) * 5 * a;
+          return (
+            <div
+              key={i}
+              style={{
+                flex: 1,
+                height: hh,
+                borderRadius: 2,
+                background: `linear-gradient(180deg, ${accent}, ${accent}44)`,
+                opacity: 0.3 + decay * 0.7,
+              }}
+            />
+          );
+        })}
       </div>
     );
+  }
 
+  function MiniPreview({ id, accent }: { id: string; accent: string }) {
+    if (id === "eq") return <EqGraph accent={accent} />;
+    if (id === "compress") return <CompGraph accent={accent} />;
+    if (id === "gate") return <GateGraph accent={accent} />;
+    if (id === "sat") return <DistGraph accent={accent} />;
+    if (id === "reverb" || id === "plate")
+      return <SpaceGraph wet={Number(id === "plate" ? fx.plateReverb : fx.reverb) || 0.3} accent={accent} />;
+    if (id === "delay" || id === "slap")
+      return <SpaceGraph wet={Number(id === "slap" ? fx.slapDelay : fx.delay) || 0.25} accent={accent} />;
+    return (
+      <div style={{ height: 72, borderRadius: 12, background: "rgba(0,0,0,0.35)", display: "grid", placeItems: "center" }}>
+        <div style={{ width: 40, height: 40, borderRadius: "50%", border: `2px solid ${accent}`, opacity: 0.7 }} />
+      </div>
+    );
+  }
+
+  const modalDef = modalId ? PLUGINS.find((p) => p.id === modalId) : null;
+
+  function renderModalKnobs(id: string, accent: string) {
+    const k = (key: keyof TrackFx, label: string, min: number, max: number, step: number, fmt?: (n: number) => string) => (
+      <Knob
+        key={String(key)}
+        label={label}
+        value={Number(fx[key]) || 0}
+        min={min}
+        max={max}
+        step={step}
+        accent={accent}
+        format={fmt}
+        onVal={(n, commit) => setKey(key, n, commit)}
+      />
+    );
     switch (id) {
       case "compress":
-        return wrap(
-          <CompCurve amount={Number(fx.compress) || 0} />,
-          <>{knob("compress", "Amount", 0, 1, 0.01, accent, "lg")}</>
-        );
-      case "deess":
-        return wrap(
-          <FilterViz mode="tel" hz={6500} />,
-          <>{knob("deEss", "HF atten", 0, 1, 0.01, accent, "lg")}</>
-        );
-      case "gate":
-        return wrap(
-          <div style={{ height: 56, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", padding: "0 16px", gap: 8 }}>
-            {[0.2, 0.35, 0.15, 0.5, 0.1, 0.4].map((h, i) => (
-              <div key={i} style={{ flex: 1, height: `${h * 100 * (1 - (Number(fx.gate) || 0) * 0.5)}%`, minHeight: 4, borderRadius: 2, background: accent, opacity: 0.5 + (Number(fx.gate) || 0) * 0.4 }} />
-            ))}
-          </div>,
+        return (
           <>
-            {knob("gate", "Amount", 0, 1, 0.01, accent, "lg")}
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
-              Cuts quiet noise between phrases. Applies on <strong style={{ color: accent }}>Export</strong> and <strong style={{ color: accent }}>Produce</strong> — not in live preview.
-            </div>
+            {k("compress", "Thresh", 0, 1, 0.01, (n) => `${Math.round(-12 - n * 20)}dB`)}
+            {k("compress", "Ratio", 0, 1, 0.01, (n) => `${(1 + n * 7).toFixed(1)}:1`)}
+            {k("limiter", "Gain", 0, 1, 0.01)}
           </>
-        );
-      case "denoise":
-        return wrap(
-          <div style={{ height: 56, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 16px", color: accent, fontSize: 12, fontWeight: 700 }}>
-            Spectral clean · {Math.round((Number(fx.noiseReduce) || 0) * 100)}%
-          </div>,
-          <>
-            {knob("noiseReduce", "Strength", 0, 1, 0.01, accent, "lg")}
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
-              Removes stationary background (traffic, fans, room). Applies on <strong style={{color: accent}}>Export</strong> and <strong style={{color: accent}}>Produce</strong> — not in live preview. Try 0.5–0.75.
-            </div>
-          </>
-        );
-      case "voice": {
-        const chars: { id: number; label: string; pitch: number }[] = [
-          { id: 1, label: "Higher", pitch: 4 },
-          { id: 2, label: "Lower", pitch: -4 },
-          { id: 3, label: "Chipmunk", pitch: 7 },
-          { id: 4, label: "Deep", pitch: -6 },
-          { id: 5, label: "Robot", pitch: 0 },
-          { id: 6, label: "Alien", pitch: 5 },
-        ];
-        const cur = Math.round(Number(fx.voiceCharacter) || 0);
-        return wrap(
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {chars.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => {
-                  const next = {
-                    ...fx,
-                    voiceCharacter: c.id,
-                    voicePitchSemis: c.pitch,
-                    voiceChanger: Math.max(Number(fx.voiceChanger) || 0, 0.85),
-                  };
-                  onChange(next);
-                  onCommit(next);
-                }}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: cur === c.id ? `1.5px solid ${accent}` : "1px solid rgba(255,255,255,0.12)",
-                  background: cur === c.id ? `${accent}33` : "rgba(0,0,0,0.35)",
-                  color: cur === c.id ? accent : "rgba(255,255,255,0.75)",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>,
-          <>
-            {knob("voicePitchSemis", "Pitch", -12, 12, 1, accent, "lg")}
-            {knob("voiceChanger", "Mix", 0, 1, 0.01, accent, "lg")}
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 6, lineHeight: 1.35 }}>
-              Creative pitch + character. Applies on Produce. Pick a preset or set pitch manually.
-            </div>
-          </>
-        );
-      }
-      case "limiter":
-        return wrap(
-          <CompCurve amount={(Number(fx.limiter) || 0) * 0.9} />,
-          <>{knob("limiter", "Limit", 0, 1, 0.01, accent, "lg")}</>
-        );
-      case "sat":
-        return wrap(
-          <SatViz amount={Number(fx.saturation) || 0} />,
-          <>{knob("saturation", "Drive", 0, 1, 0.01, accent, "lg")}</>
         );
       case "eq":
-        return wrap(
-          <EqCurve />,
+        return (
           <>
-            {knob("eqLowDb", "Low", -12, 12, 0.5, accent)}
-            {knob("eqMidDb", "Mid", -12, 12, 0.5, accent)}
-            {knob("eqHighDb", "High", -12, 12, 0.5, accent)}
-            {knob("air", "Air", 0, 1, 0.01, accent)}
+            {k("eqLowDb", "Low", -12, 12, 0.5, (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`)}
+            {k("eqMidDb", "Mid", -12, 12, 0.5, (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`)}
+            {k("eqHighDb", "High", -12, 12, 0.5, (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`)}
+            {k("air", "Air", 0, 1, 0.01)}
           </>
         );
-      case "hpf":
-        return wrap(
-          <FilterViz mode="hpf" hz={Number(fx.highPassHz) || 0} />,
-          <>{knob("highPassHz", "Hz", 0, 300, 5, accent)}</>
+      case "gate":
+        return (
+          <>
+            {k("gate", "Thresh", 0, 1, 0.01)}
+            {k("noiseReduce", "Floor", 0, 1, 0.01)}
+          </>
         );
-      case "lpf":
-        return wrap(
-          <FilterViz mode="lpf" hz={Number(fx.lowPassHz) || 18000} />,
-          <>{knob("lowPassHz", "Hz", 0, 12000, 100, accent)}</>
-        );
-      case "telephone":
-        return wrap(
-          <FilterViz mode="tel" hz={0} />,
-          <>{knob("telephone", "Amount", 0, 1, 0.01, accent, "lg")}</>
+      case "sat":
+        return (
+          <>
+            {k("saturation", "Drive", 0, 1, 0.01, (n) => `${(n * 12).toFixed(1)} dB`)}
+            {k("saturation", "Mix", 0, 1, 0.01)}
+          </>
         );
       case "reverb":
-        return wrap(
-          <SpaceViz wet={Number(fx.reverb) || 0} />,
-          <>{knob("reverb", "Mix", 0, 1, 0.01, accent, "lg")}</>
+        return (
+          <>
+            {k("reverb", "Size", 0, 1, 0.01, (n) => n.toFixed(1))}
+            {k("reverb", "Mix", 0, 1, 0.01)}
+            {k("plateReverb", "Damping", 0, 1, 0.01)}
+          </>
         );
       case "plate":
-        return wrap(
-          <SpaceViz wet={Number(fx.plateReverb) || 0} />,
-          <>{knob("plateReverb", "Mix", 0, 1, 0.01, accent, "lg")}</>
-        );
+        return <>{k("plateReverb", "Mix", 0, 1, 0.01)}{k("reverb", "Width", 0, 1, 0.01)}</>;
       case "delay":
-        return wrap(
-          <DelayViz amount={Number(fx.delay) || 0} />,
-          <>{knob("delay", "Mix", 0, 1, 0.01, accent, "lg")}</>
-        );
+        return <>{k("delay", "Time", 0, 1, 0.01)}{k("delay", "Mix", 0, 1, 0.01)}</>;
       case "slap":
-        return wrap(
-          <DelayViz amount={Number(fx.slapDelay) || 0} />,
-          <>{knob("slapDelay", "Mix", 0, 1, 0.01, accent)}</>
-        );
+        return <>{k("slapDelay", "Slap", 0, 1, 0.01)}</>;
+      case "hpf":
+        return <>{k("highPassHz", "Freq", 20, 400, 5, (n) => `${Math.round(n)} Hz`)}</>;
+      case "lpf":
+        return <>{k("lowPassHz", "Freq", 2000, 18000, 50, (n) => `${Math.round(n)} Hz`)}</>;
+      case "air":
+        return <>{k("air", "Air", 0, 1, 0.01)}</>;
+      case "deess":
+        return <>{k("deEss", "Amount", 0, 1, 0.01)}</>;
+      case "denoise":
+        return <>{k("noiseReduce", "Amount", 0, 1, 0.01)}</>;
+      case "limiter":
+        return <>{k("limiter", "Ceiling", 0, 1, 0.01)}</>;
       case "chorus":
-        return wrap(
-          <SpaceViz wet={(Number(fx.chorus) || 0) * 0.7} />,
-          <>{knob("chorus", "Mix", 0, 1, 0.01, accent, "lg")}</>
-        );
+        return <>{k("chorus", "Depth", 0, 1, 0.01)}</>;
       case "doubler":
-        return wrap(
-          <DelayViz amount={Number(fx.doubler) || 0} />,
-          <>{knob("doubler", "Mix", 0, 1, 0.01, accent, "lg")}</>
-        );
-      case "rotor":
-        return wrap(
-          <div style={{ height: 64, borderRadius: 10, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                style={{
-                  width: 36 + i * 8,
-                  height: 36 + i * 8,
-                  borderRadius: "50%",
-                  border: `2px solid ${accent}`,
-                  opacity: 0.35 + (Number(fx.rotorMix) || 0) * 0.5,
-                  transform: `rotate(${(Number(fx.rotorSpeed) || 0) * 40 * (i + 1)}deg)`,
-                  boxShadow: `0 0 ${8 + (Number(fx.rotorDepth) || 0) * 12}px ${accent}55`,
-                }}
-              />
-            ))}
-          </div>,
-          <>
-            {knob("rotorSpeed", "Speed", 0, 1, 0.01, accent)}
-            {knob("rotorDepth", "Depth", 0, 1, 0.01, accent)}
-            {knob("rotorWarmth", "Warmth", 0, 1, 0.01, accent)}
-            {knob("rotorMix", "Mix", 0, 1, 0.01, accent)}
-          </>
-        );
-      case "spring":
-        return wrap(
-          <SpaceViz wet={Number(fx.springMix) || 0} />,
-          <>
-            {knob("springDelay", "Delay", 0, 1, 0.01, accent)}
-            {knob("springTension", "Tension", 0, 1, 0.01, accent)}
-            {knob("springMix", "Mix", 0, 1, 0.01, accent)}
-            {knob("springDamp", "Damp", 0, 1, 0.01, accent)}
-            {knob("springMod", "Mod", 0, 1, 0.01, accent)}
-          </>
-        );
+        return <>{k("doubler", "Amount", 0, 1, 0.01)}</>;
+      case "width":
+        return <>{k("width", "Width", 0, 1, 0.01)}</>;
       default:
         return null;
     }
   }
 
-  const modalDef = modalId ? PLUGINS.find((p) => p.id === modalId) : null;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Level always visible */}
-      <div
-        style={{
-          padding: 10,
-          borderRadius: 12,
-          border: `1px solid ${border}`,
-          background: "rgba(0,0,0,0.28)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: brass }}>LEVEL</div>
-        {levelSlider("gainDb", "Gain dB", -12, 12, 0.5)}
-        {levelSlider("pan", "Pan L / R", -1, 1, 0.05)}
-        {levelSlider("width", "Width", 0, 1, 0.05)}
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Utility row */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <Knob
+          label="Gain"
+          value={Number(fx.gainDb) || 0}
+          min={-18}
+          max={12}
+          step={0.5}
+          accent={brass}
+          format={(n) => `${n > 0 ? "+" : ""}${n.toFixed(1)} dB`}
+          onVal={(n, c) => setKey("gainDb", n, c)}
+        />
+        <Knob
+          label="Pan"
+          value={Number(fx.pan) || 0}
+          min={-1}
+          max={1}
+          step={0.01}
+          accent="#94A3B8"
+          format={(n) => (Math.abs(n) < 0.02 ? "C" : n < 0 ? `L${Math.round(-n * 100)}` : `R${Math.round(n * 100)}`)}
+          onVal={(n, c) => setKey("pan", n, c)}
+        />
+        <Knob
+          label="Width"
+          value={Number(fx.width) || 0}
+          min={0}
+          max={1}
+          step={0.01}
+          accent="#FB7185"
+          onVal={(n, c) => setKey("width", n, c)}
+        />
       </div>
 
-      {/* Rack chips — tap opens that effect's modal */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+      {/* Plugin dock — Suno-style chain */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+          padding: "10px 12px",
+          borderRadius: 14,
+          background: "rgba(0,0,0,0.35)",
+          border: `1px solid ${border}`,
+        }}
+      >
         {effectiveRack.map((id) => {
           const def = PLUGINS.find((p) => p.id === id);
+          const active = modalId === id;
           return (
             <button
               key={id}
@@ -11480,26 +11225,26 @@ function TrackFxPanel({
               onClick={() => setModalId(id)}
               style={{
                 padding: "8px 12px",
-                borderRadius: 10,
-                border: `1px solid ${def?.accent || border}`,
-                background: "rgba(0,0,0,0.35)",
-                color: "#F5F0E8",
+                borderRadius: 999,
+                border: active ? `1px solid ${def?.accent || brass}` : `1px solid ${border}`,
+                background: active ? `${def?.accent || brass}22` : "rgba(18,18,24,0.9)",
+                color: "#F4F1EC",
                 fontSize: 12,
-                fontWeight: 650,
+                fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 6,
+                gap: 7,
               }}
             >
               <span
                 style={{
-                  width: 7,
-                  height: 7,
+                  width: 8,
+                  height: 8,
                   borderRadius: "50%",
                   background: def?.accent || brass,
-                  display: "inline-block",
+                  boxShadow: `0 0 8px ${def?.accent || brass}`,
                 }}
               />
               {def?.label || id}
@@ -11510,71 +11255,56 @@ function TrackFxPanel({
           type="button"
           onClick={() => setAddOpen(true)}
           style={{
-            padding: "8px 12px",
-            borderRadius: 10,
-            border: `1px dashed ${border}`,
+            padding: "8px 14px",
+            borderRadius: 999,
+            border: `1px dashed ${brass}88`,
             background: "transparent",
             color: brass,
             fontSize: 12,
-            fontWeight: 700,
+            fontWeight: 800,
             cursor: "pointer",
             fontFamily: "inherit",
           }}
         >
-          + Add effect
+          + Effect
         </button>
       </div>
 
-      {effectiveRack.length === 0 && (
-        <p style={{ margin: 0, fontSize: 12, color: muted, lineHeight: 1.45 }}>
-          No effects yet. Add one to open its knob panel — clean playback until then.
-        </p>
-      )}
+      <p style={{ margin: 0, fontSize: 11, color: muted, lineHeight: 1.45 }}>
+        Tap an effect to open its panel. Drag knobs to shape the sound — changes apply live on this track.
+      </p>
 
-      {/* Per-effect modal with circular knobs */}
+      {/* Effect inspector modal */}
       {modalDef && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 90,
-            background: "rgba(0,0,0,0.78)",
-            backdropFilter: "blur(6px)",
+            zIndex: 10100,
+            background: "rgba(0,0,0,0.55)",
             display: "flex",
-            alignItems: "center",
+            alignItems: "flex-end",
             justifyContent: "center",
             padding: 12,
           }}
-          onClick={() => {
-            onCommit(fx);
-            setModalId(null);
-          }}
+          onClick={() => setModalId(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(520px, 100%)",
-              maxHeight: "88vh",
-              overflow: "auto",
-              borderRadius: 20,
-              border: `1px solid ${border}`,
-              background: "linear-gradient(165deg, #1c1a18 0%, #12100e 100%)",
-              padding: 0,
-              boxShadow: `0 28px 90px rgba(0,0,0,0.65), 0 0 0 1px ${modalDef.accent}22`,
+              width: "min(440px, 100%)",
+              maxHeight: "85dvh",
+              overflowY: "auto",
+              borderRadius: 18,
+              background: "linear-gradient(180deg, #1a1a22 0%, #121218 100%)",
+              border: `1px solid ${modalDef.accent}55`,
+              boxShadow: `0 24px 80px rgba(0,0,0,0.65), 0 0 40px ${modalDef.accent}18`,
+              padding: "14px 16px max(16px, env(safe-area-inset-bottom))",
             }}
           >
-            {/* Title bar */}
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "14px 16px",
-                borderBottom: `1px solid ${border}`,
-                background: "rgba(0,0,0,0.25)",
-                borderRadius: "20px 20px 0 0",
-              }}
-            >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span
                   style={{
@@ -11582,539 +11312,69 @@ function TrackFxPanel({
                     height: 10,
                     borderRadius: "50%",
                     background: modalDef.accent,
-                    boxShadow: `0 0 12px ${modalDef.accent}`,
+                    boxShadow: `0 0 10px ${modalDef.accent}`,
                   }}
                 />
-                <span style={{ fontWeight: 800, fontSize: 17, color: "#F5F0E8", letterSpacing: "-0.01em" }}>
-                  {modalDef.label}
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: muted,
-                    padding: "3px 8px",
-                    borderRadius: 6,
-                    border: `1px solid ${border}`,
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  {(() => {
-                    const presets = EFFECT_PLUGIN_PRESETS[modalDef.id] || [];
-                    const match = presets.find((pr) =>
-                      Object.entries(pr.fx).every(([k, v]) => {
-                        const cur = Number((fx as Record<string, number>)[k]) || 0;
-                        return Math.abs(cur - Number(v)) < 0.03;
-                      })
-                    );
-                    return match ? match.label.toUpperCase() : "CUSTOM";
-                  })()}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  onCommit(fx);
-                  setModalId(null);
-                }}
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  border: `1px solid ${border}`,
-                  background: "rgba(0,0,0,0.35)",
-                  color: muted,
-                  fontSize: 18,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
-              >
-                ×
-              </button>
-            </div>
-
-            <div style={{ padding: "16px 16px 20px" }}>
-              {/* Mode tabs: Presets | Custom only */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: 4,
-                  padding: 3,
-                  borderRadius: 12,
-                  background: "rgba(0,0,0,0.35)",
-                  marginBottom: 14,
-                }}
-              >
-                {([
-                  ["presets", "Presets"],
-                  ["custom", "Custom"],
-                ] as const).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setFxEditMode(id)}
-                    style={{
-                      flex: 1,
-                      padding: "8px 6px",
-                      borderRadius: 10,
-                      border: "none",
-                      background: fxEditMode === id ? modalDef.accent : "transparent",
-                      color: fxEditMode === id ? "#111" : muted,
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {fxEditMode === "presets" && (
                 <div>
-                  <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
-                    Starting points only. Quiets noise between phrases without removing rests. Switch to Custom to fine-tune.
-                  </p>
-                  {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).length === 0 ? (
-                    <p style={{ margin: 0, fontSize: 13, color: muted }}>No presets for this effect yet.</p>
-                  ) : (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).map((pr) => (
-                        <button
-                          key={pr.id}
-                          type="button"
-                          onClick={() => {
-                            const next = applyEffectPluginPreset(
-                              fx as never,
-                              modalDef.id,
-                              pr.id
-                            ) as TrackFx;
-                            onChange(next);
-                            onCommit(next);
-                            setFxEditMode("presets");
-                          }}
-                          style={{
-                            padding: "10px 14px",
-                            borderRadius: 12,
-                            border: `1.5px solid ${
-                              Object.entries(pr.fx).every(([k, v]) => {
-                                const cur = Number((fx as Record<string, number>)[k]) || 0;
-                                return Math.abs(cur - Number(v)) < 0.03;
-                              })
-                                ? modalDef.accent
-                                : border
-                            }`,
-                            background: Object.entries(pr.fx).every(([k, v]) => {
-                              const cur = Number((fx as Record<string, number>)[k]) || 0;
-                              return Math.abs(cur - Number(v)) < 0.03;
-                            })
-                              ? `${modalDef.accent}22`
-                              : "rgba(0,0,0,0.28)",
-                            color: "#F5F0E8",
-                            fontSize: 13,
-                            fontWeight: 650,
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                          }}
-                        >
-                          {pr.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <div style={{ fontWeight: 800, fontSize: 16, color: "#F4F1EC" }}>{modalDef.label}</div>
+                  <div style={{ fontSize: 11, color: muted }}>Custom · live on this track</div>
                 </div>
-              )}
-
-              {fxEditMode === "custom" && (() => {
-                const autoKeys = modalDef.keys.filter((k) =>
-                  k in AUTOMATION_PARAM_RANGE
-                ) as AutomationParamKey[];
-                const param = (autoParam && autoKeys.includes(autoParam)
-                  ? autoParam
-                  : autoKeys[0]) as AutomationParamKey | undefined;
-                const range = param ? AUTOMATION_PARAM_RANGE[param] : null;
-                const songMs = Math.max(1000, totalMs || 60000);
-                const ph = Math.max(0, Math.min(songMs, playheadMs || 0));
-                const lane = param
-                  ? automationDoc.lanes.find(
-                      (l) => l.trackId === trackId && l.param === param
-                    )
-                  : undefined;
-                const points = lane?.points || [];
-                const staticVal =
-                  param && typeof fx[param as keyof TrackFx] === "number"
-                    ? Number(fx[param as keyof TrackFx])
-                    : 0;
-
-                // Build display polyline: automation points, or flat line at static amount
-                const displayPts =
-                  points.length > 0
-                    ? points
-                    : range
-                      ? [
-                          { id: "s0", timeMs: 0, value: staticVal },
-                          { id: "s1", timeMs: songMs, value: staticVal },
-                        ]
-                      : [];
-
-                const toXY = (timeMs: number, value: number) => {
-                  if (!range) return { x: 0, y: 50 };
-                  const x = (timeMs / songMs) * 100;
-                  const y =
-                    ((range.max - value) / (range.max - range.min || 1)) * 100;
-                  return { x, y };
-                };
-
-                const pathD = displayPts
-                  .map((p, i) => {
-                    const { x, y } = toXY(p.timeMs, p.value);
-                    return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-                  })
-                  .join(" ");
-
-                // Area under curve for glow fill
-                const areaD =
-                  pathD &&
-                  `${pathD} L 100 100 L 0 100 Z`;
-
-                const onLanePointer = (e: React.PointerEvent<SVGSVGElement>, moving: boolean) => {
-                  if (!param || !range) return;
-                  if (!moving && e.type === "pointermove" && !dragPtRef.current) return;
-                  const svg = e.currentTarget;
-                  const rect = svg.getBoundingClientRect();
-                  const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-                  const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
-                  const timeMs = x * songMs;
-                  const value = range.max - y * (range.max - range.min);
-                  if (dragPtRef.current) {
-                    onAutomationChange(
-                      updatePoint(automationDoc, trackId, param, dragPtRef.current, {
-                        timeMs,
-                        value,
-                      })
-                    );
-                    return;
-                  }
-                  if (e.type === "pointerdown" || e.type === "click") {
-                    // Also update static amount so knob matches last edit
-                    const nextFx = { ...fx, [param]: value } as TrackFx;
-                    onChange(nextFx);
-                    onCommit(nextFx);
-                    onAutomationChange(
-                      upsertPoint(automationDoc, trackId, param, timeMs, value)
-                    );
-                  }
-                };
-
-                return (
-                  <div>
-                    {autoKeys.length > 1 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                        {autoKeys.map((k) => (
-                          <button
-                            key={k}
-                            type="button"
-                            onClick={() => setAutoParam(k)}
-                            style={{
-                              padding: "5px 10px",
-                              borderRadius: 8,
-                              border: `1px solid ${param === k ? modalDef.accent : border}`,
-                              background: param === k ? `${modalDef.accent}22` : "transparent",
-                              color: param === k ? "#F5F0E8" : muted,
-                              fontSize: 11,
-                              fontWeight: 650,
-                              cursor: "pointer",
-                              fontFamily: "inherit",
-                            }}
-                          >
-                            {k}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Interactive amount curve — the purple line users click like a DAW */}
-                    {param && range ? (
-                      <div
-                        style={{
-                          borderRadius: 14,
-                          border: `1px solid ${border}`,
-                          background: "rgba(0,0,0,0.4)",
-                          padding: "10px 8px 8px",
-                          marginBottom: 14,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: 10,
-                            color: muted,
-                            marginBottom: 6,
-                            padding: "0 4px",
-                          }}
-                        >
-                          <span>Amount over song</span>
-                          <span style={{ color: modalDef.accent, fontWeight: 700 }}>
-                            {points.length
-                              ? `${points.length} points · drag to shape`
-                              : "Tap curve to automate"}
-                          </span>
-                        </div>
-                        <svg
-                          viewBox="0 0 100 100"
-                          preserveAspectRatio="none"
-                          width="100%"
-                          height={132}
-                          style={{ display: "block", cursor: "crosshair", touchAction: "none" }}
-                          onPointerDown={(e) => {
-                            // If near a point, drag it; else add
-                            if (!param || !range) return;
-                            const svg = e.currentTarget;
-                            const rect = svg.getBoundingClientRect();
-                            const x = (e.clientX - rect.left) / Math.max(1, rect.width);
-                            const timeMs = x * songMs;
-                            const near = points.find(
-                              (p) => Math.abs(p.timeMs - timeMs) < songMs * 0.04
-                            );
-                            if (near) {
-                              dragPtRef.current = near.id;
-                              (e.target as Element).setPointerCapture?.(e.pointerId);
-                            } else {
-                              onLanePointer(e, false);
-                            }
-                          }}
-                          onPointerMove={(e) => onLanePointer(e, true)}
-                          onPointerUp={() => {
-                            dragPtRef.current = null;
-                          }}
-                          onPointerLeave={() => {
-                            dragPtRef.current = null;
-                          }}
-                        >
-                          {[25, 50, 75].map((g) => (
-                            <line
-                              key={g}
-                              x1={0}
-                              y1={g}
-                              x2={100}
-                              y2={g}
-                              stroke="rgba(255,255,255,0.05)"
-                              strokeWidth={0.6}
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          ))}
-                          {areaD ? (
-                            <path d={areaD} fill={modalDef.accent} opacity={0.12} />
-                          ) : null}
-                          {pathD ? (
-                            <path
-                              d={pathD}
-                              fill="none"
-                              stroke={modalDef.accent}
-                              strokeWidth={2.2}
-                              strokeLinejoin="round"
-                              strokeLinecap="round"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          ) : null}
-                          {/* playhead */}
-                          <line
-                            x1={(ph / songMs) * 100}
-                            y1={0}
-                            x2={(ph / songMs) * 100}
-                            y2={100}
-                            stroke={brass}
-                            strokeWidth={1}
-                            opacity={0.75}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                          {points.map((p) => {
-                            const { x, y } = toXY(p.timeMs, p.value);
-                            return (
-                              <circle
-                                key={p.id}
-                                cx={x}
-                                cy={y}
-                                r={3.2}
-                                fill={modalDef.accent}
-                                stroke="#fff"
-                                strokeWidth={0.5}
-                                style={{ cursor: "grab" }}
-                                onPointerDown={(e) => {
-                                  e.stopPropagation();
-                                  dragPtRef.current = p.id;
-                                  (e.target as Element).setPointerCapture?.(e.pointerId);
-                                }}
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                  onAutomationChange(
-                                    removePoint(automationDoc, trackId, param, p.id)
-                                  );
-                                }}
-                              />
-                            );
-                          })}
-                        </svg>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            gap: 8,
-                            marginTop: 8,
-                            padding: "0 2px",
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!param) return;
-                              onAutomationChange(
-                                upsertPoint(
-                                  automationDoc,
-                                  trackId,
-                                  param,
-                                  ph,
-                                  staticVal
-                                )
-                              );
-                            }}
-                            style={{
-                              padding: "6px 10px",
-                              borderRadius: 8,
-                              border: "none",
-                              background: modalDef.accent,
-                              color: "#111",
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              fontFamily: "inherit",
-                            }}
-                          >
-                            Point at playhead
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!param) return;
-                              onAutomationChange(clearLane(automationDoc, trackId, param));
-                            }}
-                            disabled={!points.length}
-                            style={{
-                              padding: "6px 10px",
-                              borderRadius: 8,
-                              border: `1px solid ${border}`,
-                              background: "transparent",
-                              color: muted,
-                              fontSize: 11,
-                              fontWeight: 650,
-                              cursor: points.length ? "pointer" : "default",
-                              opacity: points.length ? 1 : 0.4,
-                              fontFamily: "inherit",
-                            }}
-                          >
-                            Flatten
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {/* Knobs — static baseline amount */}
-                    {renderKnobs(modalDef.id, modalDef.accent)}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {modalDef.id === "rotor" && (
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 4 }}>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
                 <button
                   type="button"
-                  onClick={() => {
-                    setKey("rotorFast", 0, true);
-                  }}
+                  onClick={() => removePlugin(modalDef.id)}
                   style={{
-                    padding: "8px 18px",
-                    borderRadius: 10,
-                    border: `1px solid ${(fx.rotorFast || 0) < 0.5 ? modalDef.accent : border}`,
-                    background: (fx.rotorFast || 0) < 0.5 ? "rgba(74,222,128,0.15)" : "transparent",
-                    color: (fx.rotorFast || 0) < 0.5 ? modalDef.accent : muted,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${border}`,
+                    background: "transparent",
+                    color: "#F87171",
+                    fontSize: 11,
                     fontWeight: 700,
-                    fontSize: 13,
                     cursor: "pointer",
-                    fontFamily: "inherit",
                   }}
                 >
-                  Slow
+                  Remove
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setKey("rotorFast", 1, true);
-                  }}
+                  onClick={() => setModalId(null)}
                   style={{
-                    padding: "8px 18px",
-                    borderRadius: 10,
-                    border: `1px solid ${(fx.rotorFast || 0) >= 0.5 ? modalDef.accent : border}`,
-                    background: (fx.rotorFast || 0) >= 0.5 ? "rgba(74,222,128,0.15)" : "transparent",
-                    color: (fx.rotorFast || 0) >= 0.5 ? modalDef.accent : muted,
-                    fontWeight: 700,
-                    fontSize: 13,
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    border: `1px solid ${border}`,
+                    background: "rgba(0,0,0,0.35)",
+                    color: "#F4F1EC",
                     cursor: "pointer",
-                    fontFamily: "inherit",
+                    fontSize: 16,
                   }}
                 >
-                  Fast
+                  ×
                 </button>
               </div>
-            )}
+            </div>
 
-            {(modalDef.id === "rotor" || modalDef.id === "spring" || modalDef.id === "gate" || modalDef.id === "denoise" || modalDef.id === "cleanup" || modalDef.id === "voice") && (
-              <p style={{ margin: "12px 0 0", fontSize: 11, color: muted, textAlign: "center" }}>
-                {modalDef.id === "voice"
-                  ? "Voice changer applies on Produce"
-                  : modalDef.id === "denoise"
-                  ? "Noise remover applies in preview, Export, and Produce"
-                  : modalDef.id === "gate"
-                  ? "Noise gate applies in preview, Export, and Produce"
-                  : modalDef.id === "cleanup"
-                  ? "Quiets hum/noise between phrases — keeps timing and vocals (preview, Export, Produce)"
-                  : "Creative effect applies on Produce"}
-              </p>
-            )}
+            <div style={{ marginBottom: 14 }}>
+              <MiniPreview id={modalDef.id} accent={modalDef.accent} />
+            </div>
 
-            <button
-              type="button"
-              onClick={() => removePlugin(modalDef.id)}
-              style={{
-                marginTop: 16,
-                width: "100%",
-                padding: "10px",
-                borderRadius: 10,
-                border: `1px solid ${border}`,
-                background: "transparent",
-                color: muted,
-                fontSize: 13,
-                fontWeight: 650,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              Remove effect
-            </button>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+              {renderModalKnobs(modalDef.id, modalDef.accent)}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Add effect picker */}
+      {/* Effects browser — Suno grid */}
       {addOpen && (
         <div
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 85,
-            background: "rgba(0,0,0,0.65)",
+            zIndex: 10120,
+            background: "rgba(0,0,0,0.7)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -12125,182 +11385,97 @@ function TrackFxPanel({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(440px, 100%)",
-              maxHeight: "80vh",
+              width: "min(520px, 100%)",
+              maxHeight: "85vh",
               overflow: "auto",
-              borderRadius: 16,
+              borderRadius: 18,
               border: `1px solid ${border}`,
-              background: surface,
+              background: "#121218",
               padding: 16,
-              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+              boxShadow: "0 28px 90px rgba(0,0,0,0.6)",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontWeight: 800, color: "#F5F0E8", fontSize: 15 }}>Add a track effect</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: muted }}>AUDIO EFFECTS</div>
+                <div style={{ fontWeight: 800, fontSize: 17, color: "#F4F1EC" }}>Add to chain</div>
+              </div>
               <button
                 type="button"
                 onClick={() => setAddOpen(false)}
-                style={{ border: "none", background: "transparent", color: muted, cursor: "pointer", fontSize: 18 }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  border: `1px solid ${border}`,
+                  background: "transparent",
+                  color: muted,
+                  cursor: "pointer",
+                  fontSize: 18,
+                }}
               >
                 ×
               </button>
             </div>
-            {(["dynamics", "tone", "space", "creative"] as const).map((g) => (
-              <div key={g} style={{ marginBottom: 14 }}>
-                <div
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    color: brass,
-                    marginBottom: 8,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {g}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {PLUGINS.filter((p) => p.group === g).map((p) => {
-                    const on = effectiveRack.includes(p.id);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => addPlugin(p.id)}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                gap: 10,
+              }}
+            >
+              {PLUGINS.map((p) => {
+                const on = effectiveRack.includes(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => addPlugin(p.id)}
+                    style={{
+                      textAlign: "left",
+                      padding: 10,
+                      borderRadius: 14,
+                      border: on ? `1px solid ${p.accent}` : `1px solid ${border}`,
+                      background: on ? `${p.accent}18` : "rgba(255,255,255,0.03)",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      color: "#F4F1EC",
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: 64,
+                        borderRadius: 10,
+                        background: "rgba(0,0,0,0.35)",
+                        marginBottom: 8,
+                        overflow: "hidden",
+                        display: "grid",
+                        placeItems: "center",
+                      }}
+                    >
+                      <div
                         style={{
-                          textAlign: "left",
-                          padding: "12px",
-                          borderRadius: 12,
-                          border: `1px solid ${on ? p.accent : border}`,
-                          background: on ? `${p.accent}22` : "rgba(0,0,0,0.35)",
-                          color: "#E8E2D6",
-                          cursor: "pointer",
-                          fontFamily: "inherit",
-                          fontSize: 13,
-                          fontWeight: 650,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
+                          width: "70%",
+                          height: 28,
+                          borderRadius: 4,
+                          background: `linear-gradient(90deg, transparent, ${p.accent}88, transparent)`,
+                          opacity: 0.85,
                         }}
-                      >
-                        <span
-                          style={{
-                            width: 7,
-                            height: 7,
-                            borderRadius: "50%",
-                            background: p.accent,
-                            flexShrink: 0,
-                          }}
-                        />
-                        {p.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+                      />
+                    </div>
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>{p.label}</div>
+                    <div style={{ fontSize: 10, color: muted, marginTop: 2 }}>{p.blurb}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
-
-      <div style={{ marginTop: 4 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", color: brass, marginBottom: 6 }}>
-          PRESETS
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {FX_PRESETS.map((pr) => (
-            <button
-              key={pr.id}
-              type="button"
-              onClick={() => {
-                const next = applyFxPreset(fx as never, pr.id) as TrackFx;
-                onChange(next);
-                onCommit(next);
-                const need = [
-                  "eq",
-                  "compress",
-                  "reverb",
-                  "sat",
-                  "deess",
-                  "plate",
-                  "delay",
-                  "doubler",
-                  "chorus",
-                  "hpf",
-                ];
-                const nextRack = Array.from(
-                  new Set([
-                    ...rack,
-                    ...need.filter((id) => {
-                      const def = PLUGINS.find((p) => p.id === id);
-                      if (!def) return false;
-                      return def.keys.some((k) => Math.abs(Number((next as any)[k]) || 0) > 0.02);
-                    }),
-                  ])
-                );
-                onRackChange(nextRack);
-              }}
-              style={{
-                padding: "5px 10px",
-                borderRadius: 8,
-                border: `1px solid ${border}`,
-                background: "rgba(0,0,0,0.25)",
-                color: muted,
-                fontSize: 11,
-                fontWeight: 650,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              {pr.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => {
-          onChange(DEFAULT_TRACK_FX);
-          onCommit(DEFAULT_TRACK_FX);
-          onRackChange([]);
-          setModalId(null);
-        }}
-        style={{
-          marginTop: 2,
-          padding: "8px",
-          borderRadius: 8,
-          border: `1px solid ${border}`,
-          background: "transparent",
-          color: muted,
-          fontSize: 12,
-          cursor: "pointer",
-          fontFamily: "inherit",
-        }}
-      >
-        Remove all effects
-      </button>
     </div>
   );
 }
 
-
-function menuItemStyle(color: string, disabled?: boolean): React.CSSProperties {
-  return {
-    display: "block",
-    width: "100%",
-    textAlign: "left",
-    padding: "9px 12px",
-    border: "none",
-    background: "transparent",
-    color,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: disabled ? "default" : "pointer",
-    fontFamily: "inherit",
-    opacity: disabled ? 0.4 : 1,
-  };
-}
 
 function iconBtn(border: string, surface: string, text: string): React.CSSProperties {
   return {
