@@ -10917,19 +10917,45 @@ function TrackFxPanel({
     { id: "gate", label: "Gate", group: "dynamics", accent: "#A78BFA", keys: ["gate"], blurb: "Cut noise between phrases" },
     { id: "deess", label: "De-esser", group: "dynamics", accent: "#C4B5FD", keys: ["deEss"], blurb: "Tame harsh sibilance" },
     { id: "denoise", label: "Denoise", group: "dynamics", accent: "#67E8F9", keys: ["noiseReduce"], blurb: "Reduce room noise" },
+    { id: "cleanup", label: "Phrase cleanup", group: "dynamics", accent: "#FBBF24", keys: ["phraseCleanup"], blurb: "Tighten gaps between phrases" },
     { id: "limiter", label: "Limiter", group: "dynamics", accent: "#F87171", keys: ["limiter"], blurb: "Catch peaks softly" },
-    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation"], blurb: "Warmth & edge" },
     { id: "eq", label: "EQ", group: "tone", accent: "#818CF8", keys: ["eqLowDb", "eqMidDb", "eqHighDb", "air"], blurb: "Shape the tone" },
     { id: "hpf", label: "High-pass", group: "tone", accent: "#38BDF8", keys: ["highPassHz"], blurb: "Remove low rumble" },
     { id: "lpf", label: "Low-pass", group: "tone", accent: "#22D3EE", keys: ["lowPassHz"], blurb: "Soften highs" },
     { id: "air", label: "Air", group: "tone", accent: "#7DD3FC", keys: ["air"], blurb: "Open top end" },
+    { id: "telephone", label: "Telephone", group: "tone", accent: "#C084FC", keys: ["telephone"], blurb: "Band-limit phone character" },
     { id: "reverb", label: "Reverb", group: "space", accent: "#34D399", keys: ["reverb"], blurb: "Room & depth" },
     { id: "plate", label: "Plate", group: "space", accent: "#6EE7B7", keys: ["plateReverb"], blurb: "Dense plate space" },
     { id: "delay", label: "Delay", group: "space", accent: "#FBBF24", keys: ["delay"], blurb: "Echo repeats" },
     { id: "slap", label: "Slap", group: "space", accent: "#FCD34D", keys: ["slapDelay"], blurb: "Short slapback" },
     { id: "chorus", label: "Chorus", group: "creative", accent: "#E879F9", keys: ["chorus"], blurb: "Width & movement" },
     { id: "doubler", label: "Doubler", group: "creative", accent: "#F472B6", keys: ["doubler"], blurb: "Stacked presence" },
+    { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation"], blurb: "Warmth & edge" },
     { id: "width", label: "Width", group: "creative", accent: "#FB7185", keys: ["width"], blurb: "Stereo image" },
+    {
+      id: "voice",
+      label: "Voice changer",
+      group: "creative",
+      accent: "#F472B6",
+      keys: ["voiceChanger", "voicePitchSemis", "voiceCharacter"],
+      blurb: "Pitch & character (Produce)",
+    },
+    {
+      id: "rotor",
+      label: "Rotor Glow",
+      group: "creative",
+      accent: "#4ADE80",
+      keys: ["rotorMix", "rotorSpeed", "rotorDepth", "rotorWarmth", "rotorFast"],
+      blurb: "Rotary movement & warmth",
+    },
+    {
+      id: "spring",
+      label: "Spring Shimmer",
+      group: "creative",
+      accent: "#FF8A3D",
+      keys: ["springMix", "springDelay", "springTension", "springDamp", "springMod"],
+      blurb: "Spring-style space",
+    },
   ];
 
   function defaultsForPlugin(id: string): Partial<TrackFx> {
@@ -10938,12 +10964,14 @@ function TrackFxPanel({
       case "gate": return { gate: 0.25 };
       case "deess": return { deEss: 0.3 };
       case "denoise": return { noiseReduce: 0.25 };
+      case "cleanup": return { phraseCleanup: 0.35 };
       case "limiter": return { limiter: 0.2 };
       case "sat": return { saturation: 0.2 };
       case "eq": return { eqLowDb: 0, eqMidDb: 0.5, eqHighDb: 1, air: 0.15 };
       case "hpf": return { highPassHz: 80 };
       case "lpf": return { lowPassHz: 14000 };
       case "air": return { air: 0.25 };
+      case "telephone": return { telephone: 0.35 };
       case "reverb": return { reverb: 0.22 };
       case "plate": return { plateReverb: 0.2 };
       case "delay": return { delay: 0.2 };
@@ -10951,6 +10979,24 @@ function TrackFxPanel({
       case "chorus": return { chorus: 0.25 };
       case "doubler": return { doubler: 0.28 };
       case "width": return { width: 0.35 };
+      case "voice":
+        return { voiceChanger: 0.4, voicePitchSemis: 0, voiceCharacter: 1 };
+      case "rotor":
+        return {
+          rotorMix: 0.32,
+          rotorSpeed: 0.4,
+          rotorDepth: 0.45,
+          rotorWarmth: 0.4,
+          rotorFast: 0,
+        };
+      case "spring":
+        return {
+          springMix: 0.32,
+          springDelay: 0.25,
+          springTension: 0.4,
+          springDamp: 0.35,
+          springMod: 0.25,
+        };
       default: return {};
     }
   }
@@ -10980,6 +11026,14 @@ function TrackFxPanel({
       for (const k of def.keys) {
         if (k === "eqLowDb" || k === "eqMidDb" || k === "eqHighDb") (nextFx as any)[k] = 0;
         else if (k === "highPassHz" || k === "lowPassHz") (nextFx as any)[k] = 0;
+        else if (k === "rotorSpeed") (nextFx as any)[k] = 0.35;
+        else if (k === "rotorDepth") (nextFx as any)[k] = 0.45;
+        else if (k === "rotorWarmth") (nextFx as any)[k] = 0.4;
+        else if (k === "springDelay") (nextFx as any)[k] = 0.25;
+        else if (k === "springTension") (nextFx as any)[k] = 0.4;
+        else if (k === "springDamp") (nextFx as any)[k] = 0.35;
+        else if (k === "springMod") (nextFx as any)[k] = 0.2;
+        else if (k === "voicePitchSemis" || k === "voiceCharacter") (nextFx as any)[k] = 0;
         else (nextFx as any)[k] = 0;
       }
     }
@@ -11351,6 +11405,38 @@ function TrackFxPanel({
         return <>{k("doubler", "Amount", 0, 1, 0.01)}</>;
       case "width":
         return <>{k("width", "Width", 0, 1, 0.01)}</>;
+      case "cleanup":
+        return <>{k("phraseCleanup", "Tighten", 0, 1, 0.01)}</>;
+      case "telephone":
+        return <>{k("telephone", "Amount", 0, 1, 0.01)}</>;
+      case "voice":
+        return (
+          <>
+            {k("voiceChanger", "Mix", 0, 1, 0.01)}
+            {k("voicePitchSemis", "Pitch", -12, 12, 1, (n) => `${n > 0 ? "+" : ""}${Math.round(n)} st`)}
+            {k("voiceCharacter", "Character", 0, 6, 1, (n) => String(Math.round(n)))}
+          </>
+        );
+      case "rotor":
+        return (
+          <>
+            {k("rotorMix", "Mix", 0, 1, 0.01)}
+            {k("rotorSpeed", "Speed", 0, 1, 0.01)}
+            {k("rotorDepth", "Depth", 0, 1, 0.01)}
+            {k("rotorWarmth", "Warmth", 0, 1, 0.01)}
+            {k("rotorFast", "Fast", 0, 1, 0.01, (n) => (n > 0.5 ? "Fast" : "Slow"))}
+          </>
+        );
+      case "spring":
+        return (
+          <>
+            {k("springMix", "Mix", 0, 1, 0.01)}
+            {k("springDelay", "Pre-delay", 0, 1, 0.01)}
+            {k("springTension", "Tension", 0, 1, 0.01)}
+            {k("springDamp", "Damp", 0, 1, 0.01)}
+            {k("springMod", "Mod", 0, 1, 0.01)}
+          </>
+        );
       default:
         return null;
     }
@@ -11402,6 +11488,7 @@ function TrackFxPanel({
           borderRadius: 14,
           background: "rgba(0,0,0,0.35)",
           border: `1px solid ${border}`,
+          maxWidth: "100%",
         }}
       >
         {effectiveRack.map((id) => {
@@ -11558,8 +11645,8 @@ function TrackFxPanel({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(440px, 100%)",
-              maxHeight: "85dvh",
+              width: "min(460px, 100%)",
+              maxHeight: "min(85dvh, 100%)",
               overflowY: "auto",
               borderRadius: 18,
               background: "linear-gradient(180deg, #1a1a22 0%, #121218 100%)",
@@ -11746,8 +11833,8 @@ function TrackFxPanel({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: "min(520px, 100%)",
-              maxHeight: "85vh",
+              width: "min(560px, 100%)",
+              maxHeight: "min(88dvh, 100%)",
               overflow: "auto",
               borderRadius: 18,
               border: `1px solid ${border}`,
@@ -11781,7 +11868,7 @@ function TrackFxPanel({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 132px), 1fr))",
                 gap: 10,
               }}
             >
