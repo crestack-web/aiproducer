@@ -1171,7 +1171,34 @@ export function ProducerView({
   const [durationById, setDurationById] = useState<Record<string, number>>({});
 
   const [decodeStatus, setDecodeStatus] = useState<string>("");
-  const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [editMsg, setEditMsgRaw] = useState<string | null>(null);
+  const editMsgTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Floating console toast — short copy, never a full-width red header bar */
+  const setEditMsg = React.useCallback((msg: string | null) => {
+    if (editMsgTimerRef.current) {
+      clearTimeout(editMsgTimerRef.current);
+      editMsgTimerRef.current = null;
+    }
+    if (msg == null) {
+      setEditMsgRaw(null);
+      return;
+    }
+    const short =
+      msg.length > 120 ? msg.slice(0, 117).replace(/\s+\S*$/, "").trim() + "…" : msg;
+    setEditMsgRaw(short);
+    const isProgress = /…$|Building|Exporting|Aligning|Merging|Uploading|Saving|Applying/.test(
+      msg
+    );
+    const isError = /fail|error|could not|denied|missing|not found|unavailable|too short|busy|permission/i.test(
+      msg
+    );
+    if (!isProgress) {
+      editMsgTimerRef.current = setTimeout(
+        () => setEditMsgRaw(null),
+        isError ? 6500 : 3200
+      );
+    }
+  }, []);
   const [showAddTrack, setShowAddTrack] = useState(false);
   const [aiInstrumentBusy, setAiInstrumentBusy] = useState(false);
   const [aiInstrumentError, setAiInstrumentError] = useState<string | null>(null);
@@ -1650,7 +1677,7 @@ export function ProducerView({
             // Local actions may have succeeded; only block server if no take
             if (!plan.actions.length) {
               setApLastResult("err");
-              setEditMsg("Record or upload a take on this track first — AP needs audio to shape.");
+              setEditMsg("Record or upload a take first.");
               setApSteps((s) => [
                 ...s.map((x) => ({ ...x, active: false, done: true })),
                 { label: "Need a take on this track", done: true, active: false },
@@ -2797,9 +2824,7 @@ export function ProducerView({
             : typeof uj.message === "string"
               ? uj.message
               : "Upload failed";
-        setEditMsg(
-          `${detail} — take still plays here. Use Retry upload or Download take before closing this tab.`
-        );
+        setEditMsg(`${detail} — take still plays. Retry or Download below.`);
         clearTrackBusy(taskId);
         return;
       }
@@ -7112,63 +7137,135 @@ export function ProducerView({
           to { transform: rotate(360deg); }
         }
       `}</style>
-      {editMsg && (
+      {/* Floating toast — keeps the header clean; errors are short & dismissible */}
+      {(editMsg || layers.some((l) => l.uploadFailed)) && (
         <div
+          role="status"
+          aria-live="polite"
           style={{
-            padding: "8px 14px",
-            fontSize: 12,
-            color: "#E8756A",
-            background: "rgba(232,117,106,0.1)",
-            borderBottom: `1px solid ${border}`,
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 8,
+            position: "fixed",
+            left: "50%",
+            bottom: "max(20px, env(safe-area-inset-bottom))",
+            transform: "translateX(-50%)",
+            zIndex: 12000,
+            width: "min(420px, calc(100vw - 24px))",
+            pointerEvents: "auto",
           }}
         >
-          <span style={{ flex: "1 1 200px", lineHeight: 1.4 }}>{editMsg}</span>
-          {layers.some((l) => l.uploadFailed) && (
-            <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {layers
-                .filter((l) => l.uploadFailed)
-                .map((l) => (
-                  <span key={l.id} style={{ display: "flex", gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => void retryPendingUpload(l.id)}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        border: "none",
-                        background: "#E7A961",
-                        color: "#1A1208",
-                        fontWeight: 700,
-                        fontSize: 11,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Retry upload · {l.label}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => downloadPendingTake(l.id)}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        border: "1px solid rgba(231,169,97,0.5)",
-                        background: "transparent",
-                        color: "#E7A961",
-                        fontWeight: 700,
-                        fontSize: 11,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Download · {l.label}
-                    </button>
-                  </span>
-                ))}
-            </span>
-          )}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              padding: "12px 14px",
+              borderRadius: 16,
+              background: "rgba(18,18,24,0.94)",
+              border: `1px solid ${
+                editMsg && /fail|error|could not|denied|missing|not found|busy|permission/i.test(editMsg)
+                  ? "rgba(248,113,113,0.45)"
+                  : "rgba(255,255,255,0.12)"
+              }`,
+              boxShadow: "0 16px 48px rgba(0,0,0,0.55)",
+              backdropFilter: "blur(12px)",
+            }}
+          >
+            {editMsg && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                <span
+                  style={{
+                    marginTop: 3,
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: /fail|error|could not|denied|missing|not found|busy|permission/i.test(
+                      editMsg
+                    )
+                      ? "#F87171"
+                      : /…$|Building|Exporting|Aligning|Merging|Uploading|Saving/.test(editMsg)
+                        ? brass
+                        : "#34D399",
+                    boxShadow: "0 0 10px currentColor",
+                  }}
+                />
+                <p
+                  style={{
+                    margin: 0,
+                    flex: 1,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    lineHeight: 1.4,
+                    color: "#F4F1EC",
+                  }}
+                >
+                  {editMsg}
+                </p>
+                <button
+                  type="button"
+                  aria-label="Dismiss"
+                  onClick={() => setEditMsg(null)}
+                  style={{
+                    flexShrink: 0,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
+                    border: "none",
+                    background: "rgba(255,255,255,0.06)",
+                    color: mutedText,
+                    cursor: "pointer",
+                    fontSize: 16,
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {layers.some((l) => l.uploadFailed) && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {layers
+                  .filter((l) => l.uploadFailed)
+                  .map((l) => (
+                    <React.Fragment key={l.id}>
+                      <button
+                        type="button"
+                        onClick={() => void retryPendingUpload(l.id)}
+                        style={{
+                          padding: "7px 11px",
+                          borderRadius: 999,
+                          border: "none",
+                          background: brass,
+                          color: "#1A1208",
+                          fontWeight: 700,
+                          fontSize: 11,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        Retry · {l.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadPendingTake(l.id)}
+                        style={{
+                          padding: "7px 11px",
+                          borderRadius: 999,
+                          border: `1px solid ${brass}88`,
+                          background: "transparent",
+                          color: brass,
+                          fontWeight: 700,
+                          fontSize: 11,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        Download · {l.label}
+                      </button>
+                    </React.Fragment>
+                  ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {/* Track save/FX progress shows on the timeline lane — not in the header */}
