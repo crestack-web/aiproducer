@@ -10705,8 +10705,6 @@ function TrackFxPanel({
   void totalMs;
   void automationDoc;
   void onAutomationChange;
-  void fxEditMode;
-  void setFxEditMode;
   void color;
 
   const effectiveRack = rack.length > 0 ? rack : rackFromFx(fx);
@@ -10782,6 +10780,7 @@ function TrackFxPanel({
     onCommit(seeded);
     setAddOpen(false);
     setModalId(id);
+    setFxEditMode((EFFECT_PLUGIN_PRESETS[id] || []).length > 0 ? "presets" : "custom");
   }
 
   function removePlugin(id: string) {
@@ -11222,7 +11221,12 @@ function TrackFxPanel({
             <button
               key={id}
               type="button"
-              onClick={() => setModalId(id)}
+              onClick={() => {
+                setModalId(id);
+                setFxEditMode(
+                  (EFFECT_PLUGIN_PRESETS[id] || []).length > 0 ? "presets" : "custom"
+                );
+              }}
               style={{
                 padding: "8px 12px",
                 borderRadius: 999,
@@ -11273,6 +11277,76 @@ function TrackFxPanel({
       <p style={{ margin: 0, fontSize: 11, color: muted, lineHeight: 1.45 }}>
         Tap an effect to open its panel. Drag knobs to shape the sound — changes apply live on this track.
       </p>
+
+      {/* Track-wide FX presets (preserved) */}
+      <div>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            color: brass,
+            marginBottom: 6,
+          }}
+        >
+          PRESETS
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {FX_PRESETS.map((pr) => (
+            <button
+              key={pr.id}
+              type="button"
+              onClick={() => {
+                const next = applyFxPreset(fx as never, pr.id) as TrackFx;
+                onChange(next);
+                onCommit(next);
+                const need = [
+                  "eq",
+                  "compress",
+                  "reverb",
+                  "sat",
+                  "deess",
+                  "plate",
+                  "delay",
+                  "doubler",
+                  "chorus",
+                  "hpf",
+                  "gate",
+                  "limiter",
+                  "air",
+                ];
+                const base = rack.length > 0 ? rack : effectiveRack;
+                const nextRack = Array.from(
+                  new Set([
+                    ...base,
+                    ...need.filter((id) => {
+                      const def = PLUGINS.find((p) => p.id === id);
+                      if (!def) return false;
+                      return def.keys.some(
+                        (k) => Math.abs(Number((next as any)[k]) || 0) > 0.02
+                      );
+                    }),
+                  ])
+                );
+                onRackChange(nextRack);
+              }}
+              style={{
+                padding: "6px 11px",
+                borderRadius: 999,
+                border: `1px solid ${border}`,
+                background: "rgba(0,0,0,0.3)",
+                color: "#F4F1EC",
+                fontSize: 11,
+                fontWeight: 650,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {pr.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Effect inspector modal */}
       {modalDef && (
@@ -11360,9 +11434,106 @@ function TrackFxPanel({
               <MiniPreview id={modalDef.id} accent={modalDef.accent} />
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-              {renderModalKnobs(modalDef.id, modalDef.accent)}
+            {/* Per-effect: Presets | Custom */}
+            <div
+              style={{
+                display: "flex",
+                gap: 4,
+                padding: 3,
+                borderRadius: 12,
+                background: "rgba(0,0,0,0.35)",
+                marginBottom: 14,
+              }}
+            >
+              {([
+                ["presets", "Presets"],
+                ["custom", "Custom"],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setFxEditMode(id)}
+                  style={{
+                    flex: 1,
+                    padding: "8px 6px",
+                    borderRadius: 10,
+                    border: "none",
+                    background: fxEditMode === id ? modalDef.accent : "transparent",
+                    color: fxEditMode === id ? "#111" : muted,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
+
+            {fxEditMode === "presets" ? (
+              <div>
+                <p style={{ margin: "0 0 10px", fontSize: 12, color: muted, lineHeight: 1.4 }}>
+                  Starting points for this effect. Switch to Custom to fine-tune knobs.
+                </p>
+                {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 13, color: muted }}>No presets for this effect yet.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {(EFFECT_PLUGIN_PRESETS[modalDef.id] || []).map((pr) => (
+                      <button
+                        key={pr.id}
+                        type="button"
+                        onClick={() => {
+                          const next = applyEffectPluginPreset(
+                            fx as never,
+                            modalDef.id,
+                            pr.id
+                          ) as TrackFx;
+                          onChange(next);
+                          onCommit(next);
+                        }}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 10,
+                          border: `1px solid ${modalDef.accent}66`,
+                          background: "rgba(0,0,0,0.35)",
+                          color: "#F4F1EC",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                        }}
+                      >
+                        {pr.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setFxEditMode("custom")}
+                  style={{
+                    marginTop: 14,
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${border}`,
+                    background: "transparent",
+                    color: brass,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Edit custom knobs →
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {renderModalKnobs(modalDef.id, modalDef.accent)}
+              </div>
+            )}
           </div>
         </div>
       )}
