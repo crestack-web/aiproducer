@@ -293,32 +293,24 @@ function mediaErrorName(e: unknown): string {
 export function formatMicOpenError(e: unknown): string {
   const name = mediaErrorName(e);
   if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-    return (
-      "Could not open that input. This is often the audio interface being locked — not the browser “Sound” toggle. " +
-      "Check: (1) Site permission is Microphone (not only Sound), (2) close DAW/Zoom/Discord, " +
-      "(3) Windows: Sound → your interface → Properties → Advanced → uncheck Exclusive Mode, " +
-      "(4) try “Default microphone” in the list. macOS: System Settings → Privacy → Microphone → enable your browser."
-    );
+    return "Mic blocked — allow Microphone in browser settings, then try again.";
   }
   if (name === "NotReadableError" || name === "AbortError") {
-    return (
-      "Audio interface is busy or in Exclusive Mode. Close other audio apps (DAW, Voicemeeter, Zoom), " +
-      "disable Exclusive Mode on the device in Windows Sound settings, then select it again — or use Default microphone."
-    );
+    return "Mic busy — close other audio apps or pick Default microphone.";
   }
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No microphone found. Plug in your audio interface and select it again.";
+    return "No microphone found.";
   }
   if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
-    return (
-      "That audio interface isn’t available right now (unplugged or ID changed). " +
-      "Pick the mic again from the list, or use the system default."
-    );
+    return "That mic isn’t available — pick another or use Default.";
   }
   if (name === "SecurityError") {
-    return "Microphone requires a secure page (HTTPS). Open the site over https and try again.";
+    return "Mic needs HTTPS.";
   }
-  if (e instanceof Error && e.message) return e.message;
+  if (e instanceof Error && e.message) {
+    const m = e.message.trim();
+    return m.length > 100 ? m.slice(0, 97) + "…" : m;
+  }
   return "Could not open the microphone.";
 }
 
