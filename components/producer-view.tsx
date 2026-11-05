@@ -11477,6 +11477,25 @@ function TrackFxPanel({
 }
 
 
+
+function menuItemStyle(color: string, disabled?: boolean): React.CSSProperties {
+  return {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    padding: "10px 14px",
+    border: "none",
+    background: "transparent",
+    color: disabled ? "rgba(244,241,236,0.35)" : color,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontFamily: "inherit",
+    borderRadius: 8,
+    opacity: disabled ? 0.55 : 1,
+  };
+}
+
 function iconBtn(border: string, surface: string, text: string): React.CSSProperties {
   return {
     width: 36,
