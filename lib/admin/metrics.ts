@@ -285,23 +285,87 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
   }
 
   // --- Auth emails + last sign-in (service role) ---
+  // Emails live in auth.users, not profiles. listUsers must use the service role.
   const emailById = new Map<string, string>();
   const lastSignInById = new Map<string, string | null>();
+
+  const absorbAuthUser = (u: {
+    id?: string;
+    email?: string | null;
+    last_sign_in_at?: string | null;
+    user_metadata?: Record<string, unknown> | null;
+    identities?: { identity_data?: Record<string, unknown> | null }[] | null;
+  }) => {
+    if (!u?.id) return;
+    const metaEmail =
+      (typeof u.user_metadata?.email === "string" && u.user_metadata.email) ||
+      (typeof u.identities?.[0]?.identity_data?.email === "string" &&
+        (u.identities[0].identity_data!.email as string)) ||
+      "";
+    const email = (u.email || metaEmail || "").trim();
+    if (email) emailById.set(u.id, email);
+    lastSignInById.set(u.id, u.last_sign_in_at || null);
+  };
+
   try {
-    for (let page = 1; page <= 10; page++) {
-      const { data: list } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
-      const users = list?.users || [];
+    const perPage = 1000;
+    for (let page = 1; page <= 20; page++) {
+      const { data: list, error: listErr } = await supabase.auth.admin.listUsers({
+        page,
+        perPage,
+      });
+      if (listErr) {
+        console.error("[admin/metrics] listUsers failed", listErr.message || listErr);
+        break;
+      }
+      // Support both shapes: { users: [...] } and rare array responses
+      const raw = list as { users?: unknown[] } | unknown[] | null | undefined;
+      const users = Array.isArray(raw)
+        ? raw
+        : Array.isArray((raw as { users?: unknown[] } | null)?.users)
+          ? ((raw as { users: unknown[] }).users)
+          : [];
       if (!users.length) break;
       for (const u of users) {
-        if (u.id) {
-          emailById.set(u.id, u.email || "");
-          lastSignInById.set(u.id, u.last_sign_in_at || null);
-        }
+        absorbAuthUser(u as Parameters<typeof absorbAuthUser>[0]);
       }
-      if (users.length < 200) break;
+      if (users.length < perPage) break;
+    }
+  } catch (e) {
+    console.error("[admin/metrics] listUsers threw", e);
+  }
+
+  // Fill gaps: profiles without an email yet (listUsers page miss / transient error)
+  const missingIds = profileRows
+    .map((p) => (p as { id?: string }).id)
+    .filter((id): id is string => Boolean(id) && !emailById.get(id));
+  for (const id of missingIds.slice(0, 200)) {
+    try {
+      const { data, error } = await supabase.auth.admin.getUserById(id);
+      if (error) {
+        console.warn("[admin/metrics] getUserById", id, error.message);
+        continue;
+      }
+      if (data?.user) absorbAuthUser(data.user);
+    } catch (e) {
+      console.warn("[admin/metrics] getUserById threw", id, e);
+    }
+  }
+
+  // Optional: profiles.email column if present (older schemas / synced copies)
+  try {
+    const { data: withEmail } = await supabase
+      .from("profiles")
+      .select("id, email")
+      .limit(2000);
+    for (const row of withEmail || []) {
+      const r = row as { id?: string; email?: string | null };
+      if (r.id && r.email && !emailById.get(r.id)) {
+        emailById.set(r.id, String(r.email).trim());
+      }
     }
   } catch {
-    /* profiles only */
+    /* column may not exist */
   }
 
   // Project counts per user
@@ -334,7 +398,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
       ).toLowerCase() || null;
       return {
         id: row.id,
-        email: emailById.get(row.id) || "(no email)",
+        email: (emailById.get(row.id) || "").trim() || "(no email)",
         displayName: row.display_name || null,
         role: row.role || null,
         genre: row.genre || null,
