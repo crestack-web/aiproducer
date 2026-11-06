@@ -107,13 +107,17 @@ export async function GET(_req: Request, ctx: Ctx) {
     .replace(/^-|-$/g, "") || "beat";
   const filename = `${safeTitle}.${ext === "mpeg" ? "mp3" : ext}`;
 
+  const isPreview = url.searchParams.get("preview") === "1" || url.searchParams.get("stream") === "1";
   return new NextResponse(new Uint8Array(buf), {
     status: 200,
     headers: {
       "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": isPreview
+        ? `inline; filename="${filename}"`
+        : `attachment; filename="${filename}"`,
       "Content-Length": String(buf.length),
       "Cache-Control": "private, no-store",
+      "Accept-Ranges": "bytes",
     },
   });
 }

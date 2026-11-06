@@ -5037,8 +5037,11 @@ export function ProducerView({
       });
     }
 
-    // Prefer beat first so groove starts ASAP
-    specs.sort((a, b) => (a.kind === "beat" ? -1 : 0) - (b.kind === "beat" ? -1 : 0));
+    // Beat plays via HTMLAudio (reliable on mobile). Vocals stay on the Web Audio graph.
+    const beatSpec = specs.find((s) => s.kind === "beat");
+    const vocalSpecs = specs.filter((s) => s.kind !== "beat");
+    specs.length = 0;
+    specs.push(...vocalSpecs);
 
     // Soft-mute armed track during overdub so the artist hears the arrangement, not prior take
     if (isConsoleRecording && muteArmedWhileRecord) {
@@ -5195,36 +5198,46 @@ export function ProducerView({
       return;
     }
 
-    // HTMLAudio fallback if beat never made it into the WebAudio graph
-    const beatTrack = tracks.find((x) => x.kind === "beat" && x.url);
-    if (beatTrack?.url && !beatStartedInGraph && isAudible("beat", "beat")) {
+    // Primary beat player — HTMLAudio, same path as the library player
+    if (beatSpec && isAudible("beat", "beat")) {
       try {
         try {
           monitorAudioRef.current?.pause();
         } catch {
           /* */
         }
-        // Prefer same-origin preview so iOS doesn't block the signed URL
         const previewUrl = projectId
           ? `/api/projects/${projectId}/beat/download?preview=1`
-          : beatTrack.url;
+          : beatSpec.loadUrl;
         const a = new Audio(previewUrl);
-        a.crossOrigin = "anonymous";
+        a.preload = "auto";
         const songNow = startSec + Math.max(0, ctx.currentTime - t0);
-        a.currentTime = Math.max(0, songNow);
-        {
+        const startBeat = () => {
+          try {
+            a.currentTime = Math.max(0, Math.min(songNow, (a.duration || songNow + 1) - 0.05));
+          } catch {
+            /* */
+          }
           const bfx =
             fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
           const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
           a.volume = Math.max(0, Math.min(1, lin));
-        }
+          void a.play().catch((e) => {
+            console.warn("[producer-view] beat HTMLAudio play", e);
+            setEditMsg("Beat could not play — try again or check your output device");
+          });
+        };
         monitorAudioRef.current = a;
-        void a.play().catch((e) => {
-          console.warn("[producer-view] beat HTMLAudio play", e);
-          setEditMsg("Beat could not play — try again or check your output device");
-        });
+        if (a.readyState >= 1) startBeat();
+        else {
+          a.addEventListener("loadedmetadata", startBeat, { once: true });
+          a.addEventListener("error", () => {
+            setEditMsg("Beat audio failed to load");
+          }, { once: true });
+          a.load();
+        }
       } catch (e) {
-        console.warn("[producer-view] beat HTMLAudio fallback", e);
+        console.warn("[producer-view] beat HTMLAudio", e);
       }
     }
   }
