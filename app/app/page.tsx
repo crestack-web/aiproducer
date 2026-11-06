@@ -116,6 +116,8 @@ function AppInner() {
     projectId: string;
     title: string;
     amountUsd: number;
+    currency?: string;
+    chargeMajor?: number;
   } | null>(null);
   const [beatPayBusy, setBeatPayBusy] = useState(false);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
@@ -431,7 +433,7 @@ function AppInner() {
         const j = await res.json().catch(() => ({}));
         if (res.status === 402 || j.code === "PAYMENT_REQUIRED") {
           const cost = typeof j.beatCostUsd === "number" ? j.beatCostUsd : 0.5;
-          setBeatPay({ projectId, title, amountUsd: cost });
+          setBeatPay({ projectId, title, amountUsd: cost, currency: j.currency, chargeMajor: j.chargeMajor });
           setBeatPlayError(null);
           return;
         }
@@ -2521,7 +2523,7 @@ function AppInner() {
               Pay for this beat to download the file.
             </p>
             <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 14 }}>
-              ${beatPay.amountUsd.toFixed(2)}
+              {beatPay.currency === "NGN" && beatPay.chargeMajor ? `₦${beatPay.chargeMajor.toLocaleString()}` : `$${beatPay.amountUsd.toFixed(2)}`}
             </div>
             <button
               type="button"
@@ -2542,7 +2544,7 @@ function AppInner() {
                 opacity: beatPayBusy ? 0.7 : 1,
               }}
             >
-              {beatPayBusy ? "Starting payment…" : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
+              {beatPayBusy ? "Starting payment…" : beatPay.currency === "NGN" && beatPay.chargeMajor ? `Pay ₦${beatPay.chargeMajor.toLocaleString()} with Paystack` : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
             </button>
             <button
               type="button"

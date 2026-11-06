@@ -12,18 +12,46 @@ export function paystackPublic(): string | null {
   return process.env.PAYSTACK_PUBLIC_KEY?.trim() || null;
 }
 
-/** ISO currency — default NGN (Paystack primary). Override with PAYSTACK_CURRENCY=USD if enabled on account. */
+/**
+ * ISO currency for Paystack charges.
+ * - Nigerian users → NGN
+ * - Everyone else → USD
+ *
+ * Detection order:
+ * 1. Explicit override: PAYSTACK_CURRENCY (if set to NGN or USD)
+ * 2. Request country header (x-vercel-ip-country / cf-ipcountry)
+ * 3. Default NGN (safe for local)
+ */
 export function paystackCurrency(): string {
-  return (process.env.PAYSTACK_CURRENCY || "NGN").trim().toUpperCase();
+  const override = (process.env.PAYSTACK_CURRENCY || "").trim().toUpperCase();
+  if (override === "NGN" || override === "USD") return override;
+  return "NGN";
+}
+
+/** Resolve the currency for this request. NG → NGN, everyone else → USD. */
+export function resolvePaystackCurrency(req: Request): string {
+  const override = (process.env.PAYSTACK_CURRENCY || "").trim().toUpperCase();
+  if (override === "NGN" || override === "USD") return override;
+
+  const country =
+    req.headers.get("x-vercel-ip-country") ||
+    req.headers.get("cf-ipcountry") ||
+    req.headers.get("x-country") ||
+    "";
+  const cc = country.trim().toUpperCase();
+  if (cc === "NG") return "NGN";
+  if (cc) return "USD";
+  // Unknown country: default NGN so local users are not overcharged
+  return "NGN";
 }
 
 /**
  * USD → charge currency major units.
  * NGN rate from PAYSTACK_USD_NGN_RATE (default 1344).
  */
-export function usdToChargeMajor(usd: number): number {
-  const currency = paystackCurrency();
-  if (currency === "USD") return usd;
+export function usdToChargeMajor(usd: number, currency?: string): number {
+  const cur = (currency || paystackCurrency()).toUpperCase();
+  if (cur === "USD") return Math.round(usd * 100) / 100;
   const rate = Number(process.env.PAYSTACK_USD_NGN_RATE || "1344");
   return Math.round(usd * rate * 100) / 100;
 }

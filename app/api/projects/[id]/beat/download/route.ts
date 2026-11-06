@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolvePaystackCurrency, usdToChargeMajor } from "@/lib/paystack";
 import { requireUser } from "@/lib/auth";
 import { downloadStorageObject } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -54,6 +55,8 @@ export async function GET(_req: Request, ctx: Ctx) {
         code: "PAYMENT_REQUIRED",
         reason: access.reason,
         beatCostUsd: Math.round(beatCost * 100) / 100,
+        currency: resolvePaystackCurrency(req),
+        chargeMajor: usdToChargeMajor(Math.round(beatCost * 100) / 100, resolvePaystackCurrency(req)),
         canPayBeat: true,
       },
       { status: 402 }

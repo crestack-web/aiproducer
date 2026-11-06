@@ -4,7 +4,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { PLANS, type PlanId, type BillingInterval } from "@/lib/plans";
 import {
   paystackSecret,
-  paystackCurrency,
+  resolvePaystackCurrency,
   planChargeUsd,
   usdToChargeMajor,
   toPaystackAmount,
@@ -77,7 +77,7 @@ export async function POST(
     );
   }
 
-  const currency = paystackCurrency();
+  const currency = resolvePaystackCurrency(req);
   let usd = planChargeUsd(plan, interval);
   // After free beats are used, AP-generated beat cost is added to session download price
   if (plan === "session") {
@@ -86,7 +86,7 @@ export async function POST(
       usd = Math.round((usd + beatCost) * 100) / 100;
     }
   }
-  const major = usdToChargeMajor(usd);
+  const major = usdToChargeMajor(usd, currency);
   const amountMinor = toPaystackAmount(major, currency);
 
   const origin =
@@ -126,6 +126,8 @@ export async function POST(
 
     return NextResponse.json({
       amountUsd: usd,
+      currency,
+      chargeMajor: major,
       beatCostUsd: plan === "session" && meta.beat_generation_billable ? Number(meta.beat_cost_usd) || 0 : 0,
       checkoutUrl: init.authorization_url,
       reference: init.reference,

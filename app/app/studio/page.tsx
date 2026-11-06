@@ -201,6 +201,8 @@ function StudioPageInner() {
     projectId: string;
     title: string;
     amountUsd: number;
+    currency?: string;
+    chargeMajor?: number;
   } | null>(null);
   const [beatPayBusy, setBeatPayBusy] = useState(false);
   const [isPaidPlan, setIsPaidPlan] = useState(false);
@@ -819,7 +821,7 @@ function StudioPageInner() {
           j.reason === "payment_required"
         ) {
           const cost = typeof j.beatCostUsd === "number" ? j.beatCostUsd : 0.5;
-          setBeatPay({ projectId, title, amountUsd: cost });
+          setBeatPay({ projectId, title, amountUsd: cost, currency: j.currency, chargeMajor: j.chargeMajor });
           setError(null);
           return;
         }
@@ -2132,7 +2134,7 @@ function StudioPageInner() {
                 Beat price
               </div>
               <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>
-                ${beatPay.amountUsd.toFixed(2)}
+                {beatPay.currency === "NGN" && beatPay.chargeMajor ? `₦${beatPay.chargeMajor.toLocaleString()}` : `$${beatPay.amountUsd.toFixed(2)}`}
               </div>
             </div>
             <button
@@ -2154,7 +2156,7 @@ function StudioPageInner() {
                 opacity: beatPayBusy ? 0.7 : 1,
               }}
             >
-              {beatPayBusy ? "Starting payment…" : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
+              {beatPayBusy ? "Starting payment…" : beatPay.currency === "NGN" && beatPay.chargeMajor ? `Pay ₦${beatPay.chargeMajor.toLocaleString()} with Paystack` : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
             </button>
             <button
               type="button"

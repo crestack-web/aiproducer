@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import {
   paystackSecret,
-  paystackCurrency,
+  resolvePaystackCurrency,
   usdToChargeMajor,
   toPaystackAmount,
   paystackInitialize,
@@ -80,8 +80,8 @@ export async function POST(req: Request, ctx: Ctx) {
   }
   usd = Math.round(usd * 100) / 100;
 
-  const currency = paystackCurrency();
-  const major = usdToChargeMajor(usd);
+  const currency = resolvePaystackCurrency(req);
+  const major = usdToChargeMajor(usd, currency);
   const amountMinor = toPaystackAmount(major, currency);
 
   const origin =
@@ -120,6 +120,8 @@ export async function POST(req: Request, ctx: Ctx) {
 
     return NextResponse.json({
       amountUsd: usd,
+      currency,
+      chargeMajor: major,
       checkoutUrl: init.authorization_url,
       reference: init.reference,
       accessCode: init.access_code,
