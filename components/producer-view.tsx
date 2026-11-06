@@ -4553,7 +4553,7 @@ export function ProducerView({
               : null;
           const beatProxy =
             tr.kind === "beat" && projectId
-              ? `/api/projects/${projectId}/beat/download`
+              ? `/api/projects/${projectId}/beat/download?preview=1`
               : null;
           // Prefer same-origin proxies so waveforms load on mobile Safari
           const primary =
@@ -4933,11 +4933,15 @@ export function ProducerView({
     const gen = ++playbackGenRef.current;
 
     // Resume under the same user gesture as Play (required on iOS)
-    if (ctx.state === "suspended") {
+    if (ctx.state !== "running") {
       try {
         await ctx.resume();
       } catch {
         /* */
+      }
+      // Give the context a moment to actually start
+      if (ctx.state !== "running") {
+        await new Promise((r) => setTimeout(r, 40));
       }
     }
     if (gen !== playbackGenRef.current) return;
@@ -4953,7 +4957,7 @@ export function ProducerView({
 
     const startSec = fromMs / 1000;
     const beatProxy =
-      projectId && beatUrl ? `/api/projects/${projectId}/beat/download` : null;
+      projectId && beatUrl ? `/api/projects/${projectId}/beat/download?preview=1` : null;
 
     type ClipSpec = {
       trackId: string;
@@ -5199,8 +5203,12 @@ export function ProducerView({
         } catch {
           /* */
         }
-        const a = new Audio(beatTrack.url);
-        // Align element time to current song position
+        // Prefer same-origin preview so iOS doesn't block the signed URL
+        const previewUrl = projectId
+          ? `/api/projects/${projectId}/beat/download?preview=1`
+          : beatTrack.url;
+        const a = new Audio(previewUrl);
+        a.crossOrigin = "anonymous";
         const songNow = startSec + Math.max(0, ctx.currentTime - t0);
         a.currentTime = Math.max(0, songNow);
         {
@@ -5210,9 +5218,10 @@ export function ProducerView({
           a.volume = Math.max(0, Math.min(1, lin));
         }
         monitorAudioRef.current = a;
-        void a.play().catch((e) =>
-          console.warn("[producer-view] beat HTMLAudio play", e)
-        );
+        void a.play().catch((e) => {
+          console.warn("[producer-view] beat HTMLAudio play", e);
+          setEditMsg("Beat could not play — try again or check your output device");
+        });
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio fallback", e);
       }
@@ -5909,7 +5918,7 @@ export function ProducerView({
           label: "Beat",
           automationTrackId: "beat",
           fallbackUrl: projectId
-            ? `/api/projects/${projectId}/beat/download`
+            ? `/api/projects/${projectId}/beat/download?preview=1`
             : null,
           fx: { ...(fx as unknown as Record<string, number>) },
           muted: beatMuted,

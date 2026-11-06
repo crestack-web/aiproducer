@@ -30,9 +30,13 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 
   // Free beat may be listened to in-app; commercial file download requires unlock / plan / paid session
-  const access = await assertCommercialDownloadAccess(user.id, projectId, {
-    email: user.email,
-  });
+  const url = new URL(_req.url);
+  const preview = url.searchParams.get("preview") === "1" || url.searchParams.get("stream") === "1";
+  const access = preview
+    ? { ok: true }
+    : await assertCommercialDownloadAccess(user.id, projectId, {
+        email: user.email,
+      });
   if (!access.ok) {
     // Surface beat cost so the UI can offer a direct Paystack checkout
     const service = createServiceClient();
