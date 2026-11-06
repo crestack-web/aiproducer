@@ -311,22 +311,31 @@ export function ConsoleMixer(props: Props) {
             }}
           >
             <div style={{ fontSize: 11, fontWeight: 800, color: brass }}>MASTER</div>
-            <input
-              type="range"
-              min={-24}
-              max={6}
-              step={0.5}
-              value={masterGainDb}
-              onChange={(e) => onMasterGain(Number(e.target.value))}
-              style={{
-                writingMode: "vertical-lr",
-                direction: "rtl",
-                height: 140,
-                width: 28,
-                accentColor: brass,
-              } as React.CSSProperties}
-              aria-label="Master volume"
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: 2, height: 140 }}>
+              <FaderScale
+                min={-24}
+                max={6}
+                height={140}
+                ticks={[6, 0, -6, -12, -18, -24]}
+                color={mutedText}
+              />
+              <input
+                type="range"
+                min={-24}
+                max={6}
+                step={0.5}
+                value={masterGainDb}
+                onChange={(e) => onMasterGain(Number(e.target.value))}
+                style={{
+                  writingMode: "vertical-lr",
+                  direction: "rtl",
+                  height: 140,
+                  width: 22,
+                  accentColor: brass,
+                } as React.CSSProperties}
+                aria-label="Master volume"
+              />
+            </div>
             <div style={{ fontSize: 11, fontVariantNumeric: "tabular-nums", color: mutedText }}>
               {masterGainDb > 0 ? "+" : ""}
               {masterGainDb.toFixed(1)} dB
@@ -365,6 +374,58 @@ function chip(border: string, color: string): React.CSSProperties {
     cursor: "pointer",
     fontFamily: "inherit",
   };
+}
+
+
+/** Vertical dB scale beside a fader. Top = max, bottom = min. */
+function FaderScale({
+  min,
+  max,
+  height,
+  ticks,
+  color,
+}: {
+  min: number;
+  max: number;
+  height: number;
+  ticks: number[];
+  color: string;
+}) {
+  const span = max - min || 1;
+  return (
+    <div
+      style={{
+        position: "relative",
+        height,
+        width: 28,
+        flexShrink: 0,
+        fontSize: 8,
+        fontVariantNumeric: "tabular-nums",
+        color,
+        userSelect: "none",
+      }}
+      aria-hidden="true"
+    >
+      {ticks.map((db) => {
+        const pct = ((max - db) / span) * 100; // top = max
+        return (
+          <div
+            key={db}
+            style={{
+              position: "absolute",
+              top: `${pct}%`,
+              right: 0,
+              transform: "translateY(-50%)",
+              whiteSpace: "nowrap",
+              lineHeight: 1,
+            }}
+          >
+            {db > 0 ? `+${db}` : db}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function ChannelStrip(props: {
@@ -448,28 +509,37 @@ function ChannelStrip(props: {
           S
         </button>
       </div>
-      <input
-        type="range"
-        min={-12}
-        max={12}
-        step={0.1}
-        value={ch.gainDb}
-        onChange={(e) => props.onGain(ch.id, Number(e.target.value), false)}
-        onMouseUp={(e) => props.onGain(ch.id, Number((e.target as HTMLInputElement).value), true)}
-        onTouchEnd={(e) =>
-          props.onGain(ch.id, Number((e.target as HTMLInputElement).value), true)
-        }
-        style={
-          {
-            writingMode: "vertical-lr",
-            direction: "rtl",
-            height: 120,
-            width: 28,
-            accentColor: brass,
-          } as React.CSSProperties
-        }
-        aria-label={`${ch.label} volume`}
-      />
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 120 }}>
+        <FaderScale
+          min={-12}
+          max={12}
+          height={120}
+          ticks={[12, 6, 0, -6, -12]}
+          color={mutedText}
+        />
+        <input
+          type="range"
+          min={-12}
+          max={12}
+          step={0.1}
+          value={ch.gainDb}
+          onChange={(e) => props.onGain(ch.id, Number(e.target.value), false)}
+          onMouseUp={(e) => props.onGain(ch.id, Number((e.target as HTMLInputElement).value), true)}
+          onTouchEnd={(e) =>
+            props.onGain(ch.id, Number((e.target as HTMLInputElement).value), true)
+          }
+          style={
+            {
+              writingMode: "vertical-lr",
+              direction: "rtl",
+              height: 120,
+              width: 22,
+              accentColor: brass,
+            } as React.CSSProperties
+          }
+          aria-label={`${ch.label} volume`}
+        />
+      </div>
       <div style={{ fontSize: 10, fontVariantNumeric: "tabular-nums", color: mutedText }}>
         {ch.gainDb > 0 ? "+" : ""}
         {ch.gainDb.toFixed(1)}
