@@ -2487,30 +2487,6 @@ function AppInner() {
           </div>,
           document.body
         )}
-    </AppShell>
-  );
-}
-
-
-export default function StudioAppPage() {
-  return (
-    <Suspense
-      fallback={
-        <div
-          style={{
-            minHeight: "100vh",
-            display: "grid",
-            placeItems: "center",
-            color: "#9B96A3",
-          }}
-        >
-          Loading…
-        </div>
-      }
-    >
-      <AppInner />
-    </Suspense>
-
       {beatPay && (
         <div
           role="dialog"
@@ -2590,6 +2566,31 @@ export default function StudioAppPage() {
           </div>
         </div>
       )}
+
+    </AppShell>
+  );
+}
+
+
+export default function StudioAppPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            minHeight: "100vh",
+            display: "grid",
+            placeItems: "center",
+            color: "#9B96A3",
+          }}
+        >
+          Loading…
+        </div>
+      }
+    >
+      <AppInner />
+    </Suspense>
+
 
   );
 }
