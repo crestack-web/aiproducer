@@ -4940,7 +4940,8 @@ export function ProducerView({
         /* */
       }
       // Give the context a moment to actually start
-      if (ctx.state !== "running") {
+      const state = ctx.state as AudioContextState;
+      if (state !== "running") {
         await new Promise((r) => setTimeout(r, 40));
       }
     }
