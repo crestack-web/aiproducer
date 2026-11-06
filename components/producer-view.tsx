@@ -10103,11 +10103,7 @@ export function ProducerView({
               <input
                 value={trackPrompt}
                 onChange={(e) => setTrackPrompt(e.target.value)}
-                placeholder={
-                  selectedTrackId && selectedTrackId !== "beat"
-                    ? "e.g. solo this, pan left, more reverb, warmer…"
-                    : "e.g. mute the beat, go to chorus, louder lead…"
-                }
+placeholder="Ask AP anything…"
                 disabled={trackPromptBusy}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && trackPrompt.trim() && !trackPromptBusy) {
@@ -10158,40 +10154,7 @@ export function ProducerView({
                 ↑
               </button>
             </div>
-            {/* Suggestion chips — DAW mindset */}
-            {!trackPromptBusy && !trackPrompt.trim() ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  marginTop: 10,
-                }}
-              >
-                {AP_SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      setTrackPrompt(s);
-                    }}
-                    style={{
-                      padding: "5px 10px",
-                      borderRadius: 999,
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      background: "rgba(255,255,255,0.04)",
-                      color: mutedText,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+
             <div
               style={{
                 marginTop: 8,
@@ -10200,7 +10163,7 @@ export function ProducerView({
                 lineHeight: 1.35,
               }}
             >
-              Tell AP anything — mute, solo, pan, FX, jump to chorus, process a take. Tap a track to scope.
+              Ask AP anything. Tap a track to scope it.
             </div>
             </div>
           </div>
