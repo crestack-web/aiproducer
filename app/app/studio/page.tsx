@@ -197,6 +197,12 @@ function StudioPageInner() {
   const [editGateModal, setEditGateModal] = useState(false);
   const [subscribePaywallOpen, setSubscribePaywallOpen] = useState(false);
   const [subscribePaywallProjectId, setSubscribePaywallProjectId] = useState<string | null>(null);
+  const [beatPay, setBeatPay] = useState<{
+    projectId: string;
+    title: string;
+    amountUsd: number;
+  } | null>(null);
+  const [beatPayBusy, setBeatPayBusy] = useState(false);
   const [isPaidPlan, setIsPaidPlan] = useState(false);
 
 
@@ -812,8 +818,8 @@ function StudioPageInner() {
           j.code === "PAYWALL" ||
           j.reason === "payment_required"
         ) {
-          setSubscribePaywallProjectId(projectId);
-          setSubscribePaywallOpen(true);
+          const cost = typeof j.beatCostUsd === "number" ? j.beatCostUsd : 0.5;
+          setBeatPay({ projectId, title, amountUsd: cost });
           setError(null);
           return;
         }
@@ -838,6 +844,38 @@ function StudioPageInner() {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Download failed");
+    }
+  }
+
+
+  async function startBeatCheckout() {
+    if (!beatPay) return;
+    setBeatPayBusy(true);
+    try {
+      const res = await fetch(`/api/projects/${beatPay.projectId}/beat/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start payment");
+      }
+      if (j.unlocked) {
+        setBeatPay(null);
+        // Already unlocked — retry download
+        void downloadBeat(beatPay.projectId, beatPay.title);
+        return;
+      }
+      if (typeof j.checkoutUrl === "string" && j.checkoutUrl) {
+        window.location.href = j.checkoutUrl;
+        return;
+      }
+      throw new Error("No checkout URL returned");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Payment failed to start");
+    } finally {
+      setBeatPayBusy(false);
     }
   }
 
@@ -2047,7 +2085,101 @@ function StudioPageInner() {
         />
       ) : null}
 
-{upgradeModal && (
+
+      {beatPay && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 95,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => !beatPayBusy && setBeatPay(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: "18px 18px 0 0",
+              background: C.surface || "#16140f",
+              border: `1px solid ${C.border}`,
+              padding: "18px 16px 28px",
+              color: C.text,
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
+              Download this beat
+            </div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: C.textMuted }}>
+              Pay for this beat to download the file. This unlocks the beat only — you can still produce the full song later.
+            </p>
+            <div
+              style={{
+                margin: "0 0 14px",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.brass}`,
+                background: "rgba(231,169,97,0.1)",
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.brass, marginBottom: 4 }}>
+                Beat price
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>
+                ${beatPay.amountUsd.toFixed(2)}
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={beatPayBusy}
+              onClick={() => void startBeatCheckout()}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "none",
+                background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                color: "#1A1208",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: beatPayBusy ? "wait" : "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+                opacity: beatPayBusy ? 0.7 : 1,
+              }}
+            >
+              {beatPayBusy ? "Starting payment…" : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
+            </button>
+            <button
+              type="button"
+              disabled={beatPayBusy}
+              onClick={() => setBeatPay(null)}
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: `1px solid ${C.border}`,
+                background: "transparent",
+                color: C.textMuted,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {upgradeModal && (
         <div
           role="dialog"
           aria-modal="true"

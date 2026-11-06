@@ -86,6 +86,10 @@ export async function assertCommercialDownloadAccess(
   if (meta.download_unlocked === true || meta.session_paid === true) {
     return { ok: true, source: "project_unlock" };
   }
+  // Beat-only purchase unlocks the beat file (not the full song session)
+  if (meta.beat_download_unlocked === true) {
+    return { ok: true, source: "project_unlock" };
+  }
 
   // Profile-level subscription (Artist / Band)
   const { data: profile } = await service

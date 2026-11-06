@@ -33,11 +33,28 @@ export async function GET(_req: Request, ctx: Ctx) {
     email: user.email,
   });
   if (!access.ok) {
+    // Surface beat cost so the UI can offer a direct Paystack checkout
+    const service = createServiceClient();
+    const { data: proj } = await service
+      .from("projects")
+      .select("metadata")
+      .eq("id", projectId)
+      .maybeSingle();
+    const meta = ((proj?.metadata || {}) as Record<string, unknown>) || {};
+    let beatCost = Number(meta.beat_cost_usd);
+    if (!Number.isFinite(beatCost) || beatCost <= 0) {
+      const dur = Number(meta.beat_duration_sec || meta.duration_sec);
+      beatCost = Number.isFinite(dur) && dur > 0
+        ? Math.max(0.25, Math.round((dur / 120) * 100) / 100)
+        : 0.5;
+    }
     return NextResponse.json(
       {
-        error: access.message || "Pay for this session or finish the song to download the beat.",
+        error: access.message || "Pay for this beat to download it.",
         code: "PAYMENT_REQUIRED",
         reason: access.reason,
+        beatCostUsd: Math.round(beatCost * 100) / 100,
+        canPayBeat: true,
       },
       { status: 402 }
     );

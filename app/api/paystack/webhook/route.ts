@@ -55,11 +55,22 @@ export async function POST(req: Request) {
   }
 
   const meta = { ...((project.metadata || {}) as Record<string, unknown>) };
+  meta.paystack_reference = event.data?.reference;
+  meta.paystack_paid_at = event.data?.paid_at || new Date().toISOString();
+
+  if (plan === "beat" || metaIn.beat_only === true) {
+    // Beat-only purchase — unlock the beat file only
+    meta.beat_download_unlocked = true;
+    meta.beat_download_unlocked_at = new Date().toISOString();
+    meta.beat_download_plan = "beat";
+    delete meta.paystack_pending;
+    await service.from("projects").update({ metadata: meta }).eq("id", projectId);
+    return NextResponse.json({ ok: true, beat_unlocked: true });
+  }
+
   meta.download_unlocked = true;
   meta.download_unlocked_at = new Date().toISOString();
   meta.download_plan = plan;
-  meta.paystack_reference = event.data?.reference;
-  meta.paystack_paid_at = event.data?.paid_at || new Date().toISOString();
   if (plan === "creator" || plan === "band" || plan === "pro") {
     meta.subscription_plan = plan;
         // Persist on profile so Creator/Pro unlocks downloads across projects

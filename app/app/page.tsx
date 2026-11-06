@@ -112,6 +112,12 @@ function AppInner() {
   const [fullPlayerOpen, setFullPlayerOpen] = useState(false);
   const [paywallProject, setPaywallProject] = useState<{ id: string; title: string; jobId?: string; version?: number } | null>(null);
   const [beatPlayError, setBeatPlayError] = useState<string | null>(null);
+  const [beatPay, setBeatPay] = useState<{
+    projectId: string;
+    title: string;
+    amountUsd: number;
+  } | null>(null);
+  const [beatPayBusy, setBeatPayBusy] = useState(false);
   const [beatMenu, setBeatMenu] = useState<{ id: string; title: string; meta: string } | null>(null);
   const [projectMenu, setProjectMenu] = useState<{
     id: string;
@@ -423,6 +429,12 @@ function AppInner() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
+        if (res.status === 402 || j.code === "PAYMENT_REQUIRED") {
+          const cost = typeof j.beatCostUsd === "number" ? j.beatCostUsd : 0.5;
+          setBeatPay({ projectId, title, amountUsd: cost });
+          setBeatPlayError(null);
+          return;
+        }
         throw new Error(typeof j.error === "string" ? j.error : "Could not download beat");
       }
       const blob = await res.blob();
@@ -444,6 +456,37 @@ function AppInner() {
       setBeatPlayError(null);
     } catch (e) {
       setBeatPlayError(e instanceof Error ? e.message : "Download failed");
+    }
+  }
+
+
+  async function startBeatCheckout() {
+    if (!beatPay) return;
+    setBeatPayBusy(true);
+    try {
+      const res = await fetch(`/api/projects/${beatPay.projectId}/beat/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "Could not start payment");
+      }
+      if (j.unlocked) {
+        setBeatPay(null);
+        void downloadBeatFile(beatPay.projectId, beatPay.title);
+        return;
+      }
+      if (typeof j.checkoutUrl === "string" && j.checkoutUrl) {
+        window.location.href = j.checkoutUrl;
+        return;
+      }
+      throw new Error("No checkout URL returned");
+    } catch (e) {
+      setBeatPlayError(e instanceof Error ? e.message : "Payment failed to start");
+    } finally {
+      setBeatPayBusy(false);
     }
   }
 
@@ -2467,5 +2510,86 @@ export default function StudioAppPage() {
     >
       <AppInner />
     </Suspense>
+
+      {beatPay && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 95,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+          onClick={() => !beatPayBusy && setBeatPay(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: "18px 18px 0 0",
+              background: "#16140f",
+              border: "1px solid rgba(255,255,255,0.12)",
+              padding: "18px 16px 28px",
+              color: "#F5F0E8",
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
+              Download this beat
+            </div>
+            <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: "rgba(245,240,232,0.6)" }}>
+              Pay for this beat to download the file.
+            </p>
+            <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 14 }}>
+              ${beatPay.amountUsd.toFixed(2)}
+            </div>
+            <button
+              type="button"
+              disabled={beatPayBusy}
+              onClick={() => void startBeatCheckout()}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "none",
+                background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                color: "#1A1208",
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: beatPayBusy ? "wait" : "pointer",
+                fontFamily: "inherit",
+                marginBottom: 8,
+                opacity: beatPayBusy ? 0.7 : 1,
+              }}
+            >
+              {beatPayBusy ? "Starting payment…" : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
+            </button>
+            <button
+              type="button"
+              disabled={beatPayBusy}
+              onClick={() => setBeatPay(null)}
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "transparent",
+                color: "rgba(245,240,232,0.6)",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
   );
 }
