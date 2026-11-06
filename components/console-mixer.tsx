@@ -352,9 +352,7 @@ export function ConsoleMixer(props: Props) {
               color: mutedText,
             }}
           >
-            AP Auto-Tune is per vocal channel (Advanced). Natural mode preserves expression; Hard Tune
-            is the stylised effect. Tuning applies on Produce/export; use amount while mixing levels
-            live.
+            Add Auto-Tune from the FX rack on any vocal track. AP detects the key; you set the amount and character. Correction applies on Produce / export.
           </div>
         )}
       </div>
@@ -568,71 +566,6 @@ function ChannelStrip(props: {
       <button type="button" onClick={() => props.onOpenFx(ch.id)} style={{ ...chip(border, brass), fontSize: 10 }}>
         FX
       </button>
-      {!simple && ch.kind === "vocal" && (
-        <div style={{ width: "100%", marginTop: 4 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: brass, textAlign: "center" }}>
-            Auto-Tune
-          </div>
-          <button
-            type="button"
-            onClick={() =>
-              props.onAutoTuneChange(ch.id, {
-                autoTuneEnabled: ch.autoTuneEnabled ? 0 : 1,
-              })
-            }
-            style={{
-              ...chip(border, ch.autoTuneEnabled ? brass : mutedText),
-              width: "100%",
-              fontSize: 9,
-              marginTop: 4,
-            }}
-          >
-            {ch.autoTuneEnabled ? "On" : "Off"}
-          </button>
-          {ch.autoTuneEnabled && (
-            <>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={ch.autoTuneAmount ?? 0.45}
-                onChange={(e) =>
-                  props.onAutoTuneChange(ch.id, {
-                    autoTuneAmount: Number(e.target.value),
-                    autoTuneEnabled: 1,
-                  })
-                }
-                style={{ width: "100%", accentColor: brass, marginTop: 4 }}
-                aria-label="Correction amount"
-              />
-              <select
-                value={mode}
-                onChange={(e) => {
-                  const m = e.target.value as AutoTuneModeId;
-                  props.onAutoTuneChange(ch.id, {
-                    autoTuneMode: m === "hard" ? 2 : m === "modern" ? 1 : 0,
-                    autoTuneEnabled: 1,
-                  });
-                }}
-                style={{
-                  width: "100%",
-                  marginTop: 4,
-                  fontSize: 9,
-                  background: "rgba(0,0,0,0.35)",
-                  color: text,
-                  border: `1px solid ${border}`,
-                  borderRadius: 6,
-                }}
-              >
-                <option value="natural">{autoTuneModeLabel("natural")}</option>
-                <option value="modern">{autoTuneModeLabel("modern")}</option>
-                <option value="hard">{autoTuneModeLabel("hard")}</option>
-              </select>
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }

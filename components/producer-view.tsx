@@ -214,6 +214,7 @@ export const DEFAULT_TRACK_FX: TrackFx = {
 export function rackFromFx(fx: TrackFx): string[] {
   const out: string[] = [];
   const n = (v: number) => Math.abs(Number(v) || 0);
+  if ((Number(fx.autoTuneEnabled) || 0) > 0.5) out.push("autotune");
   if (n(fx.compress) > 0.02) out.push("compress");
   if (n(fx.deEss) > 0.02) out.push("deess");
   if (n(fx.gate) > 0.02) out.push("gate");
@@ -11269,6 +11270,7 @@ function TrackFxPanel({
     { id: "plate", label: "Plate", group: "space", accent: "#6EE7B7", keys: ["plateReverb"], blurb: "Dense plate space" },
     { id: "delay", label: "Delay", group: "space", accent: "#FBBF24", keys: ["delay"], blurb: "Echo repeats" },
     { id: "slap", label: "Slap", group: "space", accent: "#FCD34D", keys: ["slapDelay"], blurb: "Short slapback" },
+    { id: "autotune", label: "Auto-Tune", group: "creative", accent: "#FBBF24", keys: ["autoTuneEnabled", "autoTuneAmount", "autoTuneMode", "autoTuneKey", "autoTuneScale"], blurb: "Pitch correction — key from AP or manual" },
     { id: "chorus", label: "Chorus", group: "creative", accent: "#E879F9", keys: ["chorus"], blurb: "Width & movement" },
     { id: "doubler", label: "Doubler", group: "creative", accent: "#F472B6", keys: ["doubler"], blurb: "Stacked presence" },
     { id: "sat", label: "Distortion", group: "creative", accent: "#A78BFA", keys: ["saturation", "satMode", "satTilt", "satBias", "satMix", "satCutoff", "satOut"], blurb: "Shape harmonics & grit" },
@@ -11320,6 +11322,7 @@ function TrackFxPanel({
       case "chorus": return { chorus: 0.25 };
       case "doubler": return { doubler: 0.28 };
       case "width": return { width: 0.35 };
+      case "autotune": return { autoTuneEnabled: 1, autoTuneAmount: 0.45, autoTuneMode: 0, autoTuneKey: -1, autoTuneScale: 1 };
       case "voice":
         return { voiceChanger: 0.4, voicePitchSemis: 0, voiceCharacter: 1 };
       case "rotor":
@@ -11825,6 +11828,108 @@ function TrackFxPanel({
         return <>{k("phraseCleanup", "Tighten", 0, 1, 0.01)}</>;
       case "telephone":
         return <>{k("telephone", "Amount", 0, 1, 0.01)}</>;
+      case "autotune": {
+        const keys = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+        const scales = ["Major","Minor","Chromatic"];
+        const modes = [
+          { id: 0, label: "Natural" },
+          { id: 1, label: "Modern" },
+          { id: 2, label: "Hard" },
+        ];
+        const key = Math.round(Number(fx.autoTuneKey));
+        const scale = Math.round(Number(fx.autoTuneScale) || 0);
+        const mode = Math.round(Number(fx.autoTuneMode) || 0);
+        return (
+          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 11, color: muted, textAlign: "center", lineHeight: 1.4 }}>
+              Correction applies on Produce / export. AP detects the key from the beat; you can override it.
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+              {k("autoTuneAmount", "Amount", 0, 1, 0.05, (n) => `${Math.round(n * 100)}%`)}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+              {modes.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setKey("autoTuneMode", m.id, true)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: `1px solid ${mode === m.id ? accent : border}`,
+                    background: mode === m.id ? `${accent}22` : "transparent",
+                    color: mode === m.id ? accent : muted,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
+              <label style={{ fontSize: 11, color: muted }}>Key</label>
+              <select
+                value={key}
+                onChange={(e) => setKey("autoTuneKey", Number(e.target.value), true)}
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  color: "#F4F1EC",
+                  border: `1px solid ${border}`,
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                }}
+              >
+                <option value={-1}>Auto (AP detects)</option>
+                {keys.map((name, i) => (
+                  <option key={name} value={i}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={scale}
+                onChange={(e) => setKey("autoTuneScale", Number(e.target.value), true)}
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  color: "#F4F1EC",
+                  border: `1px solid ${border}`,
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                }}
+              >
+                {scales.map((name, i) => (
+                  <option key={name} value={i}>{name}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setKey("autoTuneEnabled", 1, false);
+                setKey("autoTuneAmount", Math.max(0.45, Number(fx.autoTuneAmount) || 0.45), false);
+                setKey("autoTuneKey", -1, true);
+              }}
+              style={{
+                alignSelf: "center",
+                padding: "8px 16px",
+                borderRadius: 999,
+                border: "none",
+                background: accent,
+                color: "#1A1208",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Tune with AP
+            </button>
+          </div>
+        );
+      }
       case "voice":
         return (
           <>
