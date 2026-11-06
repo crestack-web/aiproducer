@@ -623,6 +623,46 @@ function trackRowHeight(opts: {
   return TRACK_ROW_H;
 }
 
+
+/** Timeline zoom range — wider than the old 8–160 so detail and overview both feel professional. */
+const ZOOM_MIN = 4;
+const ZOOM_MAX = 320;
+const ZOOM_DEFAULT = 56;
+
+/**
+ * Adaptive ruler ticks. Returns major (labeled) and minor tick positions in seconds.
+ * Density scales with pxPerSec so the ruler never looks sparse or overcrowded.
+ */
+function rulerTicks(totalSec: number, pxPerSec: number): { major: number[]; minor: number[]; step: number } {
+  if (totalSec <= 0 || pxPerSec <= 0) return { major: [], minor: [], step: 1 };
+  // Target ~90px between major labels
+  const targetPx = 90;
+  const rawStep = targetPx / pxPerSec;
+  const nice = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+  let step = nice[nice.length - 1];
+  for (const n of nice) {
+    if (n >= rawStep * 0.7) { step = n; break; }
+  }
+  const major: number[] = [];
+  const minor: number[] = [];
+  const minorStep = step / 5;
+  for (let t = 0; t <= totalSec + 0.01; t += minorStep) {
+    const rounded = Math.round(t * 1000) / 1000;
+    const isMajor = Math.abs(rounded % step) < 0.001 || Math.abs((rounded % step) - step) < 0.001;
+    if (isMajor) major.push(rounded);
+    else minor.push(rounded);
+  }
+  return { major, minor, step };
+}
+
+function formatTick(sec: number, step: number): string {
+  if (step < 1) return `${sec.toFixed(1)}s`;
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
 function formatMs(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
@@ -1039,7 +1079,7 @@ export function ProducerView({
   const playingRef = useRef(false);
   /** Bumped on every stop/pause so in-flight startPlayback cannot restart audio */
   const playbackGenRef = useRef(0);
-  const pxPerSecRef = useRef(56);
+  const pxPerSecRef = useRef(ZOOM_DEFAULT);
 
   useEffect(() => {
     return () => {
@@ -1085,7 +1125,7 @@ export function ProducerView({
   const [trackHeightPx, setTrackHeightPx] = useState<Record<string, number>>({});
   const heightDragRef = useRef<{ id: string; startY: number; startH: number } | null>(null);
 
-  const [pxPerSec, setPxPerSec] = useState(56);
+  const [pxPerSec, setPxPerSec] = useState(ZOOM_DEFAULT);
   pxPerSecRef.current = pxPerSec;
   const [loopOn, setLoopOn] = useState(false);
   const loopOnRef = useRef(false);
@@ -4576,24 +4616,32 @@ export function ProducerView({
     getCtx,
   ]);
 
-  // Re-bucket peaks when zoom changes (from cache, no re-decode)
+  // Re-bucket peaks when zoom settles (debounced so dragging the zoom slider stays smooth)
   useEffect(() => {
-    setPeaksById((prev) => {
-      const next: Record<string, Float32Array | null> = { ...prev };
-      for (const tr of tracks) {
-        const parts =
-          tr.clips && tr.clips.length > 0
-            ? tr.clips.map((c) => ({ id: c.id, url: c.audioUrl || null }))
-            : [{ id: tr.id, url: tr.url || null }];
-        for (const part of parts) {
-          if (!part.url) continue;
-          const buf = bufferCache.get(part.url);
-          if (!buf) continue;
-          next[part.id] = peaksForUrl(part.url, buf, peakBuckets);
+    const id = window.setTimeout(() => {
+      setPeaksById((prev) => {
+        const next: Record<string, Float32Array | null> = { ...prev };
+        let changed = false;
+        for (const tr of tracks) {
+          const parts =
+            tr.clips && tr.clips.length > 0
+              ? tr.clips.map((c) => ({ id: c.id, url: c.audioUrl || null }))
+              : [{ id: tr.id, url: tr.url || null }];
+          for (const part of parts) {
+            if (!part.url) continue;
+            const buf = bufferCache.get(part.url);
+            if (!buf) continue;
+            const peaks = peaksForUrl(part.url, buf, peakBuckets);
+            if (next[part.id] !== peaks) {
+              next[part.id] = peaks;
+              changed = true;
+            }
+          }
         }
-      }
-      return next;
-    });
+        return changed ? next : prev;
+      });
+    }, 80);
+    return () => window.clearTimeout(id);
   }, [peakBuckets, tracks]);
 
   function isAudible(id: string, kind: "beat" | "vocal") {
@@ -5175,18 +5223,18 @@ export function ProducerView({
     if (!el || totalMs <= 0) return;
     const usable = Math.max(160, el.clientWidth - 16);
     const sec = Math.max(0.5, totalMs / 1000);
-    const next = Math.max(8, Math.min(160, usable / sec));
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, usable / sec));
     setPxPerSec(next);
     el.scrollLeft = 0;
   }
 
-  /** Zoom timeline with scroll/pinch on the timeline body (not header buttons). */
+  /** Zoom timeline around the cursor. Continuous, no coarse rounding. */
   function applyTimelineZoom(factor: number, clientX: number) {
     const el = timelineScrollRef.current;
     if (!el) return;
     setPxPerSec((z) => {
-      const next = Math.max(8, Math.min(160, Math.round(z * factor * 10) / 10));
-      if (next === z) return z;
+      const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z * factor));
+      if (Math.abs(next - z) < 0.05) return z;
       const rect = el.getBoundingClientRect();
       const cursorX = clientX - rect.left;
       const timeSec = (el.scrollLeft + cursorX) / Math.max(1e-6, z);
@@ -5194,7 +5242,6 @@ export function ProducerView({
         const sc = timelineScrollRef.current;
         if (!sc) return;
         sc.scrollLeft = Math.max(0, timeSec * next - cursorX);
-        // keep header scroll in sync
         const h = headerScrollRef.current;
         if (h) h.scrollLeft = sc.scrollLeft;
       });
@@ -5216,7 +5263,10 @@ export function ProducerView({
       if (!pinch && onRuler && Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
       e.preventDefault();
       const dy = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-      const factor = dy > 0 ? 0.9 : 1.11;
+      // Trackpad pinch (ctrl+wheel) uses smaller deltas; scale factor by magnitude for smoothness
+      const magnitude = Math.min(40, Math.abs(dy));
+      const step = 1 + magnitude * 0.004; // ~1.02–1.16
+      const factor = dy > 0 ? 1 / step : step;
       applyTimelineZoom(factor, e.clientX);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -8249,15 +8299,15 @@ export function ProducerView({
               minWidth: timelineW,
               position: "relative",
               boxSizing: "border-box",
-              // Suno-style vertical grid: subtle column lines under clips
+              // Adaptive grid — density follows zoom so it never looks sparse or noisy
               backgroundImage: `repeating-linear-gradient(
                 90deg,
                 transparent,
-                transparent calc(${pxPerSec}px - 1px),
-                rgba(255,255,255,0.045) calc(${pxPerSec}px - 1px),
-                rgba(255,255,255,0.045) ${pxPerSec}px
+                transparent calc(${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
+                rgba(255,255,255,0.04) calc(${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
+                rgba(255,255,255,0.04) ${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px
               )`,
-              backgroundSize: `${pxPerSec}px 100%`,
+              backgroundSize: `${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px 100%`,
             }}
           >
             <div
@@ -8291,6 +8341,59 @@ export function ProducerView({
                 seekFromClientX(e.clientX);
               }}
             >
+              {/* Adaptive time ticks */}
+              {(() => {
+                const totalSec = totalMs / 1000;
+                const { major, minor, step } = rulerTicks(totalSec, pxPerSec);
+                return (
+                  <>
+                    {minor.map((sec) => (
+                      <div
+                        key={`mn-${sec}`}
+                        style={{
+                          position: "absolute",
+                          left: sec * pxPerSec,
+                          top: 0,
+                          bottom: 0,
+                          width: 1,
+                          background: "rgba(255,255,255,0.06)",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    ))}
+                    {major.map((sec) => (
+                      <div
+                        key={`mj-${sec}`}
+                        style={{
+                          position: "absolute",
+                          left: sec * pxPerSec,
+                          top: 0,
+                          bottom: 0,
+                          width: 1,
+                          background: "rgba(255,255,255,0.14)",
+                          pointerEvents: "none",
+                        }}
+                      >
+                        <span
+                          style={{
+                            position: "absolute",
+                            top: 2,
+                            left: 4,
+                            fontSize: 9,
+                            fontWeight: 600,
+                            color: "rgba(255,255,255,0.55)",
+                            fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {formatTick(sec, step)}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
               {sections.map((s) => (
                 <div
                   key={s.id}
@@ -8939,20 +9042,20 @@ export function ProducerView({
               fontSize: 18,
               lineHeight: 1,
               flexShrink: 0,
-              opacity: pxPerSec <= 8 ? 0.35 : 1,
+              opacity: pxPerSec <= ZOOM_MIN + 1 ? 0.35 : 1,
             }}
           >
             −
           </button>
           <input
             type="range"
-            min={8}
-            max={160}
-            step={1}
-            value={Math.round(pxPerSec)}
+            min={ZOOM_MIN}
+            max={ZOOM_MAX}
+            step={0.5}
+            value={pxPerSec}
             aria-label="Timeline zoom"
             onChange={(e) => {
-              const next = Math.max(8, Math.min(160, Number(e.target.value) || 56));
+              const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(e.target.value) || ZOOM_DEFAULT));
               const el = timelineScrollRef.current;
               if (!el) {
                 setPxPerSec(next);
@@ -8981,6 +9084,19 @@ export function ProducerView({
               minWidth: 64,
             }}
           />
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.45)",
+              fontVariantNumeric: "tabular-nums",
+              minWidth: 32,
+              textAlign: "center",
+              flexShrink: 0,
+            }}
+          >
+            {Math.round((pxPerSec / ZOOM_DEFAULT) * 100)}%
+          </span>
           <button
             type="button"
             aria-label="Zoom in"
@@ -8999,7 +9115,7 @@ export function ProducerView({
               fontSize: 18,
               lineHeight: 1,
               flexShrink: 0,
-              opacity: pxPerSec >= 160 ? 0.35 : 1,
+              opacity: pxPerSec >= ZOOM_MAX - 1 ? 0.35 : 1,
             }}
           >
             +
