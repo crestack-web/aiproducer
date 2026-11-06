@@ -19,12 +19,12 @@ export function paystackCurrency(): string {
 
 /**
  * USD → charge currency major units.
- * NGN rate from PAYSTACK_USD_NGN_RATE (default 1600).
+ * NGN rate from PAYSTACK_USD_NGN_RATE (default 1344).
  */
 export function usdToChargeMajor(usd: number): number {
   const currency = paystackCurrency();
   if (currency === "USD") return usd;
-  const rate = Number(process.env.PAYSTACK_USD_NGN_RATE || "1600");
+  const rate = Number(process.env.PAYSTACK_USD_NGN_RATE || "1344");
   return Math.round(usd * rate * 100) / 100;
 }
 
