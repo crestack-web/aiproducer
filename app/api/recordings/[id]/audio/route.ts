@@ -81,6 +81,8 @@ export async function GET(_req: Request, ctx: Ctx) {
     status: 200,
     headers: {
       "Content-Type": type,
+      "Content-Disposition": "inline",
+      "Accept-Ranges": "bytes",
       "Cache-Control": "private, max-age=120",
       "Content-Length": String(buf.byteLength),
     },

@@ -1312,6 +1312,7 @@ export function ProducerView({
   const [renameBusy, setRenameBusy] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const vocalAudioRefs = useRef<HTMLAudioElement[]>([]);
   const consoleRecRef = useRef<{
     recorder: MediaRecorder;
     chunks: BlobPart[];
@@ -4775,6 +4776,15 @@ export function ProducerView({
         monitorAudioRef.current.currentTime = 0;
         monitorAudioRef.current = null;
       }
+      for (const a of vocalAudioRefs.current) {
+        try {
+          a.pause();
+          a.src = "";
+        } catch {
+          /* */
+        }
+      }
+      vocalAudioRefs.current = [];
     } catch {
       /* */
     }
@@ -5240,6 +5250,48 @@ export function ProducerView({
         }
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio", e);
+      }
+    }
+
+    // Vocal clips via HTMLAudio — reliable on mobile where Web Audio graph is silent
+    for (const spec of vocalSpecs) {
+      if (!spec.on) continue;
+      const songNow = startSec;
+      const layerStart = spec.startMs / 1000;
+      const layerEnd = Math.max(layerStart + 0.05, spec.endMs / 1000);
+      if (songNow >= layerEnd) continue;
+      const mediaOff = Math.max(0, spec.offsetMs / 1000);
+      const into = songNow >= layerStart ? mediaOff + (songNow - layerStart) : mediaOff;
+      const delayMs = songNow >= layerStart ? 0 : (layerStart - songNow) * 1000;
+      try {
+        const a = new Audio(spec.loadUrl);
+        a.preload = "auto";
+        const bfx = spec.fx;
+        const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
+        a.volume = Math.max(0, Math.min(1, lin));
+        const startVocal = () => {
+          try {
+            a.currentTime = Math.max(0, into);
+          } catch {
+            /* */
+          }
+          void a.play().catch((e) => console.warn("[producer-view] vocal HTMLAudio", e));
+        };
+        vocalAudioRefs.current.push(a);
+        if (delayMs > 40) {
+          window.setTimeout(() => {
+            if (gen !== playbackGenRef.current || !playingRef.current) return;
+            if (a.readyState >= 1) startVocal();
+            else a.addEventListener("loadedmetadata", startVocal, { once: true });
+          }, delayMs);
+        } else if (a.readyState >= 1) {
+          startVocal();
+        } else {
+          a.addEventListener("loadedmetadata", startVocal, { once: true });
+          a.load();
+        }
+      } catch (e) {
+        console.warn("[producer-view] vocal HTMLAudio setup", e);
       }
     }
   }
