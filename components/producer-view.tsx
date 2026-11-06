@@ -2749,12 +2749,12 @@ export function ProducerView({
         monitorAudioRef.current.pause();
         monitorAudioRef.current = null;
       }
-      // Keep multitrack arrangement playing after punch-out (DAW-style).
-      // User can pause with transport if they want silence.
-      if (isConsoleRecording) {
-        // Re-apply gains so soft-muted armed track becomes audible again
-        queueMicrotask(() => applyGains(undefined, true));
-      }
+      // Stop the arrangement on punch-out so the artist can review the take
+      // without the beat continuing underneath a paused transport.
+      playingRef.current = false;
+      setPlaying(false);
+      setTransportPhase("paused");
+      stopSources();
     } catch {
       /* ignore */
     }
@@ -4769,8 +4769,10 @@ export function ProducerView({
       panNodesRef.current.clear();
     }
     try {
-      if (monitorAudioRef.current && !isConsoleRecording) {
+      // Always silence the HTMLAudio beat on stop/pause — including during record punch-out
+      if (monitorAudioRef.current) {
         monitorAudioRef.current.pause();
+        monitorAudioRef.current.currentTime = 0;
         monitorAudioRef.current = null;
       }
     } catch {
