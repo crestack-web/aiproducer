@@ -3146,7 +3146,7 @@ export function ProducerView({
               ? " · OS may be routing audio through another device"
               : "";
       setEditMsg(
-        `Overdub from ${Math.round(fromMs / 100) / 10}s — hearing arrangement · ${mimeType.split(";")[0]} · ${micNote}${routeWarn}`
+        `Overdub from ${Math.round(intendedMs / 100) / 10}s — hearing arrangement · ${mimeType.split(";")[0]} · ${micNote}${routeWarn}`
       );
     } catch (e) {
       setEditMsg(formatMicOpenError(e));
