@@ -67,6 +67,9 @@ import { ApPaywall } from "@/components/ap-paywall";
 import { produceReadinessFromTasks } from "@/lib/production/readiness";
 import type { PlanTaskRow } from "@/lib/plan";
 import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
+import { ConsoleMixer, type MixerChannel } from "@/components/console-mixer";
+import type { MixProposal } from "@/lib/audio/mix-session";
+
 import {
   parseProductionDirection,
   mergeProductionDirection,
@@ -145,6 +148,16 @@ export type TrackFx = {
   plateReverb: number; // 0–1 denser plate-style send
   /** Close gaps between phrases 0–1 (Produce + Export bounce) */
   phraseCleanup: number;
+  /** AP Auto-Tune: 0 off, 1 on */
+  autoTuneEnabled: number;
+  /** Correction amount 0–1 (Natural default ~0.45) */
+  autoTuneAmount: number;
+  /** 0 natural, 1 modern, 2 hard tune */
+  autoTuneMode: number;
+  /** -1 = detect from instrumental, 0–11 = C…B */
+  autoTuneKey: number;
+  /** 0 major, 1 minor, 2 chromatic */
+  autoTuneScale: number;
 };
 
 export const DEFAULT_TRACK_FX: TrackFx = {
@@ -190,6 +203,11 @@ export const DEFAULT_TRACK_FX: TrackFx = {
   slapDelay: 0,
   plateReverb: 0,
   phraseCleanup: 0,
+  autoTuneEnabled: 0,
+  autoTuneAmount: 0.45,
+  autoTuneMode: 0,
+  autoTuneKey: -1,
+  autoTuneScale: 1,
 };
 
 /** Rebuild plugin rack chips from non-zero TrackFx values (after reload / presets). */
@@ -1324,6 +1342,10 @@ export function ProducerView({
     automationDocRef.current = automationDoc;
   }, [automationDoc]);
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
+  const [mixerOpen, setMixerOpen] = useState(false);
+  const [masterGainDb, setMasterGainDb] = useState(0);
+  const [mixUndoStack, setMixUndoStack] = useState<Record<string, TrackFx>[]>([]);
+
   const [sessionsOpen, setSessionsOpen] = useState(false);
   /** Mobile header overflow — keeps transport row minimal */
   const [headerMoreOpen, setHeaderMoreOpen] = useState(false);
@@ -1907,7 +1929,73 @@ export function ProducerView({
     }
   }
 
+  function applyMixProposal(proposal: MixProposal) {
+    const snapshot: Record<string, TrackFx> = {};
+    for (const tr of tracks) {
+      snapshot[tr.id] = { ...(fxByIdRef.current[tr.id] || DEFAULT_TRACK_FX) };
+    }
+    setMixUndoStack((s) => [...s.slice(-4), snapshot]);
+    for (const ch of proposal.changes) {
+      const cur = { ...(fxByIdRef.current[ch.trackId] || DEFAULT_TRACK_FX) };
+      const next = { ...cur, ...ch.fx } as TrackFx;
+      next.gainDb = Math.max(-12, Math.min(12, Number(next.gainDb) || 0));
+      next.pan = Math.max(-1, Math.min(1, Number(next.pan) || 0));
+      fxByIdRef.current = { ...fxByIdRef.current, [ch.trackId]: next };
+      setFxById((prev) => ({ ...prev, [ch.trackId]: next }));
+      const graph = fxGraphRef.current.get(ch.trackId);
+      if (graph) {
+        let audible = true;
+        try {
+          const kind = tracks.find((x) => x.id === ch.trackId)?.kind || "vocal";
+          audible = isAudible(ch.trackId, kind);
+        } catch {
+          audible = true;
+        }
+        graph.apply(trackFxToLiveParams(next as unknown as Record<string, number>), audible);
+      }
+      void persistFx(ch.trackId, next);
+    }
+    setEditMsg("AP mix applied — adjust any fader or Undo mix in Mixer.");
+  }
+
+  function undoLastMix() {
+    setMixUndoStack((stack) => {
+      if (!stack.length) return stack;
+      const prev = stack[stack.length - 1];
+      for (const [id, fx] of Object.entries(prev)) {
+        fxByIdRef.current = { ...fxByIdRef.current, [id]: fx };
+        setFxById((p) => ({ ...p, [id]: fx }));
+        const graph = fxGraphRef.current.get(id);
+        if (graph) {
+          let audible = true;
+          try {
+            const kind = tracks.find((x) => x.id === id)?.kind || "vocal";
+            audible = isAudible(id, kind);
+          } catch {
+            audible = true;
+          }
+          graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), audible);
+        }
+        void persistFx(id, fx);
+      }
+      setEditMsg("Previous mix restored.");
+      return stack.slice(0, -1);
+    });
+  }
+
+  function patchAutoTune(
+    trackId: string,
+    patch: { autoTuneEnabled?: number; autoTuneAmount?: number; autoTuneMode?: number }
+  ) {
+    const cur = { ...(fxByIdRef.current[trackId] || DEFAULT_TRACK_FX) };
+    const next = { ...cur, ...patch } as TrackFx;
+    fxByIdRef.current = { ...fxByIdRef.current, [trackId]: next };
+    setFxById((p) => ({ ...p, [trackId]: next }));
+    void persistFx(trackId, next);
+  }
+
   async function persistFx(id: string, fx: TrackFx) {
+
     fxByIdRef.current = { ...fxByIdRef.current, [id]: fx };
     setFxById((prev) => ({ ...prev, [id]: fx }));
     markTrackBusy(id, "Applying effects…");
@@ -6562,6 +6650,33 @@ export function ProducerView({
         {projectId ? (
           <button
             type="button"
+            onClick={() => setMixerOpen(true)}
+            title="Mixer — levels, pan, Mix with AP, Auto-Tune"
+            style={{
+              flexShrink: 0,
+              height: 36,
+              minHeight: 36,
+              maxHeight: 36,
+              padding: isNarrow ? "0 10px" : "0 12px",
+              borderRadius: 999,
+              border: mixerOpen ? `1px solid ${brass}` : `1px solid ${border}`,
+              boxSizing: "border-box",
+              background: mixerOpen ? "rgba(231,169,97,0.15)" : "rgba(255,255,255,0.06)",
+              color: mixerOpen ? brass : text,
+              fontWeight: 700,
+              fontSize: isNarrow ? 11 : 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Mixer
+          </button>
+        ) : null}
+
+        {projectId ? (
+          <button
+            type="button"
             onClick={() => void exportSessionBounce()}
             disabled={exportBusy || produceUi === "producing" || produceUi === "starting"}
             title="Finish and download your mix (timeline, effects, automation). WAV — does not run Produce."
@@ -10300,6 +10415,87 @@ export function ProducerView({
       ) : null}
 
       {/* FX modal — Suno-style plugin sheet */}
+      <ConsoleMixer
+        open={mixerOpen}
+        onClose={() => setMixerOpen(false)}
+        isNarrow={isNarrow}
+        brass={brass}
+        border={border}
+        text={text}
+        mutedText={mutedText}
+        surface={bg}
+        masterGainDb={masterGainDb}
+        onMasterGain={(db) => {
+          const clamped = Math.max(-24, Math.min(6, db));
+          setMasterGainDb(clamped);
+          for (const tr of tracks) {
+            try {
+              const base = fxByIdRef.current[tr.id] || DEFAULT_TRACK_FX;
+              const audible = isAudible(tr.id, tr.kind);
+              const lin =
+                (audible ? Math.pow(10, (Number(base.gainDb) || 0) / 20) : 0) *
+                Math.pow(10, clamped / 20);
+              const graph = fxGraphRef.current.get(tr.id);
+              const now = audioCtxRef.current?.currentTime ?? 0;
+              if (graph) {
+                graph.gain.gain.cancelScheduledValues(now);
+                graph.gain.gain.setTargetAtTime(Math.min(lin, 2.5), now, 0.03);
+              }
+            } catch {
+              /* */
+            }
+          }
+        }}
+        channels={tracks.map((tr): MixerChannel => {
+          const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
+          const modeN = Number(fx.autoTuneMode) || 0;
+          return {
+            id: tr.id,
+            label: String(tr.label || tr.sub || tr.id),
+            kind: tr.kind === "beat" ? "beat" : "vocal",
+            color: tr.color,
+            muted: Boolean(muted[tr.id]),
+            soloed: Boolean(soloIds[tr.id]) || soloId === tr.id,
+            gainDb: Number(fx.gainDb) || 0,
+            pan: Number(fx.pan) || 0,
+            autoTuneEnabled: Number(fx.autoTuneEnabled) > 0,
+            autoTuneAmount: Number(fx.autoTuneAmount) || 0.45,
+            autoTuneMode: modeN >= 2 ? "hard" : modeN === 1 ? "modern" : "natural",
+          };
+        })}
+        onGain={(id, db, commit) => setGain(id, db, Boolean(commit))}
+        onPan={(id, pan, commit) => setPan(id, pan, Boolean(commit))}
+        onMute={(id) => {
+          setMuted((m) => {
+            const next = { ...m, [id]: !m[id] };
+            mutedRef.current = next;
+            queueMicrotask(() => applyGains(undefined, true));
+            return next;
+          });
+        }}
+        onSolo={(id) => {
+          setSoloIds((prev) => {
+            const next = { ...prev };
+            if (next[id]) delete next[id];
+            else next[id] = true;
+            soloIdsRef.current = next;
+            const keys = Object.keys(next).filter((k) => next[k]);
+            soloIdRef.current = keys.length ? keys[0] : null;
+            setSoloId(soloIdRef.current);
+            queueMicrotask(() => applyGains(undefined, true));
+            return next;
+          });
+        }}
+        onOpenFx={(id) => {
+          setMixerOpen(false);
+          setFxOpenId(id);
+        }}
+        onApplyMixProposal={applyMixProposal}
+        onUndoMix={undoLastMix}
+        canUndoMix={mixUndoStack.length > 0}
+        onAutoTuneChange={patchAutoTune}
+      />
+
       {fxOpenId && (
         <div
           role="dialog"

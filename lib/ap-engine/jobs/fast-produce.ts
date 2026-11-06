@@ -85,6 +85,9 @@ export type FastTrackFx = {
   gate?: number;
   noiseReduce?: number;
   phraseCleanup?: number;
+  autoTuneEnabled?: number;
+  autoTuneAmount?: number;
+  autoTuneMode?: number;
   voiceChanger?: number;
   voicePitchSemis?: number;
   voiceCharacter?: number;
@@ -552,18 +555,34 @@ export async function runFastArrangement(opts: {
         role === "outro"
       ) {
         try {
-          const bias =
+          const fxAt = (v as { trackFx?: Record<string, number> }).trackFx || {};
+          const atOn = Number(fxAt.autoTuneEnabled) > 0;
+          const atAmt = Number(fxAt.autoTuneAmount);
+          const atMode = Number(fxAt.autoTuneMode) || 0;
+          let bias =
             role === "lead"
               ? 0.72
               : role === "adlib"
                 ? 0.45
                 : 0.32;
+          if (atOn && Number.isFinite(atAmt) && atAmt > 0) {
+            bias = Math.max(0.05, Math.min(0.95, atAmt));
+          }
+          const forceProfile =
+            atOn && atMode >= 2
+              ? ("tight" as const)
+              : atOn && atMode === 1
+                ? ("polished" as const)
+                : atOn
+                  ? ("natural" as const)
+                  : undefined;
           const polished = polishVocalLayer({
             pcm,
             role,
             genre: opts.genre ?? null,
             correctionStrengthBias: bias,
-            forcePreserveVibrato: true,
+            forcePreserveVibrato: !atOn || atMode < 2,
+            forceProfile,
           });
           if (polished.applied && polished.pcm) {
             pcm.left = polished.pcm.left;

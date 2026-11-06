@@ -98,6 +98,9 @@ export type TrackFxInput = {
   doubler?: number;
   slapDelay?: number;
   plateReverb?: number;
+  autoTuneEnabled?: number;
+  autoTuneAmount?: number;
+  autoTuneMode?: number;
 };
 
 export type ApVocalLayerInput = {
