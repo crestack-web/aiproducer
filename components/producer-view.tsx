@@ -2778,8 +2778,9 @@ export function ProducerView({
     const wallClockMs = Math.max(500, Date.now() - rec.startedAt);
     const taskId = rec.taskId;
     // Transport-relative start; subtract capture pipeline latency so takes sit on the groove
-    const rawStart = Math.max(0, Math.round(rec.recordStartMs ?? playheadMs));
-    const placementStartMs = Math.max(0, rawStart - getCaptureLatencyCompMs());
+    // Clip starts at the intended musical position (arrangement start).
+    // Capture begins after playback is running, so no second latency guess.
+    const placementStartMs = Math.max(0, Math.round(rec.recordStartMs ?? playheadMs));
     consoleRecRef.current = null;
     setIsConsoleRecording(false);
     setRecordSeconds(0);
@@ -3103,8 +3104,22 @@ export function ProducerView({
       recorder.ondataavailable = (ev) => {
         if (ev.data && ev.data.size > 0) chunks.push(ev.data);
       };
-      // DAW-style: record from the current playhead, not forced to section/clip start
-      const fromMs = Math.max(0, Math.round(playheadMs));
+      // Intended musical position — captured after mic is ready, before playback starts
+      const intendedMs = Math.max(0, Math.round(playheadMs));
+      setPlayheadMs(intendedMs);
+      setArmedTrackId(taskId);
+      setSelectedTrackId(taskId);
+      setEditMsg("Preparing recording…");
+
+      // Start arrangement first so the artist hears the beat at the intended position
+      try {
+        await startPlayback(intendedMs);
+      } catch {
+        /* playback monitor best-effort */
+      }
+
+      // Capture begins only after the arrangement clock is running.
+      // Clip start = intended position. No second latency guess.
       consoleRecRef.current = {
         recorder,
         chunks,
@@ -3112,29 +3127,15 @@ export function ProducerView({
         dispose: opened.dispose,
         taskId,
         startedAt: Date.now(),
-        recordStartMs: fromMs,
+        recordStartMs: intendedMs,
       };
       recorder.start(250);
       setIsConsoleRecording(true);
       setRecordSeconds(0);
-      // Passive level meter on cloned mic tracks (not in capture or monitor path)
       startLiveMeter(opened.stream);
       recordTickRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
       }, 1000);
-
-      // Multitrack overdub monitor: play ALL tracks from playhead (Web Audio).
-      // Mic capture stays on a separate MediaStream — never fed from the master mix.
-      setPlayheadMs(fromMs);
-      setArmedTrackId(taskId);
-      setSelectedTrackId(taskId);
-      try {
-        // Mute the track being recorded so the artist hears others, not prior takes on same lane
-        // (optional soft-mute only if they already have audio — keep unmuted if empty lane)
-        void startPlayback(fromMs);
-      } catch {
-        /* playback monitor best-effort */
-      }
       const micNote = opened.info?.inputLabel || micSummaryLabel(selectedMicId);
       const routeWarn =
         opened.fellBack || opened.info?.routingStatus === "FALLBACK"
