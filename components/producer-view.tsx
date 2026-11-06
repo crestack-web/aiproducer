@@ -6317,7 +6317,20 @@ export function ProducerView({
 
       if (key === " " || key === "Spacebar") {
         e.preventDefault();
+        if (isConsoleRecording) {
+          void stopConsoleRecord();
+          return;
+        }
         togglePlay();
+        return;
+      }
+      // R = arm/record on selected vocal track
+      if ((key === "r" || key === "R") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        if (selectedTrackId && selectedTrackId !== "beat") {
+          setArmedTrackId(selectedTrackId);
+          void toggleConsoleRecord();
+        }
         return;
       }
       if (key === "ArrowLeft") {
@@ -9249,9 +9262,9 @@ export function ProducerView({
             pointerEvents: "none",
           }}
         >
-          <strong style={{ color: text }}>No vocal layers yet</strong>
+          <strong style={{ color: text }}>Empty timeline</strong>
           <p style={{ margin: "8px 0 0" }}>
-            Upload a beat to generate a plan, then Record Vocal here — same capture path as Booth. Or open Booth for guided flow.
+            Add a track, then press R or Record to capture. You control the session — no plan required.
           </p>
         </div>
       )}
@@ -10327,8 +10340,30 @@ placeholder="Ask AP anything…"
               )}
               <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "14px 0" }} />
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", opacity: 0.55, marginBottom: 8 }}>
-                MANUAL
+                TRACKS
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  setShowAddTrack(true);
+                }}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "14px 12px",
+                  borderRadius: 12,
+                  border: `1px solid ${brass}`,
+                  background: "rgba(231,169,97,0.12)",
+                  color: text,
+                  marginBottom: 8,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 700,
+                }}
+              >
+                Add empty track
+              </button>
             </div>
             {!beatUrl ? (
               <button
@@ -10352,7 +10387,7 @@ placeholder="Ask AP anything…"
                   fontWeight: 600,
                 }}
               >
-                Upload beat — runs AI plan (same as Booth)
+                Upload beat or instrumental
               </button>
             ) : (
               <button
@@ -10502,15 +10537,24 @@ placeholder="Ask AP anything…"
                 fontSize: 13,
               }}
             >
-              <option value="custom">Custom</option>
-              <option value="lead">Lead</option>
-              <option value="double">Double</option>
-              <option value="harmony">Harmony</option>
-              <option value="harmony_high">Harmony high</option>
-              <option value="harmony_low">Harmony low</option>
-              <option value="adlib">Ad-lib</option>
-              <option value="background">Background</option>
+              <optgroup label="Vocal">
+                <option value="lead">Lead vocal</option>
+                <option value="double">Vocal double</option>
+                <option value="harmony">Harmony</option>
+                <option value="adlib">Ad-lib</option>
+                <option value="background">Background vocal</option>
+              </optgroup>
+              <optgroup label="Audio">
+                <option value="audio">Audio track</option>
+                <option value="instrumental">Instrumental / beat</option>
+              </optgroup>
+              <optgroup label="Other">
+                <option value="custom">Custom</option>
+              </optgroup>
             </select>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
+              Creates an empty track. Press R or Record when you are ready.
+            </div>
             <input
               ref={addFileRef}
               type="file"
