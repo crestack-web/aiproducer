@@ -6652,25 +6652,38 @@ export function ProducerView({
             type="button"
             onClick={() => setMixerOpen(true)}
             title="Mixer — levels, pan, Mix with AP, Auto-Tune"
+            aria-label="Mixer"
             style={{
+              ...iconBtn(border, surface, text),
+              width: isNarrow ? 34 : 36,
+              height: isNarrow ? 34 : 36,
+              minWidth: isNarrow ? 34 : 36,
+              minHeight: isNarrow ? 34 : 36,
               flexShrink: 0,
-              height: 36,
-              minHeight: 36,
-              maxHeight: 36,
-              padding: isNarrow ? "0 10px" : "0 12px",
               borderRadius: 999,
               border: mixerOpen ? `1px solid ${brass}` : `1px solid ${border}`,
-              boxSizing: "border-box",
               background: mixerOpen ? "rgba(231,169,97,0.15)" : "rgba(255,255,255,0.06)",
               color: mixerOpen ? brass : text,
-              fontWeight: 700,
-              fontSize: isNarrow ? 11 : 12,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              whiteSpace: "nowrap",
             }}
           >
-            Mixer
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6 4v16" />
+              <path d="M12 8v12" />
+              <path d="M18 4v16" />
+              <circle cx="6" cy="10" r="2" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="14" r="2" fill="currentColor" stroke="none" />
+              <circle cx="18" cy="8" r="2" fill="currentColor" stroke="none" />
+            </svg>
           </button>
         ) : null}
 
