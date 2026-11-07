@@ -6,15 +6,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Restore producer-view from last good commit and apply add-track patch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch --all --tags
@@ -22,10 +19,6 @@ jobs:
           patch -p1 < .github/patches/add-track-console.patch
           git config user.name "AP restore"
           git config user.email "crestack@gmail.com"
-          BRANCH="restore-console-$(date +%s)"
-          git checkout -b "$BRANCH"
           git add components/producer-view.tsx
-          git commit -m "ui(console): restore producer-view + Add track on track panel"
-          git push -u origin "$BRANCH"
-          gh pr create --title "Restore Console producer-view + Add track button" --body "Restores full Console UI from 5547f53 and adds Add track on the track panel." --base main --head "$BRANCH" || true
-          gh pr merge --admin --merge || gh pr merge --merge || true
+          git commit -m "ui(console): restore producer-view + Add track on track panel" || echo "No changes"
+          git push origin HEAD:main
