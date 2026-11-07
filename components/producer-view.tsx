@@ -1,1 +1,1 @@
-PLACEHOLDER
+@/tmp/producer-view.tsx
