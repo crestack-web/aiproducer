@@ -5088,14 +5088,10 @@ export function ProducerView({
     }
     if (gen !== playbackGenRef.current) return;
 
-    // Authoritative clock starts only after essential prepare
-    playingRef.current = true;
-    setPlaying(true);
-    setTransportPhase("playing");
+    // Hold the playhead until the beat is actually ready to sound.
+    // Clock starts only after HTMLAudio can play (or immediately if no beat).
     const t0 = ctx.currentTime;
     startedAtRef.current = t0;
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tickPlayhead);
 
     const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
     // Rehydrate from existing live graphs (pause/resume)
@@ -5241,18 +5237,31 @@ export function ProducerView({
           });
         };
         monitorAudioRef.current = a;
-        if (a.readyState >= 1) startBeat();
-        else {
-          a.addEventListener("loadedmetadata", startBeat, { once: true });
-          a.addEventListener("error", () => {
-            setEditMsg("Beat audio failed to load");
-          }, { once: true });
+        // Wait until the element can actually play before moving the playhead
+        await new Promise<void>((resolve) => {
+          if (a.readyState >= 3) { resolve(); return; }
+          const done = () => { a.removeEventListener("canplay", done); a.removeEventListener("error", done); resolve(); };
+          a.addEventListener("canplay", done, { once: true });
+          a.addEventListener("error", done, { once: true });
           a.load();
-        }
+          // Safety: don't hang forever
+          setTimeout(done, 2500);
+        });
+        if (gen !== playbackGenRef.current) return;
+        startBeat();
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio", e);
       }
     }
+
+    // Now the beat is ready (or there is none) — start the clock and vocals together
+    if (gen !== playbackGenRef.current) return;
+    playingRef.current = true;
+    setPlaying(true);
+    setTransportPhase("playing");
+    startedAtRef.current = ctx.currentTime;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(tickPlayhead);
 
     // Vocal clips via HTMLAudio — reliable on mobile where Web Audio graph is silent
     for (const spec of vocalSpecs) {
@@ -10766,16 +10775,28 @@ placeholder="Ask AP anything…"
               </div>
               <button
                 type="button"
-                onClick={() => setFxOpenId(null)}
+                aria-label="Close effects"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFxOpenId(null);
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFxOpenId(null);
+                }}
                 style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 10,
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
                   border: `1px solid ${border}`,
                   background: bg,
                   color: text,
                   cursor: "pointer",
-                  fontSize: 16,
+                  fontSize: 22,
+                  touchAction: "manipulation",
+                  flexShrink: 0,
                 }}
               >
                 ×
