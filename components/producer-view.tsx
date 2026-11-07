@@ -5247,7 +5247,10 @@ export function ProducerView({
           // Safety: don't hang forever
           setTimeout(done, 2500);
         });
-        if (gen !== playbackGenRef.current) return;
+        if (gen !== playbackGenRef.current) {
+          setTransportPhase("paused");
+          return;
+        }
         startBeat();
       } catch (e) {
         console.warn("[producer-view] beat HTMLAudio", e);
@@ -5255,7 +5258,10 @@ export function ProducerView({
     }
 
     // Now the beat is ready (or there is none) — start the clock and vocals together
-    if (gen !== playbackGenRef.current) return;
+    if (gen !== playbackGenRef.current) {
+      setTransportPhase("paused");
+      return;
+    }
     playingRef.current = true;
     setPlaying(true);
     setTransportPhase("playing");
