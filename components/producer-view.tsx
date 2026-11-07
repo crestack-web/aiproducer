@@ -1386,6 +1386,8 @@ export function ProducerView({
   const [fxOpenId, setFxOpenId] = useState<string | null>(null);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [masterGainDb, setMasterGainDb] = useState(0);
+  const masterGainDbRef = useRef(0);
+  masterGainDbRef.current = masterGainDb;
   const [mixUndoStack, setMixUndoStack] = useState<Record<string, TrackFx>[]>([]);
 
   const [sessionsOpen, setSessionsOpen] = useState(false);
@@ -4736,19 +4738,8 @@ export function ProducerView({
         panNode.pan.setTargetAtTime(p, audioCtxRef.current?.currentTime || 0, 0.02);
       }
     }
-    // HTMLAudio beat fallback (CORS) — not on the WebAudio gain graph
-    try {
-      const htmlBeat = monitorAudioRef.current;
-      if (htmlBeat) {
-        const beatOn = isAudible("beat", "beat");
-        const bfx = fxByIdRef.current["beat"] || DEFAULT_TRACK_FX;
-        const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
-        htmlBeat.volume = beatOn ? Math.max(0, Math.min(1, lin)) : 0;
-        htmlBeat.muted = !beatOn;
-      }
-    } catch {
-      /* */
-    }
+    // HTMLAudio + graphs share one level path (mixer fader = track gainDb)
+    syncMonitorLevels();
   }
 
   useEffect(() => {
@@ -5231,7 +5222,9 @@ export function ProducerView({
           }
           const bfx =
             fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
-          const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
+          const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
+          const lin =
+            Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin;
           a.volume = Math.max(0, Math.min(1, lin));
           void a.play().catch((e) => {
             console.warn("[producer-view] beat HTMLAudio play", e);
@@ -5285,7 +5278,9 @@ export function ProducerView({
         const a = new Audio(spec.loadUrl);
         a.preload = "auto";
         const bfx = spec.fx;
-        const lin = Math.pow(10, (Number(bfx.gainDb) || 0) / 20);
+        const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
+        const lin =
+          Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin;
         a.volume = Math.max(0, Math.min(1, lin));
         const startVocal = () => {
           try {
@@ -6245,39 +6240,111 @@ export function ProducerView({
     });
   }
 
-  /** Push gain into live Web Audio / HTMLAudio immediately (works mid-playback). */
-  function applyGainNow(trackId: string, gainDb: number, audible: boolean) {
-    const lin = Math.pow(10, gainDb / 20);
+  /**
+   * Console play uses HTMLAudio for beat + vocals (mobile-reliable).
+   * Mixer faders and Track FX Gain both write the same trackFx.gainDb.
+   * This pushes that value (× master) into every live monitor path.
+   */
+  function syncMonitorLevels(opts?: { trackId?: string }) {
+    const masterLin = Math.pow(
+      10,
+      Math.max(-24, Math.min(6, masterGainDbRef?.current ?? masterGainDb)) / 20
+    );
+    const only = opts?.trackId;
+
+    const levelFor = (trackId: string, kind: "beat" | "vocal") => {
+      const fx = fxByIdRef.current[trackId] || DEFAULT_TRACK_FX;
+      const audible = isAudible(trackId, kind);
+      const gainDb = Math.max(-24, Math.min(12, Number(fx.gainDb) || 0));
+      const lin = audible ? Math.pow(10, gainDb / 20) * masterLin : 0;
+      return { audible, gainDb, lin: Math.max(0, Math.min(1, lin)), linRaw: lin };
+    };
+
+    // Beat HTMLAudio
+    if ((!only || only === "beat") && monitorAudioRef.current) {
+      try {
+        const { audible, lin } = levelFor("beat", "beat");
+        monitorAudioRef.current.volume = lin;
+        monitorAudioRef.current.muted = !audible || lin <= 0.0001;
+      } catch {
+        /* */
+      }
+    }
+
+    // Vocal HTMLAudio elements (tagged with data-track-id)
+    for (const a of vocalAudioRefs.current) {
+      if (!a) continue;
+      const tid = a.dataset.trackId || only || "";
+      if (only && tid && tid !== only) continue;
+      if (!tid) continue;
+      try {
+        const { audible, lin } = levelFor(tid, "vocal");
+        a.volume = lin;
+        a.muted = !audible || lin <= 0.0001;
+      } catch {
+        /* */
+      }
+    }
+
+    // Live Web Audio graphs (when present)
     const ctx = audioCtxRef.current;
-    const t0 = ctx?.currentTime ?? 0;
-    const graph = fxGraphRef.current.get(trackId);
-    if (graph) {
-      try {
-        const fx = {
-          ...(fxByIdRef.current[trackId] || DEFAULT_TRACK_FX),
-          gainDb,
-        };
-        graph.apply(trackFxToLiveParams(fx as unknown as Record<string, number>), audible);
-      } catch {
-        /* */
+    const now = ctx?.currentTime ?? 0;
+    const ids =
+      only != null
+        ? [only]
+        : Array.from(
+            new Set([
+              ...Array.from(fxGraphRef.current.keys()),
+              ...Array.from(gainsRef.current.keys()),
+              "beat",
+              ...tracks.map((tr) => tr.id),
+            ])
+          );
+    for (const trackId of ids) {
+      const kind =
+        tracks.find((x) => x.id === trackId)?.kind ||
+        (trackId === "beat" ? "beat" : "vocal");
+      const { audible, gainDb, linRaw } = levelFor(trackId, kind as "beat" | "vocal");
+      const graph = fxGraphRef.current.get(trackId);
+      if (graph) {
+        try {
+          const fx = {
+            ...(fxByIdRef.current[trackId] || DEFAULT_TRACK_FX),
+            gainDb,
+          };
+          graph.apply(
+            trackFxToLiveParams(fx as unknown as Record<string, number>),
+            audible
+          );
+          // Apply master as extra gain on graph output when possible
+          if (graph.gain) {
+            graph.gain.gain.cancelScheduledValues(now);
+            graph.gain.gain.setTargetAtTime(
+              audible ? Math.min(linRaw, 2.5) : 0,
+              now,
+              0.02
+            );
+          }
+        } catch {
+          /* */
+        }
+        continue;
       }
-      return;
-    }
-    const g = gainsRef.current.get(trackId);
-    if (g && ctx) {
-      try {
-        g.gain.setTargetAtTime(audible ? lin : 0, t0, 0.02);
-      } catch {
-        /* */
+      const g = gainsRef.current.get(trackId);
+      if (g && ctx) {
+        try {
+          g.gain.setTargetAtTime(audible ? Math.min(linRaw, 2.5) : 0, now, 0.02);
+        } catch {
+          /* */
+        }
       }
     }
-    if (trackId === "beat" && monitorAudioRef.current) {
-      try {
-        monitorAudioRef.current.volume = audible ? Math.max(0, Math.min(1, lin)) : 0;
-      } catch {
-        /* */
-      }
-    }
+  }
+
+  function applyGainNow(trackId: string, gainDb: number, audible: boolean) {
+    void gainDb;
+    void audible;
+    syncMonitorLevels({ trackId });
   }
 
   function setGain(trackId: string, value: number, commit = false) {
@@ -10674,24 +10741,9 @@ placeholder="Ask AP anything…"
         masterGainDb={masterGainDb}
         onMasterGain={(db) => {
           const clamped = Math.max(-24, Math.min(6, db));
+          masterGainDbRef.current = clamped;
           setMasterGainDb(clamped);
-          for (const tr of tracks) {
-            try {
-              const base = fxByIdRef.current[tr.id] || DEFAULT_TRACK_FX;
-              const audible = isAudible(tr.id, tr.kind);
-              const lin =
-                (audible ? Math.pow(10, (Number(base.gainDb) || 0) / 20) : 0) *
-                Math.pow(10, clamped / 20);
-              const graph = fxGraphRef.current.get(tr.id);
-              const now = audioCtxRef.current?.currentTime ?? 0;
-              if (graph) {
-                graph.gain.gain.cancelScheduledValues(now);
-                graph.gain.gain.setTargetAtTime(Math.min(lin, 2.5), now, 0.03);
-              }
-            } catch {
-              /* */
-            }
-          }
+          syncMonitorLevels();
         }}
         channels={tracks.map((tr): MixerChannel => {
           const fx = fxById[tr.id] || DEFAULT_TRACK_FX;
