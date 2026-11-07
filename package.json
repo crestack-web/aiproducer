@@ -21,16 +21,17 @@
     "test:beat-studio": "node scripts/test-beat-studio.mjs && node scripts/test-beat-studio-arrangement.mjs && node scripts/test-beat-studio-v2-integration.mjs && node scripts/test-beat-studio-arrangement-ops.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.787.0",
+    "@aws-sdk/s3-request-presigner": "^3.787.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.47.10",
+    "@vercel/analytics": "^2.0.1",
+    "ffmpeg-static": "^5.2.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zod": "^3.24.1",
-    "ffmpeg-static": "^5.2.0",
     "tsx": "^4.19.2",
-    "@aws-sdk/client-s3": "^3.787.0",
-    "@aws-sdk/s3-request-presigner": "^3.787.0"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
