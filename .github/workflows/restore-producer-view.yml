@@ -7,18 +7,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Debug
+        run: echo "starting restore" && date
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Restore producer-view from last good commit and apply add-track patch
         run: |
-          set -euo pipefail
+          set -euxo pipefail
+          echo "fetching"
           git fetch --all --tags
+          echo "checking out good version"
           git checkout 5547f5350593ef93017265723d63fd481c31c481 -- components/producer-view.tsx
+          wc -l components/producer-view.tsx
+          echo "applying patch"
           patch -p1 < .github/patches/add-track-console.patch
           git config user.name "AP restore"
           git config user.email "crestack@gmail.com"
           git add components/producer-view.tsx
+          git status
           git commit -m "ui(console): restore producer-view + Add track on track panel" || echo "No changes"
-          git push origin HEAD:main
+          git log -1 --oneline
+          echo "pushing to restore-console-live branch"
+          git push origin HEAD:restore-console-live --force
+          echo "done"
