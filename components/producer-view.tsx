@@ -5086,7 +5086,10 @@ export function ProducerView({
         }
       }
     }
-    if (gen !== playbackGenRef.current) return;
+    if (gen !== playbackGenRef.current) {
+      setTransportPhase("paused");
+      return;
+    }
 
     // Hold the playhead until the beat is actually ready to sound.
     // Clock starts only after HTMLAudio can play (or immediately if no beat).
@@ -5105,7 +5108,8 @@ export function ProducerView({
       buf: AudioBuffer,
       graph: ReturnType<typeof createLiveTrackFxGraph>
     ) => {
-      if (gen !== playbackGenRef.current || !playingRef.current) return;
+      // Generation cancel only — playingRef is armed after prepare completes
+      if (gen !== playbackGenRef.current) return;
       const src = ctx.createBufferSource();
       let playBuf = buf;
       try {
@@ -5160,47 +5164,23 @@ export function ProducerView({
       sourcesRef.current.push(src);
     };
 
-    // Progressive: each buffer starts the moment it is ready (beat prioritized)
-    await Promise.all(
+    // Warm-decode vocal buffers in the background only — do NOT schedule Web Audio
+    // sources here. Clock + audible playback use HTMLAudio (mobile-reliable). Scheduling
+    // before playingRef is armed used to abort play entirely (stuck on Preparing…).
+    void Promise.all(
       specs.map(async (spec) => {
-        let buf =
-          bufferCache.get(spec.loadUrl) ||
-          (spec.fallback ? bufferCache.get(spec.fallback) : null) ||
-          null;
-        if (!buf) {
-          buf = await fetchDecode(ctx, spec.loadUrl, spec.fallback);
+        if (gen !== playbackGenRef.current) return;
+        if (bufferCache.has(spec.loadUrl)) return;
+        if (spec.fallback && bufferCache.has(spec.fallback)) return;
+        try {
+          await fetchDecode(ctx, spec.loadUrl, spec.fallback);
+        } catch {
+          /* non-fatal warm */
         }
-        if (!buf || gen !== playbackGenRef.current || !playingRef.current) return;
-
-        let graph = graphs.get(spec.trackId) || fxGraphRef.current.get(spec.trackId);
-        if (!graph) {
-          graph = createLiveTrackFxGraph(ctx);
-          graph.apply(
-            trackFxToLiveParams(spec.fx as unknown as Record<string, number>),
-            spec.on
-          );
-          graphs.set(spec.trackId, graph);
-          fxGraphRef.current.set(spec.trackId, graph);
-          gainsRef.current.set(spec.trackId, graph.gain);
-          panNodesRef.current.set(spec.trackId, graph.pan);
-          try {
-            graph.output.connect(ctx.destination);
-          } catch {
-            /* already connected */
-          }
-        } else {
-          graph.apply(
-            trackFxToLiveParams(spec.fx as unknown as Record<string, number>),
-            spec.on
-          );
-          gainsRef.current.set(spec.trackId, graph.gain);
-          panNodesRef.current.set(spec.trackId, graph.pan);
-        }
-        scheduleBuf(spec, buf, graph);
       })
     );
 
-    if (gen !== playbackGenRef.current || !playingRef.current) {
+    if (gen !== playbackGenRef.current) {
       stopSources();
       setPlaying(false);
       setTransportPhase("paused");
