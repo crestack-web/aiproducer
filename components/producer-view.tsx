@@ -4415,7 +4415,8 @@ export function ProducerView({
     // Re-merge when parent soft-reloads tasks (layersProp loses audioUrl until preview attaches)
   }, [projectId, layersProp]);
 
-  const totalMs = useMemo(() => {
+  /** Farthest real content on the arrangement (beat, clips, sections) — no artificial 60s floor */
+  const contentMs = useMemo(() => {
     let max = durationMs || 0;
     for (const s of sections) {
       max = Math.max(max, Number(s.endMs) || 0, (Number(s.startMs) || 0) + 1000);
@@ -4428,13 +4429,34 @@ export function ProducerView({
           ? start + decoded
           : Number(l.endMs) || 0;
       max = Math.max(max, end, start + 500);
+      if (l.clips) {
+        for (const c of l.clips) {
+          max = Math.max(max, Number(c.endMs) || 0);
+        }
+      }
     }
-    // Prefer real beat length when known; never cap the scroll region to the first section only
-    return Math.max(max, 60_000);
+    // Beat lane decoded length if known
+    const beatDecoded = durationById["beat"];
+    if (typeof beatDecoded === "number" && beatDecoded > 0) {
+      max = Math.max(max, beatDecoded);
+    }
+    return Math.max(0, max);
   }, [durationMs, sections, layers, durationById]);
 
-  // Explicit pixel width so iOS doesn't collapse absolute-positioned clip rows to viewport-only scroll
-  const timelineW = Math.max(480, Math.ceil((totalMs / 1000) * pxPerSec) + 80);
+  /**
+   * Scrollable song length: content + short tail padding only.
+   * Suno-style — not an infinite empty timeline (old floor was 60s always).
+   */
+  const totalMs = useMemo(() => {
+    const PAD_MS = 3_000;
+    const EMPTY_MS = 12_000;
+    if (contentMs <= 0) return EMPTY_MS;
+    return contentMs + PAD_MS;
+  }, [contentMs]);
+
+  // Explicit pixel width so iOS doesn't collapse absolute-positioned clip rows
+  // +48px end gutter; no multi-minute dead zone beyond content
+  const timelineW = Math.max(320, Math.ceil((totalMs / 1000) * pxPerSec) + 48);
   const peakBuckets = Math.min(2048, Math.max(64, Math.floor(timelineW)));
 
   const tracks = useMemo(() => {
@@ -6132,7 +6154,7 @@ export function ProducerView({
 
   /** Max seekable time — prefer real content length, never a short sticky default. */
   function seekCeilingMs(): number {
-    return Math.max(totalMs || 0, durationMs || 0, 3 * 60_000);
+    return Math.max(totalMs || 0, durationMs || 0, contentMs || 0, 8_000);
   }
 
   /**
@@ -8391,15 +8413,25 @@ export function ProducerView({
               minWidth: timelineW,
               position: "relative",
               boxSizing: "border-box",
-              // Adaptive grid — density follows zoom so it never looks sparse or noisy
-              backgroundImage: `repeating-linear-gradient(
-                90deg,
-                transparent,
-                transparent calc(${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
-                rgba(255,255,255,0.04) calc(${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
-                rgba(255,255,255,0.04) ${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px
-              )`,
-              backgroundSize: `${Math.max(24, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px 100%`,
+              // Vertical time grid + horizontal lane feel (bounded to content width)
+              backgroundImage: `
+                repeating-linear-gradient(
+                  90deg,
+                  transparent,
+                  transparent calc(${Math.max(20, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
+                  rgba(255,255,255,0.055) calc(${Math.max(20, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px - 1px),
+                  rgba(255,255,255,0.055) ${Math.max(20, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px
+                ),
+                repeating-linear-gradient(
+                  180deg,
+                  transparent,
+                  transparent calc(${TRACK_ROW_H}px - 1px),
+                  rgba(255,255,255,0.04) calc(${TRACK_ROW_H}px - 1px),
+                  rgba(255,255,255,0.04) ${TRACK_ROW_H}px
+                )
+              `,
+              backgroundSize: `${Math.max(20, pxPerSec * (pxPerSec < 24 ? 5 : pxPerSec < 48 ? 2 : 1))}px 100%, 100% ${TRACK_ROW_H}px`,
+              backgroundPosition: `0 ${TRACK_RULER_H}px, 0 ${TRACK_RULER_H}px`,
             }}
           >
             <div
