@@ -1,0 +1,120 @@
+From 7e60c182c3eb2401900e30dbee00ad33df3a0397 Mon Sep 17 00:00:00 2001
+From: AP <crestack@gmail.com>
+Date: Sat, 7 Nov 2026 10:32:32 +0000
+Subject: [PATCH] ui(console): Add track button on track panel
+
+---
+ components/producer-view.tsx | 84 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/components/producer-view.tsx b/components/producer-view.tsx
+index 8a6ac5e..9c995c2 100644
+--- a/components/producer-view.tsx
++++ b/components/producer-view.tsx
+@@ -7947,6 +7947,43 @@ export function ProducerView({
+               </div>
+             )}
+           </div>
++          {tracks.length === 0 && !sidebarCollapsed && (
++            <div
++              style={{
++                padding: isNarrow ? "10px 8px" : "12px 10px",
++                borderBottom: `1px solid rgba(255,255,255,0.06)`,
++                boxSizing: "border-box",
++              }}
++            >
++              <button
++                type="button"
++                onClick={() => setShowAddTrack(true)}
++                style={{
++                  width: "100%",
++                  display: "flex",
++                  alignItems: "center",
++                  justifyContent: "center",
++                  gap: 8,
++                  padding: isNarrow ? "10px 12px" : "12px 14px",
++                  borderRadius: 10,
++                  border: `1px dashed ${brass}99`,
++                  background: "rgba(231,169,97,0.08)",
++                  color: brass,
++                  fontWeight: 700,
++                  fontSize: isNarrow ? 12 : 13,
++                  cursor: "pointer",
++                  fontFamily: "inherit",
++                }}
++                title="Add MIDI or vocal track"
++              >
++                <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
++                Add track
++              </button>
++              <div style={{ marginTop: 6, fontSize: 10.5, color: faint, lineHeight: 1.35, textAlign: "center" }}>
++                Empty session — add a vocal or audio track to start
++              </div>
++            </div>
++          )}
+           {tracks.map((tr, trackIdx) => {
+             const isMuted = muted[tr.id];
+             const isSolo = Boolean(soloIds[tr.id]) || soloId === tr.id;
+@@ -8445,6 +8482,52 @@ export function ProducerView({
+               </div>
+             );
+           })}
++          {tracks.length > 0 && (
++            <div
++              style={{
++                padding: sidebarCollapsed ? "8px 4px" : isNarrow ? "8px 8px" : "10px 10px",
++                borderBottom: `1px solid rgba(255,255,255,0.06)`,
++                boxSizing: "border-box",
++                flexShrink: 0,
++              }}
++            >
++              <button
++                type="button"
++                onClick={() => {
++                  if (sidebarCollapsed) setSidebarCollapsed(false);
++                  setShowAddTrack(true);
++                }}
++                style={{
++                  width: "100%",
++                  display: "flex",
++                  alignItems: "center",
++                  justifyContent: "center",
++                  gap: sidebarCollapsed ? 0 : 8,
++                  padding: sidebarCollapsed ? "8px 0" : isNarrow ? "8px 10px" : "9px 12px",
++                  borderRadius: 10,
++                  border: `1px dashed ${brass}88`,
++                  background: "rgba(231,169,97,0.07)",
++                  color: brass,
++                  fontWeight: 700,
++                  fontSize: sidebarCollapsed ? 16 : isNarrow ? 12 : 12.5,
++                  cursor: "pointer",
++                  fontFamily: "inherit",
++                  lineHeight: 1.2,
++                }}
++                title="Add track"
++                aria-label="Add track"
++              >
++                {sidebarCollapsed ? (
++                  "+"
++                ) : (
++                  <>
++                    <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
++                    Add track
++                  </>
++                )}
++              </button>
++            </div>
++          )}
+         </div>
+
+         {/* RIGHT: timeline — horizontal + vertical scroll (vertical synced with headers) */}
+@@ -10649,6 +10732,7 @@ placeholder="Ask AP anything…"
+                 <option value="instrumental">Instrumental / beat</option>
+               </optgroup>
+               <optgroup label="Other">
++                <option value="midi">MIDI / instrument</option>
+                 <option value="custom">Custom</option>
+               </optgroup>
+             </select>
+-- 
+2.43.0
