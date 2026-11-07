@@ -5273,6 +5273,11 @@ export function ProducerView({
           }
           void a.play().catch((e) => console.warn("[producer-view] vocal HTMLAudio", e));
         };
+        try {
+          a.dataset.trackId = spec.trackId;
+        } catch {
+          /* */
+        }
         vocalAudioRefs.current.push(a);
         if (delayMs > 40) {
           window.setTimeout(() => {
@@ -10803,10 +10808,10 @@ placeholder="Ask AP anything…"
               onChange={(fx) => {
                 fxByIdRef.current = { ...fxByIdRef.current, [fxOpenId]: fx };
                 setFxById((prev) => ({ ...prev, [fxOpenId]: fx }));
+                const kind = tracks.find((x) => x.id === fxOpenId)?.kind || "vocal";
+                const on = isAudible(fxOpenId, kind);
                 const graph = fxGraphRef.current.get(fxOpenId);
                 if (graph) {
-                  const kind = tracks.find((x) => x.id === fxOpenId)?.kind || "vocal";
-                  const on = isAudible(fxOpenId, kind);
                   try {
                     graph.apply(
                       trackFxToLiveParams(fx as unknown as Record<string, number>),
@@ -10815,6 +10820,22 @@ placeholder="Ask AP anything…"
                   } catch {
                     /* */
                   }
+                }
+                // HTMLAudio monitor path (beat + mobile vocals) — apply gain immediately
+                try {
+                  const lin = on
+                    ? Math.pow(10, Math.max(-24, Math.min(12, Number(fx.gainDb) || 0)) / 20)
+                    : 0;
+                  if (fxOpenId === "beat" && monitorAudioRef.current) {
+                    monitorAudioRef.current.volume = Math.max(0, Math.min(1, lin));
+                  }
+                  for (const a of vocalAudioRefs.current) {
+                    if (!a || a.paused) continue;
+                    if (a.dataset.trackId && a.dataset.trackId !== fxOpenId) continue;
+                    a.volume = Math.max(0, Math.min(1, lin));
+                  }
+                } catch {
+                  /* */
                 }
               }}
               onCommit={(fx) => {
@@ -11501,37 +11522,115 @@ function TrackFxPanel({
   }) {
     const pct = max === min ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min)));
     const deg = -135 + pct * 270;
+    const snap = (n: number) => {
+      const s = step > 0 ? step : 0.01;
+      const rounded = Math.round(n / s) * s;
+      return Math.max(min, Math.min(max, rounded));
+    };
+    const dragRef = React.useRef<{
+      startY: number;
+      startX: number;
+      startVal: number;
+      pointerId: number;
+    } | null>(null);
+    const valueRef = React.useRef(value);
+    valueRef.current = value;
+
+    const onPointerDown = (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      dragRef.current = {
+        startY: e.clientY,
+        startX: e.clientX,
+        startVal: valueRef.current,
+        pointerId: e.pointerId,
+      };
+    };
+    const onPointerMove = (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      // Vertical drag is primary (up = increase). Horizontal also works.
+      const dy = d.startY - e.clientY;
+      const dx = e.clientX - d.startX;
+      const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
+      // ~110px full sweep — responsive on phone thumbs
+      const range = max - min;
+      const next = snap(d.startVal + (delta / 110) * range);
+      onVal(next, false);
+    };
+    const endDrag = (e: React.PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      dragRef.current = null;
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+      } catch {
+        /* */
+      }
+      onVal(valueRef.current, true);
+    };
+    const nudge = (dir: 1 | -1) => {
+      const next = snap(valueRef.current + dir * (step || 0.05));
+      onVal(next, true);
+    };
+
     return (
-      <label
+      <div
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           gap: 6,
-          minWidth: 64,
-          flex: "1 1 64px",
+          minWidth: 72,
+          flex: "1 1 72px",
+          userSelect: "none",
+          touchAction: "none",
         }}
       >
         <div
+          role="slider"
+          aria-label={label}
+          aria-valuemin={min}
+          aria-valuemax={max}
+          aria-valuenow={value}
+          tabIndex={0}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onDoubleClick={() => onVal(snap(min + (max - min) * 0.5), true)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+              e.preventDefault();
+              nudge(1);
+            } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+              e.preventDefault();
+              nudge(-1);
+            }
+          }}
           style={{
-            width: 56,
-            height: 56,
+            width: 64,
+            height: 64,
             borderRadius: "50%",
             background: `conic-gradient(from -135deg, ${accent} 0deg, ${accent} ${pct * 270}deg, rgba(255,255,255,0.08) ${pct * 270}deg, rgba(255,255,255,0.08) 270deg, transparent 270deg)`,
             display: "grid",
             placeItems: "center",
             position: "relative",
             boxShadow: `0 0 0 1px rgba(255,255,255,0.06), 0 6px 20px rgba(0,0,0,0.4)`,
+            cursor: "ns-resize",
+            touchAction: "none",
           }}
         >
           <div
             style={{
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               borderRadius: "50%",
               background: "radial-gradient(circle at 35% 30%, #2a2a32 0%, #121218 75%)",
               border: "1px solid rgba(255,255,255,0.1)",
               position: "relative",
+              pointerEvents: "none",
             }}
           >
             <div
@@ -11540,9 +11639,9 @@ function TrackFxPanel({
                 left: "50%",
                 top: "50%",
                 width: 2,
-                height: 14,
+                height: 15,
                 marginLeft: -1,
-                marginTop: -14,
+                marginTop: -15,
                 borderRadius: 2,
                 background: accent,
                 transformOrigin: "50% 100%",
@@ -11551,30 +11650,60 @@ function TrackFxPanel({
               }}
             />
           </div>
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            aria-label={label}
-            onChange={(e) => onVal(parseFloat(e.target.value))}
-            onMouseUp={(e) => onVal(parseFloat((e.target as HTMLInputElement).value), true)}
-            onTouchEnd={(e) => onVal(parseFloat((e.target as HTMLInputElement).value), true)}
-            style={{
-              position: "absolute",
-              inset: 0,
-              opacity: 0,
-              cursor: "pointer",
-              margin: 0,
-            }}
-          />
         </div>
         <span style={{ fontSize: 10, fontWeight: 700, color: muted, letterSpacing: "0.02em" }}>{label}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#F4F1EC" }}>
-          {format ? format(value) : value.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0)}
-        </span>
-      </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            type="button"
+            aria-label={`Decrease ${label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              nudge(-1);
+            }}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: `1px solid ${border}`,
+              background: "rgba(255,255,255,0.06)",
+              color: "#F4F1EC",
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: "pointer",
+              touchAction: "manipulation",
+              padding: 0,
+            }}
+          >
+            −
+          </button>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#F4F1EC", minWidth: 48, textAlign: "center" }}>
+            {format ? format(value) : value.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0)}
+          </span>
+          <button
+            type="button"
+            aria-label={`Increase ${label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              nudge(1);
+            }}
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: `1px solid ${border}`,
+              background: "rgba(255,255,255,0.06)",
+              color: "#F4F1EC",
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: "pointer",
+              touchAction: "manipulation",
+              padding: 0,
+            }}
+          >
+            +
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -12064,7 +12193,7 @@ function TrackFxPanel({
           value={Number(fx.gainDb) || 0}
           min={-18}
           max={12}
-          step={0.5}
+          step={0.1}
           accent={brass}
           format={(n) => `${n > 0 ? "+" : ""}${n.toFixed(1)} dB`}
           onVal={(n, c) => setKey("gainDb", n, c)}
@@ -12167,6 +12296,61 @@ function TrackFxPanel({
       <p style={{ margin: 0, fontSize: 11, color: muted, lineHeight: 1.45 }}>
         Tap an effect to open its panel. Drag knobs to shape the sound — changes apply live on this track.
       </p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+        <button
+          type="button"
+          onClick={() => {
+            const cleared = { ...DEFAULT_TRACK_FX };
+            // Keep gain/pan so clearing FX does not nuke mix levels
+            cleared.gainDb = Number(fx.gainDb) || 0;
+            cleared.pan = Number(fx.pan) || 0;
+            onChange(cleared);
+            onCommit(cleared);
+            onRackChange([]);
+            setModalId(null);
+          }}
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: `1px solid ${border}`,
+            background: "rgba(248,113,113,0.1)",
+            color: "#FCA5A5",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            touchAction: "manipulation",
+          }}
+        >
+          Clear all effects
+        </button>
+        <button
+          type="button"
+          title="Reset gain to 0 dB and pan to center"
+          onClick={() => {
+            const next = { ...fx, gainDb: 0, pan: 0 };
+            onChange(next);
+            onCommit(next);
+          }}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: `1px solid ${border}`,
+            background: "rgba(255,255,255,0.04)",
+            color: muted,
+            fontSize: 12,
+            fontWeight: 650,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            touchAction: "manipulation",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Reset gain/pan
+        </button>
+      </div>
 
       {/* Track-wide FX presets (preserved) */}
       <div>
