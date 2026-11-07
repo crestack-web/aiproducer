@@ -96,8 +96,7 @@ function AppInner() {
         if (!cancelled) setIsAdmin(false);
       }
     })();
-    return (
-      <AppUsageAnalytics />) => {
+    return () => {
       cancelled = true;
     };
   }, []);
@@ -939,7 +938,9 @@ function AppInner() {
   const activeNav = tab === "library" ? "library" : tab === "profile" ? "profile" : "home";
 
   return (
-    <AppShell active={activeNav} userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
+    <>
+      <AppUsageAnalytics />
+      <AppShell active={activeNav} userName={userName} userSeed={stableAvatarSeed({ userId, email: userEmail, name: userName })} onSignOut={signOut}>
 <div
         className="dash-content"
         style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
@@ -2572,6 +2573,7 @@ function AppInner() {
       )}
 
     </AppShell>
+    </>
   );
 }
 
