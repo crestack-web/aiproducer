@@ -11609,39 +11609,44 @@ function TrackFxPanel({
     const snap = (n: number) => {
       const s = step > 0 ? step : 0.01;
       const rounded = Math.round(n / s) * s;
-      return Math.max(min, Math.min(max, rounded));
+      // avoid -0
+      const v = Math.max(min, Math.min(max, rounded));
+      return Object.is(v, -0) ? 0 : v;
     };
     const dragRef = React.useRef<{
-      startY: number;
-      startX: number;
-      startVal: number;
       pointerId: number;
+      // absolute: map pointer Y on the dial face to value (tap/drag anywhere)
+      rectTop: number;
+      rectH: number;
     } | null>(null);
     const valueRef = React.useRef(value);
     valueRef.current = value;
 
+    const valueFromClientY = (clientY: number, rectTop: number, rectH: number) => {
+      // Top of dial = max, bottom = min (natural vertical fader feel on the knob)
+      const h = Math.max(1, rectH);
+      const rel = 1 - Math.max(0, Math.min(1, (clientY - rectTop) / h));
+      return snap(min + rel * (max - min));
+    };
+
     const onPointerDown = (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      const el = e.currentTarget as HTMLElement;
+      el.setPointerCapture?.(e.pointerId);
+      const rect = el.getBoundingClientRect();
       dragRef.current = {
-        startY: e.clientY,
-        startX: e.clientX,
-        startVal: valueRef.current,
         pointerId: e.pointerId,
+        rectTop: rect.top,
+        rectH: rect.height,
       };
+      // Immediate response on tap — jump to that position
+      onVal(valueFromClientY(e.clientY, rect.top, rect.height), false);
     };
     const onPointerMove = (e: React.PointerEvent) => {
       const d = dragRef.current;
       if (!d || e.pointerId !== d.pointerId) return;
-      // Vertical drag is primary (up = increase). Horizontal also works.
-      const dy = d.startY - e.clientY;
-      const dx = e.clientX - d.startX;
-      const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
-      // ~110px full sweep — responsive on phone thumbs
-      const range = max - min;
-      const next = snap(d.startVal + (delta / 110) * range);
-      onVal(next, false);
+      onVal(valueFromClientY(e.clientY, d.rectTop, d.rectH), false);
     };
     const endDrag = (e: React.PointerEvent) => {
       const d = dragRef.current;
@@ -11654,10 +11659,6 @@ function TrackFxPanel({
       }
       onVal(valueRef.current, true);
     };
-    const nudge = (dir: 1 | -1) => {
-      const next = snap(valueRef.current + dir * (step || 0.05));
-      onVal(next, true);
-    };
 
     return (
       <div
@@ -11666,8 +11667,8 @@ function TrackFxPanel({
           flexDirection: "column",
           alignItems: "center",
           gap: 6,
-          minWidth: 72,
-          flex: "1 1 72px",
+          minWidth: 64,
+          flex: "1 1 64px",
           userSelect: "none",
           touchAction: "none",
         }}
@@ -11683,14 +11684,15 @@ function TrackFxPanel({
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          onDoubleClick={() => onVal(snap(min + (max - min) * 0.5), true)}
+          onDoubleClick={() => onVal(snap(0), true)}
           onKeyDown={(e) => {
+            const s = step || 0.05;
             if (e.key === "ArrowUp" || e.key === "ArrowRight") {
               e.preventDefault();
-              nudge(1);
+              onVal(snap(valueRef.current + s), true);
             } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
               e.preventDefault();
-              nudge(-1);
+              onVal(snap(valueRef.current - s), true);
             }
           }}
           style={{
@@ -11736,57 +11738,9 @@ function TrackFxPanel({
           </div>
         </div>
         <span style={{ fontSize: 10, fontWeight: 700, color: muted, letterSpacing: "0.02em" }}>{label}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button
-            type="button"
-            aria-label={`Decrease ${label}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              nudge(-1);
-            }}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              border: `1px solid ${border}`,
-              background: "rgba(255,255,255,0.06)",
-              color: "#F4F1EC",
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: "pointer",
-              touchAction: "manipulation",
-              padding: 0,
-            }}
-          >
-            −
-          </button>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#F4F1EC", minWidth: 48, textAlign: "center" }}>
-            {format ? format(value) : value.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0)}
-          </span>
-          <button
-            type="button"
-            aria-label={`Increase ${label}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              nudge(1);
-            }}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              border: `1px solid ${border}`,
-              background: "rgba(255,255,255,0.06)",
-              color: "#F4F1EC",
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: "pointer",
-              touchAction: "manipulation",
-              padding: 0,
-            }}
-          >
-            +
-          </button>
-        </div>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#F4F1EC", fontVariantNumeric: "tabular-nums" }}>
+          {format ? format(value) : value.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0)}
+        </span>
       </div>
     );
   }
