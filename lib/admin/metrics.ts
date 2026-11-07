@@ -379,7 +379,12 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
     projectCountByUser.set(uid, (projectCountByUser.get(uid) || 0) + 1);
   }
 
-  const userDirectory: AdminUserRow[] = profileRows
+  // If profiles is empty but auth has users, build directory from auth
+  const directorySource = profileRows.length > 0
+    ? profileRows
+    : Array.from(emailById.keys()).map((id) => ({ id }));
+
+  const userDirectory: AdminUserRow[] = directorySource
     .map((p) => {
       const row = p as {
         id: string;

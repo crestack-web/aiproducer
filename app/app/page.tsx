@@ -1,4 +1,5 @@
 "use client";
+import { AppUsageAnalytics } from "@/components/product-analytics";
 
 import React, { useEffect, useState, Suspense } from "react";
 import { createPortal } from "react-dom";
@@ -95,7 +96,8 @@ function AppInner() {
         if (!cancelled) setIsAdmin(false);
       }
     })();
-    return () => {
+    return (
+      <AppUsageAnalytics />) => {
       cancelled = true;
     };
   }, []);
