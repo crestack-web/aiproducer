@@ -4744,8 +4744,13 @@ export function ProducerView({
 
   useEffect(() => {
     applyGains(undefined, true);
+    try {
+      syncMonitorLevels();
+    } catch {
+      /* */
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [muted, soloId, tracks, fxById]);
+  }, [muted, soloId, tracks, fxById, masterGainDb]);
 
   /**
    * Stop buffer sources + RAF. By default KEEP live FX graphs so pause/resume
@@ -5223,8 +5228,23 @@ export function ProducerView({
           const bfx =
             fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
           const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
+          // Headroom + vocal mix pad (same as syncMonitorLevels)
+          let anyVocal = false;
+          try {
+            for (const tr of tracks) {
+              if (tr.kind === "vocal" && isAudible(tr.id, "vocal")) {
+                anyVocal = true;
+                break;
+              }
+            }
+          } catch {
+            /* */
+          }
           const lin =
-            Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin;
+            Math.pow(10, (Number(bfx.gainDb) || 0) / 20) *
+            masterLin *
+            0.55 *
+            (anyVocal ? 0.72 : 1);
           a.volume = Math.max(0, Math.min(1, lin));
           void a.play().catch((e) => {
             console.warn("[producer-view] beat HTMLAudio play", e);
@@ -5279,8 +5299,9 @@ export function ProducerView({
         a.preload = "auto";
         const bfx = spec.fx;
         const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
+        // Match syncMonitorLevels: headroom so faders can raise vocals over the beat
         const lin =
-          Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin;
+          Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin * 0.55;
         a.volume = Math.max(0, Math.min(1, lin));
         const startVocal = () => {
           try {
@@ -5296,6 +5317,10 @@ export function ProducerView({
           /* */
         }
         vocalAudioRefs.current.push(a);
+        try {
+          a.dataset.trackId = spec.trackId;
+        } catch { /* */ }
+
         if (delayMs > 40) {
           window.setTimeout(() => {
             if (gen !== playbackGenRef.current || !playingRef.current) return;
@@ -5313,6 +5338,12 @@ export function ProducerView({
       }
     }
   }
+
+      try {
+      syncMonitorLevels();
+    } catch {
+      /* */
+    }
 
   function fitTimelineToView() {
     const el = timelineScrollRef.current;
@@ -6243,7 +6274,13 @@ export function ProducerView({
   /**
    * Console play uses HTMLAudio for beat + vocals (mobile-reliable).
    * Mixer faders and Track FX Gain both write the same trackFx.gainDb.
-   * This pushes that value (× master) into every live monitor path.
+   *
+   * DAW-style headroom: HTMLAudio.volume is capped at 1.0, so unity (0 dB)
+   * is mapped below full scale. That way:
+   *  - raising a vocal fader is audible over the beat
+   *  - lowering the beat fader actually reduces level
+   * Without headroom, 0 dB = volume 1 for every track and the hotter beat
+   * always buries dry vocals (solo still sounds fine).
    */
   function syncMonitorLevels(opts?: { trackId?: string }) {
     const masterLin = Math.pow(
@@ -6251,13 +6288,31 @@ export function ProducerView({
       Math.max(-24, Math.min(6, masterGainDbRef?.current ?? masterGainDb)) / 20
     );
     const only = opts?.trackId;
+    // ~ -5.2 dB reference so +6 dB still fits in HTMLAudio 0–1
+    const HEADROOM = 0.55;
+    // When any vocal is in the mix, ease the beat slightly (common DAW balance)
+    let anyVocalOn = false;
+    try {
+      for (const tr of tracks) {
+        if (tr.kind === "vocal" && isAudible(tr.id, "vocal")) {
+          anyVocalOn = true;
+          break;
+        }
+      }
+    } catch {
+      anyVocalOn = false;
+    }
+    const beatMixPad = anyVocalOn ? 0.72 : 1; // extra ~ -2.8 dB on beat under vocals
 
     const levelFor = (trackId: string, kind: "beat" | "vocal") => {
       const fx = fxByIdRef.current[trackId] || DEFAULT_TRACK_FX;
       const audible = isAudible(trackId, kind);
       const gainDb = Math.max(-24, Math.min(12, Number(fx.gainDb) || 0));
-      const lin = audible ? Math.pow(10, gainDb / 20) * masterLin : 0;
-      return { audible, gainDb, lin: Math.max(0, Math.min(1, lin)), linRaw: lin };
+      let linRaw = audible ? Math.pow(10, gainDb / 20) * masterLin : 0;
+      if (kind === "beat" && audible) linRaw *= beatMixPad;
+      // HTML element volume
+      const lin = Math.max(0, Math.min(1, linRaw * HEADROOM));
+      return { audible, gainDb, lin, linRaw };
     };
 
     // Beat HTMLAudio
@@ -6274,9 +6329,18 @@ export function ProducerView({
     // Vocal HTMLAudio elements (tagged with data-track-id)
     for (const a of vocalAudioRefs.current) {
       if (!a) continue;
-      const tid = a.dataset.trackId || only || "";
+      let tid = "";
+      try {
+        tid = a.dataset.trackId || "";
+      } catch {
+        tid = "";
+      }
       if (only && tid && tid !== only) continue;
-      if (!tid) continue;
+      // If untagged but only one vocal element, still apply
+      if (!tid) {
+        if (only && only !== "beat") tid = only;
+        else continue;
+      }
       try {
         const { audible, lin } = levelFor(tid, "vocal");
         a.volume = lin;
@@ -11116,19 +11180,9 @@ placeholder="Ask AP anything…"
                     /* */
                   }
                 }
-                // HTMLAudio monitor path (beat + mobile vocals) — apply gain immediately
+                // HTMLAudio monitor path — shared DAW headroom via syncMonitorLevels
                 try {
-                  const lin = on
-                    ? Math.pow(10, Math.max(-24, Math.min(12, Number(fx.gainDb) || 0)) / 20)
-                    : 0;
-                  if (fxOpenId === "beat" && monitorAudioRef.current) {
-                    monitorAudioRef.current.volume = Math.max(0, Math.min(1, lin));
-                  }
-                  for (const a of vocalAudioRefs.current) {
-                    if (!a || a.paused) continue;
-                    if (a.dataset.trackId && a.dataset.trackId !== fxOpenId) continue;
-                    a.volume = Math.max(0, Math.min(1, lin));
-                  }
+                  syncMonitorLevels({ trackId: fxOpenId });
                 } catch {
                   /* */
                 }
