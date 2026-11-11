@@ -10665,127 +10665,254 @@ placeholder="Ask AP anything…"
 
       {showAddTrack && (
         <div
+          role="dialog"
+          aria-label="Add track"
           style={{
             position: "fixed",
             inset: 0,
-            zIndex: 10040,
-            background: "rgba(0,0,0,0.45)",
+            zIndex: 80,
+            background: "rgba(0,0,0,0.55)",
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
           }}
-          onClick={() => setShowAddTrack(false)}
+          onClick={() => !addBusy && setShowAddTrack(false)}
         >
           <div
             style={{
               width: "100%",
-              maxWidth: 520,
-              margin: "0 12px max(12px, env(safe-area-inset-bottom))",
-              pointerEvents: "auto",
-              borderRadius: 14,
-              padding: 12,
-              background: "rgba(22, 22, 26, 0.95)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+              maxWidth: 420,
+              borderRadius: "18px 18px 0 0",
+              background: surface,
+              border: `1px solid ${border}`,
+              padding: "14px 14px max(18px, env(safe-area-inset-bottom))",
+              maxHeight: "min(88dvh, 640px)",
+              overflowY: "auto",
+              WebkitOverflowScrolling: "touch",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              value={addTitle}
-              onChange={(e) => setAddTitle(e.target.value)}
-              placeholder="Name (optional)"
+            <div
               style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.04)",
-                color: "#F4F1EC",
-                fontFamily: "inherit",
-                fontSize: 13,
+                width: 36,
+                height: 4,
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.18)",
+                margin: "0 auto 12px",
               }}
             />
-            <select
-              value={addType}
-              onChange={(e) => setAddType(e.target.value)}
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4, color: text }}>
+              Add track
+            </div>
+            <p style={{ margin: "0 0 14px", fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
+              Pick a type. Vocal tracks open empty — record when ready.
+            </p>
+
+            {/* Suno-style list: recording roles */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
+              RECORDING
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+              {(
+                [
+                  { id: "lead", label: "Lead vocal", hint: "Main vocal line" },
+                  { id: "double", label: "Vocal double", hint: "Tighten the lead" },
+                  { id: "harmony", label: "Harmony", hint: "Stacked harmony" },
+                  { id: "adlib", label: "Ad-lib", hint: "Fills & riffs" },
+                  { id: "background", label: "Background vocal", hint: "Pads & group" },
+                ] as const
+              ).map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  disabled={addBusy}
+                  onClick={() => {
+                    setAddType(row.id);
+                    setAddTitle("");
+                    void createTrack(null);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    border: `1px solid ${border}`,
+                    background: "rgba(255,255,255,0.04)",
+                    color: text,
+                    cursor: addBusy ? "wait" : "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <span>
+                    <span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{row.label}</span>
+                    <span style={{ display: "block", fontSize: 11, color: mutedText, marginTop: 2 }}>
+                      {row.hint}
+                    </span>
+                  </span>
+                  <span style={{ opacity: 0.35, fontSize: 18, lineHeight: 1 }}>›</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Audio only — file upload after choosing audio kind */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
+              AUDIO FILE
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+              {(
+                [
+                  { id: "audio", label: "Audio track", hint: "Upload any take" },
+                  { id: "instrumental", label: "Instrumental / beat", hint: "Replace or layer a beat" },
+                ] as const
+              ).map((row) => {
+                const active = addType === row.id;
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    disabled={addBusy}
+                    onClick={() => {
+                      setAddType(row.id);
+                      setAddTitle("");
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      border: active ? `1.5px solid ${brass}` : `1px solid ${border}`,
+                      background: active ? "rgba(231,169,97,0.12)" : "rgba(255,255,255,0.04)",
+                      color: text,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    <span>
+                      <span style={{ display: "block", fontWeight: 700, fontSize: 14 }}>{row.label}</span>
+                      <span style={{ display: "block", fontSize: 11, color: mutedText, marginTop: 2 }}>
+                        {row.hint}
+                      </span>
+                    </span>
+                    <span style={{ opacity: active ? 1 : 0.35, fontSize: 14 }}>{active ? "✓" : "›"}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {(addType === "audio" || addType === "instrumental") && (
+              <div
+                style={{
+                  marginBottom: 14,
+                  padding: 12,
+                  borderRadius: 12,
+                  border: `1px solid ${border}`,
+                  background: "rgba(0,0,0,0.25)",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 650, marginBottom: 8, color: text }}>
+                  Choose a file
+                </div>
+                <input
+                  ref={addFileRef}
+                  type="file"
+                  accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg"
+                  style={{
+                    width: "100%",
+                    fontSize: 13,
+                    color: mutedText,
+                    marginBottom: 10,
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={addBusy}
+                  onClick={() => {
+                    const f = addFileRef.current?.files?.[0] || null;
+                    if (!f) {
+                      setEditMsg("Choose an audio file first");
+                      return;
+                    }
+                    void createTrack(f);
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    borderRadius: 12,
+                    border: "none",
+                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    color: "#1A1208",
+                    fontWeight: 750,
+                    cursor: addBusy ? "wait" : "pointer",
+                    fontFamily: "inherit",
+                    fontSize: 14,
+                  }}
+                >
+                  {addBusy ? "Adding…" : "Add audio track"}
+                </button>
+              </div>
+            )}
+
+            {/* Compact AI instruments */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
+              GENERATE WITH AI
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {(["drums", "bass", "guitar", "keys", "piano", "strings", "synth"] as const).map((inst) => (
+                <button
+                  key={inst}
+                  type="button"
+                  disabled={aiInstrumentBusy || !projectId}
+                  onClick={() => void generateAiInstrument(inst)}
+                  style={{
+                    border: `1px solid ${border}`,
+                    background: "rgba(231,169,97,0.1)",
+                    color: text,
+                    borderRadius: 999,
+                    padding: "8px 12px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    textTransform: "capitalize",
+                    cursor: aiInstrumentBusy ? "wait" : "pointer",
+                    opacity: aiInstrumentBusy ? 0.7 : 1,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {aiInstrumentBusy ? "…" : inst}
+                </button>
+              ))}
+            </div>
+            {aiInstrumentError ? (
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#ff8f8f" }}>{aiInstrumentError}</p>
+            ) : null}
+
+            <button
+              type="button"
+              disabled={addBusy}
+              onClick={() => setShowAddTrack(false)}
               style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.04)",
-                color: "#F4F1EC",
+                width: "100%",
+                marginTop: 6,
+                padding: "12px",
+                borderRadius: 12,
+                border: `1px solid ${border}`,
+                background: "transparent",
+                color: mutedText,
+                fontWeight: 650,
+                cursor: "pointer",
                 fontFamily: "inherit",
-                fontSize: 13,
+                fontSize: 14,
               }}
             >
-              <optgroup label="Vocal">
-                <option value="lead">Lead vocal</option>
-                <option value="double">Vocal double</option>
-                <option value="harmony">Harmony</option>
-                <option value="adlib">Ad-lib</option>
-                <option value="background">Background vocal</option>
-              </optgroup>
-              <optgroup label="Audio">
-                <option value="audio">Audio track</option>
-                <option value="instrumental">Instrumental / beat</option>
-              </optgroup>
-              <optgroup label="Other">
-                <option value="midi">MIDI / instrument</option>
-                <option value="custom">Custom</option>
-              </optgroup>
-            </select>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
-              Creates an empty track. Press R or Record when you are ready.
-            </div>
-            <input
-              ref={addFileRef}
-              type="file"
-              accept="audio/*,.wav,.mp3,.m4a,.webm"
-              style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                disabled={addBusy}
-                onClick={() => {
-                  const f = addFileRef.current?.files?.[0] || null;
-                  void createTrack(f);
-                }}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "linear-gradient(180deg, #F0BC80, #E7A961)",
-                  color: "#1A1208",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontSize: 13,
-                }}
-              >
-                {addBusy ? "Adding…" : "Add"}
-              </button>
-              <button
-                type="button"
-                disabled={addBusy}
-                onClick={() => setShowAddTrack(false)}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "transparent",
-                  color: "rgba(255,255,255,0.55)",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontSize: 13,
-                }}
-              >
-                Cancel
-              </button>
-            </div>
+              Cancel
+            </button>
           </div>
         </div>
       )}
