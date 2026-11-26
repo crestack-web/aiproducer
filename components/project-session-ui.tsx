@@ -2987,6 +2987,15 @@ export default function ProjectDetailPage() {
     fontWeight: 500,
   };
 
+  // ── New Booth (Suno-style) presentation state ──────────────────────────
+  const [stageOpen, setStageOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedPanel, setAdvancedPanel] = useState<"menu" | "audio" | "plan">("menu");
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const [handingOff, setHandingOff] = useState(false);
+  const boothUploadRef = useRef<HTMLInputElement | null>(null);
+
+
   if (loading) {
     return (
       <AppShell active="studio">
@@ -2997,13 +3006,6 @@ export default function ProjectDetailPage() {
     );
   }
 
-  // ── New Booth (Suno-style) presentation state ──────────────────────────
-  const [stageOpen, setStageOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [advancedPanel, setAdvancedPanel] = useState<"menu" | "audio" | "plan">("menu");
-  const [handoffOpen, setHandoffOpen] = useState(false);
-  const [handingOff, setHandingOff] = useState(false);
-  const boothUploadRef = useRef<HTMLInputElement | null>(null);
 
   const planSourceRows = (planTasks.length > 0 ? planTasks : (tasks as PlanEditorTask[])).filter(
     (t) => t.active !== false && t.selected_in_plan !== false
