@@ -1,176 +1,134 @@
-/* Suno-inspired Library layouts: each collection has its own rhythm while sharing the same visual language. */
-.dash-content:has(.ap-seg[role="tablist"]) .ap-tracks-grid {
-  gap: 8px;
-}
+/* Suno-iOS-inspired library + sheet styling. Inline styles for layout stay; these
+   classes own surfaces, motion and touch feedback. */
+.ap-seg{display:flex;gap:4px;padding:4px;margin:6px 0 16px;border-radius:999px;
+  background:color-mix(in oklab,currentColor 7%,transparent);width:fit-content;max-width:100%}
+.ap-seg button{appearance:none;border:0;background:transparent;color:inherit;opacity:.55;
+  padding:8px 16px;border-radius:999px;font:600 14px/1 inherit;font-family:inherit;cursor:pointer;
+  transition:background .25s,opacity .25s,transform .15s}
+.ap-seg button[aria-selected="true"]{opacity:1;background:color-mix(in oklab,currentColor 14%,transparent);
+  box-shadow:0 1px 0 color-mix(in oklab,currentColor 10%,transparent) inset}
+.ap-seg button:active{transform:scale(.95)}
 
-/* Songs: clean, scan-friendly rows with compact artwork and actions aligned on one baseline. */
+.ap-track{display:flex;align-items:center;gap:14px;padding:8px 6px;border-radius:16px;
+  background:transparent;border:0;color:inherit;min-width:0;overflow:hidden;
+  transition:background .2s,transform .15s;animation:ap-rise .35s both}
+.ap-track:hover{background:color-mix(in oklab,currentColor 5%,transparent)}
+.ap-track:active{transform:scale(.985);background:color-mix(in oklab,currentColor 8%,transparent)}
+.ap-track[data-active="true"]{background:color-mix(in oklab,var(--ap-accent,#ff8a5c) 12%,transparent)}
+.ap-art{position:relative;width:60px;height:60px;border-radius:12px;overflow:hidden;flex-shrink:0;
+  border:0;padding:0;background:transparent;cursor:pointer;
+  box-shadow:0 8px 20px -8px rgba(0,0,0,.55)}
+.ap-art > span{opacity:0;transition:opacity .2s}
+.ap-track:hover .ap-art > span,.ap-art[data-playing="true"] > span{opacity:1}
+@media (hover:none){.ap-art > span{opacity:1;background:transparent!important}}
+.ap-track-title{font-size:15.5px;font-weight:600;letter-spacing:-.01em}
+
+.ap-sheet-backdrop{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;
+  background:rgba(0,0,0,.5);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);
+  animation:ap-fade .2s ease-out both}
+.ap-sheet{position:relative;width:100%;max-width:480px;color:#f5f3f0;
+  background:linear-gradient(180deg,rgba(38,36,40,.96),rgba(18,17,20,.98));
+  border-radius:28px 28px 0 0;border:1px solid rgba(255,255,255,.08);border-bottom:0;
+  padding:28px 20px calc(24px + env(safe-area-inset-bottom,0px));
+  box-shadow:0 -20px 60px -10px rgba(0,0,0,.6);animation:ap-sheet-up .38s cubic-bezier(.2,.9,.25,1) both}
+.ap-sheet::before{content:"";position:absolute;top:10px;left:50%;width:38px;height:5px;margin-left:-19px;
+  border-radius:99px;background:rgba(255,255,255,.22)}
+.ap-sheet-title{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px}
+.ap-sheet-sub{font-size:14px;line-height:1.45;color:rgba(245,243,240,.6);margin:0 0 20px}
+.ap-sheet-btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:52px;
+  border-radius:999px;border:0;font:600 15px/1 inherit;font-family:inherit;cursor:pointer;margin-bottom:10px;
+  background:rgba(255,255,255,.08);color:#f5f3f0;transition:transform .15s,opacity .2s}
+.ap-sheet-btn:active{transform:scale(.97)}
+.ap-sheet-btn:disabled{opacity:.6;cursor:wait}
+.ap-sheet-btn.primary{background:#f5f3f0;color:#141316}
+.ap-sheet-btn.ghost{background:transparent;color:rgba(245,243,240,.55);min-height:44px;margin:4px 0 0}
+@media (min-width:640px){.ap-sheet-backdrop{align-items:center}.ap-sheet{border-radius:28px;border-bottom:1px solid rgba(255,255,255,.08);max-width:400px}}
+
+@keyframes ap-fade{from{opacity:0}to{opacity:1}}
+@keyframes ap-sheet-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes ap-rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ap-sheet,.ap-sheet-backdrop,.ap-track{animation:none}}
+
+/* Library layouts: distinct presentation per collection, with shared typography and surfaces. */
+.dash-content:has(.ap-seg[role="tablist"]) .ap-tracks-grid { gap: 8px; }
+
+/* Songs: compact, scan-friendly rows. */
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: flex; flex-direction: column; gap: 4px;
 }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div {
-  display: grid !important;
-  grid-template-columns: 68px minmax(0, 1fr);
-  align-items: center;
-  gap: 14px !important;
-  padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,.055);
-  border-radius: 18px;
-  background: rgba(255,255,255,.025);
+  display: grid !important; grid-template-columns: 68px minmax(0, 1fr); align-items: center;
+  gap: 14px !important; padding: 8px 10px; border: 1px solid rgba(255,255,255,.055);
+  border-radius: 18px; background: rgba(255,255,255,.025);
   transition: background .18s ease, border-color .18s ease, transform .18s ease;
 }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div:hover {
-  background: rgba(255,255,255,.055);
-  border-color: rgba(255,255,255,.1);
+  background: rgba(255,255,255,.055); border-color: rgba(255,255,255,.1);
 }
-.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div > div:first-child {
-  width: 68px;
-  height: 68px;
-}
+.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div > div:first-child { width: 68px; height: 68px; }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-home-card {
-  width: 68px;
-  height: 68px;
-  aspect-ratio: 1;
-  border-radius: 14px;
-  box-shadow: 0 5px 16px rgba(0,0,0,.24);
+  width: 68px; height: 68px; aspect-ratio: 1; border-radius: 14px; box-shadow: 0 5px 16px rgba(0,0,0,.24);
 }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-home-pill {
-  top: auto;
-  left: 4px;
-  bottom: 4px;
-  padding: 3px 6px;
-  font-size: 9px;
-  background: rgba(12,12,16,.72);
+  top: auto; left: 4px; bottom: 4px; padding: 3px 6px; font-size: 9px; background: rgba(12,12,16,.72);
 }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-home-play {
-  right: 4px;
-  bottom: 4px;
-  width: 28px;
-  min-width: 28px;
-  max-width: 28px;
+  right: 4px; bottom: 4px; width: 28px; min-width: 28px; max-width: 28px;
 }
-.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) {
-  align-items: center;
-  padding: 0;
-}
-.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-track-card-title {
-  font-size: 15px;
-  letter-spacing: -.015em;
-}
-.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-track-card-meta {
-  margin-top: 4px;
-  font-size: 12px;
-}
+.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) { align-items: center; padding: 0; }
+.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-track-card-title { font-size: 15px; letter-spacing: -.015em; }
+.dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-track-card-meta { margin-top: 4px; font-size: 12px; }
 .dash-content:has(.ap-seg button:nth-child(1)[aria-selected="true"]) .ap-tracks-grid .ap-home-more {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  background: rgba(255,255,255,.045);
+  width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: rgba(255,255,255,.045);
 }
 
-/* Beats: keep the artwork-forward grid, but make cards denser and genre/source easy to scan. */
+/* Beats: artwork-forward, compact grid. */
 .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
 }
 .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid > div {
-  gap: 8px !important;
-  padding: 8px;
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 20px;
+  gap: 8px !important; padding: 8px; border: 1px solid rgba(255,255,255,.06); border-radius: 20px;
   background: linear-gradient(155deg, rgba(255,255,255,.045), rgba(255,255,255,.015));
 }
-.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-home-card {
-  border-radius: 15px;
-  aspect-ratio: 1.12 / 1;
-  box-shadow: none;
-}
-.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) {
-  align-items: center;
-}
-.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-track-card-title {
-  font-size: 14px;
-}
-.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-track-card-meta {
-  font-size: 11.5px;
-}
+.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-home-card { border-radius: 15px; aspect-ratio: 1.12 / 1; box-shadow: none; }
+.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) { align-items: center; }
+.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-track-card-title { font-size: 14px; }
+.dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-track-card-meta { font-size: 11.5px; }
 .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-home-more {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: rgba(255,255,255,.05);
+  width: 32px; height: 32px; border-radius: 10px; background: rgba(255,255,255,.05);
 }
 @media (min-width: 720px) {
-  .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
+  .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (min-width: 1100px) {
-  .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+  .dash-content:has(.ap-seg button:nth-child(2)[aria-selected="true"]) .ap-tracks-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-/* Recordings: understated session rows, with a warmer active state that matches the player. */
+/* Recordings: understated session rows. */
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: flex; flex-direction: column; gap: 6px;
 }
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid > div {
-  display: grid !important;
-  grid-template-columns: 60px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px !important;
-  padding: 9px 10px;
-  border: 1px solid rgba(255,255,255,.055);
-  border-radius: 16px;
-  background: rgba(255,255,255,.02);
+  display: grid !important; grid-template-columns: 60px minmax(0, 1fr); align-items: center;
+  gap: 12px !important; padding: 9px 10px; border: 1px solid rgba(255,255,255,.055);
+  border-radius: 16px; background: rgba(255,255,255,.02);
 }
-.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid > div > div:first-child {
-  width: 60px;
-  height: 60px;
-}
+.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid > div > div:first-child { width: 60px; height: 60px; }
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid .ap-home-card {
-  width: 60px;
-  height: 60px;
-  aspect-ratio: 1;
-  border-radius: 13px;
+  width: 60px; height: 60px; aspect-ratio: 1; border-radius: 13px;
 }
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid .ap-home-pill {
-  top: auto;
-  left: 4px;
-  bottom: 4px;
-  padding: 3px 6px;
-  font-size: 9px;
+  top: auto; left: 4px; bottom: 4px; padding: 3px 6px; font-size: 9px;
 }
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid .ap-home-play {
-  right: 4px;
-  bottom: 4px;
-  width: 26px;
-  min-width: 26px;
-  max-width: 26px;
+  right: 4px; bottom: 4px; width: 26px; min-width: 26px; max-width: 26px;
 }
-.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) {
-  align-items: center;
-}
-.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-track-card-title {
-  font-size: 14px;
-}
-.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-track-card-meta {
-  font-size: 12px;
-}
+.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-tracks-grid > div > div:nth-child(2) { align-items: center; }
+.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-track-card-title { font-size: 14px; }
+.dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-track-card-meta { font-size: 12px; }
 .dash-content:has(.ap-seg button:nth-child(3)[aria-selected="true"]) .ap-home-more {
-  width: 36px;
-  height: 36px;
-  border-radius: 11px;
-  background: rgba(255,255,255,.035);
+  width: 36px; height: 36px; border-radius: 11px; background: rgba(255,255,255,.035);
 }
 @media (prefers-reduced-motion: reduce) {
-  .dash-content:has(.ap-seg[role="tablist"]) .ap-tracks-grid > div {
-    transition: none;
-  }
+  .dash-content:has(.ap-seg[role="tablist"]) .ap-tracks-grid > div { transition: none; }
 }
