@@ -967,39 +967,129 @@ function AppInner() {
 
         {tab === "home" && (
           <>
-            <h1 style={{ ...h1, fontSize: "clamp(1.45rem, 4.5vw, 1.85rem)", marginTop: 0, marginBottom: 14 }}>
-              {userName && userName !== "Artist" ? (
-                <>
-                  Welcome back,{" "}
-                  <span style={{ fontStyle: "italic", fontWeight: 400 }}>{userName}</span>
-                </>
-              ) : (
-                <>Welcome back</>
+            <style>{`
+              .ap-home-actions { scrollbar-width: none; }
+              .ap-home-actions::-webkit-scrollbar { display: none; }
+              @keyframes apHomeEq { 0%,100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+              .ap-home-eq span { animation: apHomeEq 0.9s ease-in-out infinite; transform-origin: bottom; }
+              .ap-home-press:active { transform: scale(0.96); }
+            `}</style>
+
+            {/* Greeting row — current artist avatar + credits */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+              <button
+                type="button"
+                onClick={() => setTab("profile")}
+                style={{ display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: C.text, fontFamily: "inherit", minWidth: 0 }}
+              >
+                <ArtistAvatar seed={stableAvatarSeed({ userId, email: userEmail, name: userName })} size={44} />
+                <span style={{ textAlign: "left", minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12, color: C.textMuted }}>
+                    {(() => {
+                      const h = new Date().getHours();
+                      return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+                    })()}
+                  </span>
+                  <span style={{ display: "block", fontSize: 17, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {userName || "Artist"}
+                  </span>
+                </span>
+              </button>
+              {creditBalance != null && (
+                <span style={{ flexShrink: 0, padding: "7px 12px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surface, fontSize: 12, fontWeight: 650, color: C.text }}>
+                  <span style={{ color: C.brass }}>●</span> {creditBalance.toLocaleString()} credits
+                </span>
               )}
-            </h1>
-            <FeatureBanner seed="ap-home-banner" variant="home" />
+            </div>
 
-            
-
+            {/* Hero */}
             <div
               style={{
-                marginTop: 36,
-                fontSize: 17,
-                fontWeight: 700,
-                letterSpacing: "-0.01em",
-                color: C.text,
+                position: "relative",
+                overflow: "hidden",
+                borderRadius: 24,
+                padding: 24,
+                border: `1px solid ${C.border}`,
+                background: `radial-gradient(120% 90% at 0% 0%, ${C.brassSoft}, transparent 55%), radial-gradient(90% 90% at 100% 100%, rgba(94,234,212,0.16), transparent 60%), ${C.surfaceRaised}`,
+                boxShadow: C.cardShadow,
               }}
             >
+              <div className="ap-home-eq" aria-hidden style={{ position: "absolute", right: 22, top: 24, display: "flex", alignItems: "flex-end", gap: 4, height: 56, opacity: 0.85 }}>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <span key={i} style={{ width: 5, height: "100%", borderRadius: 99, background: C.brass, animationDelay: `${i * 0.12}s` }} />
+                ))}
+              </div>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, background: C.brassSoft, color: C.brass, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                AI Producer
+              </span>
+              <h1 style={{ ...h1, margin: "14px 0 0", fontSize: "clamp(1.5rem, 6vw, 1.9rem)", lineHeight: 1.12, maxWidth: 260 }}>
+                What are we making today?
+              </h1>
+              <p style={{ margin: "8px 0 0", maxWidth: 240, fontSize: 14, color: C.textMuted }}>
+                Drop a beat, follow the plan and hit record.
+              </p>
+              <button type="button" className="ap-home-press" style={{ ...primary, marginTop: 18, borderRadius: 999, padding: "12px 20px" }} onClick={() => router.push("/app/studio")}>
+                + Start a song
+              </button>
+            </div>
+
+            {/* Quick actions */}
+            <div className="ap-home-actions" style={{ display: "flex", gap: 12, overflowX: "auto", margin: "20px -4px 0", padding: "0 4px" }}>
+              {[
+                { label: "New song", sub: "From an idea", href: "/app/studio" },
+                { label: "Library", sub: "Songs & beats", tab: "library" as Tab },
+                { label: "Booth", sub: "Record vocals", href: "/app/studio" },
+                { label: "Profile", sub: "Plan & credits", tab: "profile" as Tab },
+              ].map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  className="ap-home-press"
+                  onClick={() => (a.href ? router.push(a.href) : a.tab && setTab(a.tab))}
+                  style={{ minWidth: 136, flexShrink: 0, textAlign: "left", padding: 16, borderRadius: 18, border: `1px solid ${C.border}`, background: C.surface, color: C.text, cursor: "pointer", fontFamily: "inherit", transition: "transform .15s" }}
+                >
+                  <span style={{ display: "block", width: 30, height: 4, borderRadius: 99, background: C.brass }} />
+                  <span style={{ display: "block", marginTop: 14, fontSize: 14, fontWeight: 700 }}>{a.label}</span>
+                  <span style={{ display: "block", fontSize: 12, color: C.textMuted }}>{a.sub}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Continue latest */}
+            {!loading && projects[0] && (
+              <>
+                <div style={{ marginTop: 30, fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: C.text }}>
+                  Pick up where you left off
+                </div>
+                <Link
+                  href={`/app/studio/${projects[0].id}`}
+                  style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 14, padding: 12, borderRadius: 18, border: `1px solid ${C.border}`, background: C.surface, color: C.text, textDecoration: "none", boxShadow: C.cardShadow }}
+                >
+                  <span style={{ width: 60, height: 60, borderRadius: 14, overflow: "hidden", flexShrink: 0, display: "block" }}>
+                    {projectCoverUrl(projects[0]) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={projectCoverUrl(projects[0]) as string} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    ) : (
+                      <ProjectCoverFallback seed={projects[0].id + (projects[0].title || "")} />
+                    )}
+                  </span>
+                  <span style={{ minWidth: 0, flex: 1 }}>
+                    <span style={{ display: "block", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{projects[0].title}</span>
+                    <span style={{ display: "block", fontSize: 12, color: C.textMuted, textTransform: "capitalize" }}>
+                      {[projects[0].status, projects[0].genre].filter(Boolean).join(" · ")}
+                    </span>
+                  </span>
+                  <span style={{ width: 42, height: 42, borderRadius: 999, display: "grid", placeItems: "center", background: C.brass, color: "#1A0E08", fontWeight: 800, flexShrink: 0 }}>→</span>
+                </Link>
+              </>
+            )}
+
+            <div style={{ marginTop: 30, fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: C.text }}>
               Recent projects
             </div>
             <div
               className="dash-project-grid"
-              style={{
-                marginTop: 14,
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: 16,
-              }}
+              style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}
             >
               {loading && <SkeletonCardGrid count={4} />}
               {!loading && projects.length === 0 && (
