@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
+import { BOOTH_PLAN_SOURCES, CONSOLE_LOCK_MESSAGE, canAiPlanRun } from "@/lib/edit-ownership";
 import { isDevMode } from "@/lib/env";
 import { generateDevBlueprint, type AnalysisSnapshot } from "@/lib/blueprint";
 import { planProduction, toDbTaskType } from "@/lib/production-planner";
@@ -50,6 +51,10 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   if (pErr || !project) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (!canAiPlanRun((project as { edit_mode?: string | null }).edit_mode)) {
+    return NextResponse.json({ error: CONSOLE_LOCK_MESSAGE, edit_mode: "console" }, { status: 409 });
   }
 
   const { data: existingTasks } = await supabase
@@ -219,7 +224,12 @@ export async function POST(_req: Request, ctx: Ctx) {
       durationMs: analysis.duration_ms,
     });
 
-    await supabase.from("recording_tasks").delete().eq("project_id", projectId);
+    // Only Booth-owned parts are replaced; Console tracks are never deleted by the AI.
+    await supabase
+      .from("recording_tasks")
+      .delete()
+      .eq("project_id", projectId)
+      .in("plan_source", [...BOOTH_PLAN_SOURCES]);
     await supabase.from("song_sections").delete().eq("project_id", projectId);
 
     const bpmForBars = analysis.bpm ? Number(analysis.bpm) : null;
