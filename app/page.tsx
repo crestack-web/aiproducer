@@ -683,7 +683,7 @@ html[data-theme="light"] .chip{
   }
   .footer-btn:hover{color:var(--text);border-color:var(--border-hi)}
   .footer-btn-primary{
-    background:linear-gradient(135deg,#F0BC80,#E7A961);
+    background:linear-gradient(135deg,#FFB089,#E7A961);
     color:#1A1208;border:none;
   }
   .footer-btn-primary:hover{filter:brightness(1.05);color:#1A1208}
@@ -881,7 +881,7 @@ html[data-theme="light"] .chip{
   .logo-img{border-radius:6px;flex-shrink:0;display:block}
   .nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0;max-width:100%}
   .nav a{color:var(--muted);font-size:14px;font-weight:500;padding:8px 12px;border-radius:999px;text-decoration:none}
-  .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#F0BC80,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none}
+  .primary{display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#FFB089,var(--brass));color:#1A1208!important;font-weight:600;font-size:14.5px;padding:10px 18px;border-radius:999px;text-decoration:none}
   .primary.lg{font-size:16px;padding:14px 28px}.primary.block,.secondary.block{width:100%;text-align:center}
   .secondary,.ghost{display:inline-flex;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--border-hi);color:var(--text)!important;font-weight:500;font-size:14.5px;padding:12px 20px;border-radius:999px;text-decoration:none}
   .ghost{padding:8px 16px;font-size:14px}
@@ -1022,7 +1022,7 @@ html[data-theme="light"] .chip{
   .pricing{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:stretch;width:100%;max-width:100%;box-sizing:border-box}
   .price-card{position:relative;padding:18px 14px 16px;border-radius:16px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .price-card.featured{border-color:rgba(231,169,97,.45);background:radial-gradient(ellipse at 50% 0%,rgba(231,169,97,.12),transparent 55%),rgba(255,255,255,.05);box-shadow:0 12px 28px -18px rgba(231,169,97,.4)}
-  .price-badge{position:absolute;top:10px;right:10px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#1A1208;background:linear-gradient(180deg,#F0BC80,var(--brass));padding:3px 8px;border-radius:999px}
+  .price-badge{position:absolute;top:10px;right:10px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#1A1208;background:linear-gradient(180deg,#FFB089,var(--brass));padding:3px 8px;border-radius:999px}
   .price-name{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase}
   .price-amount{font-family:Fraunces,serif;font-size:1.65rem;font-weight:500;letter-spacing:-.02em;margin-bottom:2px;line-height:1.15}
   .price-amount span{font-family:Inter,sans-serif;font-size:12px;font-weight:500;color:var(--muted)}
@@ -1081,7 +1081,7 @@ html[data-theme="light"] .chip{
     border:none;cursor:pointer;font-family:inherit;font-weight:700;
     font-size:14.5px;padding:11px 20px;border-radius:999px;
     color:#1A1208;
-    background:linear-gradient(135deg,#F0BC80 0%,#E7A961 40%,#E85D4C 100%);
+    background:linear-gradient(135deg,#FFB089 0%,#E7A961 40%,#E85D4C 100%);
     box-shadow:0 8px 22px rgba(231,169,97,.28);
     display:inline-flex;align-items:center;gap:8px;
   }
@@ -1153,7 +1153,7 @@ html[data-theme="light"] .chip{
   .reg-modal-primary{
     display:block;text-align:center;text-decoration:none;
     padding:13px 16px;border-radius:12px;font-weight:700;font-size:14.5px;
-    background:linear-gradient(135deg,#F0BC80,#E7A961);
+    background:linear-gradient(135deg,#FFB089,#E7A961);
     color:#1A1208;margin-bottom:10px;
   }
   .reg-modal-secondary{
@@ -1304,7 +1304,7 @@ html[data-theme="light"] .chip{
     border:1px solid rgba(255,255,255,.15);
   }
   .listen-play.on{
-    background:linear-gradient(180deg,#F0BC80,var(--brass,#e7a961));
+    background:linear-gradient(180deg,#FFB089,var(--brass,#e7a961));
     color:#1A1208;
     border-color:transparent;
   }

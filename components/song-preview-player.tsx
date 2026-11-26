@@ -486,7 +486,7 @@ export function SongPreviewPlayer({
             height: 44,
             borderRadius: 999,
             border: "none",
-            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+            background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
             color: "#1A1208",
             display: "grid",
             placeItems: "center",

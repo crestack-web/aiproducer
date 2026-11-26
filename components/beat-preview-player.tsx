@@ -491,7 +491,7 @@ export function BeatPreviewTransport({
               top: 0,
               bottom: 0,
               width: `${pct}%`,
-              background: `linear-gradient(90deg, ${C.brass}, #F0BC80)`,
+              background: `linear-gradient(90deg, ${C.brass}, #FFB089)`,
               borderRadius: 999,
             }}
           />
@@ -540,7 +540,7 @@ export function BeatPlayButton({
         border: "none",
         flexShrink: 0,
         cursor: disabled || loading ? "wait" : "pointer",
-        background: isPlaying ? `linear-gradient(180deg, #F0BC80, ${C.brass})` : C.bgDeep || C.surface,
+        background: isPlaying ? `linear-gradient(180deg, #FFB089, ${C.brass})` : C.bgDeep || C.surface,
         color: isPlaying ? "#1A1208" : C.brass,
         display: "grid",
         placeItems: "center",
@@ -952,7 +952,7 @@ export function LibraryMiniPlayer({
           style={{
             height: "100%",
             width: `${pct}%`,
-            background: `linear-gradient(90deg, ${C.brass}, #F0BC80)`,
+            background: `linear-gradient(90deg, ${C.brass}, #FFB089)`,
             transition: "width 0.15s linear",
           }}
         />
@@ -1048,7 +1048,7 @@ export function LibraryMiniPlayer({
             height: 44,
             borderRadius: 999,
             border: "none",
-            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+            background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
             color: "#1A1208",
             fontWeight: 700,
             fontSize: 14,

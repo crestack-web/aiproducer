@@ -222,7 +222,7 @@ export function ProductTour({ open, onClose, index, onIndexChange }: Props) {
               padding: "12px 16px",
               borderRadius: 12,
               border: "none",
-              background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+              background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
               color: "#1A1208",
               fontWeight: 600,
               fontSize: 14,

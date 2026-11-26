@@ -7030,7 +7030,7 @@ export function ProducerView({
                   ? "rgba(255,255,255,0.1)"
                   : produceUi === "complete"
                     ? "rgba(52,211,153,0.2)"
-                    : `linear-gradient(180deg, #F0BC80, ${brass})`,
+                    : `linear-gradient(180deg, #FFB089, ${brass})`,
               color:
                 produceUi === "producing"
                   ? mutedText
@@ -7160,7 +7160,7 @@ export function ProducerView({
             maxHeight: isNarrow ? 44 : 36,
             borderRadius: 999,
             border: "none",
-            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+            background: `linear-gradient(180deg, #FFB089, ${brass})`,
             color: "#1A1208",
             fontWeight: 800,
             fontSize: isNarrow ? 16 : 14,
@@ -7736,7 +7736,7 @@ export function ProducerView({
               display: "inline-block",
               padding: "12px 18px",
               borderRadius: 999,
-              background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+              background: `linear-gradient(180deg, #FFB089, ${brass})`,
               color: "#1A1208",
               fontWeight: 800,
               cursor: planBusy ? "wait" : "pointer",
@@ -7784,7 +7784,7 @@ export function ProducerView({
               padding: "10px 16px",
               borderRadius: 999,
               border: "none",
-              background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+              background: `linear-gradient(180deg, #FFB089, ${brass})`,
               color: "#1A1208",
               fontWeight: 800,
               cursor: planBusy ? "wait" : "pointer",
@@ -9268,7 +9268,7 @@ export function ProducerView({
                         Cancel
                       </button>
                       <button type="button" onClick={() => void commitTakeEdit()} disabled={takeEditBusy}
-                        style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: `linear-gradient(180deg, #F0BC80, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: `linear-gradient(180deg, #FFB089, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
                         {takeEditBusy ? "…" : "Done"}
                       </button>
                     </div>
@@ -9587,7 +9587,7 @@ export function ProducerView({
                       height: "100%",
                       width: `${Math.max(8, produceProgress || 8)}%`,
                       borderRadius: 999,
-                      background: `linear-gradient(90deg, ${brass}, #F0BC80)`,
+                      background: `linear-gradient(90deg, ${brass}, #FFB089)`,
                       transition: "width 0.4s ease",
                     }}
                   />
@@ -9740,7 +9740,7 @@ export function ProducerView({
                           height: 40,
                           borderRadius: 999,
                           border: "none",
-                          background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                          background: `linear-gradient(180deg, #FFB089, ${brass})`,
                           color: "#1A1208",
                           fontWeight: 800,
                           fontSize: 14,
@@ -9810,7 +9810,7 @@ export function ProducerView({
                       height: 36,
                       borderRadius: 999,
                       border: "none",
-                      background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                      background: `linear-gradient(180deg, #FFB089, ${brass})`,
                       color: "#1A1208",
                       fontWeight: 800,
                       fontSize: 12,
@@ -9898,7 +9898,7 @@ export function ProducerView({
                     padding: "0 16px",
                     borderRadius: 999,
                     border: "none",
-                    background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                    background: `linear-gradient(180deg, #FFB089, ${brass})`,
                     color: "#1A1208",
                     fontWeight: 800,
                     fontSize: 13,
@@ -10001,7 +10001,7 @@ export function ProducerView({
                   position: "absolute",
                   inset: 10,
                   borderRadius: "50%",
-                  background: `linear-gradient(135deg, ${brass}, #F0BC80 40%, #A78BFA)`,
+                  background: `linear-gradient(135deg, ${brass}, #FFB089 40%, #A78BFA)`,
                   backgroundSize: "200% 200%",
                   animation: "apPulse 1.6s ease-in-out infinite, apShimmer 3s linear infinite",
                   display: "grid",
@@ -10155,7 +10155,7 @@ export function ProducerView({
             height: 48,
             borderRadius: 999,
             border: `1px solid ${border}`,
-            background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+            background: `linear-gradient(180deg, #FFB089, ${brass})`,
             color: "#1A1208",
             fontWeight: 800,
             fontSize: 13,
@@ -10464,7 +10464,7 @@ placeholder="Ask AP anything…"
                   border: "none",
                   background:
                     !trackPromptBusy && trackPrompt.trim()
-                      ? "linear-gradient(180deg, #F0BC80, #E7A961)"
+                      ? "linear-gradient(180deg, #FFB089, #E7A961)"
                       : "rgba(255,255,255,0.1)",
                   color:
                     !trackPromptBusy && trackPrompt.trim()
@@ -10911,7 +10911,7 @@ placeholder="Ask AP anything…"
                     padding: "12px",
                     borderRadius: 12,
                     border: "none",
-                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    background: "linear-gradient(180deg, #FFB089, #E7A961)",
                     color: "#1A1208",
                     fontWeight: 750,
                     cursor: addBusy ? "wait" : "pointer",

@@ -126,7 +126,7 @@ const authCss = `
 .auth-pw-toggle:hover{color:#F4F1EC}
 .auth-submit{
   margin-top:4px;width:100%;padding:13px 16px;border:none;border-radius:14px;
-  background:linear-gradient(180deg,#F0BC80,var(--auth-brass));
+  background:linear-gradient(180deg,#FFB089,var(--auth-brass));
   color:#1a1208;font-size:15px;font-weight:700;cursor:pointer;
   box-shadow:0 8px 24px rgba(231,169,97,.25);
   letter-spacing:0.01em;

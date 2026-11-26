@@ -2943,7 +2943,7 @@ export default function ProjectDetailPage() {
     padding: "14px 18px",
     borderRadius: 14,
     border: "none",
-    background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+    background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
     color: "#1A1208",
     fontWeight: 600,
     fontSize: 15,

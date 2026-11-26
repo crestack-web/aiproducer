@@ -334,7 +334,7 @@ const css = `
   flex:1;height:3px;border-radius:99px;background:rgba(255,255,255,.08);
   display:block;transition:background .2s;
 }
-.ob-bar.on{background:linear-gradient(90deg,#F0BC80,#E7A961)}
+.ob-bar.on{background:linear-gradient(90deg,#FFB089,#E7A961)}
 .ob-body{flex:1}
 .ob-kicker{
   font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
@@ -380,7 +380,7 @@ const css = `
 }
 .ob-chip.on{
   border-color:rgba(240,188,128,.5);background:rgba(240,188,128,.12);
-  color:#F0BC80;
+  color:#FFB089;
 }
 .ob-error{
   margin-top:16px;padding:12px 14px;border-radius:12px;
@@ -393,7 +393,7 @@ const css = `
 }
 .ob-next{
   flex:1;padding:15px 18px;border-radius:999px;border:none;cursor:pointer;font-family:inherit;
-  background:linear-gradient(180deg,#F0BC80,#E7A961);color:#1A1208;font-weight:700;font-size:15px;
+  background:linear-gradient(180deg,#FFB089,#E7A961);color:#1A1208;font-weight:700;font-size:15px;
   box-shadow:0 8px 24px rgba(231,169,97,.25);
 }
 .ob-next:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}

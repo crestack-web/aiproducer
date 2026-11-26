@@ -1,4 +1,5 @@
 "use client";
+import { FullPageLoader, SkeletonCardGrid, SkeletonRows } from "@/components/loading-states";
 import { AppUsageAnalytics } from "@/components/product-analytics";
 
 import React, { useEffect, useState, Suspense } from "react";
@@ -539,10 +540,11 @@ function AppInner() {
     marginBottom: 12,
   };
   const h1: React.CSSProperties = {
-    fontFamily: "Georgia, serif",
+    fontFamily: "Inter, system-ui, sans-serif",
     fontSize: "clamp(1.85rem, 4vw, 2.75rem)",
-    lineHeight: 1.08,
-    fontWeight: 500,
+    lineHeight: 1.1,
+    fontWeight: 700,
+    letterSpacing: "-0.03em",
     margin: 0,
     color: C.text,
   };
@@ -557,9 +559,10 @@ function AppInner() {
     padding: "14px 20px",
     borderRadius: 14,
     border: "none",
-    background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
-    color: "#1A1208",
-    fontWeight: 600,
+    background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
+    color: "#1A0E08",
+    fontWeight: 650,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35), 0 10px 24px -10px rgba(255,138,91,0.7)",
     fontSize: 15,
     cursor: "pointer",
     fontFamily: "inherit",
@@ -579,7 +582,7 @@ function AppInner() {
     width: 36,
     height: 36,
     borderRadius: 999,
-    background: `linear-gradient(145deg, ${C.brass}, #6B3F17)`,
+    background: `linear-gradient(145deg, ${C.brass}, #B8452A)`,
     color: "#1A1208",
     display: "grid",
     placeItems: "center",
@@ -859,7 +862,7 @@ function AppInner() {
               display: "block",
               width: "100%",
               height: "100%",
-              borderRadius: 12,
+              borderRadius: 16,
               overflow: "hidden",
               textDecoration: "none",
               color: "inherit",
@@ -946,6 +949,15 @@ function AppInner() {
         style={{ maxWidth: 1120, margin: "0 auto", padding: "28px 20px 40px", boxSizing: "border-box", width: "100%" }}
       >
         <style>{`
+          .dash-content a[href^="/app/studio/"] > img,
+          .dash-content a[href^="/app/studio/"] { transition: transform 240ms ease, box-shadow 240ms ease, border-color 240ms ease; }
+          @media (hover: hover) {
+            .dash-project-grid a[href^="/app/studio/"]:hover {
+              transform: translateY(-3px);
+              border-color: rgba(255,138,91,0.35) !important;
+              box-shadow: 0 16px 36px -14px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,138,91,0.15) !important;
+            }
+          }
           .dash-project-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -979,12 +991,11 @@ function AppInner() {
 
             <div
               style={{
-                marginTop: 40,
-                fontSize: 12,
-                fontWeight: 600,
-                letterSpacing: 1.2,
-                color: C.textFaint,
-                textTransform: "uppercase",
+                marginTop: 36,
+                fontSize: 17,
+                fontWeight: 700,
+                letterSpacing: "-0.01em",
+                color: C.text,
               }}
             >
               Recent projects
@@ -998,7 +1009,7 @@ function AppInner() {
                 gap: 16,
               }}
             >
-              {loading && <p style={{ color: C.textMuted, gridColumn: "1 / -1" }}>Loading…</p>}
+              {loading && <SkeletonCardGrid count={4} />}
               {!loading && projects.length === 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
                   <EmptyState
@@ -1169,7 +1180,7 @@ function AppInner() {
                 {beatPlayError && (
                   <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
                 )}
-                {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
+                {loading && <SkeletonRows count={4} />}
                 {!loading && projects.filter((p) => isFinishedSong(p) && matchesLibraryQuery(p)).length === 0 && (
                   libraryQuery.trim() ? (
                     <p style={{ color: C.textMuted, fontSize: 14, textAlign: "center", padding: "24px 12px" }}>
@@ -1244,7 +1255,7 @@ function AppInner() {
             )}
             {libraryTab === "beats" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {loading && <p style={{ color: C.textMuted }}>Loading…</p>}
+                {loading && <SkeletonRows count={4} />}
                 {!loading && projects.filter((p) => p.has_beat && matchesLibraryQuery(p)).length === 0 && (
                   libraryQuery.trim() ? (
                     <p style={{ color: C.textMuted, fontSize: 14, textAlign: "center", padding: "24px 12px" }}>
@@ -1451,9 +1462,7 @@ function AppInner() {
                   gap: 12,
                 }}
               >
-                {loading && (
-                  <p style={{ color: C.textMuted, gridColumn: "1 / -1" }}>Loading…</p>
-                )}
+                {loading && <SkeletonCardGrid count={4} />}
                 {!loading &&
                   projects.filter(
                     (p) =>
@@ -1759,7 +1768,7 @@ function AppInner() {
                           padding: "14px 16px",
                           borderRadius: 14,
                           border: "none",
-                          background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                          background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
                           color: "#1A1208",
                           fontWeight: 750,
                           fontSize: 15,
@@ -2152,7 +2161,7 @@ function AppInner() {
                             padding: "10px 16px",
                             borderRadius: 999,
                             border: "none",
-                            background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                            background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
                             color: "#1A1208",
                             fontWeight: 700,
                             fontSize: 13,
@@ -2440,7 +2449,7 @@ function AppInner() {
                   padding: "12px 14px",
                   borderRadius: 12,
                   border: "none",
-                  background: `linear-gradient(180deg, #F0BC80, ${C.brass})`,
+                  background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
                   color: "#1A1208",
                   fontWeight: 600,
                   fontSize: 14,
@@ -2537,7 +2546,7 @@ function AppInner() {
                 padding: "12px 14px",
                 borderRadius: 12,
                 border: "none",
-                background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                background: "linear-gradient(180deg, #FFB089, #E7A961)",
                 color: "#1A1208",
                 fontWeight: 700,
                 fontSize: 14,
@@ -2581,18 +2590,7 @@ function AppInner() {
 export default function StudioAppPage() {
   return (
     <Suspense
-      fallback={
-        <div
-          style={{
-            minHeight: "100vh",
-            display: "grid",
-            placeItems: "center",
-            color: "#9B96A3",
-          }}
-        >
-          Loading…
-        </div>
-      }
+      fallback={<FullPageLoader />}
     >
       <AppInner />
     </Suspense>

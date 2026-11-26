@@ -175,7 +175,7 @@ export function PromptTweakPanel({
             padding: "12px 16px",
             borderRadius: 999,
             border: "none",
-            background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+            background: "linear-gradient(180deg, #FFB089, #E7A961)",
             color: "#1A1208",
             fontWeight: 700,
             fontSize: 14,
@@ -233,7 +233,7 @@ export function PromptTweakPanel({
       )}
 
       {clarification && (
-        <p style={{ margin: "12px 0 0", fontSize: 13, color: "#F0BC80" }}>{clarification}</p>
+        <p style={{ margin: "12px 0 0", fontSize: 13, color: "#FFB089" }}>{clarification}</p>
       )}
       {!variations && summary && (
         <p style={{ margin: "12px 0 0", fontSize: 13, color: C.textMuted }}>
@@ -241,7 +241,7 @@ export function PromptTweakPanel({
         </p>
       )}
       {loopNote && (
-        <p style={{ margin: "10px 0 0", fontSize: 13, color: "#F0BC80" }}>{loopNote}</p>
+        <p style={{ margin: "10px 0 0", fontSize: 13, color: "#FFB089" }}>{loopNote}</p>
       )}
       {doneSignal && (
         <p style={{ margin: "10px 0 0", fontSize: 13, color: "#7BEBD4" }}>{doneSignal}</p>

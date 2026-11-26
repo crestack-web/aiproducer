@@ -578,7 +578,7 @@ export default function TryItPage() {
                   phase === "recording"
                     ? `linear-gradient(180deg, #FBBF24 0%, #F97316 45%, #EF4444 100%)`
                     : phase === "generating" || phase === "cloning"
-                      ? `linear-gradient(180deg, #F0BC80 0%, #E7A961 50%, #F97316 100%)`
+                      ? `linear-gradient(180deg, #FFB089 0%, #E7A961 50%, #F97316 100%)`
                       : phase === "preview"
                         ? `linear-gradient(180deg, #FBBF24 0%, #EF4444 100%)`
                         : `linear-gradient(180deg, #FBBF24 0%, #FB923C 50%, #EF4444 100%)`,
@@ -631,7 +631,7 @@ export default function TryItPage() {
                   height: 56,
                   borderRadius: 999,
                   border: "none",
-                  background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                  background: "linear-gradient(180deg, #FFB089, #E7A961)",
                   color: "#1A1208",
                   fontSize: 22,
                   fontWeight: 800,
@@ -777,7 +777,7 @@ export default function TryItPage() {
                     padding: "14px",
                     borderRadius: 999,
                     border: "none",
-                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    background: "linear-gradient(180deg, #FFB089, #E7A961)",
                     color: "#1A1208",
                     fontWeight: 800,
                     fontSize: 15,
@@ -796,7 +796,7 @@ export default function TryItPage() {
                     padding: "14px",
                     borderRadius: 999,
                     border: "none",
-                    background: "linear-gradient(180deg, #F0BC80, #E7A961)",
+                    background: "linear-gradient(180deg, #FFB089, #E7A961)",
                     color: "#1A1208",
                     fontWeight: 800,
                     fontSize: 15,

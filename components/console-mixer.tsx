@@ -212,7 +212,7 @@ export function ConsoleMixer(props: Props) {
                 padding: "8px 14px",
                 borderRadius: 999,
                 border: "none",
-                background: `linear-gradient(180deg, #F0BC80, ${brass})`,
+                background: `linear-gradient(180deg, #FFB089, ${brass})`,
                 color: "#1A1208",
                 fontWeight: 800,
                 fontSize: 13,
