@@ -2285,10 +2285,7 @@ export function ProducerView({
           ? { ...c, startMs: lastStart, endMs: lastEnd, offsetMs: lastOffset }
           : c
       );
-      void fetch(`/api/recording-tasks/${layerId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      void saveClipGeometry(layerId, {
           start_ms: Math.min(...clips.map((c) => c.startMs)),
           end_ms: Math.max(...clips.map((c) => c.endMs)),
           console_clips: clips.map((c) => ({
@@ -2298,21 +2295,40 @@ export function ProducerView({
             recording_id: c.recordingId || null,
             offset_ms: c.offsetMs || 0,
           })),
-        }),
       });
     } else {
-      void fetch(`/api/recording-tasks/${layerId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          start_ms: lastStart,
-          end_ms: lastEnd,
-          metadata: { media_offset_ms: lastOffset },
-        }),
-      }).catch(() => {
-        void persistLayer(layerId, { start_ms: lastStart, end_ms: lastEnd });
+      void saveClipGeometry(layerId, {
+        start_ms: lastStart,
+        end_ms: lastEnd,
+        metadata: { media_offset_ms: lastOffset },
       });
     }
+  }
+
+  /** Save a moved/cropped clip; retry once and tell the user if it still fails. */
+  async function saveClipGeometry(layerId: string, body: Record<string, unknown>) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`/api/recording-tasks/${layerId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) return true;
+        if (res.status >= 400 && res.status < 500) {
+          const j = (await res.json().catch(() => ({}))) as ApiJson;
+          setEditMsg(
+            typeof j.error === "string" ? `Clip edit not saved: ${j.error}` : "Clip edit not saved"
+          );
+          return false;
+        }
+      } catch {
+        /* network error — retry below */
+      }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+    }
+    setEditMsg("Clip edit not saved — check your connection and try again");
+    return false;
   }
 
   async function makeChoir(
