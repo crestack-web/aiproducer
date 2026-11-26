@@ -448,8 +448,12 @@ export function AppShell({
     paddingTop: 8,
     paddingBottom: "calc(8px + env(safe-area-inset-bottom, 0px))",
     background: C.navGlass,
-    backdropFilter: "blur(16px)",
-    borderTop: `1px solid ${C.border}`,
+    backdropFilter: "blur(24px) saturate(180%)",
+    WebkitBackdropFilter: "blur(24px) saturate(180%)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    borderRadius: 28,
+    boxShadow:
+      "inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(0,0,0,0.25), 0 18px 40px -12px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,0,0,0.2)",
     zIndex: 40,
     alignItems: "stretch",
     justifyContent: "space-around",
@@ -511,11 +515,39 @@ export function AppShell({
           .studio-bottom-nav {
             display: flex !important;
             position: fixed !important;
-            left: 0 !important;
-            right: 0 !important;
-            bottom: 0 !important;
+            left: 12px !important;
+            right: 12px !important;
+            bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+            min-height: 66px !important;
+            padding: 6px !important;
+            gap: 4px;
+            overflow: hidden;
             /* Below modals/sheets/players; above page content */
             z-index: 40 !important;
+          }
+          .studio-bottom-nav::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 50% 0;
+            border-radius: 28px 28px 0 0;
+            background: linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0));
+            pointer-events: none;
+          }
+          .studio-bottom-nav > button,
+          .studio-bottom-nav > a {
+            position: relative;
+            border-radius: 22px !important;
+            min-height: 54px !important;
+            transition: background 220ms ease, color 220ms ease, transform 160ms ease;
+          }
+          .studio-bottom-nav > button:active,
+          .studio-bottom-nav > a:active { transform: scale(0.94); }
+          .studio-bottom-nav [aria-current="page"] {
+            background: linear-gradient(180deg, rgba(255,138,91,0.22), rgba(255,138,91,0.08)) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px -6px rgba(255,138,91,0.55);
+          }
+          .studio-bottom-nav [aria-current="page"] svg {
+            filter: drop-shadow(0 0 6px rgba(255,138,91,0.6));
           }
           .studio-mobile-appbar {
             display: flex !important;
