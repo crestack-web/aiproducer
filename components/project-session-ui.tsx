@@ -105,6 +105,20 @@ import { audioBlobToWavDetailed } from "@/lib/client/export-wav";
 import { PlanEditor, type PlanEditorTask } from "@/components/plan-editor";
 import { canProduce, type PlanMode } from "@/lib/plan";
 import { prepareTakesForProduce } from "@/lib/client/prepare-takes-for-produce";
+import {
+  BoothAdvancedSheet,
+  BoothBeatStep,
+  BoothDoneStep,
+  BoothMakeStep,
+  BoothPlanStep,
+  BoothRecordStage,
+  ConsoleHandoffSheet,
+  canMakeSong,
+  countInBeatsLeft,
+  countInMs as boothCountInMs,
+  toBoothParts,
+  type BoothMenuItem,
+} from "@/components/booth";
 
 /** User-facing produce progress — never show raw pipeline tokens alone. */
 function humanProduceStage(stage: string | null | undefined): string {
@@ -2248,17 +2262,19 @@ export default function ProjectDetailPage() {
       );
       // Canonical session timeline from task musical position (never rewritten by plan)
       const win = resolveTaskWindow(current);
+      // Booth: 4-beat count-in at the song tempo (falls back to 3s without a tempo)
+      const countInTotalMs = boothCountInMs(project?.tempo);
       let tl = createSessionTimeline({
         taskId: current.id,
         sectionStartMs: win.startMs,
         sectionEndMs: win.endMs,
-        countInMs: 3000,
+        countInMs: countInTotalMs,
       });
       tl = markCountdownStart(tl);
       sessionTimelineRef.current = tl;
       setLastRecordingOffsetMs(0);
 
-      setCountdown(3);
+      setCountdown(4);
       setPhase("countdown");
       void markRecordingStatus();
       // Preload section peers during countdown (do NOT play — would be 3s early vs beat)
@@ -2266,7 +2282,7 @@ export default function ProjectDetailPage() {
 
       if (beatAudioRef.current && beatUrl) {
         // Pre-roll: beat seeks to sectionStart - countIn (musical clock)
-        const preRollStart = Math.max(0, (resolveTaskWindow(current).startMs - 3000) / 1000);
+        const preRollStart = Math.max(0, (resolveTaskWindow(current).startMs - countInTotalMs) / 1000);
         try {
           beatAudioRef.current.currentTime = preRollStart;
         } catch {
@@ -2286,9 +2302,9 @@ export default function ProjectDetailPage() {
       let n = 3;
       if (countdownRef.current) clearInterval(countdownRef.current);
       // Use performance.now deadline so countdown stays tight to the 3s pre-roll
-      const countDeadline = performance.now() + 3000;
+      const countDeadline = performance.now() + countInTotalMs;
       countdownRef.current = setInterval(() => {
-        const left = Math.ceil((countDeadline - performance.now()) / 1000);
+        const left = countInBeatsLeft(countDeadline - performance.now(), countInTotalMs);
         if (left <= 0) {
           if (countdownRef.current) clearInterval(countdownRef.current);
           countdownRef.current = null;
@@ -2981,1388 +2997,445 @@ export default function ProjectDetailPage() {
     );
   }
 
+  // ── New Booth (Suno-style) presentation state ──────────────────────────
+  const [stageOpen, setStageOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedPanel, setAdvancedPanel] = useState<"menu" | "audio" | "plan">("menu");
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  const [handingOff, setHandingOff] = useState(false);
+  const boothUploadRef = useRef<HTMLInputElement | null>(null);
+
+  const planSourceRows = (planTasks.length > 0 ? planTasks : (tasks as PlanEditorTask[])).filter(
+    (t) => t.active !== false && t.selected_in_plan !== false
+  );
+  const boothParts = toBoothParts(
+    (screen === "session" || screen === "assemble" ? tasks : planSourceRows) as Parameters<typeof toBoothParts>[0],
+    (row) => sectionLabel(row as Task) || humanTitle(String(row.type || "")),
+    humanTitle
+  );
+  const stageVisible = screen === "session" && Boolean(current) && (stageOpen || phase !== "ready");
+  const boothBusy = phase === "recording" || phase === "countdown";
+
+  function openAdvanced(panel: "menu" | "audio" | "plan" = "menu") {
+    setAdvancedPanel(panel);
+    setAdvancedOpen(true);
+  }
+
+  function recordPart(taskId: string) {
+    if (boothBusy) return;
+    if (screen !== "session") {
+      void (async () => {
+        await enterSession();
+        selectTask(taskId);
+        setStageOpen(true);
+      })();
+      return;
+    }
+    selectTask(taskId);
+    setStageOpen(true);
+  }
+
+  function recordNext() {
+    if (screen !== "session") {
+      void enterSession().then(() => setStageOpen(true));
+      return;
+    }
+    setStageOpen(true);
+  }
+
+  function resetTakeForRetry() {
+    setError(null);
+    setLocalBlobUrl(null);
+    setSavedRecordingId(null);
+    setProducerTip(null);
+    setLayerSuggestion(null);
+    setReviewVoiceOnly(false);
+    setTaskTakes([]);
+    setPhase("ready");
+  }
+
+  function openPreview() {
+    setStageOpen(false);
+    setSectionPreviewOnly(false);
+    setScreen("assemble");
+    void loadSongPreview();
+  }
+
+  function handlePlanTasksChange(next: PlanEditorTask[]) {
+    setPlanTasks(next);
+    const active = next
+      .filter((t) => t.active !== false && t.selected_in_plan !== false && t.status !== "skipped")
+      .map((t) => ({
+        id: t.id,
+        type: t.type,
+        title: t.title,
+        instruction: t.instruction || "",
+        reason: t.reason,
+        status: t.status,
+        required: Boolean(t.required),
+        start_ms: t.start_ms,
+        end_ms: t.end_ms,
+        section_id: t.section_id,
+        metadata: t.metadata as Task["metadata"],
+      }));
+    setTasks(active);
+  }
+
+  async function confirmConsoleHandoff() {
+    setHandingOff(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/handoff-console`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error || "Could not open this song in Console");
+        setHandoffOpen(false);
+        return;
+      }
+      window.location.href = `/app/console/${id}`;
+    } finally {
+      setHandingOff(false);
+    }
+  }
+
+  const advancedItems: BoothMenuItem[] = [
+    ...(screen === "session" && current
+      ? [
+          {
+            key: "upload",
+            label: uploading ? "Uploading…" : "Upload a recording",
+            hint: "Use a take you recorded somewhere else",
+            disabled: uploading || boothBusy,
+            onSelect: () => boothUploadRef.current?.click(),
+          },
+          ...(!current.required
+            ? [
+                {
+                  key: "skip",
+                  label: skipping ? "Skipping…" : "Skip this part",
+                  disabled: skipping || boothBusy,
+                  onSelect: () => {
+                    setAdvancedOpen(false);
+                    void skipCurrent();
+                  },
+                },
+              ]
+            : []),
+        ]
+      : []),
+    ...(optionalOpen(tasks).length > 0
+      ? [
+          {
+            key: "skip-optional",
+            label: skipping ? "Skipping…" : `Skip optional parts (${optionalOpen(tasks).length})`,
+            disabled: skipping,
+            onSelect: () => {
+              setAdvancedOpen(false);
+              void skipAllOptional();
+            },
+          },
+        ]
+      : []),
+    {
+      key: "audio",
+      label: "Mic & headphones",
+      hint: "Choose your input and where you hear the beat",
+      onSelect: () => setAdvancedPanel("audio"),
+    },
+    ...(planSourceRows.length > 0
+      ? [{ key: "plan", label: "Edit song plan", hint: "Add, remove or move parts", onSelect: () => setAdvancedPanel("plan") }]
+      : []),
+    ...(coreDone(tasks).length > 0 && screen !== "assemble"
+      ? [{ key: "preview", label: "Hear what I have", onSelect: () => { setAdvancedOpen(false); openPreview(); } }]
+      : []),
+    {
+      key: "console",
+      label: "Open in Console",
+      hint: "Full studio. The song moves there for good.",
+      disabled: boothBusy,
+      onSelect: () => {
+        setAdvancedOpen(false);
+        setHandoffOpen(true);
+      },
+    },
+  ];
+
+  const reviewPlayer =
+    current && localBlobUrl ? (
+      <CompactAudioPlayer
+        src={localBlobUrl}
+        label="Your take"
+        seed={`take-${current.id}`}
+        beatSrc={beatUrl}
+        beatStartMs={reviewBeatStartMs(
+          resolveTaskWindow(withPlanTiming(current, planTasks)).startMs,
+          Math.max(0, Math.min(lastRecordingOffsetMs, 120000))
+        )}
+        beatEndMs={
+          resolveTaskWindow(withPlanTiming(current, planTasks)).endMs ??
+          resolveTaskWindow(withPlanTiming(current, planTasks)).startMs + 120000
+        }
+        vocalVolume={1}
+        beatVolume={0.06}
+        overdubSrcs={reviewOverdubSrcs}
+        playbackSinkId={
+          !selectedSpeakerId || selectedSpeakerId === "__handset__" || selectedSpeakerId === "__headphones__"
+            ? "__speaker__"
+            : selectedSpeakerId
+        }
+        debugSectionLabel={sectionLabel(current)}
+        debugTaskId={current.id}
+        debugSectionStartMs={resolveTaskWindow(current).startMs}
+        debugRecordingOffsetMs={lastRecordingOffsetMs}
+      />
+    ) : null;
+
+  const stepIndex = current ? boothParts.findIndex((p) => p.id === current.id) : -1;
+
   return (
     <AppShell active="studio" userName={boothUserName} userSeed={stableAvatarSeed({ userId: boothUserId, email: boothUserEmail, name: boothUserName })}>
       <div style={{ minHeight: "100%", width: "100%" }}>
         {beatUrl && <audio ref={beatAudioRef} src={beatUrl} preload="auto" style={{ display: "none" }} />}
 
         {screen === "beat" && (
-          <div style={wrap}>
-            <Link href="/app/studio" style={{ color: C.textMuted, textDecoration: "none", fontSize: 14 }}>
-              ← Studio
-            </Link>
-            <h1 style={{ ...titleStyle, marginTop: 20 }}>{project?.title || "Your beat"}</h1>
-            {error && <p style={{ color: C.danger }}>{error}</p>}
-            {beatUrl && (
-              <StudioPlayer
-                src={beatUrl}
-                title={project?.title || "Beat"}
-                subtitle={[project?.genre, project?.mood, project?.tempo ? `${project.tempo} BPM` : null]
-                  .filter(Boolean)
-                  .join(" · ")}
-                seed={project?.title || "beat"}
-              />
-            )}
-            <button type="button" style={{ ...btn, marginTop: 18 }} disabled={analyzing || !beatUrl} onClick={startProducerSession}>
-              {analyzing
-                ? "Generating…"
-                : tasks.length > 0 || planTasks.length > 0
-                  ? "Continue plan"
-                  : "Open Planner"}
-            </button>
-          </div>
+          <BoothBeatStep
+            title={project?.title || "Your beat"}
+            subtitle={[project?.genre, project?.mood, project?.tempo ? `${project.tempo} BPM` : null]
+              .filter(Boolean)
+              .join(" · ")}
+            beatUrl={beatUrl}
+            seed={project?.title || id}
+            busy={analyzing}
+            error={error}
+            ctaLabel={tasks.length > 0 || planTasks.length > 0 ? "Continue my song" : "Start my song"}
+            onStart={startProducerSession}
+            onMore={() => openAdvanced()}
+          />
         )}
 
         {screen === "analyzing" && (
-          <div style={wrap}>
-            <PlayerLoadingState
-              title="Generating your AI production plan…"
-              subtitle="Mapping sections and building recording tasks"
-              seed={`analyze-${id}`}
-            />
-            {error && (
-              <p style={{ color: C.danger, marginTop: 16 }}>
-                {error}{" "}
-                <button
-                  type="button"
-                  style={{ ...btn2, display: "inline", padding: "6px 12px", marginLeft: 8 }}
-                  onClick={() => void generateAiPlan("ai")}
-                >
-                  Retry
-                </button>
-              </p>
-            )}
-          </div>
-        )}
-
-        {screen === "plan" && (
-          <div style={wrap}>
-            <button
-              type="button"
-              style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", padding: 0 }}
-              onClick={() => setScreen("beat")}
-            >
-              ← Beat
-            </button>
-            <h1 style={{ ...titleStyle, marginTop: 12 }}>Song plan</h1>
-            <p style={{ color: C.textMuted, fontSize: 14, marginTop: 4 }}>
-              AI suggests. You decide. Only parts you keep are in your active plan.
-            </p>
-            {error && (
-              <p style={{ color: C.danger, fontSize: 14 }}>
-                {error}{" "}
-                <button
-                  type="button"
-                  style={{ ...btn2, display: "inline", padding: "6px 12px", marginLeft: 8 }}
-                  disabled={analyzing}
-                  onClick={() => void generateAiPlan(planMode === "customize" ? "customize" : "ai")}
-                >
-                  Retry
-                </button>
-              </p>
-            )}
-            <PlanEditor
-              projectId={id}
-              tasks={(planTasks.length > 0 ? planTasks : (tasks as PlanEditorTask[]))}
-              planMode={planMode}
-              onModeChange={(m) => { setPlanMode(m); void fetch(`/api/projects/${id}/plan`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_mode", mode: m }) }).catch(() => undefined); }}
-              onTasksChange={(next) => {
-                setPlanTasks(next);
-                const active = next
-                  .filter((t) => t.active !== false && t.selected_in_plan !== false && t.status !== "skipped")
-                  .map((t) => ({
-                    id: t.id,
-                    type: t.type,
-                    title: t.title,
-                    instruction: t.instruction || "",
-                    reason: t.reason,
-                    status: t.status,
-                    required: Boolean(t.required),
-                    start_ms: t.start_ms,
-                    end_ms: t.end_ms,
-                    section_id: t.section_id,
-                    metadata: t.metadata as Task["metadata"],
-                  }));
-                setTasks(active);
-                // Refresh from API but keep any newer plan times (avoid stale overwrite)
-                void fetch(`/api/projects/${id}/recording-tasks`)
-                  .then((r) => r.json())
-                  .then((j) => {
-                    if (!Array.isArray(j.tasks)) return;
-                    const byId = new Map(active.map((t) => [t.id, t]));
-                    const merged = j.tasks.map((row: Task) => {
-                      const local = byId.get(row.id);
-                      if (!local) return row;
-                      return {
-                        ...row,
-                        start_ms: local.start_ms ?? row.start_ms,
-                        end_ms: local.end_ms ?? row.end_ms,
-                        metadata: local.metadata ?? row.metadata,
-                      };
-                    });
-                    setTasks(merged);
-                  })
-                  .catch(() => undefined);
-              }}
-            />
-
-            {/* Explicit generate — only when no plan yet; never on tab switch */}
-            {planTasks.length === 0 && tasks.length === 0 && planMode !== "scratch" && (
-              <button
-                type="button"
-                style={{ ...btn, marginTop: 20 }}
-                disabled={analyzing || !beatUrl}
-                onClick={() => void generateAiPlan(planMode)}
-              >
-                {analyzing
-                  ? "Generating…"
-                  : planMode === "ai"
-                    ? "Generate AI Plan"
-                    : "Generate recommendations to customize"}
-              </button>
-            )}
-            {planTasks.length === 0 && tasks.length === 0 && planMode === "scratch" && (
-              <p style={{ color: C.textMuted, fontSize: 13, marginTop: 16 }}>
-                Use “+ Add custom part” above to build your plan from scratch. No AI generation required.
-              </p>
-            )}
-
-            {(planTasks.length > 0 || tasks.length > 0) && (
-              <>
-                <SessionSteps tasks={coreTasks(tasks)} locked={false} onSelect={selectTask} />
-                <ProjectSamplesPanel projectId={id} />
-                <button
-                  type="button"
-                  style={{ ...btn, marginTop: 20 }}
-                  onClick={enterSession}
-                  disabled={
-                    analyzing ||
-                    (tasks.filter((t) => t.status !== "skipped").length === 0 &&
-                      activeSessionTasksFromPlan(planTasks).length === 0)
-                  }
-                >
-                  Start recording
-                </button>
-                {tasks.some((t) => t.status === "pending" || t.status === "in_progress") && (
-                  <button
-                    type="button"
-                    style={{ ...btn2, marginTop: 10 }}
-                    disabled={skipping || analyzing}
-                    onClick={() => void skipAllOptional()}
-                  >
-                    {skipping ? "Skipping…" : "Skip remaining optional parts"}
+          <div className="bx">
+            <div className="bx-make" aria-live="polite">
+              <p className="bx-eyebrow">Listening to your beat</p>
+              <div className="bx-orb" aria-hidden />
+              <h1 className="bx-h1" style={{ marginTop: -40 }}>Writing your song plan</h1>
+              <p className="bx-sub">Finding the sections and what to sing in each.</p>
+              {error ? (
+                <p className="bx-error">
+                  <span>{error}</span>
+                  <button type="button" className="bx-chip" style={{ border: 0, cursor: "pointer" }} onClick={() => void generateAiPlan("ai")}>
+                    Retry
                   </button>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {screen === "session" && current && (
-          <div style={wrap}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                flexWrap: "wrap",
-                marginBottom: 4,
-              }}
-            >
-              <button
-                type="button"
-                style={{ background: "none", border: "none", color: C.textMuted, cursor: "pointer", padding: 0, fontSize: 14 }}
-                onClick={() => setScreen("plan")}
-                disabled={phase === "recording" || phase === "countdown"}
-              >
-                ← Plan
-              </button>
-              <div
-                style={{
-                  flex: "1 1 120px",
-                  textAlign: "center",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: C.text,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                title={project?.title || "Booth"}
-              >
-                {project?.title || "Booth"}
-              </div>
-              <button
-                type="button"
-                disabled={phase === "recording" || phase === "countdown"}
-                onClick={() => {
-                  if (phase === "recording" || phase === "countdown") return;
-                  window.location.href = `/app/console/${id}`;
-                }}
-                style={{
-                  background: "none",
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 999,
-                  color: C.brass,
-                  cursor: phase === "recording" || phase === "countdown" ? "not-allowed" : "pointer",
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  opacity: phase === "recording" || phase === "countdown" ? 0.5 : 1,
-                  fontFamily: "inherit",
-                }}
-                title="Same project — multitrack arrangement and FX"
-              >
-                Open in Studio
-              </button>
+                </p>
+              ) : null}
             </div>
-            <p style={{ textAlign: "center", fontSize: 11, color: C.textMuted, margin: "2px 0 8px", letterSpacing: "0.06em" }}>
-              BOOTH · create
-            </p>
-            <SessionSteps tasks={coreTasks(tasks)} highlightId={currentIsLayer ? undefined : current.id} locked={phase === "recording" || phase === "review" || phase === "countdown"} compact onSelect={selectTask} />
-            {sectionLayerStack.length > 1 && (
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: `1px solid ${C.border}`,
-                  background: C.surface,
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.textMuted }}>
-                  THIS SECTION · LAYERS
-                </div>
-                <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none" }}>
-                  {sectionLayerStack.map((t) => {
-                    const done = t.status === "completed";
-                    const skipped = t.status === "skipped";
-                    const active = t.id === current?.id;
-                    return (
-                      <li
-                        key={t.id}
-                        style={{
-                          fontSize: 13,
-                          color: active ? C.text : C.textMuted,
-                          fontWeight: active ? 600 : 400,
-                          padding: "3px 0",
-                        }}
-                      >
-                        {done ? "✓ " : skipped ? "– " : active ? "● " : "○ "}
-                        {humanTitle(t.type)}
-                        {done ? " recorded" : skipped ? " skipped" : active ? " (now)" : ""}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-            {phase !== "recording" && phase !== "countdown" && (currentIsLayer ? (
-              <div
-                style={{
-                  marginTop: 16,
-                  padding: "12px 8px 4px",
-                  textAlign: "center",
-                  maxWidth: 400,
-                  marginLeft: "auto",
-                  marginRight: "auto",
-                }}
-              >
-                <div style={{ fontSize: 11, letterSpacing: "0.12em", fontWeight: 700, color: C.brass }}>
-                  {sectionLabel(current)} · LAYER
-                </div>
-                <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>
-                  {sectionLabel(current)} · optional layer
-                </div>
-                <h1 style={{ ...titleStyle, fontSize: "1.25rem", marginTop: 8 }}>
-                  {layerRecommendationCopy(current.type).headline}
-                </h1>
-                <p style={{ color: C.text, fontSize: 14.5, marginTop: 6, lineHeight: 1.45 }}>
-                  {layerPhraseHint(
-                    normalizeLayerRole(current.type),
-                    current.metadata?.section_label || sectionLabel(current)
-                  )}
-                </p>
-                <p style={{ color: C.textMuted, fontSize: 13, marginTop: 8 }}>{current.instruction}</p>
-                {current.reason ? (
-                  <p style={{ color: C.textMuted, fontSize: 12.5, marginTop: 6, fontStyle: "italic" }}>
-                    {current.reason}
-                  </p>
-                ) : null}
-                {(current.start_ms != null || current.end_ms != null) && (
-                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 6 }}>
-                    Section: {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
-                    {sectionMs != null ? ` · records ${Math.round(sectionMs / 1000)}s` : ""}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div
-                style={{
-                  marginTop: 20,
-                  padding: "8px 4px 4px",
-                  textAlign: "center",
-                  maxWidth: 400,
-                  marginLeft: "auto",
-                  marginRight: "auto",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.14em",
-                    textTransform: "uppercase",
-                    color: C.brass,
-                  }}
-                >
-                  {sectionLabel(current)}
-                </div>
-                <h1
-                  style={{
-                    ...titleStyle,
-                    fontSize: "1.5rem",
-                    marginTop: 8,
-                    marginBottom: 0,
-                    fontWeight: 500,
-                  }}
-                >
-                  {humanTitle(current.type)}
-                </h1>
-                {current.instruction ? (
-                  <p
-                    style={{
-                      color: C.text,
-                      fontSize: 15,
-                      lineHeight: 1.5,
-                      marginTop: 12,
-                      fontFamily: "Georgia, 'Times New Roman', serif",
-                      fontStyle: "italic",
-                      opacity: 0.92,
-                    }}
-                  >
-                    “{current.instruction}”
-                  </p>
-                ) : null}
-                {(current.start_ms != null || current.end_ms != null) && (
-                  <p style={{ color: C.textMuted, fontSize: 12, marginTop: 10 }}>
-                    {fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}
-                    {sectionMs != null ? ` · ${Math.round(sectionMs / 1000)}s` : ""}
-                  </p>
-                )}
-              </div>
-            ))}
-            {error && phase !== "recording" && phase !== "countdown" && (
-              <p style={{ color: C.danger }}>{error}</p>
-            )}
-
-            {phase === "ready" && (
-              <div style={{ marginTop: 20 }}>
-                {!audioSetupOpen ? (
-                  <div
-                    style={{
-                      marginBottom: 12,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: `1px solid ${C.border}`,
-                      background: C.surface,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, letterSpacing: 0.4 }}>
-                        AUDIO SETUP
-                      </div>
-                      <div style={{ fontSize: 13, color: C.text, marginTop: 2, lineHeight: 1.35 }}>
-                        {micSummaryLabel(selectedMicId)} · {speakerSummaryLabel(selectedSpeakerId)}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setAudioSetupOpen(true)}
-                      style={{
-                        flexShrink: 0,
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        border: `1px solid ${C.border}`,
-                        background: C.inputFill,
-                        color: C.text,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      Change
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ marginBottom: 8 }}>
-                    <MicInputPicker
-                      selectedDeviceId={selectedMicId}
-                      onSelect={onMicSelect}
-                      disabled={false}
-                    />
-                    <SpeakerOutputPicker
-                      selectedDeviceId={selectedSpeakerId}
-                      onSelect={onSpeakerSelect}
-                      disabled={false}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        writeAudioSetupConfirmed(true);
-                        setAudioSetupOpen(false);
-                      }}
-                      style={{
-                        width: "100%",
-                        marginTop: 10,
-                        minHeight: 40,
-                        borderRadius: 12,
-                        border: `1px solid ${C.brass}`,
-                        background: C.brassSoft,
-                        color: C.brass,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      Done — use this setup
-                    </button>
-                  </div>
-                )}
-                {isPhoneHandsetOutput(selectedSpeakerId) && (
-                  <p
-                    style={{
-                      margin: "10px 0 0",
-                      fontSize: 13,
-                      color: C.textMuted,
-                      lineHeight: 1.45,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      border: `1px solid ${C.border}`,
-                      background: C.surface,
-                    }}
-                  >
-                    For best phone recording: hold your phone like a phone call, with the earpiece
-                    near your ear. Keep the bottom microphone unobstructed.
-                  </p>
-                )}
-                {canRecordAgain && (
-                  <button
-                    type="button"
-                    style={{ ...btn2, marginTop: 14 }}
-                    onClick={() => {
-                      setPhase("review");
-                      void loadTaskTakes(current.id).then((list) => {
-                        if (list.some((t) => t.audio_url)) {
-                          applySelectedTakeToReview(list);
-                        }
-                      });
-                    }}
-                  >
-                    Listen to take
-                  </button>
-                )}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: canRecordAgain ? 12 : 20 }}>
-                  {!canRecordAgain && current && (
-                    <div style={{ textAlign: "center", marginBottom: 18, maxWidth: 320 }}>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          letterSpacing: "0.14em",
-                          textTransform: "uppercase",
-                          color: C.brass,
-                          marginBottom: 6,
-                        }}
-                      >
-                        {sectionLabel(current)}
-                      </div>
-                      <div
-                        style={{
-                          fontFamily: "Georgia, serif",
-                          fontSize: 22,
-                          fontWeight: 500,
-                          color: C.text,
-                          marginBottom: 6,
-                        }}
-                      >
-                        {current.title?.trim() || humanTitle(current.type)}
-                      </div>
-                      {formatBoothTimeline(current.start_ms, current.end_ms) && (
-                        <div style={{ fontSize: 13, color: C.textMuted }}>
-                          {formatBoothTimeline(current.start_ms, current.end_ms)}
-                          {sectionMs != null ? ` · ${Math.round(sectionMs / 1000)}s window` : ""}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={startRecording}
-                    aria-label={
-                      canRecordAgain
-                        ? "Record again"
-                        : currentIsLayer
-                          ? layerRecommendationCopy(current.type).cta
-                          : "Record"
-                    }
-                    style={{
-                      width: 84,
-                      height: 84,
-                      borderRadius: "50%",
-                      border: "3px solid rgba(255,255,255,0.95)",
-                      background: "linear-gradient(180deg, #F07167 0%, #C93B3B 100%)",
-                      boxShadow:
-                        "0 0 0 8px rgba(201,59,59,0.16), 0 0 0 16px rgba(201,59,59,0.06), 0 16px 40px rgba(201,59,59,0.35)",
-                      cursor: "pointer",
-                      padding: 0,
-                      transition: "transform 120ms ease, box-shadow 120ms ease",
-                    }}
-                  />
-                  <div
-                    style={{
-                      marginTop: 14,
-                      fontSize: 13,
-                      color: C.textMuted,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {canRecordAgain
-                      ? "Record again"
-                      : currentIsLayer
-                        ? layerRecommendationCopy(current.type).cta
-                        : "Tap to record"}
-                  </div>
-                </div>
-                <input
-                  ref={uploadInputRef}
-                  type="file"
-                  accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    void uploadForTask(e.target.files?.[0] || null);
-                    e.target.value = "";
-                  }}
-                />
-                <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={uploading} onClick={() => uploadInputRef.current?.click()}>
-                  {uploading ? "Uploading…" : "Upload recording"}
-                </button>
-                {currentIsLayer && (
-                  <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
-                    {skipping ? "Skipping…" : "Skip"}
-                  </button>
-                )}
-                {!current.required && !currentIsLayer && (
-                  <button type="button" style={{ ...btn2, marginTop: 10 }} disabled={skipping} onClick={skipCurrent}>
-                    {skipping ? "Skipping…" : "Skip this part"}
-                  </button>
-                )}
-                {optionalOpen(tasks).length > 0 && (
-                  <button
-                    type="button"
-                    style={{ ...btn2, marginTop: 10 }}
-                    disabled={skipping}
-                    onClick={() => void skipAllOptional()}
-                  >
-                    {skipping
-                      ? "Skipping…"
-                      : optionalOpen(tasks).length === 1
-                        ? "Skip optional part"
-                        : `Skip all optional (${optionalOpen(tasks).length})`}
-                  </button>
-                )}
-              </div>
-            )}
-
-            {phase === "countdown" && (
-              <div style={{ textAlign: "center", marginTop: 24 }}>
-                <div style={{ fontSize: 72, fontFamily: "Georgia, serif" }}>{countdown}</div>
-                <button type="button" style={{ ...btn2, marginTop: 12 }} onClick={cancelCountdown}>
-                  Cancel
-                </button>
-              </div>
-            )}
-
-            {phase === "recording" && (
-              <div
-                style={{
-                  marginTop: 8,
-                  marginLeft: -4,
-                  marginRight: -4,
-                  borderRadius: 24,
-                  overflow: "hidden",
-                  border: `1px solid ${C.border}`,
-                  boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
-                }}
-              >
-                <RecordingVisualizer
-                  stream={micStream}
-                  seconds={recordSeconds}
-                  maxSeconds={sectionMs != null ? sectionMs / 1000 : null}
-                  label="Recording"
-                  seed={current ? `rec-${current.id}` : "rec"}
-                  title={current ? sectionLabel(current) : null}
-                  subtitle={
-                    current
-                      ? current.title?.trim() || humanTitle(current.type)
-                      : null
-                  }
-                  timeline={
-                    current
-                      ? formatBoothTimeline(current.start_ms, current.end_ms)
-                      : null
-                  }
-                />
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "4px 20px 28px",
-                    background: "#050506",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={stopRecording}
-                    aria-label="Stop recording"
-                    style={{
-                      width: 72,
-                      height: 72,
-                      borderRadius: "50%",
-                      border: "3px solid rgba(255,255,255,0.92)",
-                      background: "linear-gradient(180deg, #F07167 0%, #C93B3B 100%)",
-                      boxShadow:
-                        "0 0 0 6px rgba(201,59,59,0.22), 0 12px 32px rgba(201,59,59,0.4)",
-                      cursor: "pointer",
-                      padding: 0,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {showReviewUi && (
-              <div style={{ marginTop: 16 }}>
-                <p style={{ textAlign: "center", color: C.textMuted }}>
-                  {uploading
-                    ? "Saving take…"
-                    : savedRecordingId
-                      ? "Saved automatically · play to review, retake, add a layer, or go to the next section"
-                      : localBlobUrl
-                        ? "Play to review · saving may still be in progress"
-                        : "Loading take…"}
-                </p>
-                {error && phase === "review" && (
-                  <p style={{ textAlign: "center", color: C.danger, fontSize: 13, marginTop: 8 }}>
-                    {error}
-                  </p>
-                )}
-                {localBlobUrl && (
-                  <>
-                    <CompactAudioPlayer
-                      src={localBlobUrl}
-                      label="Your take"
-                      seed={`take-${current.id}`}
-                      beatSrc={beatUrl}
-                      beatStartMs={reviewBeatStartMs(
-                        resolveTaskWindow(withPlanTiming(current, planTasks)).startMs,
-                        // Clamp runaway offsets (stale state from another section)
-                        Math.max(0, Math.min(lastRecordingOffsetMs, 120000))
-                      )}
-                      beatEndMs={
-                        resolveTaskWindow(withPlanTiming(current, planTasks)).endMs ??
-                        resolveTaskWindow(withPlanTiming(current, planTasks)).startMs + 120000
-                      }
-                      vocalVolume={1}
-                      beatVolume={reviewVoiceOnly ? 0 : 0.06}
-                      overdubSrcs={reviewVoiceOnly ? [] : reviewOverdubSrcs}
-                      playbackSinkId={
-                        !selectedSpeakerId ||
-                        selectedSpeakerId === "__handset__" ||
-                        selectedSpeakerId === "__headphones__"
-                          ? "__speaker__"
-                          : selectedSpeakerId
-                      }
-                      debugSectionLabel={sectionLabel(current)}
-                      debugTaskId={current.id}
-                      debugSectionStartMs={resolveTaskWindow(current).startMs}
-                      debugRecordingOffsetMs={lastRecordingOffsetMs}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setReviewVoiceOnly((v) => !v)}
-                      style={{
-                        display: "block",
-                        margin: "10px auto 0",
-                        padding: "8px 14px",
-                        borderRadius: 999,
-                        border: `1px solid ${C.border}`,
-                        background: reviewVoiceOnly ? C.brassSoft : "transparent",
-                        color: reviewVoiceOnly ? C.brass : C.textMuted,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        fontFamily: "inherit",
-                      }}
-                    >
-                      {reviewVoiceOnly ? "Voice only · on" : "Beat + Voice"}
-                    </button>
-
-                    {taskTakes.length > 1 && (
-                      <div style={{ marginTop: 12, padding: 10, borderRadius: 12, border: `1px solid ${C.border}` }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>TAKES</div>
-                        {taskTakes.map((tk, i) => (
-                          <button
-                            key={tk.id}
-                            type="button"
-                            style={{
-                              display: "block",
-                              width: "100%",
-                              textAlign: "left",
-                              marginTop: 6,
-                              padding: "8px 10px",
-                              borderRadius: 10,
-                              border: `1px solid ${tk.is_selected ? C.brass : C.border}`,
-                              background: tk.is_selected ? C.brassSoft : "transparent",
-                              color: C.text,
-                              cursor: "pointer",
-                            }}
-                            disabled={selectingTakeId === tk.id}
-                            onClick={() => void selectTake(current.id, tk.id)}
-                          >
-                            Take {tk.take_number ?? i + 1}
-                            {selectingTakeId === tk.id
-                              ? " · switching…"
-                              : tk.is_selected
-                                ? " · selected for Review & Preview"
-                                : ""}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      style={{ ...btn2, marginTop: 10 }}
-                      onClick={() => {
-                        setSectionPreviewOnly(true);
-                        setScreen("assemble");
-                        void loadSongPreview();
-                      }}
-                    >
-                      Preview this section
-                    </button>
-                    <p style={{ fontSize: 11.5, color: C.textMuted, marginTop: 8, textAlign: "center" }}>
-                      Review uses normal speaker output (not the recording earpiece route). On iPhone, set
-                      Control Center to speaker if needed.
-                    </p>
-                  </>
-                )}
-                {producerTip && (
-                  <p style={{ marginTop: 10, fontSize: 13.5, color: C.signal, lineHeight: 1.45 }}>{producerTip}</p>
-                )}
-                {layerSuggestion && savedRecordingId && current && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: "12px 14px",
-                      borderRadius: 14,
-                      border: `1px solid ${C.border}`,
-                      background: C.surface,
-                    }}
-                  >
-                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: C.brass }}>
-                      PRODUCER NOTE
-                    </div>
-                    <p style={{ margin: "8px 0 0", fontSize: 13.5, color: C.text, lineHeight: 1.45 }}>
-                      {layerSuggestion.message}
-                    </p>
-                    <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        style={{ ...btn2, flex: 1, minWidth: 120 }}
-                        disabled={uploading || skipping}
-                        onClick={() => {
-                          void (async () => {
-                            const sug = layerSuggestion;
-                            if (!sug || !savedRecordingId || !current) return;
-                            try {
-                              if (sug.kind === "skip_planned" && sug.taskId) {
-                                await fetch(`/api/recording-tasks/${sug.taskId}/skip`, { method: "POST" });
-                              } else if (sug.kind === "add_unplanned") {
-                                await fetch(`/api/projects/${id}/plan`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    action: "add",
-                                    task: {
-                                      type: sug.targetType,
-                                      title:
-                                        sug.targetType === "DOUBLE"
-                                          ? "Double"
-                                          : sug.targetType === "HIGH_HARMONY"
-                                            ? "Harmony"
-                                            : "Ad-libs",
-                                      instruction:
-                                        sug.targetType === "DOUBLE"
-                                          ? "Sing the same line again, matching your lead."
-                                          : sug.targetType === "HIGH_HARMONY"
-                                            ? "Sing a higher harmony on the lines that need lift."
-                                            : "Add free, expressive ad-libs in the open spaces.",
-                                      start_ms: current.start_ms ?? 0,
-                                      end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
-                                      section_id: current.section_id,
-                                      section_label: current.metadata?.section_label,
-                                    },
-                                  }),
-                                });
-                              }
-                              await logLayerSuggestionOutcome(current.id, savedRecordingId, {
-                                id: sug.id,
-                                outcome: "accepted",
-                              });
-                              const tr = await fetch(`/api/projects/${id}/recording-tasks`);
-                              if (tr.ok) setTasks((await tr.json()).tasks || []);
-                            } catch {
-                              /* non-fatal */
-                            }
-                            setLayerSuggestion(null);
-                          })();
-                        }}
-                      >
-                        {layerSuggestion.kind === "skip_planned" ? "Skip it" : "Add to plan"}
-                      </button>
-                      <button
-                        type="button"
-                        style={{ ...btn2, flex: 1, minWidth: 120 }}
-                        onClick={() => {
-                          void (async () => {
-                            if (layerSuggestion && savedRecordingId && current) {
-                              await logLayerSuggestionOutcome(current.id, savedRecordingId, {
-                                id: layerSuggestion.id,
-                                outcome: "dismissed",
-                              });
-                            }
-                            setLayerSuggestion(null);
-                          })();
-                        }}
-                      >
-                        Keep plan
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {uploading && (
-                  <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 14 }}>
-                    Saving take…
-                  </p>
-                )}
-                {!uploading && savedRecordingId && (
-                  <p style={{ textAlign: "center", color: C.signal, fontSize: 13, marginTop: 14, fontWeight: 600 }}>
-                    Take saved
-                  </p>
-                )}
-                {!uploading && savedRecordingId && current && (() => {
-                  const poolForSection = [
-                    ...tasks.map((row) =>
-                      row.id === current.id ? { ...row, status: "completed" as const } : row
-                    ),
-                    ...planTasks
-                      .filter(
-                        (plan) =>
-                          plan.active !== false &&
-                          plan.selected_in_plan !== false &&
-                          plan.status !== "skipped" &&
-                          !tasks.some((x) => x.id === plan.id)
-                      )
-                      .map((plan) => ({
-                        id: plan.id,
-                        type: plan.type,
-                        title: plan.title,
-                        instruction: plan.instruction || "",
-                        status: plan.status || "pending",
-                        required: Boolean(plan.required),
-                        start_ms: plan.start_ms,
-                        end_ms: plan.end_ms,
-                        section_id: plan.section_id,
-                        metadata: plan.metadata as Task["metadata"],
-                      })),
-                  ];
-                  const openLayers = openProductionLayersForSection(poolForSection, {
-                    ...current,
-                    status: "completed",
-                  });
-                  const nextLayer = openLayers[0] ?? null;
-
-                  async function focusLayerTask(taskId: string) {
-                    setSavedRecordingId(null);
-                    setLocalBlobUrl(null);
-                    setActiveTaskId(taskId);
-                    setPhase("ready");
-                    setScreen("session");
-                    setError(null);
-                  }
-
-                  async function addLayerType(type: "DOUBLE" | "HIGH_HARMONY" | "ADLIB") {
-                    if (!current) return;
-                    try {
-                      const res = await fetch(`/api/projects/${id}/plan`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          action: "add",
-                          task: {
-                            type,
-                            title:
-                              type === "DOUBLE"
-                                ? "Double"
-                                : type === "HIGH_HARMONY"
-                                  ? "Harmony"
-                                  : "Ad-libs",
-                            instruction:
-                              type === "DOUBLE"
-                                ? "Sing the same line again, matching your lead as closely as you can."
-                                : type === "HIGH_HARMONY"
-                                  ? "Sing a higher harmony on the lines that need lift."
-                                  : "Add free, expressive ad-libs in the open spaces.",
-                            start_ms: current.start_ms ?? 0,
-                            end_ms: current.end_ms ?? (current.start_ms ?? 0) + 8000,
-                            section_id: current.section_id,
-                            section_label: current.metadata?.section_label,
-                          },
-                        }),
-                      });
-                      const j = await res.json().catch(() => ({}));
-                      const tr = await fetch(`/api/projects/${id}/recording-tasks`);
-                      let list: Task[] = [];
-                      if (tr.ok) {
-                        list = (await tr.json()).tasks || [];
-                        setTasks(list);
-                      }
-                      const newId = (j && (j.task?.id || j.id || j.created?.id)) || null;
-                      const typeNeedle = type.toLowerCase().replace("_", "");
-                      let focus =
-                        (newId && list.find((x) => x.id === newId)) ||
-                        list
-                          .filter(
-                            (x) =>
-                              isTaskOpen(x) &&
-                              (x.type || "").toLowerCase().replace(/_/g, "").includes(
-                                type === "HIGH_HARMONY" ? "harmony" : typeNeedle.replace("high", "")
-                              ) &&
-                              sameMusicalSection(current, x)
-                          )
-                          .sort((a, b) => Number(b.start_ms || 0) - Number(a.start_ms || 0))[0];
-                      if (!focus) {
-                        focus =
-                          nextProductionRecommendation(
-                            list.map((x) =>
-                              x.id === current.id ? { ...x, status: "completed" } : x
-                            ),
-                            { ...current, status: "completed" }
-                          ) || undefined;
-                      }
-                      if (focus) await focusLayerTask(focus.id);
-                    } catch {
-                      /* non-fatal */
-                    }
-                  }
-
-                  return (
-                    <div style={{ marginTop: 16 }}>
-                      {openLayers.length > 0 ? (
-                        <>
-                          <p
-                            style={{
-                              textAlign: "center",
-                              color: C.brass,
-                              fontSize: 13,
-                              fontWeight: 600,
-                              marginBottom: 8,
-                            }}
-                          >
-                            Planned layers left on this section
-                          </p>
-                          {openLayers.map((layer) => {
-                            const copy = layerRecommendationCopy(layer.type);
-                            return (
-                              <button
-                                key={layer.id}
-                                type="button"
-                                style={{ ...btn, marginTop: 6, width: "100%" }}
-                                disabled={uploading || phase !== "review"}
-                                onClick={() => void focusLayerTask(layer.id)}
-                              >
-                                {copy.cta || `Record ${layer.type}`}
-                              </button>
-                            );
-                          })}
-                        </>
-                      ) : (
-                        <>
-                          <p
-                            style={{
-                              textAlign: "center",
-                              color: C.textMuted,
-                              fontSize: 13,
-                              marginBottom: 8,
-                            }}
-                          >
-                            No more layers planned for this section — add one if you want
-                          </p>
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 6,
-                            }}
-                          >
-                            {(
-                              [
-                                ["DOUBLE", "Add a double"],
-                                ["HIGH_HARMONY", "Add a harmony"],
-                                ["ADLIB", "Add ad-libs"],
-                              ] as const
-                            ).map(([ty, label]) => (
-                              <button
-                                key={ty}
-                                type="button"
-                                style={{ ...btn2, width: "100%" }}
-                                disabled={uploading || phase !== "review" || skipping}
-                                onClick={() => void addLayerType(ty)}
-                              >
-                                {label}
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        style={{
-                          ...btn2,
-                          marginTop: 10,
-                          width: "100%",
-                          opacity: 0.95,
-                          borderStyle: "dashed",
-                        }}
-                        disabled={uploading || phase !== "review"}
-                        onClick={() => void goToNextSectionLead()}
-                      >
-                        Next section →
-                      </button>
-                    </div>
-                  );
-                })()}
-                <button
-                  type="button"
-                  style={{ ...btn2, marginTop: 12 }}
-                  disabled={uploading}
-                  onClick={() => {
-                    setError(null);
-                    setLocalBlobUrl(null);
-                    setSavedRecordingId(null);
-                    setProducerTip(null);
-                    setLayerSuggestion(null);
-                    setReviewVoiceOnly(false);
-                    setTaskTakes([]);
-                    setPhase("ready");
-                  }}
-                >
-                  Retake
-                </button>
-                {savedRecordingId && (
-                  <button
-                    type="button"
-                    style={{ ...btn2, marginTop: 8 }}
-                    disabled={uploading}
-                    onClick={() => {
-                      setSectionPreviewOnly(false);
-                      setScreen("assemble");
-                      void loadSongPreview();
-                    }}
-                  >
-                    I&apos;m done — preview song
-                  </button>
-                )}
-
-
-              </div>
-            )}
           </div>
         )}
 
-        {screen === "session" && !current && (
-          <div style={wrap}>
-            <h1 style={titleStyle}>
-              {optionalOpen(tasks).length > 0 ? "Optional parts left" : "All parts done"}
-            </h1>
-            <p style={{ color: C.textMuted, textAlign: "center" }}>
-              {optionalOpen(tasks).length > 0
-                ? "You can record optional parts or skip them all and continue to preview."
-                : "Hear your full arrangement (beat + every section) before producing."}
-            </p>
-            {optionalOpen(tasks).length > 0 && (
-              <button
-                type="button"
-                style={{ ...btn2, marginTop: 16 }}
-                disabled={skipping}
-                onClick={() => void skipAllOptional()}
-              >
-                {skipping
-                  ? "Skipping…"
-                  : `Skip all optional (${optionalOpen(tasks).length})`}
-              </button>
-            )}
-            <button
-              type="button"
-              style={{ ...btn, marginTop: 12 }}
-              onClick={() => {
-                setSectionPreviewOnly(false);
-                setScreen("assemble");
-                void loadSongPreview();
-              }}
-            >
-              Preview recorded
-            </button>
-          </div>
+        {screen === "plan" && boothParts.length === 0 && (
+          <BoothBeatStep
+            title={project?.title || "Your beat"}
+            subtitle="No plan yet"
+            beatUrl={beatUrl}
+            seed={project?.title || id}
+            busy={analyzing}
+            error={error}
+            ctaLabel="Write my song plan"
+            onStart={() => void generateAiPlan("ai")}
+            onMore={() => openAdvanced()}
+          />
+        )}
+
+        {(screen === "plan" && boothParts.length > 0) || (screen === "session" && !stageVisible) ? (
+          <BoothPlanStep
+            title={project?.title || "Your song"}
+            parts={boothParts}
+            busy={analyzing || skipping}
+            error={error}
+            onRetry={screen === "plan" ? () => void generateAiPlan("ai") : undefined}
+            onBack={() => setScreen("beat")}
+            onMore={() => openAdvanced()}
+            onRecordPart={recordPart}
+            onRecordNext={recordNext}
+            onMake={openPreview}
+          />
+        ) : null}
+
+        {stageVisible && current && (
+          <BoothRecordStage
+            phase={phase}
+            sectionLabel={sectionLabel(current)}
+            partTitle={current.title?.trim() || humanTitle(current.type)}
+            lyric={current.instruction?.trim() || null}
+            meta={
+              current.start_ms != null || current.end_ms != null
+                ? `${fmtSectionWindow(resolveTaskWindow(current).startMs, resolveTaskWindow(current).endMs)}${
+                    sectionMs != null ? ` · ${Math.round(sectionMs / 1000)}s` : ""
+                  }`
+                : null
+            }
+            stepText={stepIndex >= 0 ? `Part ${stepIndex + 1} of ${boothParts.length}` : "Recording"}
+            countdown={countdown}
+            canRecordAgain={canRecordAgain}
+            showReview={showReviewUi}
+            saving={uploading}
+            canKeep={Boolean(savedRecordingId) || isTaskDone(current)}
+            error={error}
+            visualizer={
+              <RecordingVisualizer
+                stream={micStream}
+                seconds={recordSeconds}
+                maxSeconds={sectionMs != null ? sectionMs / 1000 : null}
+                label="Recording"
+                seed={`rec-${current.id}`}
+                title={sectionLabel(current)}
+                subtitle={current.title?.trim() || humanTitle(current.type)}
+                timeline={formatBoothTimeline(current.start_ms, current.end_ms)}
+              />
+            }
+            reviewPlayer={reviewPlayer}
+            onRecord={startRecording}
+            onStop={stopRecording}
+            onCancelCount={cancelCountdown}
+            onKeep={() => void goToNextSectionLead()}
+            onRetry={resetTakeForRetry}
+            onClose={() => {
+              if (phase === "review") resetTakeForRetry();
+              setStageOpen(false);
+            }}
+            onMore={() => openAdvanced()}
+          />
         )}
 
         {screen === "assemble" && (
-          <div style={wrap}>
-            {producing ? (
-              <>
-                <PlayerLoadingState
-                  title="Producing your song"
-                  subtitle={`${humanProduceStage(produceStage)}${
-                    produceProgress > 0 ? ` · ${produceProgress}%` : ""
-                  }${produceJobId ? ` · Job ${String(produceJobId).slice(0, 8)}…` : ""}`}
-                  seed={`produce-${id}`}
+          <BoothMakeStep
+            producing={producing}
+            progress={produceProgress}
+            stageText={produceStage ? humanProduceStage(produceStage) : null}
+            error={error || previewError}
+            canMake={canMakeSong(boothParts) || coreDone(tasks).length > 0}
+            onMake={startProduce}
+            onBack={() => {
+              setSectionPreviewOnly(false);
+              setScreen("session");
+              setPhase("ready");
+              setStageOpen(false);
+            }}
+            onMore={() => openAdvanced()}
+            preview={
+              previewLoading ? (
+                <PlayerLoadingState title="Loading preview" subtitle="Gathering beat and takes…" seed={`prev-${id}`} />
+              ) : (
+                <SongPreviewPlayer
+                  beatUrl={previewBeatUrl || beatUrl}
+                  beatDurationMs={previewBeatDurationMs}
+                  layers={previewLayers}
+                  title={`Recorded · ${coreDone(tasks).length}/${coreTasks(tasks).length} parts`}
+                  seed={project?.title || id}
+                  sectionFilterSectionId={null}
+                  sectionFilterStartMs={null}
+                  sectionFilterEndMs={null}
+                  playbackSinkId={selectedSpeakerId || "__headphones__"}
                 />
-                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 13, marginTop: 12, lineHeight: 1.45 }}>
-                  Mixing and mastering usually take 1–4 minutes. Safe to leave this screen —
-                  refresh later and we will pick up progress.
-                </p>
-                {produceStage ? (
-                  <p style={{ textAlign: "center", fontSize: 11.5, color: C.textMuted, marginTop: 6 }}>
-                    Technical stage: {produceStage}
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song so far</h1>
-                <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14 }}>
-                  {coreDone(tasks).length} of {coreTasks(tasks).length} sections recorded
-                  {productionLayersAdded(tasks).length > 0
-                    ? ` · ${productionLayersAdded(tasks).length} layers`
-                    : ""}
-                </p>
-                <ul style={{ listStyle: "none", padding: 0, margin: "12px auto", maxWidth: 320 }}>
-                  {coreTasks(tasks).map((t0) => {
-                    const done = t0.status === "completed";
-                    return (
-                      <li
-                        key={t0.id}
-                        style={{
-                          fontSize: 14,
-                          color: done ? C.text : C.textMuted,
-                          padding: "4px 0",
-                        }}
-                      >
-                        {done ? "✓" : "○"} {sectionLabel(t0)} · {humanTitle(t0.type)}
-                      </li>
-                    );
-                  })}
-                </ul>
-                <p style={{ color: C.textMuted, textAlign: "center", fontSize: 14, marginTop: 6 }}>
-                  Play the full timeline — beat plus every recorded section — then produce when it feels right.
-                </p>
-                {error && <p style={{ color: C.danger, textAlign: "center" }}>{error}</p>}
-
-                {previewLoading ? (
-                  <PlayerLoadingState title="Loading preview" subtitle="Gathering beat and takes…" seed={`prev-${id}`} />
-                ) : (
-                  <SongPreviewPlayer
-                    beatUrl={previewBeatUrl || beatUrl}
-                    beatDurationMs={previewBeatDurationMs}
-                    layers={previewLayers}
-                    title={
-                      sectionPreviewOnly && current
-                        ? `${sectionLabel(current)} · section layers`
-                        : `Recorded · ${coreDone(tasks).length}/${coreTasks(tasks).length} sections`
-                    }
-                    seed={project?.title || id}
-                    sectionFilterSectionId={
-                      sectionPreviewOnly
-                        ? current?.section_id ||
-                          current?.metadata?.section_id ||
-                          null
-                        : null
-                    }
-                    sectionFilterStartMs={
-                      sectionPreviewOnly && current?.start_ms != null ? current.start_ms : null
-                    }
-                    sectionFilterEndMs={
-                      sectionPreviewOnly && current?.end_ms != null ? current.end_ms : null
-                    }
-                    playbackSinkId={selectedSpeakerId || "__headphones__"}
-                  />
-                )}
-
-                {previewError && (
-                  <p style={{ color: C.danger, textAlign: "center", fontSize: 13, marginTop: 10 }}>
-                    {previewError}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  style={{ ...btn2, marginTop: 12 }}
-                  onClick={() => {
-                    setSectionPreviewOnly(false);
-                    void loadSongPreview();
-                  }}
-                  disabled={previewLoading}
-                >
-                  {previewLoading ? "Loading preview…" : "Refresh preview (all recorded)"}
-                </button>
-
-                <ProjectSamplesPanel projectId={id} />
-                <button
-                  type="button"
-                  style={{ ...btn2, marginTop: 16 }}
-                  onClick={() => {
-                    setSectionPreviewOnly(false);
-                    setScreen("session");
-                    setPhase("ready");
-                  }}
-                >
-                  Continue Recording
-                </button>
-                <button type="button" style={{ ...btn, marginTop: 12 }} onClick={startProduce}>
-                  Produce recorded
-                </button>
-              </>
-            )}
-          </div>
+              )
+            }
+          />
         )}
 
         {screen === "done" && (
-          <div style={wrap}>
-            <h1 style={{ ...titleStyle, textAlign: "center" }}>Your song is ready</h1>
-            <p style={{ textAlign: "center", color: C.textMuted, fontSize: 14, marginTop: 8 }}>
-              Full produced master — play below or download WAV / MP3.
-            </p>
-            <button
-              type="button"
-              onClick={() => { window.location.href = `/app/console/${id}`; }}
-              style={{
-                display: "block",
-                width: "100%",
-                marginTop: 16,
-                padding: "14px 16px",
-                borderRadius: 14,
-                border: `1px solid ${C.brass}`,
-                background: `linear-gradient(180deg, rgba(231,169,97,0.2), rgba(231,169,97,0.08))`,
-                color: C.text,
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              Open in Studio
-            </button>
-            {masterUrl && (
-              <div style={{ marginTop: 20 }}>
+          <BoothDoneStep
+            title={project?.title || "Your song"}
+            hasMaster={Boolean(masterUrl)}
+            player={
+              masterUrl ? (
                 <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed={project?.title || "master"} accent="signal" />
-              </div>
-            )}
-            {!masterUrl && (
-              <>
-                <p style={{ textAlign: "center", color: C.textMuted }}>Master not ready yet.</p>
-                <button type="button" style={btn} onClick={startProduce}>
-                  Produce my song
-                </button>
-              </>
-            )}
-            {masterUrl && (
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 10,
-                  justifyContent: "center",
-                  marginTop: 20,
-                  alignItems: "center",
-                }}
-              >
-                <button
-                  type="button"
-                  aria-label="Download"
-                  title="Download"
-                  style={{
-                    ...btn,
-                    width: "auto",
-                    minWidth: 120,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}
-                  onClick={() => {
-                    if (downloadUnlocked) setDownloadModalOpen(true);
-                    else setPaywallOpen(true);
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                    <path d="M12 3v12" strokeLinecap="round" />
-                    <path d="M7 11l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M5 21h14" strokeLinecap="round" />
-                  </svg>
-                  Download
-                </button>
-                <button
-                  type="button"
-                  style={btn2}
-                  onClick={() => {
-                    setScreen("assemble");
-                    setSectionPreviewOnly(false);
-                    void loadSongPreview();
-                  }}
-                >
-                  Arrangement preview
-                </button>
-
-                <div style={{ width: "100%", maxWidth: 420, marginTop: 4 }}>
+              ) : null
+            }
+            onDownload={() => {
+              if (downloadUnlocked) setDownloadModalOpen(true);
+              else setPaywallOpen(true);
+            }}
+            onMake={startProduce}
+            onMore={() => openAdvanced()}
+            extras={
+              masterUrl ? (
+                <div style={{ marginTop: 24 }}>
                   <PromptTweakPanel
                     projectId={id}
-                    colors={{
-                      text: C.text,
-                      textMuted: C.textMuted,
-                      surface: C.surface,
-                      border: C.border,
-                      bg: C.bg,
-                    }}
-                    onMasterUrl={(url) => {
-                      setMasterUrl(url);
-                    }}
+                    colors={{ text: C.text, textMuted: C.textMuted, surface: C.surface, border: C.border, bg: C.bg }}
+                    onMasterUrl={(url) => setMasterUrl(url)}
                   />
                 </div>
-              </div>
-            )}
-
-          </div>
+              ) : null
+            }
+          />
         )}
 
+        <input
+          ref={boothUploadRef}
+          type="file"
+          accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac,.webm"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            setAdvancedOpen(false);
+            setStageOpen(true);
+            void uploadForTask(e.target.files?.[0] || null);
+            e.target.value = "";
+          }}
+        />
 
+        <BoothAdvancedSheet
+          open={advancedOpen}
+          title={advancedPanel === "audio" ? "Mic & headphones" : advancedPanel === "plan" ? "Edit song plan" : "Advanced"}
+          items={advancedPanel === "menu" ? advancedItems : undefined}
+          onClose={() => setAdvancedOpen(false)}
+        >
+          {advancedPanel === "audio" ? (
+            <div>
+              <MicInputPicker selectedDeviceId={selectedMicId} onSelect={onMicSelect} disabled={boothBusy} />
+              <SpeakerOutputPicker selectedDeviceId={selectedSpeakerId} onSelect={onSpeakerSelect} disabled={boothBusy} />
+              <button
+                type="button"
+                className="ap-sheet-btn primary"
+                style={{ marginTop: 14 }}
+                onClick={() => {
+                  writeAudioSetupConfirmed(true);
+                  setAudioSetupOpen(false);
+                  setAdvancedOpen(false);
+                }}
+              >
+                Done
+              </button>
+            </div>
+          ) : null}
+          {advancedPanel === "plan" ? (
+            <PlanEditor
+              projectId={id}
+              tasks={planSourceRows}
+              planMode={planMode}
+              onModeChange={(m) => {
+                setPlanMode(m);
+                void fetch(`/api/projects/${id}/plan`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "set_mode", mode: m }),
+                }).catch(() => undefined);
+              }}
+              onTasksChange={handlePlanTasksChange}
+            />
+          ) : null}
+        </BoothAdvancedSheet>
+
+        <ConsoleHandoffSheet
+          open={handoffOpen}
+          songTitle={project?.title}
+          busy={handingOff}
+          onConfirm={() => void confirmConsoleHandoff()}
+          onCancel={() => setHandoffOpen(false)}
+        />
 
       {paywallOpen && (
         <ApPaywall
