@@ -930,6 +930,133 @@ function AppInner() {
   }
 
 
+  /** Home dashboard: stage label + progress for a project. */
+  function homeStage(p: Project): { label: string; progress: number } {
+    if (isFinishedSong(p)) return { label: "Mastered", progress: 100 };
+    const s = (p.status || "").toLowerCase();
+    if (s.includes("record") || s === "in_progress") return { label: "Recording", progress: 65 };
+    if (p.has_beat || s === "beat_ready") return { label: "Beat ready", progress: 45 };
+    return { label: "Planning", progress: 20 };
+  }
+
+  const HOME_GRADS: [string, string, string][] = [
+    ["#C8F542", "#0E8F6E", "#06342A"],
+    ["#FF6F91", "#C2560F", "#2A1210"],
+    ["#FF8A4C", "#7A6A10", "#1E1A08"],
+    ["#8A93FF", "#A02E8A", "#1C1530"],
+    ["#5EEAD4", "#2C5BD8", "#0C1430"],
+    ["#FFC145", "#D6336C", "#2A0F1C"],
+  ];
+
+  function HomeCover({ p, small }: { p: Project; small?: boolean }) {
+    const seed = p.id + (p.title || "");
+    let s = 0;
+    for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) >>> 0;
+    const [a, b, c] = HOME_GRADS[s % HOME_GRADS.length];
+    const cover = projectCoverUrl(p);
+    const initials = (p.title || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 2) || "AP";
+    return (
+      <span style={{ position: "absolute", inset: 0, display: "block", background: `radial-gradient(70% 60% at 25% 20%, ${a} 0%, transparent 70%), linear-gradient(150deg, ${b} 0%, ${b} 35%, ${c} 100%)` }}>
+        {cover && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={cover} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+        )}
+        <span aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.35) 100%)" }} />
+        <span className="ap-home-card-initials" aria-hidden style={small ? { fontSize: 30, left: 8, bottom: 10 } : undefined}>
+          {initials}
+        </span>
+      </span>
+    );
+  }
+
+  function HomeGlyph({ name, size = 18 }: { name: string; size?: number }) {
+    const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+    if (name === "mic")
+      return (
+        <svg {...common}>
+          <circle cx="15" cy="9" r="5" />
+          <path d="M11.5 12.5 4 20l0 0M7 17l-2 2" />
+        </svg>
+      );
+    if (name === "wave")
+      return (
+        <svg {...common}>
+          <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />
+        </svg>
+      );
+    if (name === "user")
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
+        </svg>
+      );
+    return (
+      <svg {...common}>
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    );
+  }
+
+  function HomeProjectCard({ p, meta }: { p: Project; meta: string }) {
+    const isReady = isFinishedSong(p);
+    const latest = p.masters && p.masters.length > 0 ? p.masters[0] : null;
+    const playId = `master:${p.id}:${latest?.job_id || "v1"}`;
+    const isActive = activeId === playId;
+    const isPlaying = isActive && audioIsPlaying;
+    const stage = homeStage(p);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+        <div style={{ position: "relative" }}>
+          <Link href={`/app/studio/${p.id}`} className="ap-home-card" aria-label={p.title}>
+            <HomeCover p={p} />
+          </Link>
+          <span className="ap-home-pill">{stage.label}</span>
+          <button
+            type="button"
+            className="ap-home-play ap-home-press"
+            aria-label={isPlaying ? "Pause" : isReady ? "Play" : "Open project"}
+            disabled={loadingPlayId === playId}
+            onClick={() => {
+              if (!isReady) {
+                router.push(`/app/studio/${p.id}`);
+                return;
+              }
+              void togglePlayMaster(playId, p.id, {
+                ...(latest ? { jobId: latest.job_id } : { version: 1 }),
+                title: p.title,
+                subtitle: meta,
+                seed: p.title || p.id,
+              });
+            }}
+          >
+            {isPlaying ? <IconPause size={18} color="currentColor" /> : <IconPlay size={18} color="currentColor" />}
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "0 2px", minWidth: 0 }}>
+          <Link href={`/app/studio/${p.id}`} style={{ flex: 1, minWidth: 0, color: "inherit", textDecoration: "none" }}>
+            <span style={{ display: "block", fontSize: 16, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title}</span>
+            <span style={{ display: "block", marginTop: 2, fontSize: 13.5, color: "var(--hl-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textTransform: p.genre ? "none" : "capitalize" }}>
+              {p.genre || stage.label}
+            </span>
+          </Link>
+          <button
+            type="button"
+            className="ap-home-more"
+            aria-label="More options"
+            onClick={() => setProjectMenu({ id: p.id, title: p.title, meta, isReady })}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <circle cx="5" cy="12" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="19" cy="12" r="1.8" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const activeNav = tab === "library" ? "library" : tab === "profile" ? "profile" : "home";
 
   return (
@@ -968,36 +1095,52 @@ function AppInner() {
         {tab === "home" && (
           <>
             <style>{`
+              .ap-home { --hl-lime: #C8F542; --hl-lime-ink: #10130A; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
+              .ap-home-title { font-family: var(--hl-display); font-stretch: 125%; font-weight: 800; font-size: clamp(1.35rem, 5.6vw, 1.75rem); letter-spacing: -0.01em; line-height: 1.1; margin: 0; }
               .ap-home-actions { scrollbar-width: none; }
               .ap-home-actions::-webkit-scrollbar { display: none; }
               @keyframes apHomeEq { 0%,100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
               .ap-home-eq span { animation: apHomeEq 0.9s ease-in-out infinite; transform-origin: bottom; }
+              .ap-home-press { transition: transform .15s ease; }
               .ap-home-press:active { transform: scale(0.96); }
+              .ap-home-card { position: relative; display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: 28px; overflow: hidden; text-decoration: none; color: inherit; isolation: isolate; box-shadow: 0 18px 40px -22px rgba(0,0,0,0.8); transition: transform 240ms ease; }
+              @media (hover: hover) { .ap-home-card:hover { transform: translateY(-3px); } }
+              .ap-home-card-initials { position: absolute; left: 7%; bottom: 7%; font-family: var(--hl-display); font-stretch: 125%; font-weight: 900; font-size: clamp(2.2rem, 11vw, 3.4rem); line-height: 1; letter-spacing: -0.02em; color: rgba(255,255,255,0.16); mix-blend-mode: overlay; pointer-events: none; text-transform: uppercase; }
+              .ap-home-pill { position: absolute; top: 5%; left: 5%; padding: 5px 10px; border-radius: 999px; background: rgba(20,20,26,0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); font-size: 11.5px; font-weight: 550; color: var(--hl-text); z-index: 2; }
+              .ap-home-play { position: absolute; right: 6%; bottom: 6%; width: 22%; min-width: 40px; max-width: 48px; aspect-ratio: 1; border-radius: 999px; border: none; display: grid; place-items: center; background: var(--hl-lime); color: var(--hl-lime-ink); cursor: pointer; z-index: 2; box-shadow: 0 8px 18px -6px rgba(200,245,66,0.45); padding: 0; }
+              .ap-home-play:disabled { opacity: 0.55; cursor: default; }
+              .ap-home-qa { min-width: 148px; flex-shrink: 0; text-align: left; padding: 18px 18px 20px; border-radius: 26px; border: 1px solid var(--hl-line); background: var(--hl-card); color: var(--hl-text); cursor: pointer; font-family: inherit; }
+              .ap-home-qa-icon { width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center; background: rgba(255,255,255,0.06); color: var(--hl-lime); }
+              .ap-home-progress { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.07); overflow: hidden; margin-top: 10px; max-width: 220px; }
+              .ap-home-progress > span { display: block; height: 100%; border-radius: 99px; background: var(--hl-lime); }
+              .ap-home-more { appearance: none; border: none; background: none; color: var(--hl-muted); cursor: pointer; padding: 4px; line-height: 0; flex-shrink: 0; }
             `}</style>
 
+            <div className="ap-home">
             {/* Greeting row — current artist avatar + credits */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
               <button
                 type="button"
                 onClick={() => setTab("profile")}
-                style={{ display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: C.text, fontFamily: "inherit", minWidth: 0 }}
+                style={{ display: "flex", alignItems: "center", gap: 12, background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit", fontFamily: "inherit", minWidth: 0 }}
               >
-                <ArtistAvatar seed={stableAvatarSeed({ userId, email: userEmail, name: userName })} size={44} />
+                <ArtistAvatar seed={stableAvatarSeed({ userId, email: userEmail, name: userName })} size={46} />
                 <span style={{ textAlign: "left", minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 12, color: C.textMuted }}>
+                  <span style={{ display: "block", fontSize: 13, color: "var(--hl-muted)" }}>
                     {(() => {
                       const h = new Date().getHours();
                       return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
                     })()}
                   </span>
-                  <span style={{ display: "block", fontSize: 17, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <span style={{ display: "block", fontSize: 18, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {userName || "Artist"}
                   </span>
                 </span>
               </button>
               {creditBalance != null && (
-                <span style={{ flexShrink: 0, padding: "7px 12px", borderRadius: 999, border: `1px solid ${C.border}`, background: C.surface, fontSize: 12, fontWeight: 650, color: C.text }}>
-                  <span style={{ color: C.brass }}>●</span> {creditBalance.toLocaleString()} credits
+                <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--hl-line)", background: "rgba(255,255,255,0.02)", fontSize: 13, fontWeight: 550 }}>
+                  <span aria-hidden style={{ width: 9, height: 9, borderRadius: 99, background: "var(--hl-lime)", boxShadow: "0 0 8px rgba(200,245,66,0.6)" }} />
+                  {creditBalance.toLocaleString()} credits
                 </span>
               )}
             </div>
@@ -1007,50 +1150,56 @@ function AppInner() {
               style={{
                 position: "relative",
                 overflow: "hidden",
-                borderRadius: 24,
-                padding: 24,
-                border: `1px solid ${C.border}`,
-                background: `radial-gradient(120% 90% at 0% 0%, ${C.brassSoft}, transparent 55%), radial-gradient(90% 90% at 100% 100%, rgba(94,234,212,0.16), transparent 60%), ${C.surfaceRaised}`,
-                boxShadow: C.cardShadow,
+                borderRadius: 30,
+                padding: "26px 22px 24px",
+                border: "1px solid var(--hl-line)",
+                background:
+                  "radial-gradient(110% 120% at 100% 100%, rgba(214,51,108,0.55), transparent 60%), radial-gradient(80% 90% at 0% 0%, rgba(200,245,66,0.10), transparent 60%), linear-gradient(135deg, #15161E 0%, #1A1520 55%, #3A1626 100%)",
               }}
             >
-              <div className="ap-home-eq" aria-hidden style={{ position: "absolute", right: 22, top: 24, display: "flex", alignItems: "flex-end", gap: 4, height: 56, opacity: 0.85 }}>
+              <div className="ap-home-eq" aria-hidden style={{ position: "absolute", right: 22, top: 26, display: "flex", alignItems: "flex-end", gap: 4, height: 52, opacity: 0.9 }}>
                 {[0, 1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} style={{ width: 5, height: "100%", borderRadius: 99, background: C.brass, animationDelay: `${i * 0.12}s` }} />
+                  <span key={i} style={{ width: 5, height: "100%", borderRadius: 99, background: "var(--hl-lime)", animationDelay: `${i * 0.12}s` }} />
                 ))}
               </div>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, background: C.brassSoft, color: C.brass, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "rgba(200,245,66,0.12)", color: "var(--hl-lime)", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
                 AI Producer
               </span>
-              <h1 style={{ ...h1, margin: "14px 0 0", fontSize: "clamp(1.5rem, 6vw, 1.9rem)", lineHeight: 1.12, maxWidth: 260 }}>
+              <h1 className="ap-home-title" style={{ marginTop: 14, maxWidth: 260 }}>
                 What are we making today?
               </h1>
-              <p style={{ margin: "8px 0 0", maxWidth: 240, fontSize: 14, color: C.textMuted }}>
+              <p style={{ margin: "8px 0 0", maxWidth: 240, fontSize: 14, color: "var(--hl-muted)" }}>
                 Drop a beat, follow the plan and hit record.
               </p>
-              <button type="button" className="ap-home-press" style={{ ...primary, marginTop: 18, borderRadius: 999, padding: "12px 20px" }} onClick={() => router.push("/app/studio")}>
-                + Start a song
+              <button
+                type="button"
+                className="ap-home-press"
+                onClick={() => router.push("/app/studio")}
+                style={{ marginTop: 20, display: "inline-flex", alignItems: "center", gap: 8, border: "none", borderRadius: 999, padding: "14px 26px", background: "var(--hl-lime)", color: "var(--hl-lime-ink)", fontFamily: "inherit", fontSize: 15, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 26px -10px rgba(200,245,66,0.6)" }}
+              >
+                <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>+</span> Start a song
               </button>
             </div>
 
             {/* Quick actions */}
-            <div className="ap-home-actions" style={{ display: "flex", gap: 12, overflowX: "auto", margin: "20px -4px 0", padding: "0 4px" }}>
+            <div className="ap-home-actions" style={{ display: "flex", gap: 12, overflowX: "auto", margin: "22px -20px 0", padding: "0 20px" }}>
               {[
-                { label: "New song", sub: "From an idea", href: "/app/studio" },
-                { label: "Library", sub: "Songs & beats", tab: "library" as Tab },
-                { label: "Booth", sub: "Record vocals", href: "/app/studio" },
-                { label: "Profile", sub: "Plan & credits", tab: "profile" as Tab },
+                { label: "New song", sub: "From an idea", href: "/app/studio", icon: "plus" },
+                { label: "Library", sub: "Songs & beats", tab: "library" as Tab, icon: "wave" },
+                { label: "Booth", sub: "Record vocals", href: "/app/studio", icon: "mic" },
+                { label: "Profile", sub: "Plan & credits", tab: "profile" as Tab, icon: "user" },
               ].map((a) => (
                 <button
                   key={a.label}
                   type="button"
-                  className="ap-home-press"
+                  className="ap-home-qa ap-home-press"
                   onClick={() => (a.href ? router.push(a.href) : a.tab && setTab(a.tab))}
-                  style={{ minWidth: 136, flexShrink: 0, textAlign: "left", padding: 16, borderRadius: 18, border: `1px solid ${C.border}`, background: C.surface, color: C.text, cursor: "pointer", fontFamily: "inherit", transition: "transform .15s" }}
                 >
-                  <span style={{ display: "block", width: 30, height: 4, borderRadius: 99, background: C.brass }} />
-                  <span style={{ display: "block", marginTop: 14, fontSize: 14, fontWeight: 700 }}>{a.label}</span>
-                  <span style={{ display: "block", fontSize: 12, color: C.textMuted }}>{a.sub}</span>
+                  <span className="ap-home-qa-icon" aria-hidden>
+                    <HomeGlyph name={a.icon} />
+                  </span>
+                  <span style={{ display: "block", marginTop: 26, fontSize: 16, fontWeight: 600 }}>{a.label}</span>
+                  <span style={{ display: "block", marginTop: 2, fontSize: 13.5, color: "var(--hl-muted)" }}>{a.sub}</span>
                 </button>
               ))}
             </div>
@@ -1058,39 +1207,43 @@ function AppInner() {
             {/* Continue latest */}
             {!loading && projects[0] && (
               <>
-                <div style={{ marginTop: 30, fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: C.text }}>
-                  Pick up where you left off
-                </div>
-                <Link
-                  href={`/app/studio/${projects[0].id}`}
-                  style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 14, padding: 12, borderRadius: 18, border: `1px solid ${C.border}`, background: C.surface, color: C.text, textDecoration: "none", boxShadow: C.cardShadow }}
-                >
-                  <span style={{ width: 60, height: 60, borderRadius: 14, overflow: "hidden", flexShrink: 0, display: "block" }}>
-                    {projectCoverUrl(projects[0]) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={projectCoverUrl(projects[0]) as string} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                    ) : (
-                      <ProjectCoverFallback seed={projects[0].id + (projects[0].title || "")} />
-                    )}
-                  </span>
-                  <span style={{ minWidth: 0, flex: 1 }}>
-                    <span style={{ display: "block", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{projects[0].title}</span>
-                    <span style={{ display: "block", fontSize: 12, color: C.textMuted, textTransform: "capitalize" }}>
-                      {[projects[0].status, projects[0].genre].filter(Boolean).join(" · ")}
+                <h2 className="ap-home-title" style={{ marginTop: 36 }}>Pick up where you left off</h2>
+                <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 16, padding: 14, borderRadius: 28, border: "1px solid var(--hl-line)", background: "var(--hl-card)" }}>
+                  <Link href={`/app/studio/${projects[0].id}`} style={{ display: "flex", alignItems: "center", gap: 16, flex: 1, minWidth: 0, color: "inherit", textDecoration: "none" }}>
+                    <span style={{ position: "relative", width: 72, height: 72, borderRadius: 20, overflow: "hidden", flexShrink: 0, display: "block" }}>
+                      <HomeCover p={projects[0]} small />
                     </span>
-                  </span>
-                  <span style={{ width: 42, height: 42, borderRadius: 999, display: "grid", placeItems: "center", background: C.brass, color: "#1A0E08", fontWeight: 800, flexShrink: 0 }}>→</span>
-                </Link>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: "block", fontSize: 17, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{projects[0].title}</span>
+                      <span style={{ display: "block", marginTop: 2, fontSize: 13.5, color: "var(--hl-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {[homeStage(projects[0]).label, projects[0].genre].filter(Boolean).join(" · ")}
+                      </span>
+                      <span className="ap-home-progress" aria-hidden>
+                        <span style={{ width: `${homeStage(projects[0]).progress}%` }} />
+                      </span>
+                    </span>
+                  </Link>
+                  <Link
+                    href={`/app/studio/${projects[0].id}`}
+                    aria-label="Open booth"
+                    className="ap-home-press"
+                    style={{ width: 50, height: 50, borderRadius: 999, display: "grid", placeItems: "center", background: "var(--hl-orange)", color: "#1A0E08", flexShrink: 0, boxShadow: "0 10px 24px -10px rgba(255,122,47,0.7)" }}
+                  >
+                    <HomeGlyph name="mic" size={20} />
+                  </Link>
+                </div>
               </>
             )}
 
-            <div style={{ marginTop: 30, fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: C.text }}>
-              Recent projects
+            <div style={{ marginTop: 36, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+              <h2 className="ap-home-title">Recent projects</h2>
+              {projects.length > 0 && (
+                <button type="button" onClick={() => setTab("library")} style={{ background: "none", border: "none", padding: 0, color: "var(--hl-lime)", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                  See all
+                </button>
+              )}
             </div>
-            <div
-              className="dash-project-grid"
-              style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}
-            >
+            <div className="dash-project-grid" style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 18 }}>
               {loading && <SkeletonCardGrid count={4} />}
               {!loading && projects.length === 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1107,12 +1260,9 @@ function AppInner() {
                 </div>
               )}
               {projects.slice(0, 12).map((p) => (
-                <ProjectRow
-                  key={p.id}
-                  p={p}
-                  meta={`${p.status} · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`}
-                />
+                <HomeProjectCard key={p.id} p={p} meta={`${p.status} · ${[p.genre, p.mood].filter(Boolean).join(" · ")}`} />
               ))}
+            </div>
             </div>
           </>
         )}
