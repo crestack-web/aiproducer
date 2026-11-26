@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
+import { canConsoleTouch, isBoothOwned, normalizeEditMode, taskPlanSource } from "@/lib/edit-ownership";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -141,11 +142,37 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   const { data: project } = await service
     .from("projects")
-    .select("id, user_id")
+    .select("*")
     .eq("id", task.project_id)
     .maybeSingle();
   if (!project || project.user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Ownership: once Console owns a song, Booth parts are frozen; Console clip
+  // edits only ever touch Console-owned parts.
+  {
+    const editMode = normalizeEditMode((project as { edit_mode?: string | null }).edit_mode);
+    const { data: srcRow } = await service
+      .from("recording_tasks")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    const planSource = taskPlanSource(
+      (srcRow || { metadata: task.metadata }) as { plan_source?: string | null; metadata?: unknown }
+    );
+    if (editMode === "console" && isBoothOwned(planSource)) {
+      return NextResponse.json(
+        { error: "This Booth part is locked because the song moved to Console." },
+        { status: 409 }
+      );
+    }
+    if (parsed.data.console_clips && !canConsoleTouch(editMode, planSource)) {
+      return NextResponse.json(
+        { error: "Clip edits are only allowed on Console tracks after Open in Console." },
+        { status: 409 }
+      );
+    }
   }
 
   const patch: Record<string, unknown> = {};

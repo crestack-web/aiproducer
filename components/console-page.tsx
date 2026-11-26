@@ -14,6 +14,8 @@ import {
   type ProducerSection,
   type TrackFx,
 } from "@/components/producer-view";
+import { isConsoleOwned, normalizeEditMode } from "@/lib/edit-ownership";
+import { ConsoleHandoffSheet } from "@/components/booth/console-handoff-sheet";
 
 type TaskRow = {
   id: string;
@@ -22,6 +24,7 @@ type TaskRow = {
   status?: string | null;
   selected_in_plan?: boolean | null;
   active?: boolean | null;
+  plan_source?: string | null;
   start_ms?: number | null;
   end_ms?: number | null;
   /** Canonical Producer View FX (column). Prefer over metadata.track_fx. */
@@ -32,6 +35,7 @@ type TaskRow = {
     track_fx?: Record<string, number>;
     track_color?: string;
     section_label?: string;
+    plan_source?: string;
     /** DAW split regions on this track (same lane, multiple clips) */
     console_clips?: Array<{
       id?: string;
@@ -54,12 +58,29 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   const [layers, setLayers] = useState<ProducerLayer[]>([]);
   const [sections, setSections] = useState<ProducerSection[]>([]);
   const [hasMaster, setHasMaster] = useState(false);
+  /** Song still owned by Booth: ask before the one-way hand-off. */
+  const [needsHandoff, setNeedsHandoff] = useState(false);
+  const [handingOff, setHandingOff] = useState(false);
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
     // soft=true refreshes data without unmounting Console (avoids full-page flash on small edits)
     if (!opts?.soft) setLoading(true);
     setError(null);
     try {
+      if (!opts?.soft) {
+        const gate = await fetch(`/api/projects/${projectId}`);
+        if (gate.ok) {
+          const gj = await gate.json();
+          const gp = gj.project || gj;
+          if (normalizeEditMode(gp?.edit_mode) !== "console") {
+            setTitle(gp?.title || "Session");
+            setNeedsHandoff(true);
+            setLoading(false);
+            return;
+          }
+        }
+        setNeedsHandoff(false);
+      }
       const [pr, br, tr, prev] = await Promise.all([
         fetch(`/api/projects/${projectId}`),
         fetch(`/api/projects/${projectId}/beat`),
@@ -132,6 +153,8 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
         const tasks = (tj.tasks || []) as TaskRow[];
         const nextLayers: ProducerLayer[] = tasks
           .filter((tk) => {
+            // Console only shows and edits Console-owned parts.
+            if (!isConsoleOwned(tk.plan_source || tk.metadata?.plan_source)) return false;
             const st = (tk.status || "").toLowerCase();
             if (st === "skipped" || st === "cancelled") return false;
             if (tk.selected_in_plan === false) return false;
@@ -299,6 +322,39 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
   useEffect(() => {
     void load({ soft: false });
   }, [load]);
+
+  async function confirmHandoff() {
+    setHandingOff(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/handoff-console`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(j.error || "Could not open this song in Console");
+        setNeedsHandoff(false);
+        return;
+      }
+      setNeedsHandoff(false);
+      await load({ soft: false });
+    } finally {
+      setHandingOff(false);
+    }
+  }
+
+  if (needsHandoff) {
+    return (
+      <ConsoleHandoffSheet
+        open
+        songTitle={title}
+        busy={handingOff}
+        onConfirm={() => void confirmHandoff()}
+        onCancel={() => router.push(`/app/studio/${projectId}`)}
+      />
+    );
+  }
 
   if (loading) {
     return (

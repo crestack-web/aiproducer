@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { isConsoleOwned, normalizeEditMode } from "@/lib/edit-ownership";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -99,13 +100,14 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const { data: project } = await supabase
     .from("projects")
-    .select("id, user_id, metadata")
+    .select("*")
     .eq("id", projectId)
     .maybeSingle();
   if (!project || project.user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const projectMeta = (project.metadata || {}) as Record<string, unknown>;
+  const projectEditMode = normalizeEditMode((project as { edit_mode?: string | null }).edit_mode);
   const projectPlanMode = String(projectMeta.plan_mode || "");
 
   let body: unknown;
@@ -146,11 +148,14 @@ export async function POST(req: Request, ctx: Ctx) {
       recommendation: "optional",
       selected_in_plan: true,
       active: true,
+      // Duplicates come from Console; without this they defaulted to 'ai' (Booth-owned).
+      plan_source: "console",
       start_ms: src.start_ms ?? 0,
       end_ms: src.end_ms ?? (src.start_ms ?? 0) + 8000,
       priority: 0,
       metadata: {
         ...srcMeta,
+        plan_source: "console",
         duplicated_from: src.id,
         duplicated_at: new Date().toISOString(),
       },
@@ -224,9 +229,12 @@ export async function POST(req: Request, ctx: Ctx) {
     parsed.data.title ||
     (type === "custom" ? "Custom track" : type.replace(/_/g, " "));
 
-  const planSource =
+  const requestedSource =
     parsed.data.plan_source ||
     (projectPlanMode === "scratch" ? "scratch" : "console");
+  // Once Console owns the song, every new part is Console-owned.
+  const planSource =
+    projectEditMode === "console" && !isConsoleOwned(requestedSource) ? "console" : requestedSource;
 
   const row: Record<string, unknown> = {
     project_id: projectId,

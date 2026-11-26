@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import type { PlanMode } from "@/lib/plan";
+import {
+  BOOTH_PLAN_SOURCES,
+  CONSOLE_LOCK_MESSAGE,
+  canAiPlanRun,
+  isBoothOwned,
+  taskPlanSource,
+} from "@/lib/edit-ownership";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,11 +18,39 @@ async function assertOwned(
 ) {
   const { data } = await supabase
     .from("projects")
-    .select("id, metadata, status")
+    .select("*")
     .eq("id", projectId)
     .eq("user_id", userId)
     .maybeSingle();
-  return data;
+  return data as
+    | { id: string; metadata?: unknown; status?: string; edit_mode?: string | null }
+    | null;
+}
+
+/**
+ * Refuse plan edits on a part Booth does not own (Console tracks).
+ * Returns a 409 response, or null when the edit may go ahead.
+ */
+async function rejectIfNotBoothPart(
+  supabase: Awaited<ReturnType<typeof requireUser>>["supabase"],
+  projectId: string,
+  taskId: string
+) {
+  const { data } = await supabase
+    .from("recording_tasks")
+    .select("*")
+    .eq("id", taskId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (!data) return null; // let the update path report 404
+  const row = data as { plan_source?: string | null; metadata?: unknown };
+  if (!isBoothOwned(taskPlanSource(row))) {
+    return NextResponse.json(
+      { error: "This part belongs to Console. The AI plan can't change it." },
+      { status: 409 }
+    );
+  }
+  return null;
 }
 
 
@@ -140,10 +175,17 @@ async function bulkUpdatePlanFlags(
   if (flags.selected !== undefined) patches.push({ selected_in_plan: flags.selected });
   // Never rewrite status here — "skipped"/"pending" destroyed completed takes in scratch mode.
 
+  // The AI plan only ever touches Booth-owned parts.
+  const boothSet = new Set<string>(BOOTH_PLAN_SOURCES);
+  const sources = (filter?.plan_sources?.length ? filter.plan_sources : [...BOOTH_PLAN_SOURCES]).filter(
+    (src) => boothSet.has(src)
+  );
+  if (!sources.length) return null;
+
   for (const patch of patches) {
     let q = supabase.from("recording_tasks").update(patch).eq("project_id", projectId);
     if (filter?.ids?.length) q = q.in("id", filter.ids);
-    if (filter?.plan_sources?.length) q = q.in("plan_source", filter.plan_sources);
+    q = q.in("plan_source", sources);
     const { error } = await q;
     if (!error) return null;
     const msg = (error.message || "").toLowerCase();
@@ -197,8 +239,17 @@ export async function PATCH(req: Request, ctx: Ctx) {
   const project = await assertOwned(supabase, projectId, user.id);
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  if (!canAiPlanRun(project.edit_mode)) {
+    return NextResponse.json({ error: CONSOLE_LOCK_MESSAGE, edit_mode: "console" }, { status: 409 });
+  }
+
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const action = String(body.action || "");
+
+  if (["select", "remove", "restore", "update"].includes(action)) {
+    const guard = await rejectIfNotBoothPart(supabase, projectId, String(body.task_id || ""));
+    if (guard) return guard;
+  }
 
   const meta = (project.metadata || {}) as Record<string, unknown>;
 
@@ -350,6 +401,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
           })
           .eq("project_id", projectId)
           .eq("section_id", sectionId)
+          .in("plan_source", [...BOOTH_PLAN_SOURCES])
           .neq("id", taskId);
         // Best-effort: keep song_sections aligned so any section-based UI matches
         await supabase
@@ -500,8 +552,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
     // Lead/core parts must stay required when the artist starts recording
     const { data: allTasks, error: listErr } = await supabase
       .from("recording_tasks")
-      .select("id, type, required")
-      .eq("project_id", projectId);
+      .select("id, type, required, plan_source")
+      .eq("project_id", projectId)
+      .in("plan_source", [...BOOTH_PLAN_SOURCES]);
     if (listErr) {
       return NextResponse.json({ error: listErr.message }, { status: 500 });
     }
