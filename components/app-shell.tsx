@@ -84,6 +84,9 @@ function IconProfile({ size = 20, color = "currentColor" }: { size?: number; col
 
 export type AppNavKey = "home" | "studio" | "library" | "profile";
 
+/** Dashboard accent used by the mobile bottom nav. */
+const NAV_LIME = "#C8F542";
+
 const NAV: { key: AppNavKey; label: string; href: string; Icon: typeof IconHome }[] = [
   { key: "home", label: "Home", href: "/app", Icon: IconHome },
   { key: "studio", label: "Studio", href: "/app/studio", Icon: IconStudio },
@@ -518,10 +521,12 @@ export function AppShell({
             left: 12px !important;
             right: 12px !important;
             bottom: calc(10px + env(safe-area-inset-bottom, 0px)) !important;
-            min-height: 66px !important;
-            padding: 6px !important;
+            min-height: 72px !important;
+            padding: 6px 8px !important;
+            border-radius: 32px !important;
+            background: rgba(16,17,24,0.92) !important;
             gap: 4px;
-            overflow: hidden;
+            overflow: visible;
             /* Below modals/sheets/players; above page content */
             z-index: 40 !important;
           }
@@ -542,13 +547,17 @@ export function AppShell({
           }
           .studio-bottom-nav > button:active,
           .studio-bottom-nav > a:active { transform: scale(0.94); }
-          .studio-bottom-nav [aria-current="page"] {
-            background: linear-gradient(180deg, rgba(255,138,91,0.22), rgba(255,138,91,0.08)) !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 6px 18px -6px rgba(255,138,91,0.55);
-          }
           .studio-bottom-nav [aria-current="page"] svg {
-            filter: drop-shadow(0 0 6px rgba(255,138,91,0.6));
+            filter: drop-shadow(0 0 6px rgba(200,245,66,0.45));
           }
+          .studio-bottom-nav .ap-nav-fab-slot { flex: 1; display: flex; justify-content: center; align-items: flex-start; position: relative; }
+          .studio-bottom-nav .ap-nav-fab {
+            position: absolute; top: -26px; width: 64px; height: 64px; border-radius: 999px; border: none; cursor: pointer;
+            display: grid; place-items: center; background: #C8F542; color: #10130A; padding: 0;
+            box-shadow: 0 0 0 6px rgba(10,11,16,0.0), 0 12px 30px -6px rgba(200,245,66,0.55);
+            transition: transform 160ms ease;
+          }
+          .studio-bottom-nav .ap-nav-fab:active { transform: scale(0.94); }
           .studio-mobile-appbar {
             display: flex !important;
             visibility: visible !important;
@@ -966,12 +975,12 @@ export function AppShell({
               onClick={() => go("home", "/app")}
               style={{
                 ...bottomItem,
-                color: visual === "home" ? C.brass : C.textFaint,
+                color: visual === "home" ? NAV_LIME : C.textFaint,
                 fontWeight: visual === "home" ? 600 : 500,
               }}
               aria-current={visual === "home" ? "page" : undefined}
             >
-              <IconHome size={22} color={visual === "home" ? C.brass : C.textFaint} />
+              <IconHome size={22} color={visual === "home" ? NAV_LIME : C.textFaint} />
               Home
             </button>
             <button
@@ -980,12 +989,12 @@ export function AppShell({
               onClick={() => projectIdFromPath && goProject("booth", projectIdFromPath)}
               style={{
                 ...bottomItem,
-                color: onBoothPage || pendingNav === "booth" ? C.brass : C.textFaint,
+                color: onBoothPage || pendingNav === "booth" ? NAV_LIME : C.textFaint,
                 fontWeight: onBoothPage || pendingNav === "booth" ? 600 : 500,
               }}
               aria-current={onBoothPage ? "page" : undefined}
             >
-              <IconBooth size={22} color={onBoothPage || pendingNav === "booth" ? C.brass : C.textFaint} />
+              <IconBooth size={22} color={onBoothPage || pendingNav === "booth" ? NAV_LIME : C.textFaint} />
               Booth
             </button>
             <button
@@ -994,12 +1003,12 @@ export function AppShell({
               onClick={() => projectIdFromPath && goProject("console", projectIdFromPath)}
               style={{
                 ...bottomItem,
-                color: onStudioPage || pendingNav === "console" ? C.brass : C.textFaint,
+                color: onStudioPage || pendingNav === "console" ? NAV_LIME : C.textFaint,
                 fontWeight: onStudioPage || pendingNav === "console" ? 600 : 500,
               }}
               aria-current={onStudioPage ? "page" : undefined}
             >
-              <IconStudio size={22} color={onStudioPage || pendingNav === "console" ? C.brass : C.textFaint} />
+              <IconStudio size={22} color={onStudioPage || pendingNav === "console" ? NAV_LIME : C.textFaint} />
               Console
             </button>
             <button
@@ -1008,37 +1017,69 @@ export function AppShell({
               onClick={() => go("library", "/app?tab=library")}
               style={{
                 ...bottomItem,
-                color: visual === "library" ? C.brass : C.textFaint,
+                color: visual === "library" ? NAV_LIME : C.textFaint,
                 fontWeight: visual === "library" ? 600 : 500,
               }}
               aria-current={visual === "library" ? "page" : undefined}
             >
-              <IconLibrary size={22} color={visual === "library" ? C.brass : C.textFaint} />
+              <IconLibrary size={22} color={visual === "library" ? NAV_LIME : C.textFaint} />
               Library
             </button>
           </>
         ) : (
-          NAV.map(({ key, label, href, Icon }) => {
-            const isActive = visual === key;
-            return (
+          <>
+            {([
+              { key: "home" as AppNavKey, label: "Home", href: "/app", Icon: IconHome },
+              { key: "library" as AppNavKey, label: "Library", href: "/app?tab=library", Icon: IconLibrary },
+            ]).map(({ key, label, href, Icon }) => {
+              const isActive = visual === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  data-tour-nav={key}
+                  onClick={() => go(key, href)}
+                  style={{ ...bottomItem, color: isActive ? NAV_LIME : C.textFaint, fontWeight: isActive ? 600 : 500, opacity: pendingNav && pendingNav !== key ? 0.7 : 1 }}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <Icon size={22} color={isActive ? NAV_LIME : C.textFaint} />
+                  {label}
+                </button>
+              );
+            })}
+            <div className="ap-nav-fab-slot">
               <button
-                key={key}
                 type="button"
-                data-tour-nav={key}
-                onClick={() => go(key, href)}
-                style={{
-                  ...bottomItem,
-                  color: isActive ? C.brass : C.textFaint,
-                  fontWeight: isActive ? 600 : 500,
-                  opacity: pendingNav && pendingNav !== key ? 0.7 : 1,
-                }}
-                aria-current={isActive ? "page" : undefined}
+                className="ap-nav-fab"
+                aria-label="Start a song"
+                title="Start a song"
+                data-tour-nav="studio"
+                onClick={() => go("studio", "/app/studio")}
               >
-                <Icon size={22} color={isActive ? C.brass : C.textFaint} />
-                {label}
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
               </button>
-            );
-          })
+            </div>
+            {([
+              { key: "studio" as AppNavKey, label: "Booth", href: "/app/studio", Icon: IconBooth },
+              { key: "profile" as AppNavKey, label: "Profile", href: "/app?tab=profile", Icon: IconProfile },
+            ]).map(({ key, label, href, Icon }) => {
+              const isActive = visual === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => go(key, href)}
+                  style={{ ...bottomItem, color: isActive ? NAV_LIME : C.textFaint, fontWeight: isActive ? 600 : 500, opacity: pendingNav && pendingNav !== key ? 0.7 : 1 }}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <Icon size={22} color={isActive ? NAV_LIME : C.textFaint} />
+                  {label}
+                </button>
+              );
+            })}
+          </>
         )}
       </nav>
     </div>
