@@ -902,12 +902,12 @@ function StudioPageInner() {
 
 
   const chip = (on: boolean): CSSProperties => ({
-    padding: "5px 10px",
+    padding: "7px 12px",
     borderRadius: 999,
-    border: on ? `1px solid ${C.brassLine}` : `1px solid ${C.border}`,
-    background: on ? C.brassSoft : "transparent",
-    color: on ? C.brass : C.textMuted,
-    fontSize: 11.5,
+    border: on ? "1px solid #FFFFFF" : "1px solid rgba(255,255,255,0.10)",
+    background: on ? "#FFFFFF" : "rgba(255,255,255,0.04)",
+    color: on ? "#0B0A0F" : C.textMuted,
+    fontSize: 12,
     fontWeight: on ? 600 : 450,
     cursor: "pointer",
     fontFamily: "inherit",
@@ -919,9 +919,9 @@ function StudioPageInner() {
     flex: 1,
     padding: "8px 6px",
     border: "none",
-    borderBottom: on ? `2px solid ${C.brass}` : `2px solid transparent`,
-    background: "transparent",
-    color: on ? C.text : C.textFaint,
+    borderRadius: 999,
+    background: on ? "rgba(255,255,255,0.12)" : "transparent",
+    color: on ? "#F5F6FA" : C.textFaint,
     fontSize: 12,
     fontWeight: on ? 650 : 500,
     cursor: "pointer",
@@ -932,10 +932,10 @@ function StudioPageInner() {
   const modeTab = (on: boolean): CSSProperties => ({
     flex: 1,
     padding: "8px 12px",
-    borderRadius: 10,
+    borderRadius: 999,
     border: "none",
-    background: on ? (C.brassSoft || "rgba(231,169,97,0.14)") : "transparent",
-    color: on ? C.brass : C.textMuted,
+    background: on ? "#FFFFFF" : "transparent",
+    color: on ? "#0B0A0F" : C.textMuted,
     fontSize: 12.5,
     fontWeight: on ? 650 : 500,
     cursor: "pointer",
@@ -970,22 +970,23 @@ function StudioPageInner() {
           alignItems: "stretch",
         }}
       >
-        <h1 style={{ fontFamily: "Georgia, Fraunces, serif", fontSize: "clamp(1.5rem, 2.8vw, 2rem)", fontWeight: 500, margin: "0 0 6px", color: C.text }}>
+        <h1 style={{ fontFamily: '"Archivo", "Inter", system-ui, sans-serif', fontStretch: "125%", fontSize: "clamp(1.6rem, 6vw, 2.1rem)", fontWeight: 800, letterSpacing: "-0.01em", lineHeight: 1.05, margin: "0 0 8px", color: "#F5F6FA" }}>
           Create your beat
         </h1>
-        <p style={{ color: C.textMuted, fontSize: 13.5, lineHeight: 1.45, margin: "0 0 18px", maxWidth: "100%" }}>
-          Prompt + a few controls — AP builds the instrumental.
+        <p style={{ color: "#8E92A0", fontSize: 14, lineHeight: 1.45, margin: "0 0 18px", maxWidth: "100%" }}>
+          Describe it, shape the sound, then let AP build it.
         </p>
 
         <div
           style={{
             width: "100%",
             boxSizing: "border-box",
-            background: C.surface,
-            border: `1px solid ${C.border}`,
-            borderRadius: 16,
-            padding: "16px 16px 18px",
+            background: "linear-gradient(180deg, #1A1B24 0%, #13141B 100%)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 28,
+            padding: "14px 16px 18px",
             margin: "0 auto",
+            boxShadow: "0 24px 50px -28px rgba(0,0,0,0.8)",
           }}
         >
           {/* AI / Upload mode */}
@@ -993,10 +994,10 @@ function StudioPageInner() {
             style={{
               display: "flex",
               gap: 4,
-              padding: 3,
-              borderRadius: 12,
-              background: C.bgDeep,
-              marginBottom: 12,
+              padding: 4,
+              borderRadius: 999,
+              background: "rgba(255,255,255,0.05)",
+              marginBottom: 16,
             }}
           >
             <button type="button" style={modeTab(beatMode === "ai")} onClick={() => setBeatMode("ai")}>
@@ -1014,54 +1015,79 @@ function StudioPageInner() {
 
           {beatMode === "ai" ? (
             <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: "#8E92A0", textTransform: "uppercase", marginBottom: 8 }}>
+                1 · Describe it
+              </div>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                rows={2}
-                placeholder="Describe the beat — mood, story, texture…"
+                rows={3}
+                placeholder="Late-night drive, warm keys, slow 808s…"
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
-                  minHeight: 64,
-                  borderRadius: 12,
-                  border: `1px solid ${C.border}`,
-                  background: C.bgDeep,
-                  color: C.text,
-                  padding: "10px 12px",
-                  fontSize: 13.5,
+                  minHeight: 92,
+                  borderRadius: 20,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(0,0,0,0.25)",
+                  color: "#F5F6FA",
+                  padding: "14px 16px",
+                  fontSize: 15,
                   fontFamily: "inherit",
                   resize: "none",
-                  lineHeight: 1.4,
+                  lineHeight: 1.45,
+                  outline: "none",
                 }}
               />
+              {!prompt.trim() && (
+                <div style={{ display: "flex", gap: 6, overflowX: "auto", marginTop: 10, scrollbarWidth: "none" }}>
+                  {[
+                    "Moody Afrobeats with log drums",
+                    "Dreamy R&B, soft guitar",
+                    "Hard trap, dark piano",
+                    "Lo-fi study beat, vinyl crackle",
+                  ].map((idea) => (
+                    <button key={idea} type="button" style={chip(false)} onClick={() => setPrompt(idea)}>
+                      {idea}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-              {/* Selection summary */}
-              <div
-                style={{
-                  marginTop: 10,
-                  fontSize: 11.5,
-                  color: C.textFaint,
-                  lineHeight: 1.35,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "4px 8px",
-                }}
-              >
-                <span style={{ color: C.textMuted }}>{genre}</span>
-                <span>·</span>
-                <span style={{ color: C.textMuted }}>{mood}</span>
-                <span>·</span>
-                <span style={{ color: C.textMuted }}>{energy}</span>
-                <span>·</span>
-                <span style={{ color: C.textMuted }}>{tempo} BPM</span>
-                <span>·</span>
-                <span style={{ color: C.brass || "#E7A961" }}>{beatDurationSec}s</span>
-                {referenceStyle ? (
-                  <>
-                    <span>·</span>
-                    <span style={{ color: C.textMuted }}>{referenceStyle}</span>
-                  </>
-                ) : null}
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: "#8E92A0", textTransform: "uppercase", margin: "20px 0 8px" }}>
+                2 · Shape the sound
+              </div>
+              {/* Selection summary — tap a value to jump to its controls */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {(
+                  [
+                    ["sound", genre],
+                    ["vibe", mood],
+                    ["vibe", energy],
+                    ["vibe", `${tempo} BPM`],
+                    ["length", `${beatDurationSec}s`],
+                    ...(referenceStyle ? ([["style", referenceStyle]] as const) : []),
+                  ] as const
+                ).map(([panel, label], i) => (
+                  <button
+                    key={`${panel}-${i}`}
+                    type="button"
+                    onClick={() => setCreatePanel(panel)}
+                    style={{
+                      padding: "6px 11px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: createPanel === panel ? "rgba(255,255,255,0.10)" : "transparent",
+                      color: "#F5F6FA",
+                      fontSize: 12,
+                      fontWeight: 550,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {/* Compact tabs */}
@@ -1069,7 +1095,10 @@ function StudioPageInner() {
                 style={{
                   display: "flex",
                   marginTop: 12,
-                  borderBottom: `1px solid ${C.border}`,
+                  padding: 4,
+                  gap: 2,
+                  borderRadius: 999,
+                  background: "rgba(255,255,255,0.04)",
                 }}
               >
                 {(
@@ -1382,12 +1411,13 @@ function StudioPageInner() {
               width: "100%",
               marginTop: 14,
               padding: "11px 16px",
-              borderRadius: 12,
+              borderRadius: 999,
               border: "none",
-              background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
-              color: "#1A1208",
-              fontWeight: 650,
-              fontSize: 14,
+              background: "#C8F542",
+              color: "#10130A",
+              fontWeight: 750,
+              fontSize: 15,
+              boxShadow: "0 12px 28px -12px rgba(200,245,66,0.5)",
               cursor: "pointer",
               fontFamily: "inherit",
               opacity: creating || (beatMode === "upload" && !beatFile) ? 0.55 : 1,
