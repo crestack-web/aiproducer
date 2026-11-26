@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase/env";
 import { ThemeProvider } from "@/lib/theme";
@@ -63,6 +64,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <PwaRegister />
           {children}
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
   );
