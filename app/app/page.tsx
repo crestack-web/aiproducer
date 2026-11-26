@@ -940,7 +940,7 @@ function AppInner() {
   }
 
   const HOME_GRADS: [string, string, string][] = [
-    ["#C8F542", "#0E8F6E", "#06342A"],
+    ["#C17A12", "#0E8F6E", "#06342A"],
     ["#FF6F91", "#C2560F", "#2A1210"],
     ["#FF8A4C", "#7A6A10", "#1E1A08"],
     ["#8A93FF", "#A02E8A", "#1C1530"],
@@ -1144,7 +1144,7 @@ function AppInner() {
         `}</style>
 
         <style>{`
-              .ap-home, .ap-tracks { --hl-lime: #C8F542; --hl-lime-ink: #10130A; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
+              .ap-home, .ap-tracks { --hl-lime: #C17A12; --hl-lime-ink: #0B0A0F; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
               .ap-home-title { font-family: var(--hl-display); font-stretch: 125%; font-weight: 800; font-size: clamp(1.35rem, 5.6vw, 1.75rem); letter-spacing: -0.01em; line-height: 1.1; margin: 0; }
               .ap-home-actions { scrollbar-width: none; }
               .ap-home-actions::-webkit-scrollbar { display: none; }
@@ -1195,7 +1195,7 @@ function AppInner() {
               </button>
               {creditBalance != null && (
                 <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--hl-line)", background: "rgba(255,255,255,0.02)", fontSize: 13, fontWeight: 550 }}>
-                  <span aria-hidden style={{ width: 9, height: 9, borderRadius: 99, background: "var(--hl-lime)", boxShadow: "0 0 8px rgba(200,245,66,0.6)" }} />
+                  <span aria-hidden style={{ width: 9, height: 9, borderRadius: 99, background: "var(--hl-lime)", boxShadow: "0 0 8px rgba(193,122,18,0.6)" }} />
                   {creditBalance.toLocaleString()} credits
                 </span>
               )}
@@ -1210,7 +1210,7 @@ function AppInner() {
                 padding: "26px 22px 24px",
                 border: "1px solid var(--hl-line)",
                 background:
-                  "radial-gradient(110% 120% at 100% 100%, rgba(214,51,108,0.55), transparent 60%), radial-gradient(80% 90% at 0% 0%, rgba(200,245,66,0.10), transparent 60%), linear-gradient(135deg, #15161E 0%, #1A1520 55%, #3A1626 100%)",
+                  "radial-gradient(110% 120% at 100% 100%, rgba(214,51,108,0.55), transparent 60%), radial-gradient(80% 90% at 0% 0%, rgba(193,122,18,0.10), transparent 60%), linear-gradient(135deg, #15161E 0%, #1A1520 55%, #3A1626 100%)",
               }}
             >
               <div className="ap-home-eq" aria-hidden style={{ position: "absolute", right: 22, top: 26, display: "flex", alignItems: "flex-end", gap: 4, height: 52, opacity: 0.9 }}>
@@ -1218,7 +1218,7 @@ function AppInner() {
                   <span key={i} style={{ width: 5, height: "100%", borderRadius: 99, background: "var(--hl-lime)", animationDelay: `${i * 0.12}s` }} />
                 ))}
               </div>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "rgba(200,245,66,0.12)", color: "var(--hl-lime)", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 999, background: "rgba(193,122,18,0.12)", color: "var(--hl-lime)", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
                 AI Producer
               </span>
               <h1 className="ap-home-title" style={{ marginTop: 14, maxWidth: 260 }}>
@@ -1231,7 +1231,7 @@ function AppInner() {
                 type="button"
                 className="ap-home-press"
                 onClick={() => router.push("/app/studio")}
-                style={{ marginTop: 20, display: "inline-flex", alignItems: "center", gap: 8, border: "none", borderRadius: 999, padding: "14px 26px", background: "var(--hl-lime)", color: "var(--hl-lime-ink)", fontFamily: "inherit", fontSize: 15, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 26px -10px rgba(200,245,66,0.6)" }}
+                style={{ marginTop: 20, display: "inline-flex", alignItems: "center", gap: 8, border: "none", borderRadius: 999, padding: "14px 26px", background: "var(--hl-lime)", color: "var(--hl-lime-ink)", fontFamily: "inherit", fontSize: 15, fontWeight: 700, cursor: "pointer", boxShadow: "0 10px 26px -10px rgba(193,122,18,0.6)" }}
               >
                 <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>+</span> Start a song
               </button>
@@ -2392,7 +2392,7 @@ function AppInner() {
                   },
                   {
                     key: "cover",
-                    icon: "download",
+                    icon: "image",
                     label: "Change cover art",
                     onClick: () => {
                       const id = projectMenu.id;
