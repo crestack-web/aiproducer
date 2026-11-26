@@ -4,6 +4,7 @@ import { AppUsageAnalytics } from "@/components/product-analytics";
 
 import React, { useEffect, useState, Suspense } from "react";
 import { createPortal } from "react-dom";
+import "./suno-ui.css";
 import {
   useBeatAudio,
   BeatPreviewTransport,
@@ -695,9 +696,11 @@ function AppInner() {
     const isPlaying = isActive && audioIsPlaying;
     const busy = loadingPlayId === playId || deletingId === projectId;
     return (
-      <div style={{ ...rowStyle, gap: 10 }}>
+      <div className="ap-track" data-active={isActive} style={{ ["--ap-accent" as string]: C.brass } as React.CSSProperties}>
         <button
           type="button"
+          className="ap-art"
+          data-playing={isPlaying}
           aria-label={isPlaying ? "Pause" : "Play"}
           disabled={!isReady || busy}
           onClick={() => {
@@ -709,20 +712,9 @@ function AppInner() {
               seed: title || projectId,
             });
           }}
-          style={{
-            position: "relative",
-            width: 52,
-            height: 52,
-            borderRadius: 12,
-            border: "none",
-            padding: 0,
-            flexShrink: 0,
-            cursor: !isReady || busy ? "default" : "pointer",
-            overflow: "hidden",
-            background: "transparent",
-          }}
+          style={{ cursor: !isReady || busy ? "default" : "pointer" }}
         >
-          <CoverArt seed={title || projectId} size={52} />
+          <CoverArt seed={title || projectId} size={60} />
           <span
             style={{
               position: "absolute",
@@ -759,7 +751,7 @@ function AppInner() {
           }}
         >
           <div style={rowBody}>
-            <div style={{ ...rowTitle, color: isActive ? C.brass : C.text }}>{title}</div>
+            <div className="ap-track-title" style={{ ...rowTitle, color: isActive ? C.brass : C.text }}>{title}</div>
             <div style={rowMeta}>
               {meta}
               {isPlaying ? " · Playing" : isActive ? " · Paused" : ""}
@@ -1147,7 +1139,7 @@ function AppInner() {
                 </button>
               </div>
             )}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4, marginBottom: 12 }}>
+            <div className="ap-seg" role="tablist" style={{ color: C.text }}>
               {(
                 [
                   ["songs", "Songs"],
@@ -1158,18 +1150,9 @@ function AppInner() {
                 <button
                   key={k}
                   type="button"
+                  role="tab"
+                  aria-selected={libraryTab === k}
                   onClick={() => setLibraryTab(k)}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: 999,
-                    border: libraryTab === k ? `1px solid ${C.brassLine}` : `1px solid ${C.border}`,
-                    background: libraryTab === k ? C.brassSoft : "transparent",
-                    color: libraryTab === k ? C.brass : C.textMuted,
-                    fontSize: 13,
-                    fontWeight: libraryTab === k ? 600 : 500,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
                 >
                   {l}
                 </button>
@@ -1287,20 +1270,15 @@ function AppInner() {
                     return (
                       <div
                         key={p.id}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 0,
-                          padding: "12px 14px",
-                          borderRadius: 16,
-                          background: C.surface,
-                          border: `1px solid ${isActive ? C.brassLine || C.brass : C.border}`,
-                          color: C.text,
-                        }}
+                        className="ap-track"
+                        data-active={isActive}
+                        style={{ flexDirection: "column", alignItems: "stretch", gap: 0, color: C.text, ["--ap-accent" as string]: C.brass } as React.CSSProperties}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                           <button
                             type="button"
+                            className="ap-art"
+                            data-playing={isPlaying}
                             aria-label={isPlaying ? "Pause beat" : "Play beat"}
                             disabled={busy && loadingPlayId !== p.id}
                             onClick={() => {
@@ -1311,20 +1289,9 @@ function AppInner() {
                                 seed: p.title || p.id,
                               });
                             }}
-                            style={{
-                              position: "relative",
-                              width: 52,
-                              height: 52,
-                              borderRadius: 12,
-                              border: "none",
-                              padding: 0,
-                              flexShrink: 0,
-                              cursor: "pointer",
-                              overflow: "hidden",
-                              background: "transparent",
-                            }}
+                            style={{ cursor: "pointer" }}
                           >
-                            <CoverArt seed={p.title || p.id} size={52} />
+                            <CoverArt seed={p.title || p.id} size={60} />
                             <span
                               style={{
                                 position: "absolute",
@@ -2410,90 +2377,36 @@ function AppInner() {
             role="dialog"
             aria-modal="true"
             aria-label="Download format"
+            className="ap-sheet-backdrop"
             onClick={() => !downloadBusy && setDownloadModal(null)}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 230,
-              background: "rgba(0,0,0,0.55)",
-              display: "grid",
-              placeItems: "center",
-              padding:
-                "calc(20px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))",
-            }}
+            style={{ zIndex: 230 }}
           >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: "100%",
-                maxWidth: 340,
-                borderRadius: 18,
-                background: C.surface,
-                border: `1px solid ${C.border}`,
-                padding: "22px 20px",
-                boxShadow: C.cardShadow,
-              }}
-            >
-              <div style={{ fontFamily: "Georgia, serif", fontSize: 18, color: C.text, marginBottom: 6 }}>
-                Download
-              </div>
-              <p style={{ fontSize: 13, color: C.textMuted, margin: "0 0 16px", lineHeight: 1.45 }}>
+            <div className="ap-sheet" onClick={(e) => e.stopPropagation()}>
+              <h2 className="ap-sheet-title">Download</h2>
+              <p className="ap-sheet-sub">
                 Choose a format for “{downloadModal.title || "your song"}”. The file will save to your device.
               </p>
               <button
                 type="button"
+                className="ap-sheet-btn primary"
                 disabled={downloadBusy}
                 onClick={() => void runDownload(downloadModal.id, downloadModal.title, "wav", { jobId: downloadModal.jobId, version: downloadModal.version })}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: "none",
-                  background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
-                  color: "#1A1208",
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: downloadBusy ? "wait" : "pointer",
-                  marginBottom: 8,
-                  fontFamily: "inherit",
-                }}
               >
                 {downloadBusy ? "Downloading…" : "WAV — full quality"}
               </button>
               <button
                 type="button"
+                className="ap-sheet-btn"
                 disabled={downloadBusy}
                 onClick={() => void runDownload(downloadModal.id, downloadModal.title, "mp3", { jobId: downloadModal.jobId, version: downloadModal.version })}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: `1px solid ${C.border}`,
-                  background: C.surface,
-                  color: C.text,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: downloadBusy ? "wait" : "pointer",
-                  fontFamily: "inherit",
-                }}
               >
                 {downloadBusy ? "Downloading…" : "MP3 — smaller file"}
               </button>
               <button
                 type="button"
+                className="ap-sheet-btn ghost"
                 disabled={downloadBusy}
                 onClick={() => setDownloadModal(null)}
-                style={{
-                  width: "100%",
-                  marginTop: 12,
-                  padding: "10px",
-                  border: "none",
-                  background: "transparent",
-                  color: C.textMuted,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                }}
               >
                 Cancel
               </button>
@@ -2505,75 +2418,30 @@ function AppInner() {
         <div
           role="dialog"
           aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 95,
-            background: "rgba(0,0,0,0.72)",
-            display: "flex",
-            alignItems: "flex-end",
-            justifyContent: "center",
-          }}
+          aria-label="Download this beat"
+          className="ap-sheet-backdrop"
+          style={{ zIndex: 95 }}
           onClick={() => !beatPayBusy && setBeatPay(null)}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 420,
-              borderRadius: "18px 18px 0 0",
-              background: "#16140f",
-              border: "1px solid rgba(255,255,255,0.12)",
-              padding: "18px 16px 28px",
-              color: "#F5F0E8",
-            }}
-          >
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
-              Download this beat
-            </div>
-            <p style={{ margin: "0 0 12px", fontSize: 13, lineHeight: 1.5, color: "rgba(245,240,232,0.6)" }}>
-              Pay for this beat to download the file.
-            </p>
-            <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 14 }}>
+          <div className="ap-sheet" onClick={(e) => e.stopPropagation()}>
+            <h2 className="ap-sheet-title">Download this beat</h2>
+            <p className="ap-sheet-sub">Pay for this beat to download the file.</p>
+            <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.03em", margin: "0 0 20px" }}>
               {beatPay.currency === "NGN" && beatPay.chargeMajor ? `₦${beatPay.chargeMajor.toLocaleString()}` : `$${beatPay.amountUsd.toFixed(2)}`}
             </div>
             <button
               type="button"
+              className="ap-sheet-btn primary"
               disabled={beatPayBusy}
               onClick={() => void startBeatCheckout()}
-              style={{
-                width: "100%",
-                padding: "12px 14px",
-                borderRadius: 12,
-                border: "none",
-                background: "linear-gradient(180deg, #FFB089, #E7A961)",
-                color: "#1A1208",
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: beatPayBusy ? "wait" : "pointer",
-                fontFamily: "inherit",
-                marginBottom: 8,
-                opacity: beatPayBusy ? 0.7 : 1,
-              }}
             >
               {beatPayBusy ? "Starting payment…" : beatPay.currency === "NGN" && beatPay.chargeMajor ? `Pay ₦${beatPay.chargeMajor.toLocaleString()} with Paystack` : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
             </button>
             <button
               type="button"
+              className="ap-sheet-btn ghost"
               disabled={beatPayBusy}
               onClick={() => setBeatPay(null)}
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "transparent",
-                color: "rgba(245,240,232,0.6)",
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
             >
               Cancel
             </button>

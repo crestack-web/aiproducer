@@ -3135,6 +3135,8 @@ export function ProducerView({
       } catch {
         /* playback monitor best-effort */
       }
+      // Song position advances from here; measure when capture really begins.
+      const playStartWall = performance.now();
 
       // Capture begins only after the arrangement clock is running.
       // Clip start = intended position. No second latency guess.
@@ -3146,6 +3148,20 @@ export function ProducerView({
         taskId,
         startedAt: Date.now(),
         recordStartMs: intendedMs,
+      };
+      // Place the take where capture actually started, not where record was pressed.
+      // Device output latency (what the artist hears late) is read from the audio
+      // context instead of a fixed guess for every device.
+      recorder.onstart = () => {
+        const rec = consoleRecRef.current;
+        if (!rec || rec.recorder !== recorder) return;
+        const elapsed = Math.max(0, performance.now() - playStartWall);
+        const ctx = getCtx() as (AudioContext & { outputLatency?: number }) | null;
+        const deviceLatencyMs = ctx
+          ? Math.max(0, ((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000)
+          : 0;
+        const latencyMs = Math.min(250, deviceLatencyMs || getCaptureLatencyCompMs());
+        rec.recordStartMs = Math.max(0, Math.round(intendedMs + elapsed - latencyMs));
       };
       recorder.start(250);
       setIsConsoleRecording(true);
