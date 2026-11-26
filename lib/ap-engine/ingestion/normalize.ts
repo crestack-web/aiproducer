@@ -1,6 +1,6 @@
 import { convertBufferToWav } from "@/lib/audio/convert-to-wav";
-import { decodeWav, isWavBuffer } from "@/lib/audio/wav";
-import { monoToStereo, resampleMono } from "../dsp";
+import { decodeWavStereo, isWavBuffer } from "@/lib/audio/wav";
+import { resampleMono } from "../dsp";
 import type { PcmStereo } from "../types";
 
 const TARGET_SR = 44100;
@@ -38,13 +38,17 @@ export async function normalizeToInternalPcm(
     throw new Error("Could not normalize audio to WAV");
   }
 
-  const decoded = decodeWav(wav);
-  let mono = decoded.samples;
+  // Keep both channels so stereo beats keep their width (previously summed to mono).
+  const decoded = decodeWavStereo(wav);
+  let left = decoded.left;
+  let right = decoded.right;
   let sr = decoded.sampleRate;
   if (sr !== TARGET_SR) {
-    mono = resampleMono(mono, sr, TARGET_SR);
+    left = resampleMono(left, sr, TARGET_SR);
+    right = resampleMono(right, sr, TARGET_SR);
     sr = TARGET_SR;
   }
+  const mono = left;
 
   const durationMs = Math.round((mono.length / sr) * 1000);
   if (durationMs < MIN_DURATION_MS) {
@@ -55,15 +59,15 @@ export async function normalizeToInternalPcm(
   }
 
   let peak = 0;
-  for (let i = 0; i < mono.length; i++) {
-    const a = Math.abs(mono[i] || 0);
+  for (let i = 0; i < left.length; i++) {
+    const a = Math.max(Math.abs(left[i] || 0), Math.abs(right[i] || 0));
     if (a > peak) peak = a;
   }
   if (peak < 1e-5) {
     throw new Error("Audio appears silent");
   }
 
-  const pcm = monoToStereo(mono, sr);
+  const pcm: PcmStereo = { left, right, sampleRate: sr };
   return { pcm, originalFormat, durationMs, bytesIn: buffer.length };
 }
 

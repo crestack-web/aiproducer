@@ -16,6 +16,71 @@ function readU16(view: DataView, offset: number) {
   return view.getUint16(offset, true);
 }
 
+/** Decode a PCM/float WAV keeping left and right (mono files give L=R). */
+export function decodeWavStereo(buffer: Buffer | ArrayBuffer | Uint8Array): {
+  left: Float32Array;
+  right: Float32Array;
+  sampleRate: number;
+  channels: number;
+} {
+  const u8 = buffer instanceof Buffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
+  if (u8.byteLength < 44) throw new Error("WAV too small");
+  const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let offset = 12;
+  let sampleRate = 44100;
+  let channels = 1;
+  let bitsPerSample = 16;
+  let audioFormat = 1;
+  let dataOffset = -1;
+  let dataSize = 0;
+  while (offset + 8 <= u8.byteLength) {
+    const id = String.fromCharCode(u8[offset], u8[offset + 1], u8[offset + 2], u8[offset + 3]);
+    const size = readU32(view, offset + 4);
+    const body = offset + 8;
+    if (id === "fmt ") {
+      audioFormat = readU16(view, body);
+      channels = readU16(view, body + 2);
+      sampleRate = readU32(view, body + 4);
+      bitsPerSample = readU16(view, body + 14);
+    } else if (id === "data") {
+      dataOffset = body;
+      dataSize = Math.min(size, u8.byteLength - body);
+      break;
+    }
+    offset = body + size + (size % 2);
+  }
+  if (dataOffset < 0) throw new Error("WAV missing data chunk");
+  if (audioFormat !== 1 && audioFormat !== 3 && audioFormat !== 0xfffe) {
+    // Unknown codec: fall back to the mono decoder's error handling.
+    const m = decodeWav(buffer);
+    return { left: m.samples, right: new Float32Array(m.samples), sampleRate: m.sampleRate, channels: 1 };
+  }
+  const bytes = bitsPerSample / 8;
+  const isFloat = audioFormat === 3 || (audioFormat === 0xfffe && bitsPerSample === 32);
+  const frameCount = Math.floor(dataSize / (channels * bytes));
+  const left = new Float32Array(frameCount);
+  const right = new Float32Array(frameCount);
+  const read = (o: number): number => {
+    if (isFloat && bitsPerSample === 32) return view.getFloat32(o, true);
+    if (bitsPerSample === 16) return view.getInt16(o, true) / 32768;
+    if (bitsPerSample === 8) return ((u8[o] ?? 128) - 128) / 128;
+    if (bitsPerSample === 24) {
+      let v = u8[o] | (u8[o + 1] << 8) | (u8[o + 2] << 16);
+      if (v & 0x800000) v |= ~0xffffff;
+      return v / 8388608;
+    }
+    if (bitsPerSample === 32) return view.getInt32(o, true) / 2147483648;
+    throw new Error(`Unsupported bitsPerSample ${bitsPerSample}`);
+  };
+  for (let i = 0; i < frameCount; i++) {
+    const base = dataOffset + i * channels * bytes;
+    const l = read(base);
+    left[i] = l;
+    right[i] = channels > 1 ? read(base + bytes) : l;
+  }
+  return { left, right, sampleRate, channels };
+}
+
 /** Decode a standard PCM WAV buffer to mono Float32 samples (-1..1). */
 export function decodeWav(buffer: Buffer | ArrayBuffer | Uint8Array): PcmAudio {
   const u8 = buffer instanceof Buffer ? new Uint8Array(buffer) : new Uint8Array(buffer);
