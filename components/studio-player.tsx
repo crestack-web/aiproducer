@@ -98,7 +98,7 @@ const COVER_GRADS = [
   ["#3A2E4A", "#0B0A0F"],
 ];
 
-function coverGrad(seed: string): [string, string] {
+export function coverGrad(seed: string): [string, string] {
   let n = 0;
   const s = seed || "song";
   for (let i = 0; i < s.length; i++) n = (n + s.charCodeAt(i) * (i + 1)) % COVER_GRADS.length;
