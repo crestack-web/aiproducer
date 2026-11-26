@@ -85,7 +85,7 @@ function IconProfile({ size = 20, color = "currentColor" }: { size?: number; col
 export type AppNavKey = "home" | "studio" | "library" | "profile";
 
 /** Dashboard accent used by the mobile bottom nav. */
-const NAV_LIME = "#C8F542";
+const NAV_LIME = "#FFFFFF"; // active nav items are white; lime is reserved for small accents
 
 const NAV: { key: AppNavKey; label: string; href: string; Icon: typeof IconHome }[] = [
   { key: "home", label: "Home", href: "/app", Icon: IconHome },
@@ -548,13 +548,13 @@ export function AppShell({
           .studio-bottom-nav > button:active,
           .studio-bottom-nav > a:active { transform: scale(0.94); }
           .studio-bottom-nav [aria-current="page"] svg {
-            filter: drop-shadow(0 0 6px rgba(200,245,66,0.45));
+            filter: drop-shadow(0 0 6px rgba(255,255,255,0.35));
           }
           .studio-bottom-nav .ap-nav-fab-slot { flex: 1; display: flex; justify-content: center; align-items: flex-start; position: relative; }
           .studio-bottom-nav .ap-nav-fab {
             position: absolute; top: -26px; width: 64px; height: 64px; border-radius: 999px; border: none; cursor: pointer;
-            display: grid; place-items: center; background: #C8F542; color: #10130A; padding: 0;
-            box-shadow: 0 0 0 6px rgba(10,11,16,0.0), 0 12px 30px -6px rgba(200,245,66,0.55);
+            display: grid; place-items: center; background: #FFFFFF; color: #0B0A0F; padding: 0;
+            box-shadow: 0 0 0 6px rgba(10,11,16,0.0), 0 12px 30px -6px rgba(255,255,255,0.35);
             transition: transform 160ms ease;
           }
           .studio-bottom-nav .ap-nav-fab:active { transform: scale(0.94); }

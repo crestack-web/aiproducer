@@ -998,54 +998,52 @@ function AppInner() {
     );
   }
 
-  function HomeProjectCard({ p, meta }: { p: Project; meta: string }) {
-    const isReady = isFinishedSong(p);
-    const latest = p.masters && p.masters.length > 0 ? p.masters[0] : null;
-    const playId = `master:${p.id}:${latest?.job_id || "v1"}`;
-    const isActive = activeId === playId;
-    const isPlaying = isActive && audioIsPlaying;
-    const stage = homeStage(p);
+  /** One track card used everywhere (Home, Library, Profile) so tracks look the same across the app. */
+  function TrackCard({
+    p,
+    title,
+    subtitle,
+    pill,
+    isPlaying,
+    busy,
+    onPlay,
+    onMore,
+    playLabel,
+  }: {
+    p: Project;
+    title: string;
+    subtitle: string;
+    pill: string;
+    isPlaying: boolean;
+    busy?: boolean;
+    onPlay: () => void;
+    onMore: () => void;
+    playLabel?: string;
+  }) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
         <div style={{ position: "relative" }}>
-          <Link href={`/app/studio/${p.id}`} className="ap-home-card" aria-label={p.title}>
+          <Link href={`/app/studio/${p.id}`} className="ap-home-card" aria-label={title}>
             <HomeCover p={p} />
           </Link>
-          <span className="ap-home-pill">{stage.label}</span>
+          <span className="ap-home-pill">{pill}</span>
           <button
             type="button"
             className="ap-home-play ap-home-press"
-            aria-label={isPlaying ? "Pause" : isReady ? "Play" : "Open project"}
-            disabled={loadingPlayId === playId}
-            onClick={() => {
-              if (!isReady) {
-                router.push(`/app/studio/${p.id}`);
-                return;
-              }
-              void togglePlayMaster(playId, p.id, {
-                ...(latest ? { jobId: latest.job_id } : { version: 1 }),
-                title: p.title,
-                subtitle: meta,
-                seed: p.title || p.id,
-              });
-            }}
+            data-playing={isPlaying}
+            aria-label={isPlaying ? "Pause" : playLabel || "Play"}
+            disabled={busy}
+            onClick={onPlay}
           >
             {isPlaying ? <IconPause size={18} color="currentColor" /> : <IconPlay size={18} color="currentColor" />}
           </button>
         </div>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "0 2px", minWidth: 0 }}>
           <Link href={`/app/studio/${p.id}`} style={{ flex: 1, minWidth: 0, color: "inherit", textDecoration: "none" }}>
-            <span style={{ display: "block", fontSize: 16, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.title}</span>
-            <span style={{ display: "block", marginTop: 2, fontSize: 13.5, color: "var(--hl-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textTransform: p.genre ? "none" : "capitalize" }}>
-              {p.genre || stage.label}
-            </span>
+            <span className="ap-track-card-title">{title}</span>
+            <span className="ap-track-card-meta">{isPlaying ? "Playing" : subtitle}</span>
           </Link>
-          <button
-            type="button"
-            className="ap-home-more"
-            aria-label="More options"
-            onClick={() => setProjectMenu({ id: p.id, title: p.title, meta, isReady })}
-          >
+          <button type="button" className="ap-home-more" aria-label="More options" onClick={onMore}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <circle cx="5" cy="12" r="1.8" />
               <circle cx="12" cy="12" r="1.8" />
@@ -1054,6 +1052,59 @@ function AppInner() {
           </button>
         </div>
       </div>
+    );
+  }
+
+  function HomeProjectCard({ p, meta }: { p: Project; meta: string }) {
+    const isReady = isFinishedSong(p);
+    const latest = p.masters && p.masters.length > 0 ? p.masters[0] : null;
+    const playId = `master:${p.id}:${latest?.job_id || "v1"}`;
+    const isPlaying = activeId === playId && audioIsPlaying;
+    const stage = homeStage(p);
+    return (
+      <TrackCard
+        p={p}
+        title={p.title}
+        subtitle={p.genre || stage.label}
+        pill={stage.label}
+        isPlaying={isPlaying}
+        busy={loadingPlayId === playId}
+        playLabel={isReady ? "Play" : "Open project"}
+        onPlay={() => {
+          if (!isReady) {
+            router.push(`/app/studio/${p.id}`);
+            return;
+          }
+          void togglePlayMaster(playId, p.id, {
+            ...(latest ? { jobId: latest.job_id } : { version: 1 }),
+            title: p.title,
+            subtitle: meta,
+            seed: p.title || p.id,
+          });
+        }}
+        onMore={() => setProjectMenu({ id: p.id, title: p.title, meta, isReady })}
+      />
+    );
+  }
+
+  function BeatTrackCard({ p }: { p: Project }) {
+    const isPlaying = activeId === p.id && audioIsPlaying;
+    const meta = [p.genre, p.mood].filter(Boolean).join(" · ") || p.status;
+    return (
+      <TrackCard
+        p={p}
+        title={p.title}
+        subtitle={meta}
+        pill={p.beat_source === "upload" ? "Upload" : "AP beat"}
+        isPlaying={isPlaying}
+        busy={loadingPlayId === p.id || deletingId === p.id}
+        playLabel="Play beat"
+        onPlay={() => {
+          setBeatPlayError(null);
+          void togglePlayBeat(p.id, { title: p.title, subtitle: meta || "Beat", seed: p.title || p.id });
+        }}
+        onMore={() => setBeatMenu({ id: p.id, title: p.title, meta: `Beat · ${meta}` })}
+      />
     );
   }
 
@@ -1092,10 +1143,8 @@ function AppInner() {
           }
         `}</style>
 
-        {tab === "home" && (
-          <>
-            <style>{`
-              .ap-home { --hl-lime: #C8F542; --hl-lime-ink: #10130A; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
+        <style>{`
+              .ap-home, .ap-tracks { --hl-lime: #C8F542; --hl-lime-ink: #10130A; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
               .ap-home-title { font-family: var(--hl-display); font-stretch: 125%; font-weight: 800; font-size: clamp(1.35rem, 5.6vw, 1.75rem); letter-spacing: -0.01em; line-height: 1.1; margin: 0; }
               .ap-home-actions { scrollbar-width: none; }
               .ap-home-actions::-webkit-scrollbar { display: none; }
@@ -1107,14 +1156,21 @@ function AppInner() {
               @media (hover: hover) { .ap-home-card:hover { transform: translateY(-3px); } }
               .ap-home-card-initials { position: absolute; left: 7%; bottom: 7%; font-family: var(--hl-display); font-stretch: 125%; font-weight: 900; font-size: clamp(2.2rem, 11vw, 3.4rem); line-height: 1; letter-spacing: -0.02em; color: rgba(255,255,255,0.16); mix-blend-mode: overlay; pointer-events: none; text-transform: uppercase; }
               .ap-home-pill { position: absolute; top: 5%; left: 5%; padding: 5px 10px; border-radius: 999px; background: rgba(20,20,26,0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); font-size: 11.5px; font-weight: 550; color: var(--hl-text); z-index: 2; }
-              .ap-home-play { position: absolute; right: 6%; bottom: 6%; width: 22%; min-width: 40px; max-width: 48px; aspect-ratio: 1; border-radius: 999px; border: none; display: grid; place-items: center; background: var(--hl-lime); color: var(--hl-lime-ink); cursor: pointer; z-index: 2; box-shadow: 0 8px 18px -6px rgba(200,245,66,0.45); padding: 0; }
+              .ap-home-play { position: absolute; right: 6%; bottom: 6%; width: 22%; min-width: 40px; max-width: 48px; aspect-ratio: 1; border-radius: 999px; border: none; display: grid; place-items: center; background: #FFFFFF; color: #0B0A0F; cursor: pointer; z-index: 2; box-shadow: 0 8px 18px -6px rgba(0,0,0,0.55); padding: 0; }
               .ap-home-play:disabled { opacity: 0.55; cursor: default; }
               .ap-home-qa { min-width: 148px; flex-shrink: 0; text-align: left; padding: 18px 18px 20px; border-radius: 26px; border: 1px solid var(--hl-line); background: var(--hl-card); color: var(--hl-text); cursor: pointer; font-family: inherit; }
               .ap-home-qa-icon { width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center; background: rgba(255,255,255,0.06); color: var(--hl-lime); }
               .ap-home-progress { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.07); overflow: hidden; margin-top: 10px; max-width: 220px; }
               .ap-home-progress > span { display: block; height: 100%; border-radius: 99px; background: var(--hl-lime); }
               .ap-home-more { appearance: none; border: none; background: none; color: var(--hl-muted); cursor: pointer; padding: 4px; line-height: 0; flex-shrink: 0; }
+                          .ap-home-play[data-playing="true"] { background: var(--hl-lime); color: var(--hl-lime-ink); }
+              .ap-tracks-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+              @media (min-width: 900px) { .ap-tracks-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+              .ap-track-card-title { display: block; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--hl-text); }
+              .ap-track-card-meta { display: block; margin-top: 2px; font-size: 13.5px; color: var(--hl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             `}</style>
+        {tab === "home" && (
+          <>
 
             <div className="ap-home">
             {/* Greeting row — current artist avatar + credits */}
@@ -1238,12 +1294,12 @@ function AppInner() {
             <div style={{ marginTop: 36, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
               <h2 className="ap-home-title">Recent projects</h2>
               {projects.length > 0 && (
-                <button type="button" onClick={() => setTab("library")} style={{ background: "none", border: "none", padding: 0, color: "var(--hl-lime)", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                <button type="button" onClick={() => setTab("library")} style={{ background: "none", border: "none", padding: 0, color: "var(--hl-text)", fontFamily: "inherit", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
                   See all
                 </button>
               )}
             </div>
-            <div className="dash-project-grid" style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 18 }}>
+            <div className="dash-project-grid ap-tracks-grid" style={{ marginTop: 16 }}>
               {loading && <SkeletonCardGrid count={4} />}
               {!loading && projects.length === 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1422,6 +1478,7 @@ function AppInner() {
                   />
                   )
                 )}
+                <div className="ap-tracks ap-tracks-grid">
                 {projects
                   .filter((p) => isFinishedSong(p) && matchesLibraryQuery(p))
                   .flatMap((p) => {
@@ -1462,18 +1519,37 @@ function AppInner() {
                         .filter(Boolean)
                         .join(" · ");
                       return (
-                        <SongVersionRow
+                        <TrackCard
                           key={`${p.id}-${m.job_id || m.version}`}
-                          projectId={p.id}
+                          p={p}
                           title={label}
-                          meta={meta + eng}
-                          jobId={m.job_id || undefined}
-                          version={m.version}
-                          isReady
+                          subtitle={[p.genre, p.mood].filter(Boolean).join(" · ") || (total > 1 ? `Take ${m.version} of ${total}` : "Song ready")}
+                          pill={total > 1 ? `Take ${m.version}` : "Song"}
+                          isPlaying={activeId === `master:${p.id}:${m.job_id || `v${m.version}`}` && audioIsPlaying}
+                          busy={loadingPlayId === `master:${p.id}:${m.job_id || `v${m.version}`}`}
+                          onPlay={() =>
+                            void togglePlayMaster(`master:${p.id}:${m.job_id || `v${m.version}`}`, p.id, {
+                              ...(m.job_id ? { jobId: m.job_id } : { version: m.version }),
+                              title: label,
+                              subtitle: meta + eng,
+                              seed: label || p.id,
+                            })
+                          }
+                          onMore={() =>
+                            setProjectMenu({
+                              id: p.id,
+                              title: label,
+                              meta: meta + eng,
+                              isReady: true,
+                              ...(m.job_id ? { jobId: m.job_id } : {}),
+                              version: m.version,
+                            })
+                          }
                         />
                       );
                     });
                   })}
+                </div>
               </div>
             )}
             {libraryTab === "beats" && (
@@ -1500,126 +1576,13 @@ function AppInner() {
                 {beatPlayError && (
                   <p style={{ color: "#E07070", fontSize: 13, margin: 0 }}>{beatPlayError}</p>
                 )}
-                {projects
-                  .filter((p) => p.has_beat && matchesLibraryQuery(p))
-                  .map((p) => {
-                    const isActive = activeId === p.id;
-                    const isPlaying = isActive && audioIsPlaying;
-                    const busy = loadingPlayId === p.id || deletingId === p.id;
-                    const meta = [p.genre, p.mood].filter(Boolean).join(" · ") || p.status;
-                    return (
-                      <div
-                        key={p.id}
-                        className="ap-track"
-                        data-active={isActive}
-                        style={{ flexDirection: "column", alignItems: "stretch", gap: 0, color: C.text, ["--ap-accent" as string]: C.brass } as React.CSSProperties}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <button
-                            type="button"
-                            className="ap-art"
-                            data-playing={isPlaying}
-                            aria-label={isPlaying ? "Pause beat" : "Play beat"}
-                            disabled={busy && loadingPlayId !== p.id}
-                            onClick={() => {
-                              setBeatPlayError(null);
-                              void togglePlayBeat(p.id, {
-                                title: p.title,
-                                subtitle: meta || "Beat",
-                                seed: p.title || p.id,
-                              });
-                            }}
-                            style={{ cursor: "pointer" }}
-                          >
-                            <CoverArt seed={p.title || p.id} size={60} />
-                            <span
-                              style={{
-                                position: "absolute",
-                                inset: 0,
-                                display: "grid",
-                                placeItems: "center",
-                                background: "rgba(0,0,0,0.3)",
-                                color: "#fff",
-                                fontSize: 14,
-                                fontWeight: 700,
-                              }}
-                            >
-                              {loadingPlayId === p.id ? (
-                                "…"
-                              ) : isPlaying ? (
-                                <IconPause size={18} color="#fff" />
-                              ) : (
-                                <IconPlay size={18} color="#fff" />
-                              )}
-                            </span>
-                          </button>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div
-                              style={{
-                                fontWeight: 650,
-                                fontSize: 14,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                              }}
-                            >
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {p.title}
-                              </span>
-                              {p.beat_source === "ai" && (
-                                <span
-                                  style={{
-                                    flexShrink: 0,
-                                    fontSize: 9,
-                                    fontWeight: 800,
-                                    padding: "2px 6px",
-                                    borderRadius: 999,
-                                    background: "rgba(231,169,97,0.16)",
-                                    color: C.brass,
-                                    border: `1px solid ${C.brassLine || C.brass}`,
-                                  }}
-                                >
-                                  AP
-                                </span>
-                              )}
-                              {p.beat_source === "upload" && (
-                                <span
-                                  style={{
-                                    flexShrink: 0,
-                                    fontSize: 9,
-                                    fontWeight: 700,
-                                    padding: "2px 6px",
-                                    borderRadius: 999,
-                                    color: C.textMuted,
-                                    border: `1px solid ${C.border}`,
-                                  }}
-                                >
-                                  Upload
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-                              {meta}
-                              {isPlaying ? " · Playing" : isActive ? " · Paused" : ""}
-                            </div>
-                          </div>
-                          <BeatMoreButton
-                            active={beatMenu?.id === p.id}
-                            onClick={() =>
-                              setBeatMenu({
-                                id: p.id,
-                                title: p.title,
-                                meta: `Beat · ${meta}`,
-                              })
-                            }
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="ap-tracks ap-tracks-grid">
+                  {projects
+                    .filter((p) => p.has_beat && matchesLibraryQuery(p))
+                    .map((p) => (
+                      <BeatTrackCard key={p.id} p={p} />
+                    ))}
+                </div>
                 <BeatActionsSheet
                   open={Boolean(beatMenu)}
                   title={beatMenu?.title || "Beat"}
@@ -1661,14 +1624,7 @@ function AppInner() {
               </div>
             )}
             {libraryTab === "recordings" && (
-              <div
-                className="dash-project-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: 12,
-                }}
-              >
+              <div className="dash-project-grid ap-tracks ap-tracks-grid">
                 {loading && <SkeletonCardGrid count={4} />}
                 {!loading &&
                   projects.filter(
@@ -1702,7 +1658,7 @@ function AppInner() {
                       matchesLibraryQuery(p)
                   )
                   .map((p) => (
-                    <ProjectRow key={p.id} p={p} meta={`Session · ${p.status}`} />
+                    <HomeProjectCard key={p.id} p={p} meta={`Session · ${p.status}`} />
                   ))}
               </div>
             )}
@@ -2321,12 +2277,12 @@ function AppInner() {
                         </button>
                       </div>
                     ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div className="ap-tracks ap-tracks-grid">
                         {projects
                           .filter((p) => isFinishedSong(p))
                           .slice(0, 8)
                           .map((p) => (
-                            <ProjectRow key={p.id} p={p} meta={`Song · ${p.genre || p.status}`} />
+                            <HomeProjectCard key={p.id} p={p} meta={`Song · ${p.genre || p.status}`} />
                           ))}
                       </div>
                     )}
@@ -2380,16 +2336,12 @@ function AppInner() {
                         </button>
                       </div>
                     ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div className="ap-tracks ap-tracks-grid">
                         {projects
                           .filter((p) => p.has_beat)
                           .slice(0, 8)
                           .map((p) => (
-                            <ProjectRow
-                              key={p.id}
-                              p={p}
-                              meta={`${p.beat_source === "upload" ? "Upload" : "AP beat"} · ${p.genre || p.status}`}
-                            />
+                            <BeatTrackCard key={p.id} p={p} />
                           ))}
                         {beatCount > 8 && (
                           <button
@@ -2399,6 +2351,7 @@ function AppInner() {
                               ...secondary,
                               width: "100%",
                               marginTop: 4,
+                              gridColumn: "1 / -1",
                             }}
                           >
                             See all in Studio
