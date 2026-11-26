@@ -2392,7 +2392,7 @@ function AppInner() {
                   },
                   {
                     key: "cover",
-                    icon: "download",
+                    icon: "image",
                     label: "Change cover art",
                     onClick: () => {
                       const id = projectMenu.id;

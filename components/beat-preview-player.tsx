@@ -570,6 +570,7 @@ export type BeatActionsSheetIcon =
   | "edit"
   | "play"
   | "share"
+  | "image"
   | "more";
 
 export type BeatActionsSheetItem = {
@@ -641,6 +642,15 @@ function SheetIcon({ name }: { name: string }) {
       </svg>
     );
   }
+  if (n === "image" || n === "cover") {
+    return (
+      <svg {...common}>
+        <rect x="3" y="3" width="18" height="18" rx="3" />
+        <circle cx="9" cy="9" r="1.8" />
+        <path d="M21 15l-5-5L5 21" />
+      </svg>
+    );
+  }
   if (n === "play") {
     return (
       <svg {...common}>
@@ -684,6 +694,73 @@ export function BeatActionsSheet({
   if (!open) return null;
   if (typeof document === "undefined") return null;
 
+  const regular = items.filter((it) => !it.danger);
+  const danger = items.filter((it) => it.danger);
+  const initials = (title || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase() || "AP";
+
+  const renderItem = (it: BeatActionsSheetItem, i: number, list: BeatActionsSheetItem[]) => {
+    const iconKey = String(it.icon || it.key);
+    return (
+      <button
+        key={it.key}
+        type="button"
+        className="ap-sheet-item"
+        disabled={it.disabled}
+        onClick={() => {
+          if (it.disabled) return;
+          it.onClick();
+          onClose();
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          width: "100%",
+          textAlign: "left",
+          padding: "12px 14px",
+          border: "none",
+          borderBottom: i < list.length - 1 ? "1px solid rgba(255,255,255,0.06)" : "none",
+          background: "transparent",
+          color: it.danger ? "#FF6B6B" : "#F5F6FA",
+          fontSize: 15,
+          fontWeight: 550,
+          fontFamily: "inherit",
+          cursor: it.disabled ? "wait" : "pointer",
+          opacity: it.disabled ? 0.5 : 1,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 12,
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+            background: it.danger ? "rgba(255,107,107,0.12)" : "rgba(255,255,255,0.07)",
+            color: it.danger ? "#FF6B6B" : "#F5F6FA",
+          }}
+        >
+          <SheetIcon name={iconKey} />
+        </span>
+        <span style={{ flex: 1 }}>{it.label}</span>
+        {!it.danger && (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C606C" strokeWidth="2" strokeLinecap="round" aria-hidden>
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        )}
+      </button>
+    );
+  };
+
+  const group = (list: BeatActionsSheetItem[]) =>
+    list.length ? (
+      <div style={{ borderRadius: 20, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+        {list.map((it, i) => renderItem(it, i, list))}
+      </div>
+    ) : null;
+
   return createPortal(
     <div
       role="dialog"
@@ -696,8 +773,15 @@ export function BeatActionsSheet({
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
+        fontFamily: '"Inter", system-ui, -apple-system, sans-serif',
       }}
     >
+      <style>{`
+        @keyframes apSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes apSheetFade { from { opacity: 0; } to { opacity: 1; } }
+        .ap-sheet-item:active { background: rgba(255,255,255,0.06) !important; }
+        @media (hover: hover) { .ap-sheet-item:hover { background: rgba(255,255,255,0.05) !important; } }
+      `}</style>
       <button
         type="button"
         aria-label="Close"
@@ -706,143 +790,85 @@ export function BeatActionsSheet({
           position: "absolute",
           inset: 0,
           border: "none",
-          background: "rgba(0,0,0,0.55)",
+          background: "rgba(0,0,0,0.6)",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
           cursor: "pointer",
           padding: 0,
+          animation: "apSheetFade 200ms ease",
         }}
       />
       <div
         style={{
           position: "relative",
           width: "100%",
-          maxWidth: 420,
-          margin: 0,
-          borderRadius: "18px 18px 0 0",
-          background: C.surface || "#1A1510",
-          border: `1px solid ${C.border}`,
+          maxWidth: 440,
+          borderRadius: "28px 28px 0 0",
+          background: "#121319",
+          border: "1px solid rgba(255,255,255,0.08)",
           borderBottom: "none",
-          boxShadow: "0 -12px 40px rgba(0,0,0,0.45)",
-          padding: "12px 14px calc(28px + env(safe-area-inset-bottom, 0px))",
+          boxShadow: "0 -20px 50px rgba(0,0,0,0.55)",
+          padding: "10px 16px calc(20px + env(safe-area-inset-bottom, 0px))",
           boxSizing: "border-box",
           maxHeight: "min(88vh, 680px)",
           overflowY: "auto",
+          animation: "apSheetUp 260ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+          color: "#F5F6FA",
         }}
       >
-        <div
-          style={{
-            width: 36,
-            height: 4,
-            borderRadius: 999,
-            background: C.border,
-            margin: "0 auto 10px",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 8,
-            padding: "0 4px 8px",
-          }}
-        >
-          <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>More</div>
+        <div style={{ width: 40, height: 5, borderRadius: 999, background: "rgba(255,255,255,0.18)", margin: "0 auto 16px" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 16,
+              flexShrink: 0,
+              display: "grid",
+              placeItems: "center",
+              background: "linear-gradient(150deg, #2C5BD8 0%, #A02E8A 100%)",
+              color: "rgba(255,255,255,0.85)",
+              fontWeight: 800,
+              fontSize: 17,
+            }}
+          >
+            {initials}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 17, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+            {subtitle ? (
+              <div style={{ fontSize: 13, color: "#8E92A0", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {subtitle}
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             aria-label="Close"
             onClick={onClose}
             style={{
-              width: 32,
-              height: 32,
+              width: 34,
+              height: 34,
+              flexShrink: 0,
               borderRadius: 999,
               border: "none",
-              background: "rgba(255,255,255,0.06)",
-              color: C.textMuted,
+              background: "rgba(255,255,255,0.08)",
+              color: "#F5F6FA",
               cursor: "pointer",
-              fontSize: 14,
-              fontFamily: "inherit",
+              display: "grid",
+              placeItems: "center",
+              padding: 0,
             }}
           >
-            ˅
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
         </div>
-        <div style={{ marginBottom: 10, padding: "0 4px 12px", borderBottom: `1px solid ${C.border}` }}>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: 14,
-              color: C.text,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {title}
-          </div>
-          {subtitle ? (
-            <div
-              style={{
-                fontSize: 12,
-                color: C.textMuted,
-                marginTop: 3,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {subtitle}
-            </div>
-          ) : null}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          {items.map((it) => {
-            const iconKey = String(it.icon || it.key);
-            return (
-              <button
-                key={it.key}
-                type="button"
-                disabled={it.disabled}
-                onClick={() => {
-                  if (it.disabled) return;
-                  it.onClick();
-                  onClose();
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  textAlign: "left",
-                  padding: "14px 8px",
-                  borderRadius: 0,
-                  border: "none",
-                  borderBottom: `1px solid rgba(255,255,255,0.04)`,
-                  background: "transparent",
-                  color: it.danger ? "#E07070" : C.text,
-                  fontSize: 15,
-                  fontWeight: 500,
-                  cursor: it.disabled ? "wait" : "pointer",
-                  fontFamily: "inherit",
-                  opacity: it.disabled ? 0.5 : 1,
-                  width: "100%",
-                }}
-              >
-                <span
-                  style={{
-                    width: 28,
-                    height: 28,
-                    display: "grid",
-                    placeItems: "center",
-                    flexShrink: 0,
-                    color: it.danger ? "#E07070" : C.textMuted,
-                  }}
-                  aria-hidden
-                >
-                  <SheetIcon name={iconKey} />
-                </span>
-                <span style={{ flex: 1 }}>{it.label}</span>
-              </button>
-            );
-          })}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {group(regular)}
+          {group(danger)}
         </div>
       </div>
     </div>,
