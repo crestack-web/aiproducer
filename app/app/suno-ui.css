@@ -132,3 +132,57 @@
 @media (prefers-reduced-motion: reduce) {
   .dash-content:has(.ap-seg[role="tablist"]) .ap-tracks-grid > div { transition: none; }
 }
+
+/* Focused header cleanup. Existing theme colors, artist identity and handlers stay intact. */
+.dash-content .ap-home-eq { display: none !important; }
+.dash-content .ap-home-eq span { animation: none !important; }
+
+/* FeatureBanner is the direct child containing the live copy; scope to Library only. */
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) {
+  margin-bottom: 14px !important;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) > div {
+  background: none !important;
+  border-width: 0 0 1px !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 0 20px !important;
+  overflow: visible !important;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) > div > div:first-child {
+  display: none !important;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) > div > div:last-child {
+  max-width: 100% !important;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) > div > div:last-child > div:first-child {
+  display: none !important;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) [aria-live="polite"] > div {
+  font-size: 21px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  letter-spacing: 0;
+  margin-bottom: 0 !important;
+  overflow-wrap: anywhere;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) [aria-live="polite"] > p {
+  display: none;
+}
+.dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) button {
+  justify-self: start;
+  min-height: 44px;
+  padding: 11px 18px !important;
+  font-size: 14px !important;
+  white-space: nowrap;
+}
+@media (min-width: 640px) {
+  .dash-content:has(.ap-seg[role="tablist"]) > div:has([aria-live="polite"]) > div > div:last-child {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 24px;
+  }
+}
