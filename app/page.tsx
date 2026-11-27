@@ -40,6 +40,7 @@ export default function WelcomePage() {
             <a href="#motion-sing">AP sings</a>
             <a href="#motion-mix">Produce</a>
               <a href="#value">Why Studio</a>
+              <a href="#compare">Compare</a>
               <a href="#faq">FAQ</a>
               <a href="#pricing">Pricing</a>
               <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
@@ -153,6 +154,92 @@ export default function WelcomePage() {
             Bad days, short sessions, and vague direction mean money spent without a radio-ready file.
             Studio flips that — you pay for a <strong>finished song path</strong>, with a producer plan and mastering baked in,
             so more of every dollar ends up in the track you release.
+          </div>
+        </section>
+
+        <section className="section" id="compare">
+          <div className="section-head">
+            <p className="section-kicker">How we compare</p>
+            <h2>The only one in the middle</h2>
+            <p>
+              Suno is the biggest name, but it sounds like a robot singing your lyrics — hard to call your own performance.
+              BandLab and Voloco keep your voice but expect you to know production. AP Studio keeps your voice <em>and</em> produces the song.
+            </p>
+          </div>
+          <div className="vs-wrap">
+            <table className="vs-table">
+              <thead>
+                <tr>
+                  <th scope="col">Competitor</th>
+                  <th scope="col">What it does</th>
+                  <th scope="col">Price (USD)</th>
+                  <th scope="col">Uses your real voice?</th>
+                  <th scope="col">Full song produced for you?</th>
+                </tr>
+              </thead>
+              <tbody>
+                  <tr>
+                    <th scope="row">Suno</th>
+                    <td>Generates whole songs, vocals included, from a prompt</td>
+                    <td>Free; Pro $10/mo; Premier $30/mo; Platinum $120/mo</td>
+                    <td><span className="vs-mark vs-partial" aria-hidden="true">~</span>Partly (“Voices” feature), but it’s mostly synthetic</td>
+                    <td><span className="vs-mark vs-partial" aria-hidden="true">~</span>Yes, but it’s AI singing</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Udio</th>
+                    <td>Generates songs from a prompt</td>
+                    <td>Free; $10/mo; $30/mo</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>No</td>
+                    <td><span className="vs-mark vs-partial" aria-hidden="true">~</span>Yes, but downloads are disabled on every plan since the UMG settlement</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">BandLab</th>
+                    <td>Free DAW with AI helpers (SongStarter, AutoMix, Voice Cleaner, mastering)</td>
+                    <td>Free; Pro $14.99/mo or $99 first year</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>No. You produce it yourself</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Voloco</th>
+                    <td>Records vocals over beats with auto-tune, effects and one-tap mastering</td>
+                    <td>About $9.99–$11.99/mo</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>No. Effects, not production</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">LANDR</th>
+                    <td>AI mastering plus distribution</td>
+                    <td>$9.99 per track; $11–$40/mo</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes (you upload a mix)</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>No. Mastering only, you bring a finished mix</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Moises</th>
+                    <td>Stem separation and practice tools</td>
+                    <td>Free; about $5.99/mo</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>Not a recording tool</td>
+                    <td><span className="vs-mark vs-no" aria-hidden="true">✕</span>No</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">A real studio</th>
+                    <td>Room, engineer, mix, master</td>
+                    <td>$400–$1,200+ per single</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes</td>
+                    <td><span className="vs-mark vs-partial" aria-hidden="true">~</span>Yes, but expensive</td>
+                  </tr>
+                  <tr className="vs-us">
+                    <th scope="row">AP Studio</th>
+                    <td>Beat, song plan, coached vocals, mix and master</td>
+                    <td>From $4.99/song</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes, your voice leads</td>
+                    <td><span className="vs-mark vs-yes" aria-hidden="true">✓</span>Yes</td>
+                  </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="gap-callout">
+            <strong>The cheapest way to get a finished song:</strong> LANDR charges <strong>$9.99</strong> to master one track you already mixed.
+            AP Studio is <strong>$4.99</strong> for beat + coached recording + mix + master.
           </div>
         </section>
 
