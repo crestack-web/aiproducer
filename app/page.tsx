@@ -31,18 +31,12 @@ export default function WelcomePage() {
               />
               AP Studio
             </Link>
-            <nav className="nav desktop-nav">
-              <a href="#workspace">Workspace</a>
+            <nav className="nav desktop-nav" aria-label="Main navigation">
               <a href="#listen">Listen</a>
               <a href="#how">How it works</a>
-              <a href="#motion-create">Create</a>
-            <a href="#motion-edit">Edit</a>
-            <a href="#motion-sing">AP sings</a>
-            <a href="#motion-mix">Produce</a>
-              <a href="#value">Why Studio</a>
               <a href="#compare">Compare</a>
-              <a href="#faq">FAQ</a>
               <a href="#pricing">Pricing</a>
+              <a href="#faq">FAQ</a>
               <Link href="/auth?mode=login&next=/app" className="ghost">Log in</Link>
               <Link href={START_HREF} className="primary">Start creating</Link>
             </nav>
@@ -58,7 +52,7 @@ export default function WelcomePage() {
             <br />
             <em>With your real voice.</em>
           </h1>
-          <p className="trust">No music theory · Pay per finished song · Your voice stays the lead</p>
+          <p className="trust">Your voice stays the lead · Preview before you unlock · Songs from $4.99</p>
           <WelcomeCreateHook />
         </section>
 
@@ -91,32 +85,51 @@ export default function WelcomePage() {
               </div>
             ))}
           </div>
+          <div className="section-action">
+            <Link href={START_HREF} className="primary">Start with your idea</Link>
+            <span>All you need is a phone or computer mic.</span>
+          </div>
         </section>
 
         <section className="section" id="difference">
           <div className="section-head">
-            <h2>Not another AI voice generator</h2>
-            <p>Full-song AI apps can sound impressive — but they don’t sound like you.</p>
+            <p className="section-kicker">Why AP Studio</p>
+            <h2>A finished song that still sounds like you</h2>
+            <p>AI can generate a performance. AP Studio helps you finish yours — without learning production first.</p>
           </div>
-          <div className="compare">
-            <div className="compare-card">
-              <h3>Typical AI song apps</h3>
-              <ul><li>Synthetic vocals</li><li>Hard to claim as your performance</li><li>One-shot output, not a session</li></ul>
+          <div className="outcome-grid">
+            <article className="outcome-card">
+              <span className="outcome-number">01</span>
+              <h3>Your voice leads</h3>
+              <p>Record the performance yourself. AP handles the cleanup, arrangement, mix and master around it.</p>
+            </article>
+            <article className="outcome-card">
+              <span className="outcome-number">02</span>
+              <h3>You always know what’s next</h3>
+              <p>Follow a clear plan for verses, hooks, harmonies and ad-libs instead of staring at a blank timeline.</p>
+            </article>
+            <article className="outcome-card">
+              <span className="outcome-number">03</span>
+              <h3>You leave with a record</h3>
+              <p>Go from idea to a mixed and mastered song, with WAV or MP3 export when you’re ready to release.</p>
+            </article>
+          </div>
+          <div className="inline-cta">
+            <div>
+              <strong>No music theory. No studio booking.</strong>
+              <span>Bring your voice and an idea — AP Studio guides the rest.</span>
             </div>
-            <div className="compare-card yes">
-              <h3>Studio</h3>
-              <ul><li>Your real recorded voice</li><li>Guided layers & structure</li><li>Pro mix & master on every credit</li></ul>
-            </div>
+            <Link href={START_HREF} className="primary">Start creating</Link>
           </div>
         </section>
 
         <section className="section" id="value">
           <div className="section-head">
-            <h2>The gap most artists feel</h2>
+            <p className="section-kicker">A clearer way to pay</p>
+            <h2>One finished song. One clear price.</h2>
             <p>
-              A real studio can sound incredible — but sessions are expensive, time is limited,
-              and a lot of the money goes to hours that don’t end up on the record.
-              Studio closes that gap: guided production + pro mix & master without booking a room.
+              Skip the studio clock and the production learning curve. Get guided recording,
+              professional mixing and mastering without booking a room.
             </p>
           </div>
           <div className="cost-compare">
@@ -135,7 +148,8 @@ export default function WelcomePage() {
               </ul>
             </div>
             <div className="cost-card studio-app">
-              <div className="cost-label">Studio app</div>
+              <div className="cost-badge">Best place to start</div>
+              <div className="cost-label">AP Studio</div>
               <h3>One finished song</h3>
               <p>Beat → plan → guided vocals → mix & master. Clear cost per release.</p>
               <div className="cost-total">From $4.99<span> / song</span></div>
@@ -154,6 +168,10 @@ export default function WelcomePage() {
             Bad days, short sessions, and vague direction mean money spent without a radio-ready file.
             Studio flips that — you pay for a <strong>finished song path</strong>, with a producer plan and mastering baked in,
             so more of every dollar ends up in the track you release.
+          </div>
+          <div className="section-action">
+            <Link href={START_HREF} className="primary">Make my song for $4.99</Link>
+            <span>Record from home, whenever you’re ready.</span>
           </div>
         </section>
 
@@ -310,21 +328,31 @@ export default function WelcomePage() {
             <strong>The cheapest way to get a finished song:</strong> LANDR charges <strong>$9.99</strong> to master one track you already mixed.
             AP Studio is <strong>$4.99</strong> for beat + coached recording + mix + master.
           </div>
+          <div className="section-action">
+            <Link href={START_HREF} className="primary">Choose your voice. Start your song.</Link>
+            <span>Preview the produced track before you unlock the download.</span>
+          </div>
         </section>
 
         <section className="section" id="pricing">
           <div className="section-head">
-            <h2>Simple pricing</h2>
+            <p className="section-kicker">Simple pricing</p>
+            <h2>Start with one song. Grow when you’re ready.</h2>
             <p>
-              Buy a single session or a monthly credit pack. Every finished song includes
-              professional mix & master so every release can sound radio-ready.
+              Try a single session or save with a monthly credit pack. Every finished song includes
+              guided recording, professional mixing and mastering.
             </p>
+          </div>
+          <div className="pricing-assurance" aria-label="Pricing benefits">
+            <span>✓ Preview before you unlock</span>
+            <span>✓ Mix & master included</span>
+            <span>✓ Cancel monthly plans anytime</span>
           </div>
           <div className="pricing">
             <div className="price-card">
               <div className="price-name">Session</div>
               <div className="price-amount">$4.99 <span>/ song</span></div>
-              <p className="price-desc">One finished song, end to end.</p>
+              <p className="price-desc">Best for your first finished song.</p>
               <ul className="price-list">
                 <li>1 song credit</li>
                 <li>Beat + plan + guided record</li>
@@ -333,10 +361,10 @@ export default function WelcomePage() {
               <Link href={START_HREF} className="secondary block">Buy session</Link>
             </div>
             <div className="price-card featured">
-              <div className="price-badge">Popular</div>
+              <div className="price-badge">Most popular</div>
               <div className="price-name">Artist</div>
               <div className="price-amount">$25 <span>/ mo</span></div>
-              <p className="price-desc">Ship singles every month.</p>
+              <p className="price-desc">Best for releasing consistently.</p>
               <ul className="price-list">
                 <li>10 songs / mo · ~$2.50</li>
                 <li>Everything in Session</li>
@@ -347,7 +375,7 @@ export default function WelcomePage() {
             <div className="price-card">
               <div className="price-name">Band</div>
               <div className="price-amount">$59 <span>/ mo</span></div>
-              <p className="price-desc">Higher volume for EPs.</p>
+              <p className="price-desc">Best for EPs and groups.</p>
               <ul className="price-list">
                 <li>25 songs / mo · ~$2.36</li>
                 <li>Priority mastering</li>
@@ -358,7 +386,7 @@ export default function WelcomePage() {
             <div className="price-card">
               <div className="price-name">Label</div>
               <div className="price-amount">$129 <span>/ mo</span></div>
-              <p className="price-desc">Catalog-scale output.</p>
+              <p className="price-desc">Best for multi-artist catalogs.</p>
               <ul className="price-list">
                 <li>50 songs / mo · ~$2.58</li>
                 <li>Everything in Band</li>
@@ -379,8 +407,15 @@ export default function WelcomePage() {
             <h2>Frequently asked questions</h2>
             <p>Straight answers before you open the booth.</p>
           </div>
+          <div className="faq-layout">
           <div className="faq-list">
             <details className="faq-item" open>
+              <summary>Can I hear my song before paying?</summary>
+              <p>
+                Yes. You can preview the produced track before you unlock the download.
+              </p>
+            </details>
+            <details className="faq-item">
               <summary>Is this my real voice or AI singing for me?</summary>
               <p>
                 Your voice stays the lead. AP is the producer — cleanup, arrangement,
@@ -405,7 +440,7 @@ export default function WelcomePage() {
               <summary>How does pricing work?</summary>
               <p>
                 Pay per finished song with a single session, or use a monthly plan for more songs.
-                You can preview the produced track before you unlock download.
+                Monthly plans can be cancelled anytime.
               </p>
             </details>
             <details className="faq-item">
@@ -423,12 +458,25 @@ export default function WelcomePage() {
               </p>
             </details>
           </div>
+          <aside className="faq-cta">
+            <p className="section-kicker">Still deciding?</p>
+            <h3>Start with just one song.</h3>
+            <p>See what AP Studio can do with your voice before choosing a monthly plan.</p>
+            <Link href={START_HREF} className="primary block">Start for $4.99</Link>
+            <span>No production experience needed.</span>
+          </aside>
+          </div>
         </section>
 
         <section className="bottom-cta">
-          <h2>Your next song can be radio-ready today</h2>
-          <p>Beat → plan → guided vocals → mix & master.</p>
-          <Link href={START_HREF} className="primary lg">Create your first song</Link>
+          <p className="section-kicker">Your next release starts here</p>
+          <h2>Bring the voice. We’ll help finish the record.</h2>
+          <p>Start with an idea or a beat. AP guides your vocals, then mixes and masters the song.</p>
+          <div className="bottom-cta-actions">
+            <Link href={START_HREF} className="primary lg">Start my song — from $4.99</Link>
+            <a href="#listen" className="secondary lg">Hear what Studio can do</a>
+          </div>
+          <span className="bottom-cta-note">Preview the produced track before you unlock the download.</span>
         </section>
 
       </div>
@@ -522,6 +570,14 @@ export default function WelcomePage() {
           </nav>
         </div>
       </footer>
+
+      <div className="mobile-start" aria-label="Start a song">
+        <div>
+          <strong>Your song starts here</strong>
+          <span>From $4.99 · Your real voice</span>
+        </div>
+        <Link href={START_HREF} className="primary">Start now</Link>
+      </div>
     </>
   );
 }
@@ -1803,6 +1859,116 @@ html[data-theme="light"] .chip{
   }
   @media (min-width:900px){
     .footer-banner-img{max-height:min(48vh,520px)}
+  }
+
+  /* Conversion pass: clearer outcomes, lower-risk decisions and consistent next steps */
+  .primary,.secondary,.footer-cta{transition:transform .18s ease,filter .18s ease,box-shadow .18s ease}
+  .primary:hover,.footer-cta:hover{transform:translateY(-2px);filter:brightness(1.05);box-shadow:0 12px 28px -12px rgba(231,169,97,.55)}
+  .secondary:hover{transform:translateY(-2px);border-color:rgba(231,169,97,.38)}
+  .primary:focus-visible,.secondary:focus-visible,.ghost:focus-visible,.footer-cta:focus-visible{outline:2px solid var(--signal);outline-offset:3px}
+  .section-head h2{font-size:clamp(1.9rem,4vw,2.7rem);line-height:1.12;letter-spacing:-.035em;text-wrap:balance}
+  .section-head p{max-width:590px;margin-left:auto;margin-right:auto}
+  .section-head .section-kicker{margin-bottom:12px;color:var(--brass);font-size:11px}
+  .section-action{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:26px;text-align:center}
+  .section-action .primary{padding:12px 24px;font-weight:700}
+  .section-action>span{font-size:12.5px;line-height:1.45;color:var(--muted)}
+  .outcome-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;max-width:960px;margin:0 auto}
+  .outcome-card{position:relative;overflow:hidden;padding:26px 24px;border:1px solid var(--border);border-radius:22px;background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.02))}
+  .outcome-card::after{content:"";position:absolute;width:120px;height:120px;right:-60px;top:-60px;border-radius:50%;background:rgba(123,235,212,.07);pointer-events:none}
+  .outcome-number{display:inline-flex;margin-bottom:24px;color:var(--brass);font-size:11px;font-weight:750;letter-spacing:.12em}
+  .outcome-card h3{font-family:Fraunces,Georgia,serif;font-size:1.25rem;font-weight:500;line-height:1.2;margin:0 0 10px;letter-spacing:-.02em}
+  .outcome-card p{font-size:14px;line-height:1.6;color:var(--muted);margin:0}
+  .inline-cta{display:flex;align-items:center;justify-content:space-between;gap:24px;max-width:960px;margin:16px auto 0;padding:20px 22px;border:1px solid rgba(231,169,97,.24);border-radius:20px;background:linear-gradient(110deg,rgba(231,169,97,.11),rgba(123,235,212,.055))}
+  .inline-cta>div{display:flex;flex-direction:column;gap:5px}
+  .inline-cta strong{font-size:15px;color:var(--text)}
+  .inline-cta span{font-size:13px;line-height:1.45;color:var(--muted)}
+  .inline-cta .primary{flex-shrink:0;font-weight:700}
+  .cost-card{position:relative}
+  .cost-card.studio-app{box-shadow:0 24px 60px -34px rgba(123,235,212,.38)}
+  .cost-badge{position:absolute;top:18px;right:18px;padding:5px 9px;border-radius:999px;background:rgba(123,235,212,.12);border:1px solid rgba(123,235,212,.25);color:var(--signal);font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+  .pricing-assurance{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px 22px;max-width:820px;margin:-14px auto 24px;color:var(--muted);font-size:12.5px}
+  .pricing-assurance span{white-space:nowrap}
+  .pricing-assurance span::first-letter{color:var(--signal)}
+  .price-card{padding:24px 20px 20px;border-radius:22px;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}
+  .price-card:hover{transform:translateY(-4px);border-color:var(--border-hi);box-shadow:0 24px 50px -34px rgba(0,0,0,.7)}
+  .price-card.featured{border-color:rgba(231,169,97,.6);box-shadow:0 24px 60px -30px rgba(231,169,97,.34)}
+  .price-card.featured:hover{border-color:var(--brass)}
+  .price-badge{top:16px;right:16px;font-size:9px;padding:4px 9px}
+  .price-name{font-size:11px;margin-bottom:9px}
+  .price-amount{font-size:2rem;margin-bottom:8px}
+  .price-desc{min-height:34px;font-size:13px;line-height:1.45;margin-bottom:16px}
+  .price-list li{font-size:13px;padding:7px 0;line-height:1.4}
+  .price-card .primary.block,.price-card .secondary.block{padding:12px 14px;font-size:13px;font-weight:700}
+  .price-note{max-width:680px;margin:20px auto 0;line-height:1.55}
+  .faq-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;max-width:960px;margin:0 auto;align-items:start}
+  .faq-layout .faq-list{max-width:none;width:100%}
+  .faq-item{transition:border-color .18s ease,background .18s ease}
+  .faq-item:hover{border-color:rgba(231,169,97,.25)}
+  .faq-item[open]{border-color:rgba(231,169,97,.28);background:rgba(231,169,97,.045)}
+  .faq-item summary{font-size:15px;line-height:1.4}
+  .faq-cta{position:sticky;top:110px;padding:26px 22px;border:1px solid rgba(231,169,97,.28);border-radius:22px;background:linear-gradient(155deg,rgba(231,169,97,.12),rgba(123,235,212,.05));text-align:left}
+  .faq-cta h3{font-family:Fraunces,Georgia,serif;font-size:1.45rem;font-weight:500;line-height:1.2;letter-spacing:-.025em;margin:0 0 10px}
+  .faq-cta>p:not(.section-kicker){font-size:13.5px;line-height:1.55;color:var(--muted);margin:0 0 20px}
+  .faq-cta .primary{font-weight:700}
+  .faq-cta>span{display:block;margin-top:12px;text-align:center;font-size:11.5px;color:var(--muted)}
+  .secondary.lg{font-size:15px;padding:13px 24px}
+  .bottom-cta{position:relative;overflow:hidden;margin-top:88px;padding:64px 32px;border-color:rgba(231,169,97,.3);background:radial-gradient(ellipse at 50% -10%,rgba(231,169,97,.18),transparent 58%),radial-gradient(ellipse at 90% 100%,rgba(123,235,212,.09),transparent 45%),rgba(255,255,255,.035);box-shadow:0 32px 80px -48px rgba(231,169,97,.35)}
+  .bottom-cta h2{max-width:680px;margin:0 auto 14px;font-size:clamp(2rem,4.6vw,3.15rem);line-height:1.1;letter-spacing:-.035em;text-wrap:balance}
+  .bottom-cta>p:not(.section-kicker){max-width:570px;margin:0 auto 26px;line-height:1.6}
+  .bottom-cta-actions{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px}
+  .bottom-cta-actions .primary{font-weight:750}
+  .bottom-cta-note{display:block;margin-top:18px;font-size:12px;color:var(--muted)}
+  .mobile-start{display:none}
+  html[data-theme="light"] .outcome-card{background:#fff;box-shadow:var(--shadow)}
+  html[data-theme="light"] .inline-cta{background:linear-gradient(110deg,rgba(196,120,32,.1),rgba(10,143,122,.06))}
+  html[data-theme="light"] .cost-badge{background:rgba(10,143,122,.09)}
+  html[data-theme="light"] .faq-item[open]{background:#FFFCF7}
+  html[data-theme="light"] .faq-cta{background:linear-gradient(155deg,rgba(196,120,32,.1),rgba(10,143,122,.05))}
+  @media (min-width:1100px){
+    .price-card.featured{transform:translateY(-8px)}
+    .price-card.featured:hover{transform:translateY(-12px)}
+  }
+  @media (max-width:800px){
+    .faq-layout{grid-template-columns:1fr;max-width:680px}
+    .faq-cta{position:static;text-align:center}
+    .faq-cta .primary{max-width:320px;margin:0 auto}
+  }
+  @media (max-width:720px){
+    .section{margin-top:68px}
+    .section-head{margin-bottom:28px}
+    .section-head h2{font-size:clamp(1.65rem,8vw,2rem)}
+    .outcome-grid{grid-template-columns:1fr;gap:10px}
+    .outcome-card{padding:20px;border-radius:18px}
+    .outcome-number{margin-bottom:12px}
+    .outcome-card h3{font-size:1.18rem;margin-bottom:7px}
+    .outcome-card p{font-size:13.5px;line-height:1.5}
+    .inline-cta{flex-direction:column;align-items:stretch;text-align:center;gap:16px;padding:20px 18px}
+    .inline-cta .primary{width:100%}
+    .cost-badge{top:14px;right:14px;font-size:9px}
+    .pricing-assurance{gap:7px 14px;margin:-6px auto 20px;font-size:11.5px}
+    .price-card{padding:24px 22px 20px}
+    .price-desc{min-height:0}
+    .bottom-cta{margin-top:68px;padding:40px 20px;border-radius:22px}
+    .bottom-cta h2{font-size:clamp(1.8rem,8.5vw,2.35rem)}
+    .bottom-cta-actions{flex-direction:column;align-items:stretch}
+    .bottom-cta-actions .primary,.bottom-cta-actions .secondary{width:100%}
+    .site-footer{padding-bottom:112px}
+    .mobile-start{position:fixed;display:flex;align-items:center;justify-content:space-between;gap:12px;left:12px;right:12px;bottom:12px;z-index:70;padding:10px 10px 10px 16px;border:1px solid rgba(255,255,255,.14);border-radius:18px;background:rgba(15,15,20,.92);box-shadow:0 16px 44px rgba(0,0,0,.45);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+    .mobile-start>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+    .mobile-start strong{font-size:13px;color:var(--text)}
+    .mobile-start span{font-size:10.5px;color:var(--muted);white-space:nowrap}
+    .mobile-start .primary{flex-shrink:0;padding:11px 16px;font-size:13px;font-weight:750}
+    html[data-theme="light"] .mobile-start{background:rgba(255,251,246,.94);border-color:rgba(48,36,22,.14);box-shadow:0 16px 40px rgba(40,28,12,.18)}
+  }
+  @media (max-width:360px){
+    .mobile-start{left:8px;right:8px;bottom:8px;padding-left:12px}
+    .mobile-start strong{font-size:12px}
+    .mobile-start span{font-size:9.5px}
+    .mobile-start .primary{padding:10px 13px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .primary,.secondary,.footer-cta,.price-card{transition:none}
+    .primary:hover,.secondary:hover,.footer-cta:hover,.price-card:hover,.price-card.featured:hover{transform:none}
   }
 
 `;
