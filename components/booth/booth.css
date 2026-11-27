@@ -127,3 +127,5 @@
 @keyframes bx-ring{0%{opacity:.8;transform:scale(.9)}100%{opacity:0;transform:scale(1.35)}}
 @keyframes bx-spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.bx-rec::after,.bx-orb,.bx-count,.bx-part,.bx-beat,.bx-stage{animation:none}}
+
+.bx-guide{font-size:13.5px;line-height:1.4;color:rgba(255,255,255,.7);text-align:center;margin:0 auto 12px;max-width:30ch}
