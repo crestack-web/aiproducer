@@ -2999,8 +2999,15 @@ export default function ProjectDetailPage() {
   if (loading) {
     return (
       <AppShell active="studio">
-        <div style={wrap}>
-          <PlayerLoadingState title="Loading session" subtitle="Pulling your beat, plan, and takes…" seed={`load-${id}`} />
+        <div className="bx">
+          <div className="bx-load" role="status" aria-live="polite">
+            <div className="bx-load-eq" aria-hidden><i /><i /><i /><i /><i /></div>
+            <p className="bx-load-title">Opening your booth</p>
+            <p className="bx-load-sub">Getting your beat, plan and takes ready…</p>
+            <div className="bx-skel bx-skel-beat" aria-hidden />
+            <div className="bx-skel bx-skel-line" aria-hidden />
+            <div className="bx-skel bx-skel-line short" aria-hidden />
+          </div>
         </div>
       </AppShell>
     );
@@ -3223,7 +3230,7 @@ export default function ProjectDetailPage() {
             <div className="bx-make" aria-live="polite">
               <p className="bx-eyebrow">Listening to your beat</p>
               <div className="bx-orb" aria-hidden />
-              <h1 className="bx-h1" style={{ marginTop: -40 }}>Writing your song plan</h1>
+              <h1 className="bx-h1">Writing your song plan</h1>
               <p className="bx-sub">Finding the sections and what to sing in each.</p>
               {error ? (
                 <p className="bx-error">
