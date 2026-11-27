@@ -101,6 +101,19 @@ export function BoothRecordStage({
           {error && !busy ? <p className="bx-error" style={{ marginTop: 16 }}>{error}</p> : null}
         </div>
 
+        <p className="bx-guide" aria-live="polite">
+          {phase === "countdown"
+            ? "Get ready. Start singing right after 1."
+            : phase === "recording"
+              ? "You're live. Sing the part, then tap stop."
+              : showReview
+                ? saving
+                  ? "Saving your take…"
+                  : "Listen back. Happy? Tap Keep."
+                : canRecordAgain
+                  ? "Want a better take? Record again."
+                  : "Headphones on, then tap the red button."}
+        </p>
         {phase === "countdown" ? (
           <button type="button" className="bx-ghost" onClick={onCancelCount}>
             Cancel
