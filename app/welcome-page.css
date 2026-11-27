@@ -49,29 +49,3 @@ a.primary.lg{display:inline-block;padding:12px 22px;border-radius:999px;text-dec
 .footer-legal-link{color:var(--muted);text-decoration:none;font-size:13px}
 .footer-legal-link:hover{color:var(--brass)}
 @media(max-width:899px){.desktop-nav a:not(.primary):not(.ghost){display:none}}
-
-/* Competitor comparison */
-.vs-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:16px;background:var(--surface);-webkit-overflow-scrolling:touch}
-.vs-table{width:100%;min-width:760px;border-collapse:collapse;font-size:.9rem;line-height:1.45}
-.vs-table th,.vs-table td{padding:14px 16px;text-align:left;vertical-align:top;border-top:1px solid var(--border)}
-.vs-table thead th{border-top:0;color:var(--muted);font-weight:500;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em}
-.vs-table tbody th{font-weight:600;white-space:nowrap;color:var(--text)}
-.vs-table td{color:var(--muted)}
-.vs-table td:nth-child(3){color:var(--text)}
-.vs-mark{display:inline-block;width:1.2em;margin-right:6px;font-weight:700}
-.vs-yes{color:var(--signal)}.vs-no{color:#F07A6A}.vs-partial{color:var(--brass)}
-.vs-us{background:var(--brass-soft)}
-.vs-us th,.vs-us td{color:var(--text)}
-.vs-us th{color:var(--brass)}
-#compare .gap-callout{margin-top:16px}
-@media (max-width:760px){
-  .vs-table{min-width:0}
-  .vs-table thead{display:none}
-  .vs-table,.vs-table tbody,.vs-table tr,.vs-table th,.vs-table td{display:block}
-  .vs-table tr{padding:14px 16px;border-top:1px solid var(--border)}
-  .vs-table tbody tr:first-child{border-top:0}
-  .vs-table th,.vs-table td{padding:3px 0;border:0}
-  .vs-table tbody th{font-size:1rem;margin-bottom:4px}
-  .vs-table td:nth-child(4)::before{content:"Your voice: ";color:var(--faint)}
-  .vs-table td:nth-child(5)::before{content:"Full song: ";color:var(--faint)}
-}
