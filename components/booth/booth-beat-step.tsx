@@ -73,7 +73,11 @@ export function BoothBeatStep({
       </div>
 
       {error ? <p className="bx-error">{error}</p> : null}
-      <p className="bx-sub">The AI listens to your beat and writes a plan: which parts to sing, and in what order.</p>
+      <ol className="bx-steps" aria-label="How recording works">
+          <li data-on="true"><b>1</b><span>Play your beat<small>Get the vibe. Headphones on if you have them.</small></span></li>
+          <li><b>2</b><span>Get your song plan<small>We split the beat into parts to sing.</small></span></li>
+          <li><b>3</b><span>Record part by part<small>Tap record, wait for the 4-count, sing.</small></span></li>
+        </ol>
 
       <div className="bx-dock">
         <div className="bx-dock-inner">
