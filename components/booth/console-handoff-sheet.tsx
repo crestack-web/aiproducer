@@ -20,6 +20,12 @@ export function ConsoleHandoffSheet({
   onCancel: () => void;
 }) {
   if (!open) return null;
+  const clean = (songTitle || "")
+    .replace(/\.(mp3|wav|m4a|aac|flac|ogg)$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const shortTitle = clean.length > 28 ? clean.slice(0, 27).trimEnd() + "…" : clean;
   return (
     <div
       className="ap-sheet-backdrop"
@@ -30,12 +36,11 @@ export function ConsoleHandoffSheet({
     >
       <div className="ap-sheet" onClick={(e) => e.stopPropagation()}>
         <h2 id="ap-handoff-title" className="ap-sheet-title">
-          Open {songTitle ? `“${songTitle}”` : "this song"} in Console?
+          Open {shortTitle ? `“${shortTitle}”` : "this song"} in Console?
         </h2>
         <p className="ap-sheet-sub">
-          Your kept takes are copied into Console, the full studio. From then on you edit the song
-          there, and the AI song plan won&apos;t change it any more. Booth will show it as
-          &ldquo;Editing in Console&rdquo; with a Listen button. This can&apos;t be undone.
+          Your kept takes move to Console, the full studio. You&apos;ll keep editing there.
+          This can&apos;t be undone.
         </p>
         <button type="button" className="ap-sheet-btn primary" disabled={busy} onClick={onConfirm}>
           {busy ? "Moving to Console…" : "Open in Console"}
