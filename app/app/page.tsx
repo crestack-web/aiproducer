@@ -1194,10 +1194,11 @@ function AppInner() {
                 </span>
               </button>
               {creditBalance != null && (
-                <span style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 999, border: "1px solid var(--hl-line)", background: "rgba(255,255,255,0.02)", fontSize: 13, fontWeight: 550 }}>
+                <button type="button" onClick={() => setSubscribeOpen(true)} aria-label="Buy credits" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 12px 8px 14px", borderRadius: 999, border: "1px solid var(--hl-line)", background: "rgba(255,255,255,0.02)", color: "inherit", fontFamily: "inherit", fontSize: 13, fontWeight: 550, cursor: "pointer" }}>
                   <span aria-hidden style={{ width: 9, height: 9, borderRadius: 99, background: "var(--hl-lime)", boxShadow: "0 0 8px rgba(193,122,18,0.6)" }} />
                   {creditBalance.toLocaleString()} credits
-                </span>
+                  <span aria-hidden style={{ marginLeft: 2, width: 18, height: 18, borderRadius: 99, background: "rgba(255,255,255,0.1)", display: "grid", placeItems: "center", fontSize: 14, lineHeight: 1 }}>+</span>
+                </button>
               )}
             </div>
 
@@ -2518,6 +2519,7 @@ function AppInner() {
         open={subscribeOpen}
         onClose={() => setSubscribeOpen(false)}
         showSessionUnlock={false}
+        creditBalance={creditBalance}
         colors={{
           text: C.text,
           textMuted: C.textMuted,
