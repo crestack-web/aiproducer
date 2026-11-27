@@ -161,9 +161,12 @@ export default function WelcomePage() {
           <div className="section-head">
             <p className="section-kicker">How we compare</p>
             <h2>The only one in the middle</h2>
-            <p>
+            <p className="vs-intro">
               Suno is the biggest name, but it sounds like a robot singing your lyrics — hard to call your own performance.
               BandLab and Voloco keep your voice but expect you to know production. AP Studio keeps your voice <em>and</em> produces the song.
+            </p>
+            <p className="vs-intro-m">
+              Suno sings for you. BandLab and Voloco leave you to produce it. AP Studio keeps your voice <em>and</em> produces the song.
             </p>
           </div>
           <div className="vs-wrap">
@@ -237,6 +240,72 @@ export default function WelcomePage() {
               </tbody>
             </table>
           </div>
+          <ul className="vs-mobile" aria-label="Competitor comparison, compact view">
+            <li className="vs-m-row">
+              <span className="vs-m-name">Suno</span>
+              <span className="vs-m-price">Free; $10–$120/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-partial">Your voice ~</span>
+                <span className="vs-m-mark vs-partial">Full song ~</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">Udio</span>
+              <span className="vs-m-price">Free; $10–$30/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-no">Your voice ✕</span>
+                <span className="vs-m-mark vs-partial">Full song ~</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">BandLab</span>
+              <span className="vs-m-price">Free; Pro $14.99/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-yes">Your voice ✓</span>
+                <span className="vs-m-mark vs-no">Full song ✕</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">Voloco</span>
+              <span className="vs-m-price">$9.99–$11.99/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-yes">Your voice ✓</span>
+                <span className="vs-m-mark vs-no">Full song ✕</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">LANDR</span>
+              <span className="vs-m-price">$9.99/track; $11–$40/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-yes">Your voice ✓</span>
+                <span className="vs-m-mark vs-no">Full song ✕</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">Moises</span>
+              <span className="vs-m-price">Free; ≈$5.99/mo</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-no">Your voice ✕</span>
+                <span className="vs-m-mark vs-no">Full song ✕</span>
+              </span>
+            </li>
+            <li className="vs-m-row">
+              <span className="vs-m-name">A real studio</span>
+              <span className="vs-m-price">$400–$1,200+/single</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-yes">Your voice ✓</span>
+                <span className="vs-m-mark vs-partial">Full song ~</span>
+              </span>
+            </li>
+            <li className="vs-m-row vs-m-us">
+              <span className="vs-m-name">AP Studio</span>
+              <span className="vs-m-price">From $4.99/song</span>
+              <span className="vs-m-marks">
+                <span className="vs-m-mark vs-yes">Your voice ✓</span>
+                <span className="vs-m-mark vs-yes">Full song ✓</span>
+              </span>
+            </li>
+          </ul>
           <div className="gap-callout">
             <strong>The cheapest way to get a finished song:</strong> LANDR charges <strong>$9.99</strong> to master one track you already mixed.
             AP Studio is <strong>$4.99</strong> for beat + coached recording + mix + master.
@@ -1106,6 +1175,36 @@ html[data-theme="light"] .chip{
   .cost-list li.dim{color:var(--muted)}
   .gap-callout{max-width:900px;margin:20px auto 0;padding:18px 20px;border-radius:16px;border:1px solid rgba(231,169,97,.28);background:rgba(231,169,97,.15);font-size:14.5px;line-height:1.55;color:var(--text)}
   .gap-callout strong{color:var(--brass);font-weight:600}
+  .vs-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:16px;background:var(--surface);-webkit-overflow-scrolling:touch}
+  .vs-table{width:100%;min-width:760px;border-collapse:collapse;font-size:.9rem;line-height:1.45}
+  .vs-table th,.vs-table td{padding:13px 16px;text-align:left;vertical-align:top;border-top:1px solid var(--border)}
+  .vs-table thead th{border-top:0;color:var(--muted);font-weight:500;font-size:.76rem;text-transform:uppercase;letter-spacing:.06em}
+  .vs-table tbody th{font-weight:600;white-space:nowrap;color:var(--text)}
+  .vs-table td{color:var(--muted)}
+  .vs-table td:nth-child(3){color:var(--text)}
+  .vs-mark{display:inline-block;width:1.2em;margin-right:6px;font-weight:700}
+  .vs-yes{color:var(--signal)}.vs-no{color:#F07A6A}.vs-partial{color:var(--brass)}
+  .vs-us{background:var(--brass-soft)}
+  .vs-us th,.vs-us td{color:var(--text)}
+  .vs-us th{color:var(--brass)}
+  .vs-mobile{display:none;list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:16px;background:var(--surface);overflow:hidden}
+  .vs-m-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:10px 14px;border-top:1px solid var(--border)}
+  .vs-m-row:first-child{border-top:0}
+  .vs-m-name{font-weight:600;font-size:.92rem;color:var(--text)}
+  .vs-m-price{margin-left:auto;color:var(--muted);font-size:.78rem;text-align:right}
+  .vs-m-marks{display:flex;gap:14px;flex-basis:100%}
+  .vs-m-mark{font-size:.76rem}
+  .vs-m-us{background:var(--brass-soft)}
+  .vs-m-us .vs-m-name{color:var(--brass)}
+  .vs-intro-m{display:none}
+  @media (max-width:760px){
+    #compare .vs-wrap{display:none}
+    #compare .vs-mobile{display:block}
+    #compare .vs-intro{display:none}
+    #compare .vs-intro-m{display:block;font-size:.85rem;margin-bottom:14px}
+    #compare .section-head h2{font-size:1.3rem}
+    #compare .gap-callout{margin-top:14px;padding:13px 15px;font-size:13px;line-height:1.5}
+  }
   .pricing{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:stretch;width:100%;max-width:100%;box-sizing:border-box}
   .price-card{position:relative;padding:18px 14px 16px;border-radius:16px;border:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .price-card.featured{border-color:rgba(231,169,97,.45);background:radial-gradient(ellipse at 50% 0%,rgba(231,169,97,.12),transparent 55%),rgba(255,255,255,.05);box-shadow:0 12px 28px -18px rgba(231,169,97,.4)}
