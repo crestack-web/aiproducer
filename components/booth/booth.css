@@ -127,3 +127,27 @@
 @keyframes bx-ring{0%{opacity:.8;transform:scale(.9)}100%{opacity:0;transform:scale(1.35)}}
 @keyframes bx-spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.bx-rec::after,.bx-orb,.bx-count,.bx-part,.bx-beat,.bx-stage{animation:none}}
+
+/* Recording stage clears the mobile bottom nav */
+@media (max-width:899px){
+  .bx-stage{padding-bottom:calc(112px + env(safe-area-inset-bottom,0px))}
+}
+/* Song plan "listening" orb: spin + breathe, text sits clearly below */
+.bx-make .bx-orb{margin:18px auto 32px;animation:bx-orb-spin 3.2s linear infinite, bx-orb-breathe 2.4s ease-in-out infinite}
+@keyframes bx-orb-spin{to{rotate:360deg}}
+@keyframes bx-orb-breathe{0%,100%{scale:.94;opacity:.85}50%{scale:1.04;opacity:1}}
+/* Booth loading state */
+.bx-load{max-width:520px;margin:0 auto;padding:56px 20px 24px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.bx-load-eq{display:flex;align-items:flex-end;gap:6px;height:44px;margin-bottom:22px}
+.bx-load-eq i{width:6px;border-radius:99px;background:var(--bx-accent,#ff6b4a);animation:bx-eq 1s ease-in-out infinite}
+.bx-load-eq i:nth-child(2){animation-delay:.12s}.bx-load-eq i:nth-child(3){animation-delay:.24s}
+.bx-load-eq i:nth-child(4){animation-delay:.36s}.bx-load-eq i:nth-child(5){animation-delay:.48s}
+@keyframes bx-eq{0%,100%{height:10px;opacity:.5}50%{height:44px;opacity:1}}
+.bx-load-title{font-size:20px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px;color:#fff}
+.bx-load-sub{font-size:14px;color:rgba(255,255,255,.55);margin:0 0 28px}
+.bx-skel{width:100%;border-radius:14px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.1),rgba(255,255,255,.05));
+  background-size:200% 100%;animation:bx-shimmer 1.4s linear infinite}
+.bx-skel-beat{aspect-ratio:16/9;margin-bottom:16px;border-radius:20px}
+.bx-skel-line{height:14px;margin-bottom:10px}.bx-skel-line.short{width:60%}
+@keyframes bx-shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.bx-make .bx-orb,.bx-load-eq i,.bx-skel{animation:none}}
