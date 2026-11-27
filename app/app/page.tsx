@@ -560,10 +560,10 @@ function AppInner() {
     padding: "14px 20px",
     borderRadius: 14,
     border: "none",
-    background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
-    color: "#1A0E08",
+    background: `linear-gradient(180deg, #D9962E, ${C.brass})`,
+    color: "#0B0A0F",
     fontWeight: 650,
-    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35), 0 10px 24px -10px rgba(255,138,91,0.7)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35), 0 10px 24px -10px rgba(193,122,18,0.7)",
     fontSize: 15,
     cursor: "pointer",
     fontFamily: "inherit",
@@ -1124,8 +1124,8 @@ function AppInner() {
           @media (hover: hover) {
             .dash-project-grid a[href^="/app/studio/"]:hover {
               transform: translateY(-3px);
-              border-color: rgba(255,138,91,0.35) !important;
-              box-shadow: 0 16px 36px -14px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,138,91,0.15) !important;
+              border-color: rgba(193,122,18,0.35) !important;
+              box-shadow: 0 16px 36px -14px rgba(0,0,0,0.7), 0 0 0 1px rgba(193,122,18,0.15) !important;
             }
           }
           .dash-project-grid {
@@ -1144,7 +1144,7 @@ function AppInner() {
         `}</style>
 
         <style>{`
-              .ap-home, .ap-tracks { --hl-lime: #C17A12; --hl-lime-ink: #0B0A0F; --hl-orange: #FF7A2F; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
+              .ap-home, .ap-tracks { --hl-lime: #C17A12; --hl-lime-ink: #0B0A0F; --hl-orange: #C17A12; --hl-card: #13141B; --hl-card-hi: #1A1B24; --hl-line: rgba(255,255,255,0.08); --hl-text: #F5F6FA; --hl-muted: #8E92A0; --hl-display: "Archivo", "Inter", system-ui, sans-serif; color: var(--hl-text); }
               .ap-home-title { font-family: var(--hl-display); font-stretch: 125%; font-weight: 800; font-size: clamp(1.35rem, 5.6vw, 1.75rem); letter-spacing: -0.01em; line-height: 1.1; margin: 0; }
               .ap-home-actions { scrollbar-width: none; }
               .ap-home-actions::-webkit-scrollbar { display: none; }
@@ -1284,7 +1284,7 @@ function AppInner() {
                     href={`/app/studio/${projects[0].id}`}
                     aria-label="Open booth"
                     className="ap-home-press"
-                    style={{ width: 50, height: 50, borderRadius: 999, display: "grid", placeItems: "center", background: "var(--hl-orange)", color: "#1A0E08", flexShrink: 0, boxShadow: "0 10px 24px -10px rgba(255,122,47,0.7)" }}
+                    style={{ width: 50, height: 50, borderRadius: 999, display: "grid", placeItems: "center", background: "var(--hl-orange)", color: "#0B0A0F", flexShrink: 0, boxShadow: "0 10px 24px -10px rgba(193,122,18,0.7)" }}
                   >
                     <HomeGlyph name="mic" size={20} />
                   </Link>
@@ -1932,7 +1932,7 @@ function AppInner() {
                           padding: "14px 16px",
                           borderRadius: 14,
                           border: "none",
-                          background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
+                          background: `linear-gradient(180deg, #D9962E, ${C.brass})`,
                           color: "#1A1208",
                           fontWeight: 750,
                           fontSize: 15,
@@ -2325,7 +2325,7 @@ function AppInner() {
                             padding: "10px 16px",
                             borderRadius: 999,
                             border: "none",
-                            background: `linear-gradient(180deg, #FFB089, ${C.brass})`,
+                            background: `linear-gradient(180deg, #D9962E, ${C.brass})`,
                             color: "#1A1208",
                             fontWeight: 700,
                             fontSize: 13,

@@ -14,7 +14,7 @@
   transition:background .2s,transform .15s;animation:ap-rise .35s both}
 .ap-track:hover{background:color-mix(in oklab,currentColor 5%,transparent)}
 .ap-track:active{transform:scale(.985);background:color-mix(in oklab,currentColor 8%,transparent)}
-.ap-track[data-active="true"]{background:color-mix(in oklab,var(--ap-accent,#ff8a5c) 12%,transparent)}
+.ap-track[data-active="true"]{background:color-mix(in oklab,var(--ap-accent,#C17A12) 12%,transparent)}
 .ap-art{position:relative;width:60px;height:60px;border-radius:12px;overflow:hidden;flex-shrink:0;
   border:0;padding:0;background:transparent;cursor:pointer;
   box-shadow:0 8px 20px -8px rgba(0,0,0,.55)}

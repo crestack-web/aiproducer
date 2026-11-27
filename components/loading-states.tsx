@@ -77,7 +77,7 @@ export function FullPageLoader({ label = "Loading your studio" }: { label?: stri
         minHeight: "100vh",
         display: "grid",
         placeItems: "center",
-        background: "radial-gradient(ellipse at 50% 35%, rgba(255,138,91,0.10), transparent 55%), #05060A",
+        background: "radial-gradient(ellipse at 50% 35%, rgba(193,122,18,0.10), transparent 55%), #05060A",
         color: "#A1A5B3",
       }}
     >
@@ -93,7 +93,7 @@ export function FullPageLoader({ label = "Loading your studio" }: { label?: stri
           style={{
             borderRadius: 16,
             objectFit: "cover",
-            boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 12px 40px -8px rgba(255,138,91,0.55)",
+            boxShadow: "0 0 0 1px rgba(255,255,255,0.08), 0 12px 40px -8px rgba(193,122,18,0.55)",
             animation: "ap-pulse 1.8s ease-in-out infinite",
           }}
         />
@@ -106,7 +106,7 @@ export function FullPageLoader({ label = "Loading your studio" }: { label?: stri
                 width: 4,
                 height: "100%",
                 borderRadius: 4,
-                background: "linear-gradient(180deg, #FFB089, #FF8A5B)",
+                background: "linear-gradient(180deg, #D9962E, #C17A12)",
                 transformOrigin: "bottom",
                 animation: `ap-eq 0.9s ease-in-out ${i * 0.12}s infinite`,
               }}
