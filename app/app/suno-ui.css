@@ -186,3 +186,11 @@
     gap: 24px;
   }
 }
+
+/* Compact handoff sheet: never overflow small screens */
+.ap-sheet{box-sizing:border-box;max-width:min(480px,100vw);max-height:calc(100dvh - 24px);overflow-y:auto;
+  font-family:inherit;padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
+.ap-sheet-backdrop{overflow:hidden}
+.ap-sheet-title{font-family:inherit;font-size:18px;overflow-wrap:anywhere}
+.ap-sheet-sub{font-size:13.5px;margin-bottom:16px}
+.ap-sheet-btn{min-height:48px}
