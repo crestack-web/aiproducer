@@ -204,7 +204,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
       unlocked += 1;
       const plan = String(meta.download_plan || meta.subscription_plan || "session");
       byPlan[plan] = (byPlan[plan] || 0) + 1;
-      const paidAt = String(meta.paystack_paid_at || meta.download_unlocked_at || "") || null;
+      const paidAt = String(meta.paid_at || meta.paystack_paid_at || meta.download_unlocked_at || "") || null;
       if (paidAt && paidAt >= t30) paidDownloads30 += 1;
 
       let amountUsd: number | null = null;
@@ -218,7 +218,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
         plan,
         amountUsd,
         paidAt,
-        reference: meta.paystack_reference ? String(meta.paystack_reference) : null,
+        reference: meta.payment_reference || meta.paystack_reference ? String(meta.payment_reference || meta.paystack_reference) : null,
       });
     }
   }
@@ -503,7 +503,7 @@ export async function collectAdminMetrics(): Promise<AdminMetrics> {
     },
     revenue: {
       currencyNote:
-        "Estimated USD from unlocked projects (plan list prices when Paystack amount not stored).",
+        "Estimated USD from unlocked projects (plan list prices when payment amount not stored).",
       estimatedUsd: Math.round(estimatedUsd * 100) / 100,
       unlockedProjects: unlocked,
       paidDownloadsLast30d: paidDownloads30,

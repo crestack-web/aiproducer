@@ -2630,7 +2630,7 @@ function AppInner() {
               disabled={beatPayBusy}
               onClick={() => void startBeatCheckout()}
             >
-              {beatPayBusy ? "Starting payment…" : beatPay.currency === "NGN" && beatPay.chargeMajor ? `Pay ₦${beatPay.chargeMajor.toLocaleString()} with Paystack` : `Pay $${beatPay.amountUsd.toFixed(2)} with Paystack`}
+              {beatPayBusy ? "Starting payment…" : `Pay $${beatPay.amountUsd.toFixed(2)}`}
             </button>
             <button
               type="button"

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolvePaystackCurrency, usdToChargeMajor } from "@/lib/paystack";
+import { resolveChargeCurrency, usdToChargeMajor } from "@/lib/whop";
 import { requireUser } from "@/lib/auth";
 import { downloadStorageObject } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
@@ -38,7 +38,7 @@ export async function GET(_req: Request, ctx: Ctx) {
         email: user.email,
       });
   if (!access.ok) {
-    // Surface beat cost so the UI can offer a direct Paystack checkout
+    // Surface beat cost so the UI can offer a direct checkout
     const service = createServiceClient();
     const { data: proj } = await service
       .from("projects")
@@ -59,8 +59,8 @@ export async function GET(_req: Request, ctx: Ctx) {
         code: "PAYMENT_REQUIRED",
         reason: access.reason,
         beatCostUsd: Math.round(beatCost * 100) / 100,
-        currency: resolvePaystackCurrency(_req),
-        chargeMajor: usdToChargeMajor(Math.round(beatCost * 100) / 100, resolvePaystackCurrency(_req)),
+        currency: resolveChargeCurrency(_req),
+        chargeMajor: usdToChargeMajor(Math.round(beatCost * 100) / 100, resolveChargeCurrency(_req)),
         canPayBeat: true,
       },
       { status: 402 }

@@ -92,7 +92,7 @@ export async function listCreditLedger(
 }
 
 /**
- * Credit a purchase once per idempotency key (Paystack reference).
+ * Credit a purchase once per idempotency key (payment reference).
  */
 export async function grantCredits(opts: {
   userId: string;
@@ -226,11 +226,11 @@ export async function spendCredits(opts: {
   return { ok: true, balance: nextBal, alreadyApplied: false };
 }
 
-/** After verified Paystack payment for a package plan */
+/** After verified Whop payment for a package plan */
 export async function fulfillCreditPackagePurchase(opts: {
   userId: string;
   planId: string;
-  paystackReference: string;
+  reference: string;
 }): Promise<{ ok: boolean; credits?: number; balance?: number; error?: string }> {
   if (!isCreditPackagePlan(opts.planId)) {
     return { ok: false, error: "not_a_credit_package" };
@@ -241,9 +241,9 @@ export async function fulfillCreditPackagePurchase(opts: {
   const result = await grantCredits({
     userId: opts.userId,
     amount: credits,
-    idempotencyKey: `paystack:${opts.paystackReference}`,
+    idempotencyKey: `whop:${opts.reference}`,
     entryType: "purchase",
-    reference: opts.paystackReference,
+    reference: opts.reference,
     note: `Credit package ${opts.planId}`,
     metadata: { plan_id: opts.planId, credits },
   });

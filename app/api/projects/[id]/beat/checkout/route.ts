@@ -1,13 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
-import {
-  paystackSecret,
-  resolvePaystackCurrency,
-  usdToChargeMajor,
-  toPaystackAmount,
-  paystackInitialize,
-} from "@/lib/paystack";
+import { whopKey, resolveChargeCurrency, usdToChargeMajor, whopCreateCheckout } from "@/lib/whop";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -16,7 +10,7 @@ const DEFAULT_BEAT_DOWNLOAD_USD = 0.5;
 
 /**
  * POST /api/projects/:id/beat/checkout
- * Starts a Paystack checkout for this beat only (not the full song session).
+ * Starts a Whop checkout for this beat only (not the full song session).
  * On success the callback/webhook sets beat_download_unlocked so the file can be downloaded.
  */
 export async function POST(req: Request, ctx: Ctx) {
@@ -45,7 +39,7 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ unlocked: true, already: true });
   }
 
-  if (!paystackSecret()) {
+  if (!whopKey()) {
     if (process.env.AP_ALLOW_DEV_UNLOCK === "1") {
       meta.beat_download_unlocked = true;
       meta.beat_download_unlocked_at = new Date().toISOString();
@@ -54,7 +48,7 @@ export async function POST(req: Request, ctx: Ctx) {
       return NextResponse.json({ unlocked: true, dev: true });
     }
     return NextResponse.json(
-      { error: "PAYSTACK_SECRET_KEY is not configured" },
+      { error: "Payments are not configured (WHOP_API_KEY missing)" },
       { status: 503 }
     );
   }
@@ -80,9 +74,8 @@ export async function POST(req: Request, ctx: Ctx) {
   }
   usd = Math.round(usd * 100) / 100;
 
-  const currency = resolvePaystackCurrency(req);
+  const currency = resolveChargeCurrency(req);
   const major = usdToChargeMajor(usd, currency);
-  const amountMinor = toPaystackAmount(major, currency);
 
   const origin =
     req.headers.get("origin") ||
@@ -92,28 +85,27 @@ export async function POST(req: Request, ctx: Ctx) {
   const reference = `ap_beat_${projectId.replace(/-/g, "").slice(0, 12)}_${Date.now()}`;
 
   try {
-    const init = await paystackInitialize({
-      email,
-      amountMinor,
-      currency,
-      callbackUrl: `${origin}/api/paystack/callback?project_id=${encodeURIComponent(projectId)}&type=beat`,
-      reference,
+    const checkout = await whopCreateCheckout({
+      amountUsd: usd,
+      title: String(project.title || "AP Studio beat"),
+      redirectUrl: `${origin}/api/whop/callback?project_id=${encodeURIComponent(projectId)}&type=beat`,
       metadata: {
         project_id: projectId,
         user_id: user.id,
         plan: "beat",
         beat_only: true,
         amount_usd: usd,
-        song_title: String(project.title || "AP Studio beat"),
+        reference,
       },
     });
 
-    meta.paystack_pending = {
-      reference: init.reference,
+    meta.whop_pending = {
+      checkout_id: checkout.id,
+      variant_id: checkout.variantId,
+      reference,
       plan: "beat",
-      amount: amountMinor,
-      currency,
       amount_usd: usd,
+      currency,
       at: new Date().toISOString(),
     };
     await service.from("projects").update({ metadata: meta }).eq("id", projectId);
@@ -122,14 +114,12 @@ export async function POST(req: Request, ctx: Ctx) {
       amountUsd: usd,
       currency,
       chargeMajor: major,
-      checkoutUrl: init.authorization_url,
-      reference: init.reference,
-      accessCode: init.access_code,
-      publicKey: process.env.PAYSTACK_PUBLIC_KEY || null,
+      checkoutUrl: checkout.purchaseUrl,
+      reference,
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Paystack checkout failed" },
+      { error: e instanceof Error ? e.message : "Whop checkout failed" },
       { status: 502 }
     );
   }

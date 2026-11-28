@@ -55,7 +55,7 @@ export default function PrivacyPage() {
           </p>
           <h3>Payments</h3>
           <p>
-            Payments are processed by third-party providers (for example Paystack). We receive
+            Payments are processed by third-party providers (for example Whop). We receive
             confirmation of payment status and limited metadata needed to unlock downloads or
             subscriptions. We do not store full card numbers on our servers.
           </p>

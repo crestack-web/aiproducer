@@ -371,7 +371,7 @@ export function ApPaywall({
         <p style={{ textAlign: "center", fontSize: 12, color: muted, marginTop: 12 }}>
           {showSessionUnlock
             ? "Preview stays free. Download unlocks after purchase."
-            : "Secure checkout with Paystack."}
+            : "Secure checkout with Whop."}
         </p>
       </div>
     </div>,

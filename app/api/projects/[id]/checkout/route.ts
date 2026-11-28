@@ -2,21 +2,14 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { PLANS, type PlanId, type BillingInterval } from "@/lib/plans";
-import {
-  paystackSecret,
-  resolvePaystackCurrency,
-  planChargeUsd,
-  usdToChargeMajor,
-  toPaystackAmount,
-  paystackInitialize,
-} from "@/lib/paystack";
+import { whopKey, resolveChargeCurrency, usdToChargeMajor, whopCreateCheckout, planChargeUsd } from "@/lib/whop";
 
 type Body = { plan?: string; interval?: string };
 
 /**
- * Start Paystack checkout after the produce aha moment.
+ * Start Whop checkout after the produce aha moment.
  * Session = one-time unlock for this project.
- * Creator/Pro = paid plan charge (recurring can be added via Paystack subscriptions later).
+ * Creator/Pro = paid plan charge (recurring can be added via Whop subscriptions later).
  */
 export async function POST(
   req: Request,
@@ -55,7 +48,7 @@ export async function POST(
     return NextResponse.json({ unlocked: true, already: true });
   }
 
-  if (!paystackSecret()) {
+  if (!whopKey()) {
     if (process.env.AP_ALLOW_DEV_UNLOCK === "1" && plan === "session") {
       meta.download_unlocked = true;
       meta.download_unlocked_at = new Date().toISOString();
@@ -64,7 +57,7 @@ export async function POST(
       return NextResponse.json({ unlocked: true, dev: true });
     }
     return NextResponse.json(
-      { error: "PAYSTACK_SECRET_KEY is not configured" },
+      { error: "Payments are not configured (WHOP_API_KEY missing)" },
       { status: 503 }
     );
   }
@@ -77,7 +70,7 @@ export async function POST(
     );
   }
 
-  const currency = resolvePaystackCurrency(req);
+  const currency = resolveChargeCurrency(req);
   let usd = planChargeUsd(plan, interval);
   // After free beats are used, AP-generated beat cost is added to session download price
   if (plan === "session") {
@@ -87,38 +80,37 @@ export async function POST(
     }
   }
   const major = usdToChargeMajor(usd, currency);
-  const amountMinor = toPaystackAmount(major, currency);
 
   const origin =
     req.headers.get("origin") ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "https://apstudio.site";
 
-  // Unique reference Paystack will echo on verify
+  // Unique reference Whop will echo on verify
   const reference = `ap_${plan}_${projectId.replace(/-/g, "").slice(0, 12)}_${Date.now()}`;
 
   try {
-    const init = await paystackInitialize({
-      email,
-      amountMinor,
-      currency,
-      callbackUrl: `${origin}/api/paystack/callback?project_id=${encodeURIComponent(projectId)}`,
-      reference,
+    const checkout = await whopCreateCheckout({
+      amountUsd: usd,
+      title: String(project.title || "AP Studio song"),
+      redirectUrl: `${origin}/api/whop/callback?project_id=${encodeURIComponent(projectId)}`,
       metadata: {
         project_id: projectId,
         user_id: user.id,
         plan,
         interval,
-        song_title: String(project.title || "AP Studio song"),
+        amount_usd: usd,
+        reference,
       },
     });
 
-    // Stash pending checkout on project for verify
-    meta.paystack_pending = {
-      reference: init.reference,
+    meta.whop_pending = {
+      checkout_id: checkout.id,
+      variant_id: checkout.variantId,
+      reference,
       plan,
       interval,
-      amount: amountMinor,
+      amount_usd: usd,
       currency,
       at: new Date().toISOString(),
     };
@@ -129,14 +121,12 @@ export async function POST(
       currency,
       chargeMajor: major,
       beatCostUsd: plan === "session" && meta.beat_generation_billable ? Number(meta.beat_cost_usd) || 0 : 0,
-      checkoutUrl: init.authorization_url,
-      reference: init.reference,
-      accessCode: init.access_code,
-      publicKey: process.env.PAYSTACK_PUBLIC_KEY || null,
+      checkoutUrl: checkout.purchaseUrl,
+      reference,
     });
   } catch (e) {
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Paystack checkout failed" },
+      { error: e instanceof Error ? e.message : "Whop checkout failed" },
       { status: 502 }
     );
   }
