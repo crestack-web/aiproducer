@@ -10,6 +10,7 @@ import {
 } from "@/components/studio-player";
 import { forceDownloadFromApi } from "@/lib/download-audio";
 import { ApPaywall } from "@/components/ap-paywall";
+import { ResultsScreen } from "@/components/results-screen";
 import { PromptTweakPanel } from "@/components/prompt-tweak-panel";
 import { SongPreviewPlayer, type SongPreviewLayer } from "@/components/song-preview-player";
 import {
@@ -3368,7 +3369,14 @@ export default function ProjectDetailPage() {
             hasMaster={Boolean(masterUrl)}
             player={
               masterUrl ? (
-                <StudioPlayer src={masterUrl} title={project?.title || "Song"} seed={project?.title || "master"} accent="signal" />
+                <ResultsScreen
+                  projectId={id}
+                  title={project?.title || "Your song"}
+                  masterUrl={masterUrl}
+                  downloadUnlocked={downloadUnlocked}
+                  onUnlock={() => setPaywallOpen(true)}
+                  onDownload={() => setDownloadModalOpen(true)}
+                />
               ) : null
             }
             onDownload={() => {
