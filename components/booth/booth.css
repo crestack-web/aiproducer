@@ -211,3 +211,43 @@
 .bx-viz > div > div:last-child > div:nth-child(2) > span{font-size:12px !important;color:var(--bx-muted) !important}
 .bx-viz > div > div:last-child > div:last-child{display:none !important}
 @media (prefers-reduced-motion:reduce){.bx-viz > div > div[aria-hidden] > div{transition:none !important}}
+
+/* ---- Record button v2: no square backdrop, brand gradient, beat pulse ---- */
+button.bx-rec,button.bx-rec:hover,button.bx-rec:focus,button.bx-rec:active,button.bx-rec:disabled{
+  background:none!important;background-color:transparent!important;background-image:none!important;
+  box-shadow:none!important;border:0!important;outline:none;border-radius:50%!important;-webkit-tap-highlight-color:transparent}
+button.bx-rec:focus-visible{outline:2px solid var(--bx-accent);outline-offset:10px}
+.bx-rec-wrap{background:transparent!important}
+.bx-rec-halo{inset:-16px;filter:blur(14px);
+  background:radial-gradient(circle,rgba(255,77,109,.55) 0%,rgba(255,138,92,.25) 45%,transparent 70%);
+  animation:bx-rec-beat-halo 1s ease-in-out infinite}
+.bx-rec-orb{inset:10px;background:linear-gradient(135deg,#ff8a5c 0%,#ff4d6d 100%);background-size:100% 100%;
+  box-shadow:inset 0 2px 6px rgba(255,255,255,.35),inset 0 -8px 18px rgba(120,20,40,.25),0 14px 40px -10px rgba(255,77,109,.75);
+  animation:bx-rec-beat 1s cubic-bezier(.3,0,.3,1) infinite}
+.bx-rec-orb::before{background:conic-gradient(from 0deg,transparent,rgba(255,255,255,.22),transparent 40%);animation:bx-rec-fluid 6s linear infinite}
+.bx-rec-mic{color:#fff}
+.bx-rec::before,.bx-rec::after{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid rgba(255,108,98,.55);
+  animation:bx-rec-ring 2s ease-out infinite;pointer-events:none}
+.bx-rec::after{animation-delay:1s}
+.bx-rec[data-stop="true"] .bx-rec-orb{inset:14px;background:linear-gradient(135deg,#ff4d6d,#ff2d55);
+  animation:bx-rec-beat .5s cubic-bezier(.3,0,.3,1) infinite}
+.bx-rec[data-stop="true"] .bx-rec-halo{animation:bx-rec-beat-halo .5s ease-in-out infinite}
+.bx-rec[data-stop="true"]::before,.bx-rec[data-stop="true"]::after{border-color:rgba(255,77,109,.7);animation-duration:1.2s}
+.bx-rec[data-stop="true"]::after{animation-delay:.6s}
+@keyframes bx-rec-beat{0%{scale:1}12%{scale:1.07}40%{scale:.98}100%{scale:1}}
+@keyframes bx-rec-beat-halo{0%,100%{opacity:.55;scale:.95}15%{opacity:1;scale:1.1}}
+
+/* ---- Listening loader v2: speaker cone thumping on the beat with sound waves ---- */
+.bx-orb,.bx-make .bx-orb{position:relative;width:180px;height:180px;border-radius:50%;filter:none;-webkit-mask:none;mask:none;
+  background:
+    radial-gradient(circle,#ff4d6d 0 14%,#1a1418 15% 19%,transparent 20%),
+    repeating-radial-gradient(circle,rgba(255,255,255,.07) 0 2px,transparent 2px 7px),
+    radial-gradient(circle,#2a1f26 0 62%,#ff8a5c 63% 65%,#18141a 66%);
+  box-shadow:0 0 0 1px rgba(255,138,92,.25),0 20px 60px -20px rgba(255,77,109,.6);
+  animation:bx-thump .6s cubic-bezier(.3,0,.3,1) infinite}
+.bx-orb::before,.bx-orb::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid rgba(255,138,92,.6);
+  animation:bx-wave 1.2s ease-out infinite;pointer-events:none}
+.bx-orb::after{border-color:rgba(255,77,109,.55);animation-delay:.6s}
+@keyframes bx-thump{0%{scale:1}10%{scale:1.06}35%{scale:.99}100%{scale:1}}
+@keyframes bx-wave{0%{opacity:.8;transform:scale(1)}100%{opacity:0;transform:scale(1.45)}}
+@media (prefers-reduced-motion:reduce){.bx-orb,.bx-orb::before,.bx-orb::after,.bx-rec::before,.bx-rec::after,.bx-rec-halo,.bx-rec-orb{animation:none}}
