@@ -118,11 +118,16 @@ export async function POST(req: Request, ctx: Ctx) {
       .order("created_at", { ascending: false });
     const list = (recs || []) as Record<string, unknown>[];
     const rec = list.find((r) => r.is_selected === true) || list[0];
-    if (rec?.audio_path) {
+    const recPath = (rec?.audio_path || rec?.original_audio_path) as string | null | undefined;
+    if (rec && recPath) {
+      // Copy every take column (timeline placement, offsets, original path) so
+      // Console plays the take exactly where Booth had it.
+      const { id: _rid, task_id: _tid, created_at: _ca, updated_at: _ua, ...rest } = rec;
       const copy: Record<string, unknown> = {
+        ...rest,
         task_id: newId,
         project_id: projectId,
-        audio_path: rec.audio_path,
+        audio_path: recPath,
         status: rec.status || "ready",
         is_selected: true,
       };
@@ -130,6 +135,20 @@ export async function POST(req: Request, ctx: Ctx) {
       if (rec.content_type) copy.content_type = rec.content_type;
       if (rec.metadata) copy.metadata = rec.metadata;
       let recIns = await supabase.from("recordings").insert(copy);
+      if (recIns.error) {
+        // Fall back to the minimal column set for older schemas
+        const minimal: Record<string, unknown> = {
+          task_id: newId,
+          project_id: projectId,
+          audio_path: recPath,
+          status: rec.status || "ready",
+          is_selected: true,
+        };
+        for (const k of ["duration_ms", "content_type", "metadata", "timeline_start_ms", "timeline_end_ms", "recording_offset_ms"]) {
+          if (rec[k] != null) minimal[k] = rec[k];
+        }
+        recIns = await supabase.from("recordings").insert(minimal);
+      }
       if (recIns.error) {
         const { is_selected: _s, ...slimRec } = copy;
         recIns = await supabase.from("recordings").insert(slimRec);
