@@ -23,6 +23,7 @@ import {
   currentLyricLine,
   makeCountInPlan,
   scheduleClipEdgeFades,
+  scoreTakeAssessment,
 } from "@/lib/audio/console-editing";
 import { openRecordingStream, createVocalRecorder,
   formatMicOpenError,
@@ -395,6 +396,16 @@ function mergeTakeOntoLayer(
   };
 }
 
+
+type ConsoleTake = {
+  id: string;
+  take_number?: number | null;
+  created_at?: string | null;
+  duration_ms?: number | null;
+  is_selected?: boolean | null;
+  audio_url?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
 
 export type ProducerSection = {
   id: string;
@@ -1153,6 +1164,12 @@ export function ProducerView({
   const [takeDurationMs, setTakeDurationMs] = useState(0);
   const [takePeaks, setTakePeaks] = useState<number[]>([]);
   const [takeEditBusy, setTakeEditBusy] = useState(false);
+  const [takePicker, setTakePicker] = useState<{
+    taskId: string;
+    takes: ConsoleTake[];
+    busy: boolean;
+    choosingBest: boolean;
+  } | null>(null);
   const [takeUndoDepth, setTakeUndoDepth] = useState(0);
   const [retakeTarget, setRetakeTarget] = useState<{
     taskId: string;
@@ -2052,6 +2069,21 @@ export function ProducerView({
     fxByIdRef.current = { ...fxByIdRef.current, [trackId]: next };
     setFxById((p) => ({ ...p, [trackId]: next }));
     void persistFx(trackId, next);
+  }
+
+  async function quickCleanNoise(trackId: string) {
+    const cur = { ...(fxByIdRef.current[trackId] || DEFAULT_TRACK_FX) };
+    const next = {
+      ...cur,
+      noiseReduce: Math.max(cur.noiseReduce, 0.55),
+      gate: Math.max(cur.gate, 0.16),
+      highPassHz: Math.max(cur.highPassHz, 70),
+    };
+    fxByIdRef.current = { ...fxByIdRef.current, [trackId]: next };
+    setFxById((prev) => ({ ...prev, [trackId]: next }));
+    void persistFx(trackId, next);
+    if (playingRef.current) void startPlayback(playheadMsRef.current);
+    setEditMsg("Noise cleanup on — rumble, room noise and quiet gaps are reduced");
   }
 
   async function persistFx(id: string, fx: TrackFx) {
@@ -3604,6 +3636,102 @@ export function ProducerView({
     }
   }
 
+  async function selectTakeForClip(taskId: string, take: ConsoleTake) {
+    const layer = layers.find((l) => l.id === taskId);
+    if (!layer) return;
+    const audioUrl = `/api/recordings/${take.id}/audio`;
+    const existing = clipsForLayer(layer);
+    const targetId = selectedClipId && existing.some((c) => c.id === selectedClipId)
+      ? selectedClipId
+      : existing[0]?.id;
+    const nextClips = existing.map((clip) =>
+      clip.id === targetId
+        ? { ...clip, id: take.id, recordingId: take.id, audioUrl, offsetMs: 0 }
+        : clip
+    );
+    setTakeEditBusy(true);
+    try {
+      const res = await fetch(`/api/recording-tasks/${taskId}/recordings/${take.id}/select`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exclusive: nextClips.length <= 1 }),
+      });
+      if (!res.ok) throw new Error("Could not select this take");
+      const nextLayer: ProducerLayer = {
+        ...layer,
+        clips: nextClips.length > 1 ? nextClips : undefined,
+        audioUrl,
+        recordingId: take.id,
+        mediaOffsetMs: 0,
+      };
+      setLayers((prev) => prev.map((l) => l.id === taskId ? nextLayer : l));
+      setSelectedClipId(take.id);
+      if (nextClips.length > 1) persistLayerStructure(nextLayer);
+      setEditMsg(`Take ${take.take_number || "selected"} is now on the timeline`);
+      onLayersChanged?.();
+    } catch (e) {
+      setEditMsg(e instanceof Error ? e.message : "Could not select this take");
+    } finally {
+      setTakeEditBusy(false);
+    }
+  }
+
+  async function openTakePicker(taskId: string, chooseBest = false) {
+    setTakePicker({ taskId, takes: [], busy: true, choosingBest: chooseBest });
+    try {
+      const res = await fetch(`/api/recording-tasks/${taskId}/recordings`);
+      const j = await res.json().catch(() => ({})) as { recordings?: ConsoleTake[]; error?: string };
+      if (!res.ok) throw new Error(j.error || "Could not load older takes");
+      const takes = (j.recordings || []).filter((take) => take.id && take.audio_url);
+      if (!takes.length) throw new Error("No saved takes on this track yet");
+      setTakePicker({ taskId, takes, busy: false, choosingBest: chooseBest });
+      if (!chooseBest) return;
+      if (takes.length === 1) {
+        await selectTakeForClip(taskId, takes[0]!);
+        setTakePicker(null);
+        return;
+      }
+      const ranked = await Promise.all(takes.map(async (take) => {
+        try {
+          const ar = await fetch(`/api/recording-tasks/${taskId}/recordings/${take.id}/analyze`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          const aj = await ar.json().catch(() => ({})) as {
+            analysis?: { quality?: { clippingDetected?: boolean; silenceDetected?: boolean }; timing?: { onsetDeviationMs?: number } };
+            recommendation?: { action?: string; confidence?: number };
+          };
+          return { take, score: scoreTakeAssessment({
+            action: aj.recommendation?.action,
+            confidence: aj.recommendation?.confidence,
+            clippingDetected: aj.analysis?.quality?.clippingDetected,
+            silenceDetected: aj.analysis?.quality?.silenceDetected,
+            onsetDeviationMs: aj.analysis?.timing?.onsetDeviationMs,
+          }) };
+        } catch {
+          return { take, score: 0 };
+        }
+      }));
+      ranked.sort((a, b) => b.score - a.score);
+      const best = ranked[0]?.take;
+      if (best) await selectTakeForClip(taskId, best);
+      setTakePicker(null);
+    } catch (e) {
+      setTakePicker(null);
+      setEditMsg(e instanceof Error ? e.message : "Could not load takes");
+    }
+  }
+
+  function editOlderTake(take: ConsoleTake) {
+    if (!takePicker) return;
+    const taskId = takePicker.taskId;
+    setTakePicker(null);
+    void beginTakeEdit(taskId, `/api/recordings/${take.id}/audio`).then(() => {
+      setEditMsg("Highlight the best phrase, then tap Keep and Done to drop it into this section");
+    });
+  }
+
   function cancelTakeEdit() {
     takeWorkingRef.current = null;
     takeUndoStackRef.current = [];
@@ -4634,6 +4762,10 @@ export function ProducerView({
     }
     return list;
   }, [layers, totalMs, beatUrl, colorById, durationById]);
+
+  const lyricTimeline = useMemo(() => buildLyricTimeline(layers), [layers]);
+  const activeLyric = currentLyricLine(lyricTimeline, playheadMs);
+  const nextLyric = lyricTimeline.find((line) => line.startMs > playheadMs) || null;
 
   const getCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -7169,6 +7301,22 @@ export function ProducerView({
         >
           {countInBeat != null ? `${countInBeat} / 4` : "Count-in"}
         </button>
+
+        {lyricTimeline.length ? (
+          <button
+            type="button"
+            aria-pressed={lyricsOpen}
+            aria-label="Show lyrics"
+            onClick={() => setLyricsOpen((v) => !v)}
+            style={{
+              ...iconBtn(border, surface, text),
+              color: lyricsOpen ? brass : text,
+              borderColor: lyricsOpen ? brass : border,
+            }}
+          >
+            Lyrics
+          </button>
+        ) : null}
 
         <button
           type="button"
@@ -10974,6 +11122,60 @@ placeholder="Ask AP anything…"
 
 
       
+      {lyricsOpen && lyricTimeline.length ? (() => {
+        const shown = activeLyric || nextLyric;
+        if (!shown) return null;
+        const layer = layers.find((l) => l.id === shown.trackId);
+        return (
+          <aside
+            aria-label="Song lyrics"
+            aria-live="polite"
+            style={{
+              position: "fixed", right: isNarrow ? 8 : 18, left: isNarrow ? 8 : "auto",
+              bottom: "calc(164px + env(safe-area-inset-bottom))", zIndex: 180,
+              width: isNarrow ? "auto" : 320, padding: "14px 16px", borderRadius: 18,
+              background: "rgba(14,15,22,0.94)", border: `1px solid ${border}`,
+              backdropFilter: "blur(18px)", boxShadow: "0 12px 32px rgba(0,0,0,0.42)",
+              pointerEvents: "none",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: brass, fontSize: 10, fontWeight: 800, letterSpacing: "0.1em" }}>
+              <span>{activeLyric ? "NOW SING" : "NEXT LINE"}</span>
+              <span style={{ color: mutedText, letterSpacing: 0, textTransform: "none" }}>{layer?.sectionLabel || layer?.label || "Vocal"}</span>
+            </div>
+            <p style={{ margin: "9px 0 0", color: text, fontFamily: "Georgia, serif", fontSize: isConsoleRecording ? 21 : 18, lineHeight: 1.4 }}>
+              {shown.text}
+            </p>
+          </aside>
+        );
+      })() : null}
+
+      {takePicker ? (
+        <div role="dialog" aria-modal="true" aria-label="Choose an older take" style={{ position: "fixed", inset: 0, zIndex: 260, display: "grid", placeItems: "end center", background: "rgba(0,0,0,0.58)", backdropFilter: "blur(6px)" }} onClick={() => !takePicker.busy && setTakePicker(null)}>
+          <div style={{ width: "min(560px, 100%)", maxHeight: "78dvh", overflowY: "auto", padding: "10px 18px 22px", borderRadius: "24px 24px 0 0", background: surface, border: `1px solid ${border}`, color: text }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 40, height: 4, borderRadius: 99, background: border, margin: "0 auto 16px" }} />
+            <h2 style={{ margin: 0, fontSize: 20 }}>Choose a better take</h2>
+            <p style={{ margin: "7px 0 16px", color: mutedText, fontSize: 13, lineHeight: 1.45 }}>
+              Trim a phrase to highlight the best part, then tap Keep and Done. Or use the whole take immediately.
+            </p>
+            {takePicker.busy || takePicker.choosingBest ? (
+              <p style={{ padding: 20, color: brass }}>{takePicker.choosingBest ? "Comparing takes…" : "Loading takes…"}</p>
+            ) : null}
+            {!takePicker.busy && !takePicker.choosingBest ? takePicker.takes.slice().reverse().map((take) => (
+              <div key={take.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 0", borderTop: `1px solid ${border}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 750 }}>Take {take.take_number || "—"} {take.is_selected ? "· Current" : ""}</div>
+                  <div style={{ color: mutedText, fontSize: 12, marginTop: 3 }}>{take.duration_ms ? `${(take.duration_ms / 1000).toFixed(1)} seconds` : "Saved vocal"}</div>
+                </div>
+                <button type="button" onClick={() => void selectTakeForClip(takePicker.taskId, take).then(() => setTakePicker(null))} style={{ padding: "9px 11px", borderRadius: 999, border: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer" }}>Use all</button>
+                <button type="button" onClick={() => editOlderTake(take)} style={{ padding: "9px 13px", borderRadius: 999, border: "none", background: brass, color: "#0B0A0F", fontWeight: 750, cursor: "pointer" }}>Trim phrase</button>
+              </div>
+            )) : null}
+            <button type="button" onClick={() => setTakePicker(null)} style={{ width: "100%", marginTop: 12, padding: 12, borderRadius: 14, border: `1px solid ${border}`, background: "transparent", color: mutedText, cursor: "pointer" }}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Quick edit bar — one-tap DAW tools for the selected vocal track (no ⋮ menu needed) */}
       {(() => {
         const sel = tracks.find((x) => x.id === selectedTrackId);
@@ -11010,9 +11212,16 @@ placeholder="Ask AP anything…"
             }}
           >
             {btn("✂ Split", "S", () => void splitSelectedAtPlayhead(), false, takeEditBusy)}
-            {sel.url ? btn("↻ Replace section", "R", () => void beginTakeEdit(sel.id, sel.url)) : null}
+            {sel.url ? btn("↻ Older takes", "R", () => void openTakePicker(sel.id), false, takeEditBusy) : null}
             {btn("⧉ Duplicate", "D", () => void duplicateLayer(sel.id))}
             {btn("♩ Snap", "Q", () => void quantizeSelectedToBeat(1), false, takeEditBusy || tempoBpm == null)}
+            {btn("🎙 Tune", "AI", () => {
+              patchAutoTune(sel.id, { autoTuneEnabled: 1, autoTuneAmount: 0.65, autoTuneMode: 0 });
+              setEditMsg("Natural tuning on — included in your next finished song");
+            }, false, takeEditBusy)}
+            {btn("⏱ Tighten", "AI", () => void correctSelectedToBeat(), false, takeEditBusy || tempoBpm == null)}
+            {btn("✨ Clean noise", "AI", () => void quickCleanNoise(sel.id), false, takeEditBusy)}
+            {btn("★ Best take", "AI", () => void openTakePicker(sel.id, true), false, takeEditBusy)}
             {btn("🗑 Delete", "Del", () => void deleteSelectedClipOrRecording(), true)}
           </div>
         );

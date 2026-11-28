@@ -74,22 +74,19 @@ export function buildLyricTimeline(
       .map((line) => line.trim())
       .filter(Boolean);
     if (!textLines.length) continue;
-    const regions = layer.clips?.length
-      ? layer.clips
-      : [{ startMs: layer.startMs, endMs: layer.endMs }];
-    for (const region of regions) {
-      const start = Math.max(0, region.startMs);
-      const end = Math.max(start + 1, region.endMs);
-      const lineMs = (end - start) / textLines.length;
-      textLines.forEach((text, index) => {
-        lines.push({
-          text,
-          startMs: start + index * lineMs,
-          endMs: index === textLines.length - 1 ? end : start + (index + 1) * lineMs,
-          trackId: layer.id,
-        });
+    // Split clips are pieces of the same performance, not new copies of its words.
+    // Use the layer span so cutting a clip never duplicates the section's lyrics.
+    const start = Math.max(0, layer.startMs);
+    const end = Math.max(start + 1, layer.endMs);
+    const lineMs = (end - start) / textLines.length;
+    textLines.forEach((text, index) => {
+      lines.push({
+        text,
+        startMs: start + index * lineMs,
+        endMs: index === textLines.length - 1 ? end : start + (index + 1) * lineMs,
+        trackId: layer.id,
       });
-    }
+    });
   }
   return lines.sort((a, b) => a.startMs - b.startMs);
 }
@@ -99,4 +96,34 @@ export function currentLyricLine(
   positionMs: number
 ): LyricTimelineLine | null {
   return lines.find((line) => positionMs >= line.startMs && positionMs < line.endMs) || null;
+}
+
+export type TakeAssessment = {
+  action?: string | null;
+  confidence?: number | null;
+  clippingDetected?: boolean | null;
+  silenceDetected?: boolean | null;
+  onsetDeviationMs?: number | null;
+};
+
+/** Deterministic ranking for Best take; musical review remains available in the picker. */
+export function scoreTakeAssessment(assessment: TakeAssessment | null | undefined): number {
+  if (!assessment) return 0;
+  const actionScore: Record<string, number> = {
+    KEEP: 100,
+    TRIM: 72,
+    NEEDS_REVIEW: 45,
+    ADD_DOUBLE: 60,
+    ADD_HARMONY: 60,
+    ADD_BACKGROUND: 60,
+    ADD_ADLIB: 60,
+    RETAKE: 5,
+  };
+  let score = actionScore[String(assessment.action || "").toUpperCase()] ?? 25;
+  score += Math.max(0, Math.min(1, Number(assessment.confidence) || 0)) * 10;
+  if (assessment.clippingDetected) score -= 45;
+  if (assessment.silenceDetected) score -= 60;
+  const deviation = Math.abs(Number(assessment.onsetDeviationMs) || 0);
+  score -= Math.min(20, deviation / 100);
+  return score;
 }
