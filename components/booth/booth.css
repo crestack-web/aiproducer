@@ -225,6 +225,11 @@ button.bx-rec:focus-visible{outline:2px solid var(--bx-accent);outline-offset:10
   box-shadow:inset 0 2px 6px rgba(255,255,255,.35),inset 0 -8px 18px rgba(120,20,40,.25),0 14px 40px -10px rgba(255,77,109,.75);
   animation:bx-rec-beat 1s cubic-bezier(.3,0,.3,1) infinite}
 .bx-rec-orb::before{background:conic-gradient(from 0deg,transparent,rgba(255,255,255,.22),transparent 40%);animation:bx-rec-fluid 6s linear infinite}
+/* iOS Safari: overflow:hidden + border-radius stops clipping while the orb animates,
+   so the rotating sheen above showed as a light square behind the button. Force a
+   circular clip and drop the blend mode so only the round button is visible. */
+.bx-rec-orb{clip-path:circle(50% at 50% 50%);-webkit-mask-image:-webkit-radial-gradient(white,black);transform:translateZ(0)}
+.bx-rec-orb::before{mix-blend-mode:normal}
 .bx-rec-mic{color:#fff}
 .bx-rec::before,.bx-rec::after{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid rgba(255,108,98,.55);
   animation:bx-rec-ring 2s ease-out infinite;pointer-events:none}
@@ -261,3 +266,31 @@ button.bx-rec:focus-visible{outline:2px solid var(--bx-accent);outline-offset:10
 .bx-stage .bx-ghost{background:rgba(255,255,255,.08);border:1px solid rgba(255,138,92,.25)}
 .bx-stage .bx-review .bx-cta.glow,.bx-stage .bx-cta.glow{background:linear-gradient(135deg,#ff8a5c,#ff4d6d);color:#fff}
 .bx-stage .bx-viz{animation:bx-pop .3s ease-out both}
+
+/* ---- Record button v3 (idle): spinning aurora ring, orbiting spark, gloss sweep, floating mic ---- */
+.bx-rec[data-idle="true"] .bx-rec-ring{position:absolute;inset:3px;border-radius:50%;z-index:0;pointer-events:none;
+  background:conic-gradient(from 0deg,#ff8a5c,#ff4d6d,#ffd36e,#ff7a9c,#ff8a5c);
+  box-shadow:0 0 18px rgba(255,110,110,.55),0 0 42px rgba(255,138,92,.28);
+  animation:bx-rec-spin 3.2s linear infinite}
+.bx-rec[data-idle="true"] .bx-rec-orb{z-index:1;inset:10px;
+  box-shadow:inset 0 2px 6px rgba(255,255,255,.4),inset 0 -10px 20px rgba(120,20,40,.3),0 0 0 3px #0b0709}
+.bx-rec[data-idle="true"] .bx-rec-spark{position:absolute;inset:3px;z-index:2;pointer-events:none;
+  animation:bx-rec-spin 2.4s linear infinite reverse}
+.bx-rec[data-idle="true"] .bx-rec-spark i{position:absolute;top:-2px;left:50%;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;
+  background:#fff;box-shadow:0 0 8px #fff,0 0 16px rgba(255,138,92,.9),0 0 28px rgba(255,77,109,.7)}
+.bx-rec-gloss{position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.5) 48%,rgba(255,255,255,.15) 55%,transparent 68%);
+  transform:translateX(-130%);animation:bx-rec-gloss 3.6s ease-in-out infinite}
+.bx-rec[data-idle="true"] .bx-rec-mic{animation:bx-rec-float 2.4s ease-in-out infinite;filter:drop-shadow(0 3px 6px rgba(90,10,30,.35))}
+.bx-rec[data-idle="true"]:hover .bx-rec-ring{animation-duration:1.4s}
+.bx-rec[data-idle="true"]:hover .bx-rec-mic{transform:scale(1.08)}
+.bx-rec[data-idle="true"]:active .bx-rec-ring{box-shadow:0 0 26px rgba(255,110,110,.85),0 0 60px rgba(255,138,92,.5)}
+.bx-rec-label[data-idle="true"]{background:linear-gradient(90deg,rgba(255,255,255,.55) 0%,#fff 45%,#ffb59a 55%,rgba(255,255,255,.55) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:bx-rec-label-shine 3.6s ease-in-out infinite}
+@keyframes bx-rec-spin{to{transform:rotate(360deg)}}
+@keyframes bx-rec-gloss{0%{transform:translateX(-130%)}55%,100%{transform:translateX(130%)}}
+@keyframes bx-rec-float{0%,100%{transform:translateY(1.5px)}50%{transform:translateY(-2px)}}
+@keyframes bx-rec-label-shine{0%{background-position:100% 0}55%,100%{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.bx-rec-ring,.bx-rec-spark,.bx-rec-gloss,.bx-rec-mic,.bx-rec-label[data-idle="true"]{animation:none!important}
+  .bx-rec-gloss{display:none}}
