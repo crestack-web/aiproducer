@@ -9337,7 +9337,7 @@ export function ProducerView({
                         EDIT
                         {retakeTarget ? " · RETAKE" : ""}
                       </span>
-                      <button type="button" onClick={playTakeSelection}
+                      <button type="button" aria-label="Play selected audio" title="Play selected audio" onClick={playTakeSelection}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
                         ▶
                       </button>
@@ -9357,14 +9357,16 @@ export function ProducerView({
                         Retake
                       </button>
                       <button type="button" disabled={takeUndoDepth === 0 || takeEditBusy}
+                        aria-label="Undo take edit" title="Undo take edit"
                         onClick={undoTakeEdit}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                        Undo
+                        ↶
                       </button>
                       <button type="button" disabled={takeRedoStackRef.current.length === 0 || takeEditBusy}
+                        aria-label="Redo take edit" title="Redo take edit"
                         onClick={redoTakeEdit}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "rgba(255,255,255,0.08)", color: text, fontWeight: 700, fontSize: 11, cursor: takeRedoStackRef.current.length ? "pointer" : "default", fontFamily: "inherit", opacity: takeRedoStackRef.current.length ? 1 : 0.4 }}>
-                        Redo
+                        ↷
                       </button>
                       <button type="button" onClick={cancelTakeEdit} disabled={takeEditBusy}
                         style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${border}`, background: "transparent", color: mutedText, fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
