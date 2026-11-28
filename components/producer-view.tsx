@@ -2313,6 +2313,25 @@ export function ProducerView({
   /** Save a moved/cropped clip. Saves for the same clip run in order (an old retry can't
    *  overwrite a newer edit); transient failures retry up to 3 times. */
   const clipSaveChainRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  // DAW keyboard shortcuts for the selected vocal track: S split, D duplicate, Q snap, Delete/Backspace delete
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const sel = tracks.find((x) => x.id === selectedTrackId);
+      if (!sel || sel.kind !== "vocal" || sel.id === "beat") return;
+      const k = e.key.toLowerCase();
+      if (k === "s") void splitSelectedAtPlayhead();
+      else if (k === "d") void duplicateLayer(sel.id);
+      else if (k === "q") void quantizeSelectedToBeat(1);
+      else if (k === "delete" || k === "backspace") void deleteSelectedClipOrRecording();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   function saveClipGeometry(layerId: string, body: Record<string, unknown>) {
     const snapshot = JSON.stringify(body);
     const prev = clipSaveChainRef.current.get(layerId) ?? Promise.resolve();
