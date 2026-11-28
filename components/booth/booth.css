@@ -151,3 +151,26 @@
 .bx-skel-line{height:14px;margin-bottom:10px}.bx-skel-line.short{width:60%}
 @keyframes bx-shimmer{to{background-position:-200% 0}}
 @media (prefers-reduced-motion:reduce){.bx-make .bx-orb,.bx-load-eq i,.bx-skel{animation:none}}
+
+/* Compact recording display: override the shared player's immersive inline styling
+   only inside Booth; audio capture and other players remain unchanged. */
+.bx-stage[data-phase="recording"] .bx-top,
+.bx-stage[data-phase="recording"] .bx-rec-wrap{flex-shrink:0}
+.bx-stage[data-phase="recording"] .bx-stage-mid{overflow-y:auto;justify-content:safe center;gap:0;min-width:0}
+.bx-stage[data-phase="recording"] .bx-stage-mid > *{flex-shrink:0;overflow-wrap:anywhere}
+.bx-stage[data-phase="recording"] .bx-h1{font-size:22px;line-height:1.25;letter-spacing:0}
+.bx-stage[data-phase="recording"] .bx-lyric{font-size:17px;line-height:1.45;margin-top:10px;flex-shrink:1;min-height:0;overflow-y:auto;max-width:100%}
+.bx-stage[data-phase="recording"] .bx-viz{width:100%;max-width:240px;min-height:88px;align-self:center;border-radius:0;overflow:visible;margin-top:16px}
+.bx-viz > div{min-height:88px !important;padding:8px 0 !important;border-radius:0 !important;background:transparent !important;gap:8px}
+.bx-viz > div > div[aria-hidden]:first-child,
+.bx-viz > div > div:not([aria-hidden]):not(:last-child){display:none !important}
+.bx-viz > div > div[aria-hidden]:not(:first-child){height:36px !important;width:168px !important;max-width:100% !important;gap:1px !important;filter:none !important;flex-shrink:0}
+.bx-viz > div > div[aria-hidden] > div{width:2px !important;min-width:0;flex:1 1 0;background:var(--bx-text) !important;transform:scaleY(.32);transition:height 120ms ease-out !important}
+.bx-viz > div > div:last-child{margin-top:0 !important;flex-direction:row !important;gap:10px !important;max-width:100%;flex-wrap:wrap;justify-content:center}
+.bx-viz > div > div:last-child > div:first-child{padding:0 !important;border:0 !important;background:transparent !important;gap:5px !important}
+.bx-viz > div > div:last-child > div:first-child > span:first-child{background:var(--bx-rec) !important;box-shadow:none !important}
+.bx-viz > div > div:last-child > div:first-child > span:last-child{color:var(--bx-muted) !important;letter-spacing:0 !important;font-weight:600 !important}
+.bx-viz > div > div:last-child > div:nth-child(2){font-size:14px !important;line-height:1.4 !important;letter-spacing:0 !important;color:var(--bx-text) !important}
+.bx-viz > div > div:last-child > div:nth-child(2) > span{font-size:12px !important;color:var(--bx-muted) !important}
+.bx-viz > div > div:last-child > div:last-child{display:none !important}
+@media (prefers-reduced-motion:reduce){.bx-viz > div > div[aria-hidden] > div{transition:none !important}}
