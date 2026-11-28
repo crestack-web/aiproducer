@@ -131,16 +131,20 @@ export function BoothRecordStage({
               className="bx-rec"
               aria-label={canRecordAgain ? "Record again" : "Record"}
               onClick={onRecord}
+              data-idle="true"
             >
               <span className="bx-rec-halo" aria-hidden="true" />
+              <span className="bx-rec-ring" aria-hidden="true" />
+              <span className="bx-rec-spark" aria-hidden="true"><i /></span>
               <span className="bx-rec-orb" aria-hidden="true">
+                <span className="bx-rec-gloss" />
                 <svg className="bx-rec-mic" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="9" y="3" width="6" height="11" rx="3" />
                   <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
                 </svg>
               </span>
             </button>
-            <span className="bx-rec-label">{canRecordAgain ? "Record again" : "Tap to record"}</span>
+            <span className="bx-rec-label" data-idle="true">{canRecordAgain ? "Record again" : "Tap to record"}</span>
           </div>
         )}
       </div>
