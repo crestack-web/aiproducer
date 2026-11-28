@@ -28,3 +28,18 @@
 .ap-fx-browser-grid button>div:last-child{line-height:1.4;overflow-wrap:anywhere}
 .ap-effect-preview{display:none}
 @media(prefers-reduced-motion:reduce){.ap-work-spinner{animation:none}}
+
+/* Clip tools keep their close control outside the horizontally scrolling actions. */
+.ap-clip-tools{overflow:hidden!important;border-radius:8px!important;align-items:center;width:max-content}
+.ap-clip-tools-close{flex-shrink:0;min-width:44px!important;min-height:44px!important}
+.ap-clip-tools-actions{display:flex;gap:6px;overflow-x:auto;min-width:0;overscroll-behavior:contain}
+@media(max-width:720px){
+ .ap-console-header{flex-wrap:wrap!important;height:auto!important;min-height:104px!important;max-height:none!important;overflow:visible!important;gap:6px!important;padding:4px 10px 8px!important}
+ .ap-console-header>button,.ap-console-header>a{flex-shrink:0!important}
+ .ap-console-header>button[aria-label="Mixer"]{width:36px!important;min-width:36px!important}
+ .ap-console-header>button[aria-label="More tools"]{margin-left:auto}
+ .ap-console-position{order:10;flex:1 0 88px;min-width:88px!important;box-sizing:border-box}
+ .ap-console-secondary{order:11;height:38px!important;min-height:38px!important}
+ .ap-console-count-in,.ap-console-guide{width:auto!important;padding:0 10px!important;white-space:nowrap;font-size:12px!important}
+ .ap-console-header>button[aria-label="Record vocal"],.ap-console-header>button[aria-label="Stop recording"]{width:36px!important;min-width:36px!important}
+}

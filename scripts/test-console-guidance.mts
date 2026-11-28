@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import { GUIDE_DURATION_MS, isClipDoubleTap, isClipTap } from "../lib/console-guidance";
+assert.equal(GUIDE_DURATION_MS, 6000);
+const first = { id: "vocal", at: 1000, x: 10, y: 10 };
+assert.equal(isClipDoubleTap(null, first), false, "Single tap only selects");
+assert.equal(isClipDoubleTap(first, { ...first, at: 1250 }), true, "Double tap opens tools");
+assert.equal(isClipDoubleTap(first, { ...first, id: "other", at: 1250 }), false);
+assert.equal(isClipDoubleTap(first, { ...first, at: 1500 }), false);
+assert.equal(isClipTap(first, { x: 30, y: 10 }), false, "Dragging must not open tools");
+assert.equal(isClipTap(first, { x: 12, y: 10 }), true);
+console.log("console guidance and tap rules: ok");

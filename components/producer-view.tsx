@@ -13,6 +13,7 @@
  */
 
 import "./producer-panels.css";
+import { GUIDE_DURATION_MS, isClipDoubleTap, isClipTap, type ClipTap } from "@/lib/console-guidance";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
@@ -1329,6 +1330,8 @@ export function ProducerView({
   const [countInEnabled, setCountInEnabled] = useState(true);
   const [countInBeat, setCountInBeat] = useState<number | null>(null);
   const [lyricsOpen, setLyricsOpen] = useState(true);
+  const [lyricVisible, setLyricVisible] = useState(false);
+  const [guideReplay, setGuideReplay] = useState(0);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [selectedMicId, setSelectedMicId] = useState("");
   const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
@@ -1437,6 +1440,21 @@ export function ProducerView({
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [clipToolsOpen, setClipToolsOpen] = useState(false);
+  const clipToolsRef = useRef<HTMLDivElement | null>(null);
+  const lastClipTapRef = useRef<ClipTap | null>(null);
+  const clipTouchStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!clipToolsOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !clipToolsRef.current?.contains(event.target)) setClipToolsOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setClipToolsOpen(false); };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape); };
+  }, [clipToolsOpen]);
+  useEffect(() => { setClipToolsOpen(false); }, [selectedTrackId]);
   const [trackPrompt, setTrackPrompt] = useState("");
   const [productionDirection, setProductionDirection] = useState<ProductionDirection | null>(null);
   const [directionNote, setDirectionNote] = useState<string | null>(null);
@@ -2229,6 +2247,8 @@ export function ProducerView({
     endMs: number
   ) {
     if (id === "beat") return;
+    setClipToolsOpen(false);
+    clipTouchStartRef.current = e.pointerType === "touch" && mode === "move" ? { id, x: e.clientX, y: e.clientY } : null;
     e.stopPropagation();
     e.preventDefault();
     const originOffset = resolveClipOffset(id);
@@ -2287,7 +2307,14 @@ export function ProducerView({
       d.lastOffset = off;
       updateLocalLayer(d.id, s, en, off);
     };
-    const onUp = () => {
+    const onUp = (event: PointerEvent) => {
+      const start = clipTouchStartRef.current;
+      clipTouchStartRef.current = null;
+      if (start && event.type === "pointerup" && isClipTap(start, { x: event.clientX, y: event.clientY })) {
+        const tap = { id: start.id, at: Date.now(), x: event.clientX, y: event.clientY };
+        if (isClipDoubleTap(lastClipTapRef.current, tap)) { setClipToolsOpen(true); lastClipTapRef.current = null; }
+        else lastClipTapRef.current = tap;
+      } else lastClipTapRef.current = null;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -4766,6 +4793,14 @@ export function ProducerView({
   const lyricTimeline = useMemo(() => buildLyricTimeline(layers), [layers]);
   const activeLyric = currentLyricLine(lyricTimeline, playheadMs);
   const nextLyric = lyricTimeline.find((line) => line.startMs > playheadMs) || null;
+  const shownLyric = activeLyric || nextLyric;
+  const lyricCueKey = shownLyric ? `${shownLyric.trackId}:${shownLyric.startMs}:${shownLyric.text}:${activeLyric ? "now" : "next"}` : null;
+  useEffect(() => {
+    if (!lyricsOpen || !lyricCueKey) { setLyricVisible(false); return; }
+    setLyricVisible(true);
+    const timer = window.setTimeout(() => setLyricVisible(false), GUIDE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [lyricsOpen, lyricCueKey, guideReplay]);
 
   const getCtx = useCallback(() => {
     if (!audioCtxRef.current) {
@@ -6764,8 +6799,8 @@ export function ProducerView({
           boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
         }}
       >
-      {/* Row 1 — tools. Mobile: minimal transport (no horizontal button dump). */}
-      <div
+      {/* Stable transport and guidance rows on mobile. */}
+      <div className="ap-console-header"
         style={{
           display: "flex",
           alignItems: "center",
@@ -7153,7 +7188,7 @@ export function ProducerView({
             }}
           />
         </button>
-        {isConsoleRecording && (
+        {isConsoleRecording && !isNarrow && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#F07167", fontVariantNumeric: "tabular-nums" }}>
               {Math.floor(recordSeconds / 60)}:{String(recordSeconds % 60).padStart(2, "0")}
@@ -7248,7 +7283,7 @@ export function ProducerView({
           </span>
         ) : null}
 
-        <div aria-label="Playback position" style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: text, minWidth: 88, fontWeight: 650, padding: "5px 10px", borderRadius: 10, background: "rgba(255,255,255,0.045)", border: `1px solid ${border}` }}>
+        <div className="ap-console-position" aria-label="Playback position" style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: text, minWidth: 88, fontWeight: 650, padding: "5px 10px", borderRadius: 10, background: "rgba(255,255,255,0.045)", border: `1px solid ${border}` }}>
           <span style={{ display: "block", fontSize: 8, letterSpacing: "0.12em", color: faint, marginBottom: 2 }}>POSITION</span>
           {formatPlayhead(playheadMs)}
           {typeof window !== "undefined" &&
@@ -7287,6 +7322,7 @@ export function ProducerView({
         <button
           type="button"
           aria-pressed={countInEnabled}
+          className="ap-console-secondary ap-console-count-in"
           aria-label="Tempo count-in"
           title={tempoBpm ? `Four-click count-in at ${Math.round(tempoBpm)} BPM` : "Set a project BPM to use count-in"}
           disabled={!makeCountInPlan(tempoBpm, 4)}
@@ -7306,15 +7342,16 @@ export function ProducerView({
           <button
             type="button"
             aria-pressed={lyricsOpen}
-            aria-label="Show lyrics"
-            onClick={() => setLyricsOpen((v) => !v)}
+            className="ap-console-secondary ap-console-guide"
+            aria-label="AI recording guide"
+            onClick={() => { setLyricsOpen((v) => !v); setGuideReplay((v) => v + 1); }}
             style={{
               ...iconBtn(border, surface, text),
               color: lyricsOpen ? brass : text,
               borderColor: lyricsOpen ? brass : border,
             }}
           >
-            Lyrics
+            AI guide
           </button>
         ) : null}
 
@@ -7387,6 +7424,7 @@ export function ProducerView({
                 ? "Loop selected track"
                 : "Loop full session (select a track to loop that part)"
           }
+          className="ap-console-secondary ap-console-loop"
           aria-pressed={loopOn}
         >
           <LoopIcon />
@@ -9041,6 +9079,7 @@ export function ProducerView({
                     onContextMenu={(e) =>
                       openTrackContextMenu(e, tr.id, primaryClip?.id || null)
                     }
+                    onDoubleClick={(e) => { e.stopPropagation(); if (tr.kind === "vocal" && !isTakeEditing) { setSelectedTrackId(tr.id); setSelectedClipId(primaryClip?.id || null); setClipToolsOpen(true); } }}
                     onPointerDown={
                       tr.kind === "vocal"
                         ? (e) => {
@@ -9269,6 +9308,7 @@ export function ProducerView({
                               touchAction: "none",
                               opacity: dimmed ? 0.4 : 1,
                             }}
+                            onDoubleClick={(e) => { e.stopPropagation(); setSelectedTrackId(tr.id); setSelectedClipId(clip.id); setClipToolsOpen(true); }}
                             onContextMenu={(e) => openTrackContextMenu(e, tr.id, clip.id)}
                             onPointerDown={(e) => {
                               e.stopPropagation();
@@ -11122,7 +11162,7 @@ placeholder="Ask AP anything…"
 
 
       
-      {lyricsOpen && lyricTimeline.length ? (() => {
+      {lyricsOpen && lyricVisible && lyricTimeline.length ? (() => {
         const shown = activeLyric || nextLyric;
         if (!shown) return null;
         const layer = layers.find((l) => l.id === shown.trackId);
@@ -11136,9 +11176,10 @@ placeholder="Ask AP anything…"
               width: isNarrow ? "auto" : 320, padding: "14px 16px", borderRadius: 18,
               background: "rgba(14,15,22,0.94)", border: `1px solid ${border}`,
               backdropFilter: "blur(18px)", boxShadow: "0 12px 32px rgba(0,0,0,0.42)",
-              pointerEvents: "none",
+              pointerEvents: "auto",
             }}
           >
+            <button type="button" aria-label="Dismiss recording guide" onClick={() => setLyricVisible(false)} style={{ ...iconBtn(border, surface, text), float: "right", marginLeft: 8 }}>×</button>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: brass, fontSize: 10, fontWeight: 800, letterSpacing: "0.1em" }}>
               <span>{activeLyric ? "NOW SING" : "NEXT LINE"}</span>
               <span style={{ color: mutedText, letterSpacing: 0, textTransform: "none" }}>{layer?.sectionLabel || layer?.label || "Vocal"}</span>
@@ -11179,7 +11220,7 @@ placeholder="Ask AP anything…"
       {/* Quick edit bar — one-tap DAW tools for the selected vocal track (no ⋮ menu needed) */}
       {(() => {
         const sel = tracks.find((x) => x.id === selectedTrackId);
-        if (!sel || sel.kind !== "vocal" || sel.id === "beat" || trackMenu) return null;
+        if (!clipToolsOpen || !sel || sel.kind !== "vocal" || sel.id === "beat" || trackMenu) return null;
         const btn = (label: string, key: string, fn: () => void, danger?: boolean, disabled?: boolean) => (
           <button
             key={label}
@@ -11199,6 +11240,8 @@ placeholder="Ask AP anything…"
         );
         return (
           <div
+            ref={clipToolsRef}
+            className="ap-clip-tools"
             role="toolbar"
             aria-label="Edit selected track"
             onClick={(e) => e.stopPropagation()}
@@ -11211,6 +11254,8 @@ placeholder="Ask AP anything…"
               boxShadow: "0 12px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)",
             }}
           >
+            <button className="ap-clip-tools-close" type="button" aria-label="Close track controls" onClick={() => setClipToolsOpen(false)} style={iconBtn(border, surface, text)}>×</button>
+            <div className="ap-clip-tools-actions">
             {btn("✂ Split", "S", () => void splitSelectedAtPlayhead(), false, takeEditBusy)}
             {sel.url ? btn("↻ Older takes", "R", () => void openTakePicker(sel.id), false, takeEditBusy) : null}
             {btn("⧉ Duplicate", "D", () => void duplicateLayer(sel.id))}
@@ -11223,6 +11268,7 @@ placeholder="Ask AP anything…"
             {btn("✨ Clean noise", "AI", () => void quickCleanNoise(sel.id), false, takeEditBusy)}
             {btn("★ Best take", "AI", () => void openTakePicker(sel.id, true), false, takeEditBusy)}
             {btn("🗑 Delete", "Del", () => void deleteSelectedClipOrRecording(), true)}
+            </div>
           </div>
         );
       })()}
