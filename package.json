@@ -12,7 +12,7 @@
     "test:booth-console": "node scripts/test-booth-console-parity.mjs",
     "test:fx-automation": "node scripts/test-fx-automation.mjs",
     "test:edit-ownership": "tsx scripts/test-edit-ownership.mts",
-    "test:unit": "tsx scripts/test-edit-ownership.mts && node scripts/test-placement.mjs && node scripts/test-session-preview-membership.mjs && node scripts/test-speaker-duck-state.mjs && node scripts/test-beat-studio.mjs && node scripts/test-beat-studio-arrangement.mjs",
+    "test:unit": "tsx scripts/test-edit-ownership.mts && tsx scripts/test-console-editing.mts && node scripts/test-placement.mjs && node scripts/test-session-preview-membership.mjs && node scripts/test-speaker-duck-state.mjs && node scripts/test-beat-studio.mjs && node scripts/test-beat-studio-arrangement.mjs",
     "test:pitch": "node scripts/test-pitch-polish.mjs",
     "test:performance": "node scripts/test-performance-polish.mjs",
     "typecheck": "tsc --noEmit",
