@@ -92,15 +92,43 @@
 .bx-beats > i{width:12px;height:12px;border-radius:99px;background:rgba(255,255,255,.18);transition:background .15s,transform .15s}
 .bx-beats > i[data-on="true"]{background:#fff;transform:scale(1.2)}
 .bx-viz{border-radius:24px;overflow:hidden;margin:16px 0 0}
-.bx-rec-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:8px}
-.bx-rec{position:relative;width:96px;height:96px;border-radius:999px;border:4px solid rgba(255,255,255,.95);cursor:pointer;padding:0;
-  background:radial-gradient(circle at 50% 35%,#ff7a7a,var(--bx-rec) 60%,#b31f2a);
-  box-shadow:0 0 0 10px rgba(255,77,77,.16),0 0 60px 6px rgba(255,77,77,.45);transition:transform .15s}
-.bx-rec:active{transform:scale(.94)}
-.bx-rec::after{content:"";position:absolute;inset:-14px;border-radius:inherit;border:2px solid rgba(255,77,77,.5);animation:bx-ring 2.2s ease-out infinite}
-.bx-rec[data-stop="true"]{background:var(--bx-rec)}
-.bx-rec[data-stop="true"]::before{content:"";position:absolute;inset:30px;border-radius:8px;background:#fff}
-.bx-rec-label{font-size:13.5px;color:rgba(255,255,255,.62);font-weight:600}
+.bx-rec-wrap{display:flex;flex-direction:column;align-items:center;gap:15px;padding:16px 0 4px}
+.bx-rec{position:relative;width:118px;height:118px;border-radius:999px;border:0;cursor:pointer;padding:0;
+  display:grid;place-items:center;background:transparent;color:#fff;isolation:isolate;
+  transition:transform .2s cubic-bezier(.2,.8,.2,1);-webkit-tap-highlight-color:transparent}
+.bx-rec:hover{transform:scale(1.035)}
+.bx-rec:active{transform:scale(.93)}
+.bx-rec:focus-visible{outline:2px solid #fff;outline-offset:8px}
+.bx-rec-halo{position:absolute;inset:-13px;border-radius:inherit;z-index:-2;
+  background:conic-gradient(from 20deg,rgba(255,164,142,.12),rgba(255,107,139,.55),rgba(255,196,128,.3),rgba(193,122,18,.12),rgba(255,164,142,.12));
+  filter:blur(10px);animation:bx-rec-halo 7s linear infinite,bx-rec-breathe 3.2s ease-in-out infinite}
+.bx-rec-orb{position:absolute;inset:9px;border-radius:inherit;display:grid;place-items:center;overflow:hidden;
+  background:
+    radial-gradient(circle at 28% 20%,rgba(255,255,255,.9),transparent 25%),
+    radial-gradient(circle at 76% 78%,rgba(255,190,104,.95),transparent 43%),
+    radial-gradient(circle at 20% 82%,rgba(255,99,122,.9),transparent 52%),
+    linear-gradient(145deg,#ffd2c4 0%,#ff8e9d 42%,#ff765f 70%,#e9a44d 100%);
+  background-size:130% 130%,140% 140%,145% 145%,160% 160%;
+  box-shadow:inset 0 1px 2px rgba(255,255,255,.7),inset 0 -10px 24px rgba(194,55,65,.16),
+    0 10px 32px rgba(255,91,102,.28),0 0 70px rgba(255,129,105,.22);
+  animation:bx-rec-gradient 8s ease-in-out infinite,bx-rec-breathe 3.2s ease-in-out infinite;
+  transition:inset .25s,box-shadow .25s}
+.bx-rec-orb::before{content:"";position:absolute;inset:-35%;border-radius:44%;
+  background:conic-gradient(from 90deg,transparent,rgba(255,255,255,.32),transparent 38%,rgba(255,221,181,.24),transparent 72%);
+  animation:bx-rec-fluid 9s linear infinite;mix-blend-mode:soft-light}
+.bx-rec-orb::after{content:"";position:absolute;inset:1px;border-radius:inherit;border:1px solid rgba(255,255,255,.28);pointer-events:none}
+.bx-rec-mic{position:relative;z-index:2;filter:drop-shadow(0 2px 5px rgba(116,36,43,.18));transition:transform .2s}
+.bx-rec[data-stop="true"] .bx-rec-orb{inset:13px;box-shadow:inset 0 1px 2px rgba(255,255,255,.65),0 10px 34px rgba(255,77,77,.38),0 0 84px rgba(255,91,102,.32);
+  animation:bx-rec-gradient 3.5s ease-in-out infinite,bx-rec-live 1.8s ease-in-out infinite}
+.bx-rec[data-stop="true"] .bx-rec-halo{inset:-18px;animation:bx-rec-halo 3.5s linear infinite,bx-rec-live-halo 1.8s ease-in-out infinite}
+.bx-rec[data-stop="true"]::before,.bx-rec[data-stop="true"]::after{content:"";position:absolute;inset:2px;border-radius:inherit;
+  border:1px solid rgba(255,143,139,.52);animation:bx-rec-ring 2.1s ease-out infinite;pointer-events:none}
+.bx-rec[data-stop="true"]::after{animation-delay:1.05s}
+.bx-rec-stop{position:relative;z-index:2;width:28px;height:28px;border-radius:9px;background:#fff;
+  box-shadow:0 3px 12px rgba(115,35,43,.22);animation:bx-rec-stop-in .25s cubic-bezier(.2,.9,.25,1) both}
+.bx-rec-label{font-size:13px;color:rgba(255,255,255,.62);font-weight:600;letter-spacing:.01em;display:flex;align-items:center;gap:7px}
+.bx-rec-label[data-live="true"]{color:rgba(255,255,255,.86)}
+.bx-rec-label i{width:7px;height:7px;border-radius:99px;background:#ff7b78;box-shadow:0 0 12px rgba(255,93,100,.8);animation:bx-rec-dot 1.2s ease-in-out infinite}
 .bx-review{display:flex;gap:10px;margin-top:14px}
 .bx-review > button{flex:1}
 .bx-ghost{display:flex;align-items:center;justify-content:center;min-height:56px;border-radius:999px;border:0;cursor:pointer;
@@ -126,7 +154,16 @@
 @keyframes bx-pop{from{opacity:0;transform:scale(1.4)}to{opacity:1;transform:none}}
 @keyframes bx-ring{0%{opacity:.8;transform:scale(.9)}100%{opacity:0;transform:scale(1.35)}}
 @keyframes bx-spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.bx-rec::after,.bx-orb,.bx-count,.bx-part,.bx-beat,.bx-stage{animation:none}}
+@keyframes bx-rec-halo{to{transform:rotate(360deg)}}
+@keyframes bx-rec-fluid{to{transform:rotate(360deg)}}
+@keyframes bx-rec-gradient{0%,100%{background-position:0% 0%,100% 100%,0% 100%,0% 50%}50%{background-position:100% 60%,0% 20%,100% 0%,100% 50%}}
+@keyframes bx-rec-breathe{0%,100%{scale:.98;opacity:.92}50%{scale:1.025;opacity:1}}
+@keyframes bx-rec-live{0%,100%{scale:.97}50%{scale:1.035}}
+@keyframes bx-rec-live-halo{0%,100%{opacity:.55;scale:.96}50%{opacity:1;scale:1.06}}
+@keyframes bx-rec-ring{0%{opacity:.65;transform:scale(.9)}100%{opacity:0;transform:scale(1.48)}}
+@keyframes bx-rec-stop-in{from{opacity:0;transform:scale(.5) rotate(-12deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+@keyframes bx-rec-dot{0%,100%{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+@media (prefers-reduced-motion:reduce){.bx-rec::before,.bx-rec::after,.bx-rec-halo,.bx-rec-orb,.bx-rec-orb::before,.bx-rec-stop,.bx-rec-label i,.bx-orb,.bx-count,.bx-part,.bx-beat,.bx-stage{animation:none}}
 
 /* Recording stage clears the mobile bottom nav */
 @media (max-width:899px){
