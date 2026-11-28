@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { PLANS, type PlanId, type BillingInterval } from "@/lib/plans";
 import { whopKey, resolveChargeCurrency, usdToChargeMajor, whopCreateCheckout, planChargeUsd } from "@/lib/whop";
+import { getActiveBeatInfo } from "@/lib/beats/active-beat";
 
 type Body = { plan?: string; interval?: string };
 
@@ -73,10 +74,17 @@ export async function POST(
   const currency = resolveChargeCurrency(req);
   let usd = planChargeUsd(plan, interval);
   // After free beats are used, AP-generated beat cost is added to session download price
+  // Only when the song actually uses an AP-generated beat — never for the user's own upload
+  // (meta.beat_generation_billable can be left over from an earlier generated beat).
+  let beatCostAddedUsd = 0;
   if (plan === "session") {
     const beatCost = Number(meta.beat_cost_usd) || 0;
     if (meta.beat_generation_billable === true && beatCost > 0) {
-      usd = Math.round((usd + beatCost) * 100) / 100;
+      const activeBeat = await getActiveBeatInfo(service, projectId, meta);
+      if (!activeBeat.isUserUpload) {
+        beatCostAddedUsd = beatCost;
+        usd = Math.round((usd + beatCost) * 100) / 100;
+      }
     }
   }
   const major = usdToChargeMajor(usd, currency);
@@ -120,7 +128,7 @@ export async function POST(
       amountUsd: usd,
       currency,
       chargeMajor: major,
-      beatCostUsd: plan === "session" && meta.beat_generation_billable ? Number(meta.beat_cost_usd) || 0 : 0,
+      beatCostUsd: beatCostAddedUsd,
       checkoutUrl: checkout.purchaseUrl,
       reference,
     });

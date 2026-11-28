@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { whopKey, resolveChargeCurrency, usdToChargeMajor, whopCreateCheckout } from "@/lib/whop";
+import { getActiveBeatInfo } from "@/lib/beats/active-beat";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -37,6 +38,12 @@ export async function POST(req: Request, ctx: Ctx) {
   const meta = { ...((project.metadata || {}) as Record<string, unknown>) };
   if (meta.beat_download_unlocked === true || meta.download_unlocked === true) {
     return NextResponse.json({ unlocked: true, already: true });
+  }
+
+  // Uploaded beats are the user's own: nothing to pay for.
+  const activeBeat = await getActiveBeatInfo(service, projectId, meta);
+  if (activeBeat.isUserUpload) {
+    return NextResponse.json({ unlocked: true, ownBeat: true, amountUsd: 0 });
   }
 
   if (!whopKey()) {

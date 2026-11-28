@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { downloadStorageObject } from "@/lib/storage";
 import { createServiceClient } from "@/lib/supabase/server";
 import { assertCommercialDownloadAccess } from "@/lib/entitlements";
+import { getActiveBeatInfo } from "@/lib/beats/active-beat";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -32,7 +33,11 @@ export async function GET(_req: Request, ctx: Ctx) {
   // Free beat may be listened to in-app; commercial file download requires unlock / plan / paid session
   const url = new URL(_req.url);
   const preview = url.searchParams.get("preview") === "1" || url.searchParams.get("stream") === "1";
-  const access = preview
+  // The user's own uploaded beat is theirs: never paywall downloading it back.
+  const ownBeat = preview
+    ? false
+    : (await getActiveBeatInfo(createServiceClient(), projectId, null)).isUserUpload;
+  const access = preview || ownBeat
     ? { ok: true }
     : await assertCommercialDownloadAccess(user.id, projectId, {
         email: user.email,
