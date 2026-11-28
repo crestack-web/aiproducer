@@ -304,6 +304,9 @@ export type ProducerLayer = {
 
 function clipsForLayer(l: ProducerLayer): ProducerClip[] {
   if (l.clips && l.clips.length > 0) return l.clips;
+  // A newly added track is an empty lane, not an audio region. Rendering a
+  // placeholder here made it look and behave like a take that did not exist.
+  if (!l.audioUrl && !l.recordingId) return [];
   return [
     {
       id: l.recordingId || l.id,
@@ -4226,6 +4229,7 @@ export function ProducerView({
           title: addTitle.trim() || undefined,
           start_ms: startMs,
           end_ms: startMs + 8000,
+          plan_source: "console",
         }),
       });
       const j = await res.json().catch(() => ({})) as ApiJson;
@@ -4309,6 +4313,12 @@ export function ProducerView({
           audioUrl,
         },
       ]);
+      setSelectedTrackId(task.id);
+      setSelectedClipId(null);
+      if (!file) {
+        setArmedTrackId(task.id);
+        setEditMsg(`${named} added — tap its lane where you want to start, then press Record`);
+      }
       setShowAddTrack(false);
       setAddTitle("");
       setAddType("custom");
@@ -4537,8 +4547,8 @@ export function ProducerView({
         }
         return { ...c, endMs: end };
       });
-      const spanStart = Math.min(...clips.map((c) => c.startMs));
-      const spanEnd = Math.max(...clips.map((c) => c.endMs));
+      const spanStart = clips.length ? Math.min(...clips.map((c) => c.startMs)) : l.startMs;
+      const spanEnd = clips.length ? Math.max(...clips.map((c) => c.endMs)) : l.endMs;
       list.push({
         id: l.id,
         label: l.label,
@@ -8832,7 +8842,6 @@ export function ProducerView({
             {tracks.map((tr) => {
               const expanded = expandedId === tr.id;
               const dimmed = !isAudible(tr.id, tr.kind);
-              const isMock = tr.kind === "vocal" && !tr.url && !peaksById[tr.id];
               const isArmed = armedTrackId === tr.id && tr.kind === "vocal";
               const isLiveRec =
                 isConsoleRecording &&
@@ -8851,7 +8860,8 @@ export function ProducerView({
               const colorOpen = colorPickerId === tr.id;
               const multiClips =
                 tr.kind === "vocal" && tr.clips && tr.clips.length > 1 ? tr.clips : null;
-              const primaryClip = multiClips ? multiClips[0] : null;
+              const primaryClip = multiClips ? multiClips[0] : tr.clips?.[0] || null;
+              const hasPrimaryRegion = Boolean(isLiveRec || primaryClip || tr.url || tr.recordingId);
               const clipStartMs = isLiveRec
                 ? liveRecStartMs
                 : primaryClip
@@ -8970,6 +8980,7 @@ export function ProducerView({
                       </div>
                     </div>
                   ) : null}
+                  {hasPrimaryRegion && (
                   <div
                     data-layer-id={tr.id}
                     style={{
@@ -9177,6 +9188,29 @@ export function ProducerView({
                       </>
                     )}
                   </div>
+                  )}
+                  {!hasPrimaryRegion && tr.kind === "vocal" && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: "8px 12px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        border: `1px dashed ${isArmed ? brass : border}`,
+                        borderRadius: 10,
+                        background: isArmed ? "rgba(193,122,18,0.06)" : "rgba(255,255,255,0.018)",
+                        color: isArmed ? brass : mutedText,
+                        fontSize: 11,
+                        fontWeight: 650,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: "#F07167" }} />
+                      Tap this lane to choose a start point, then press Record
+                    </div>
+                  )}
                   {/* Additional split clips on the same track lane */}
                   {multiClips
                     ? multiClips.slice(1).map((clip) => {
@@ -10838,7 +10872,7 @@ placeholder="Ask AP anything…"
               Add track
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: mutedText, lineHeight: 1.4 }}>
-              Pick a type. Vocal tracks open empty — record when ready.
+              Add an empty vocal lane or import audio. Nothing is recorded until you press Record.
             </p>
 
             {/* Suno-style list: recording roles */}
@@ -10992,39 +11026,6 @@ placeholder="Ask AP anything…"
                 </button>
               </div>
             )}
-
-            {/* Compact AI instruments */}
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
-              GENERATE WITH AI
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-              {(["drums", "bass", "guitar", "keys", "piano", "strings", "synth"] as const).map((inst) => (
-                <button
-                  key={inst}
-                  type="button"
-                  disabled={aiInstrumentBusy || !projectId}
-                  onClick={() => void generateAiInstrument(inst)}
-                  style={{
-                    border: `1px solid ${border}`,
-                    background: "rgba(193,122,18,0.1)",
-                    color: text,
-                    borderRadius: 999,
-                    padding: "8px 12px",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    textTransform: "capitalize",
-                    cursor: aiInstrumentBusy ? "wait" : "pointer",
-                    opacity: aiInstrumentBusy ? 0.7 : 1,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  {aiInstrumentBusy ? "…" : inst}
-                </button>
-              ))}
-            </div>
-            {aiInstrumentError ? (
-              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#ff8f8f" }}>{aiInstrumentError}</p>
-            ) : null}
 
             <button
               type="button"

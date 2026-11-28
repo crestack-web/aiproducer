@@ -74,6 +74,8 @@ const CreateTrackSchema = z.object({
       "harmony_low",
       "adlib",
       "background",
+      "audio",
+      "instrumental",
       "custom",
     ])
     .default("custom"),
