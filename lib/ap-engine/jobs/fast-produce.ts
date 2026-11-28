@@ -1,3 +1,4 @@
+import { applyVocalBandDip } from "../mix/balance";
 /**
  * Fast produce path (STOPGAP) — timeline assembly + light polish for Vercel time limits.
  *
@@ -835,12 +836,9 @@ export async function runFastArrangement(opts: {
     e = e * envSmooth + (vocalEnv[i] || 0) * (1 - envSmooth);
     vocalEnv[i] = e;
   }
-  const duckAmt = Math.min(0.55, Math.max(0.2, duckDb / 10));
-  for (let i = 0; i < totalSamples; i++) {
-    const duck = 1 - Math.min(0.48, (vocalEnv[i] || 0) * duckAmt * 2.8);
-    mix.left[i]! *= duck;
-    mix.right[i]! *= duck;
-  }
+  // Band-limited, vocal-keyed dip on the beat (1–5 kHz, max 3 dB). Replaces the old
+  // broadband duck that pulled the whole beat (kick and bass included) down under vocals.
+  applyVocalBandDip(mix, vocalEnv, Math.min(3, duckDb * 0.5));
 
   // Add vocals
   for (const L of layers) {

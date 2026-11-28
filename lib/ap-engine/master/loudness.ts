@@ -1,39 +1,31 @@
 import { applyGainStereo, dbToGain, peakOf, rmsOf, stereoToMono, limitStereo, cloneStereo } from "../dsp";
 import type { PcmStereo } from "../types";
+import { measureIntegratedLufs, truePeakLinear } from "./lufs";
 
 /**
- * Estimate integrated loudness proxy (dB) — RMS of mono.
- * Not ITU BS.1770 LUFS, but correlates enough for gain staging in pure TS.
+ * Integrated loudness in LUFS (ITU-R BS.1770-4, gated).
+ * Name kept for existing callers; this is now a real LUFS measurement, not an RMS proxy.
  */
 export function estimateLoudnessProxyDb(pcm: PcmStereo): number {
-  const r = rmsOf(stereoToMono(pcm));
-  if (r < 1e-12) return -120;
-  return 20 * Math.log10(r);
+  return measureIntegratedLufs(pcm);
 }
 
 function truePeakApprox(pcm: PcmStereo): number {
-  let tp = 0;
-  const n = pcm.left.length;
-  for (let i = 0; i < n - 1; i++) {
-    const l0 = Math.abs(pcm.left[i] || 0);
-    const l1 = Math.abs(pcm.left[i + 1] || 0);
-    const r0 = Math.abs(pcm.right[i] || 0);
-    const r1 = Math.abs(pcm.right[i + 1] || 0);
-    tp = Math.max(tp, l0, l1, r0, r1, (l0 + l1) * 0.5, (r0 + r1) * 0.5);
-  }
-  return tp;
+  return truePeakLinear(pcm);
 }
 
 /**
- * True-peak style limiter: inter-sample peak estimate + sample limit.
+ * True-peak limiter: lookahead limiting toward the ceiling, then a final
+ * 4x-oversampled true-peak check so nothing exceeds the ceiling after encoding.
  */
 export function truePeakLimit(pcm: PcmStereo, ceilingDb = -1, marginDb = 0.5): void {
-  const ceil = dbToGain(ceilingDb - Math.max(0, marginDb * 0.25));
-  const tp = truePeakApprox(pcm);
+  const target = ceilingDb - Math.max(0, marginDb * 0.25);
+  limitStereo(pcm, target);
+  const ceil = dbToGain(ceilingDb);
+  const tp = truePeakLinear(pcm);
   if (tp > ceil && tp > 1e-9) {
     applyGainStereo(pcm, ceil / tp);
   }
-  limitStereo(pcm, ceilingDb);
 }
 
 /**
@@ -81,36 +73,35 @@ export function normalizeToStreamingTarget(
   ceilingDb = -1.0,
   marginDb = 0.35
 ): LoudnessNormalizeResult {
-  // RMS proxy vs integrated LUFS: aim hotter so phones/speakers feel competitive.
-  // Streaming refs often sit ~-9 to -11 LUFS; push RMS a couple dB above target label.
-  // Push RMS proxy hotter so phones feel competitive after platform normalization.
-  const targetRmsDb = targetLufs + 3.2;
-  const beforeDb = estimateLoudnessProxyDb(pcm);
+  // Measured in real LUFS. Clamp to a sane streaming range: louder than -8 only adds
+  // distortion (platforms turn it down), quieter than -14 sounds weak next to releases.
+  const target = Math.max(-14, Math.min(-8, Number.isFinite(targetLufs) ? targetLufs : -11));
+  const beforeDb = measureIntegratedLufs(pcm);
   let totalGainDb = 0;
   let passes = 0;
-  const maxPasses = 7;
+  const maxPasses = 5;
+  const maxTotalBoostDb = 14;
 
   for (let i = 0; i < maxPasses; i++) {
-    const cur = estimateLoudnessProxyDb(pcm);
-    const err = targetRmsDb - cur;
-    if (Math.abs(err) < 0.5) break;
-    // Progressive boost; allow larger early steps so quiet mixes leave the -20 LUFS floor.
-    const step = Math.max(-6, Math.min(10, err * (i === 0 ? 0.95 : 0.8)));
-    if (Math.abs(step) < 0.2) break;
+    const cur = i === 0 ? beforeDb : measureIntegratedLufs(pcm);
+    if (cur <= -69) break; // silence
+    const err = target - cur;
+    if (Math.abs(err) < 0.3) break;
+    let step = Math.max(-8, Math.min(8, err));
+    if (totalGainDb + step > maxTotalBoostDb) step = maxTotalBoostDb - totalGainDb;
+    if (Math.abs(step) < 0.1) break;
     applyGainStereo(pcm, dbToGain(step));
     totalGainDb += step;
-    // Soft bus-style limit between passes so RMS can rise without one-sample spikes blocking boosts
     truePeakLimit(pcm, ceilingDb, marginDb);
     passes++;
   }
 
-  // Final ceiling enforce
   truePeakLimit(pcm, ceilingDb, marginDb);
 
   return {
     beforeDb,
-    afterDb: estimateLoudnessProxyDb(pcm),
-    targetDb: targetRmsDb,
+    afterDb: measureIntegratedLufs(pcm),
+    targetDb: target,
     passes,
     totalGainDb,
   };

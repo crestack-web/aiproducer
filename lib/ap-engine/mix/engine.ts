@@ -1,7 +1,7 @@
 import { trimVocalSumToTargetPeak } from "./vocal-bus";
 import { cloneStereo } from "../dsp";
 import type { MixDecision, PcmStereo } from "../types";
-import { applyMixGains, sumStereo, autoBalanceGains } from "./balance";
+import { applyMixGains, sumStereo, autoBalanceGains, duckBeatFromVocal } from "./balance";
 import { applyBeatPresenceCut } from "./masking-lite";
 import { applyMixGlue } from "./glue";
 import { applyBusGrooveLock } from "../production/timing-intelligence";
@@ -36,7 +36,8 @@ export function mixVocalAndBeat(
   // 3. No dynamic sidechain duck — beat level stays steady under vocals
   // (pumping beat down on vocal / up on silence was the reported defect).
   // Pocket comes from static gains + presence cut only, not envelope ducking.
-  void decision.duckDb;
+  // Band-limited, vocal-keyed dip (1–5 kHz, max 3 dB) — no broadband pumping.
+  duckBeatFromVocal(vocal, beat, Math.min(3, (decision.duckDb || 0) * 0.5));
 
   // 4. Sum + bus glue
   const trimmed = trimVocalSumToTargetPeak(vocal, -3);

@@ -218,6 +218,7 @@ export function processAndPlaceLayerDetailed(
     ...layer.decision.vocal,
     reverbSend: Math.min(0.12, layer.decision.vocal.reverbSend * 0.45),
     delaySend: Math.min(0.08, layer.decision.vocal.delaySend * 0.45),
+    delayBpm: layer.bpm ?? null,
   };
   const chain = processVocalChainDetailed(v, vocalDec, role);
   v = chain.pcm;

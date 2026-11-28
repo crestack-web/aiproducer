@@ -91,6 +91,8 @@ export type VocalDecision = {
   gainDb: number;
   reverbSend: number; // 0–1 wet
   delaySend: number; // 0–1
+  /** Song tempo; when set, vocal delay locks to an 1/8 note. */
+  delayBpm?: number | null;
 };
 
 export type MixDecision = {
@@ -141,7 +143,14 @@ export type QcResult = {
     rms: number;
     durationMs: number;
     vocalDominance?: number;
+    /** BS.1770 integrated loudness of the master */
+    lufs?: number;
+    /** 4x-oversampled true peak, dBTP */
+    truePeakDbtp?: number;
+    clippedSamples?: number;
   };
+  /** True when loudness, true peak and clipping all meet streaming delivery targets. */
+  radioReady?: boolean;
 };
 
 export type PcmStereo = {

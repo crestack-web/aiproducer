@@ -192,30 +192,67 @@ export function applyEqStereo(s: PcmStereo, bands: EqBand[]): void {
   applyEqChain(s.right, s.sampleRate, bands);
 }
 
-/** Soft knee compressor (sample-peak envelope). */
+/** Soft-knee feed-forward compressor (mono). */
 export function compressInPlace(buf: Float32Array, sampleRate: number, p: CompressorParams): void {
-  const thr = dbToGain(p.thresholdDb);
-  const atk = Math.exp(-1 / ((p.attackMs / 1000) * sampleRate));
-  const rel = Math.exp(-1 / ((p.releaseMs / 1000) * sampleRate));
+  const env = new Float32Array(buf.length);
+  envelopeFollow(buf, null, sampleRate, p.attackMs, p.releaseMs, env);
   const makeup = dbToGain(p.makeupDb);
-  let env = 0;
   for (let i = 0; i < buf.length; i++) {
-    const x = buf[i] || 0;
-    const a = Math.abs(x);
-    env = a > env ? atk * env + (1 - atk) * a : rel * env + (1 - rel) * a;
-    let g = 1;
-    if (env > thr && env > 1e-9) {
-      const overDb = gainToDb(env) - p.thresholdDb;
-      const grDb = overDb - overDb / Math.max(1, p.ratio);
-      g = dbToGain(-grDb);
-    }
-    buf[i] = x * g * makeup;
+    buf[i] = (buf[i] || 0) * compGain(env[i], p) * makeup;
   }
 }
 
+const COMP_KNEE_DB = 6;
+
+/** Gain for a detector level using a soft knee. */
+function compGain(level: number, p: CompressorParams): number {
+  if (level <= 1e-9) return 1;
+  const ratio = Math.max(1, p.ratio);
+  const x = gainToDb(level);
+  const over = x - p.thresholdDb;
+  const half = COMP_KNEE_DB / 2;
+  let grDb = 0;
+  if (over <= -half) grDb = 0;
+  else if (over >= half) grDb = over - over / ratio;
+  else {
+    const t = over + half;
+    grDb = ((1 / ratio - 1) * t * t) / (2 * COMP_KNEE_DB) * -1;
+  }
+  return grDb > 0 ? dbToGain(-grDb) : 1;
+}
+
+/** Peak envelope of one channel, or of max(|L|,|R|) when right is given (linked detection). */
+function envelopeFollow(
+  left: Float32Array,
+  right: Float32Array | null,
+  sampleRate: number,
+  attackMs: number,
+  releaseMs: number,
+  out: Float32Array
+): void {
+  const atk = Math.exp(-1 / ((Math.max(0.1, attackMs) / 1000) * sampleRate));
+  const rel = Math.exp(-1 / ((Math.max(1, releaseMs) / 1000) * sampleRate));
+  let env = 0;
+  for (let i = 0; i < left.length; i++) {
+    const a = right
+      ? Math.max(Math.abs(left[i] || 0), Math.abs(right[i] || 0))
+      : Math.abs(left[i] || 0);
+    env = a > env ? atk * env + (1 - atk) * a : rel * env + (1 - rel) * a;
+    out[i] = env;
+  }
+}
+
+/** Stereo-linked compressor: one gain for both channels so the image never shifts. */
 export function compressStereo(s: PcmStereo, p: CompressorParams): void {
-  compressInPlace(s.left, s.sampleRate, p);
-  compressInPlace(s.right, s.sampleRate, p);
+  const n = Math.min(s.left.length, s.right.length);
+  const env = new Float32Array(n);
+  envelopeFollow(s.left.subarray(0, n), s.right.subarray(0, n), s.sampleRate, p.attackMs, p.releaseMs, env);
+  const makeup = dbToGain(p.makeupDb);
+  for (let i = 0; i < n; i++) {
+    const g = compGain(env[i], p) * makeup;
+    s.left[i] = (s.left[i] || 0) * g;
+    s.right[i] = (s.right[i] || 0) * g;
+  }
 }
 
 /** Gentle noise gate / expander. */
@@ -436,68 +473,166 @@ export function deEssInPlace(buf: Float32Array, sampleRate: number, amount: numb
   }
 }
 
-/** Very short algorithmic reverb (comb + allpass-ish). */
+/**
+ * Stereo algorithmic reverb (Freeverb-style): 8 damped combs + 4 allpasses per side,
+ * decorrelated L/R, pre-delay, and band-limited returns (no boomy lows, no fizzy highs).
+ */
 export function addReverbStereo(s: PcmStereo, wet: number): void {
   const w = Math.max(0, Math.min(0.35, wet));
   if (w < 0.02) return;
-  const delays = [1117, 1351, 1699, 1871];
-  const n = s.left.length;
-  const dryL = new Float32Array(s.left);
-  const dryR = new Float32Array(s.right);
-  const wetL = new Float32Array(n);
-  const wetR = new Float32Array(n);
-  for (const d of delays) {
-    const fb = 0.55;
-    let prevL = 0;
-    let prevR = 0;
-    for (let i = 0; i < n; i++) {
-      const iL = i - d;
-      const srcL = iL >= 0 ? wetL[iL] : 0;
-      const srcR = iL >= 0 ? wetR[iL] : 0;
-      const inl = (dryL[i] || 0) + srcL * fb;
-      const inr = (dryR[i] || 0) + srcR * fb;
-      wetL[i] = (wetL[i] || 0) + inl * 0.25;
-      wetR[i] = (wetR[i] || 0) + inr * 0.25;
-      prevL = inl;
-      prevR = inr;
-    }
-  }
+  const sr = s.sampleRate;
+  const n = Math.min(s.left.length, s.right.length);
+  const scale = sr / 44100;
+  const combTuning = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+  const allpassTuning = [556, 441, 341, 225];
+  const spread = 23;
+  const feedback = 0.8; // room size ~ medium plate
+  const damp = 0.35;
+  const preDelay = Math.round(0.025 * sr);
+
+  // Mono, pre-delayed, band-limited send
+  const send = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    s.left[i] = (dryL[i] || 0) * (1 - w) + (wetL[i] || 0) * w;
-    s.right[i] = (dryR[i] || 0) * (1 - w) + (wetR[i] || 0) * w;
+    const j = i - preDelay;
+    send[i] = j >= 0 ? 0.5 * ((s.left[j] || 0) + (s.right[j] || 0)) : 0;
+  }
+  applyBiquadInPlace(send, "highpass", 250, sr, 0, 0.7);
+  applyBiquadInPlace(send, "lowpass", 8000, sr, 0, 0.7);
+
+  const runSide = (offset: number): Float32Array => {
+    const out = new Float32Array(n);
+    for (const t of combTuning) {
+      const len = Math.max(1, Math.round((t + offset) * scale));
+      const line = new Float32Array(len);
+      let idx = 0;
+      let store = 0;
+      for (let i = 0; i < n; i++) {
+        const y = line[idx];
+        store = y * (1 - damp) + store * damp;
+        line[idx] = send[i] * 0.015 + store * feedback;
+        out[i] += y;
+        idx = idx + 1 === len ? 0 : idx + 1;
+      }
+    }
+    for (const t of allpassTuning) {
+      const len = Math.max(1, Math.round((t + offset) * scale));
+      const line = new Float32Array(len);
+      let idx = 0;
+      for (let i = 0; i < n; i++) {
+        const bufout = line[idx];
+        const input = out[i];
+        out[i] = -input + bufout;
+        line[idx] = input + bufout * 0.5;
+        idx = idx + 1 === len ? 0 : idx + 1;
+      }
+    }
+    return out;
+  };
+  const wetL = runSide(0);
+  const wetR = runSide(spread);
+
+  // Level-match the tail to the dry signal so `wet` means the same thing as before
+  let dryE = 0;
+  let wetE = 0;
+  for (let i = 0; i < n; i++) {
+    const dm = 0.5 * ((s.left[i] || 0) + (s.right[i] || 0));
+    dryE += dm * dm;
+    const wm = 0.5 * (wetL[i] + wetR[i]);
+    wetE += wm * wm;
+  }
+  const norm = wetE > 1e-12 ? Math.sqrt(dryE / wetE) * 0.7 : 0;
+  for (let i = 0; i < n; i++) {
+    s.left[i] = (s.left[i] || 0) * (1 - w * 0.5) + wetL[i] * norm * w;
+    s.right[i] = (s.right[i] || 0) * (1 - w * 0.5) + wetR[i] * norm * w;
   }
 }
 
-/** Simple slap delay. */
-export function addDelayStereo(s: PcmStereo, send: number, delayMs = 120): void {
+/**
+ * Filtered ping-pong delay. When bpm is known the echo locks to an 1/8 note,
+ * otherwise delayMs is used. Repeats are band-limited so they sit behind the vocal.
+ */
+export function addDelayStereo(s: PcmStereo, send: number, delayMs = 120, bpm?: number | null): void {
   const w = Math.max(0, Math.min(0.25, send));
   if (w < 0.02) return;
-  const d = Math.floor((delayMs / 1000) * s.sampleRate);
-  const n = s.left.length;
-  const dryL = new Float32Array(s.left);
-  const dryR = new Float32Array(s.right);
+  const sr = s.sampleRate;
+  const ms = bpm && bpm > 50 && bpm < 220 ? 60000 / bpm / 2 : delayMs;
+  const d = Math.max(1, Math.floor((ms / 1000) * sr));
+  const n = Math.min(s.left.length, s.right.length);
+  const input = new Float32Array(n);
+  for (let i = 0; i < n; i++) input[i] = 0.5 * ((s.left[i] || 0) + (s.right[i] || 0));
+  applyBiquadInPlace(input, "highpass", 300, sr, 0, 0.7);
+  applyBiquadInPlace(input, "lowpass", 5000, sr, 0, 0.7);
+  const fb = 0.32;
+  const echoL = new Float32Array(n);
+  const echoR = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const j = i - d;
-    const eL = j >= 0 ? dryL[j] * 0.45 : 0;
-    const eR = j >= 0 ? dryR[j] * 0.4 : 0;
-    s.left[i] = (dryL[i] || 0) + eL * w;
-    s.right[i] = (dryR[i] || 0) + eR * w;
+    // L gets the dry-fed tap, R gets L's previous echo (ping-pong)
+    echoL[i] = j >= 0 ? input[j] + echoR[j] * fb : 0;
+    echoR[i] = j >= 0 ? echoL[j] : 0;
+  }
+  for (let i = 0; i < n; i++) {
+    s.left[i] = (s.left[i] || 0) + echoL[i] * 0.5 * w;
+    s.right[i] = (s.right[i] || 0) + echoR[i] * 0.5 * w;
   }
 }
 
-/** Brickwall-ish soft limiter. */
+/**
+ * Lookahead brickwall limiter (offline). The gain curve is a sliding minimum over the
+ * next ~2 ms, smoothed so gain reduction ramps in before each peak instead of clipping
+ * transients, with an 80 ms release. Stereo-linked.
+ */
 export function limitStereo(s: PcmStereo, ceilingDb: number): void {
   const ceil = dbToGain(ceilingDb);
-  const atk = Math.exp(-1 / (0.001 * s.sampleRate));
-  const rel = Math.exp(-1 / (0.05 * s.sampleRate));
-  let env = 0;
-  for (let i = 0; i < s.left.length; i++) {
+  const n = Math.min(s.left.length, s.right.length);
+  if (!n) return;
+  const L = Math.max(1, Math.round(0.002 * s.sampleRate));
+  const req = new Float32Array(n);
+  let any = false;
+  for (let i = 0; i < n; i++) {
     const a = Math.max(Math.abs(s.left[i] || 0), Math.abs(s.right[i] || 0));
-    env = a > env ? atk * env + (1 - atk) * a : rel * env + (1 - rel) * a;
-    let g = 1;
-    if (env > ceil && env > 1e-9) g = ceil / env;
+    req[i] = a > ceil ? ceil / a : 1;
+    if (req[i] < 1) any = true;
+  }
+  if (!any) return;
+  // Sliding minimum over [i, i+L] (monotonic deque)
+  const gmin = new Float32Array(n);
+  const dq = new Int32Array(n + L + 1);
+  let head = 0;
+  let tail = 0;
+  let next = 0;
+  for (let i = 0; i < n; i++) {
+    const hi = Math.min(n - 1, i + L);
+    while (next <= hi) {
+      while (tail > head && req[dq[tail - 1]] >= req[next]) tail--;
+      dq[tail++] = next++;
+    }
+    while (dq[head] < i) head++;
+    gmin[i] = req[dq[head]];
+  }
+  // Release: instant down, slow recovery
+  const rel = Math.exp(-1 / (0.08 * s.sampleRate));
+  let env = 1;
+  for (let i = 0; i < n; i++) {
+    const g = gmin[i];
+    env = g < env ? g : rel * env + (1 - rel) * g;
+    gmin[i] = env;
+  }
+  // Box smoothing over L samples; every value in the window is <= the requirement at i
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    acc += gmin[i];
+    if (i >= L) acc -= gmin[i - L];
+    const g = acc / Math.min(i + 1, L);
     s.left[i] = (s.left[i] || 0) * g;
     s.right[i] = (s.right[i] || 0) * g;
+  }
+  // Safety: hard clamp any residual sample overs
+  for (let i = 0; i < n; i++) {
+    if (s.left[i] > ceil) s.left[i] = ceil;
+    else if (s.left[i] < -ceil) s.left[i] = -ceil;
+    if (s.right[i] > ceil) s.right[i] = ceil;
+    else if (s.right[i] < -ceil) s.right[i] = -ceil;
   }
 }
 
@@ -683,7 +818,9 @@ export function encodeStereoWav(s: PcmStereo): Buffer {
   let o = 44;
   for (let i = 0; i < s.left.length; i++) {
     for (const ch of [s.left[i] || 0, s.right[i] || 0]) {
-      const c = Math.max(-1, Math.min(1, ch));
+      // TPDF dither (±1 LSB) before 16-bit quantization
+      const dither = (Math.random() - Math.random()) / 32768;
+      const c = Math.max(-1, Math.min(1, ch + dither));
       const v = c < 0 ? Math.round(c * 32768) : Math.round(c * 32767);
       buf.writeInt16LE(Math.max(-32768, Math.min(32767, v)), o);
       o += 2;

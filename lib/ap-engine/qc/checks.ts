@@ -1,5 +1,6 @@
 import { peakOf, rmsOf, stereoToMono, limitStereo, cloneStereo } from "../dsp";
 import type { PcmStereo, QcIssue, QcResult } from "../types";
+import { countClippedSamples, measureIntegratedLufs, truePeakDbtp } from "../master/lufs";
 
 /** Issues that mean the render is unusable — fail the job. */
 const FATAL_ISSUES: QcIssue[] = ["SILENT_OUTPUT", "INVALID_DURATION", "BROKEN_RENDER"];
@@ -38,8 +39,18 @@ export function runQc(master: PcmStereo, mix?: PcmStereo): QcResult {
     warnings.push("high_rms");
   }
 
-  let vocalDominance: number | undefined;
-  if (mix) vocalDominance = rms;
+  // Streaming delivery checks (BS.1770 loudness, oversampled true peak, clipped samples)
+  const lufs = measureIntegratedLufs(master);
+  const tpDb = truePeakDbtp(master);
+  const clipped = countClippedSamples(master);
+  if (lufs > -8) warnings.push("loudness_too_hot");
+  if (lufs < -14.5) warnings.push("loudness_too_quiet");
+  if (tpDb > -0.9) warnings.push("true_peak_over");
+  if (clipped > 0) warnings.push("clipped_samples");
+  const radioReady = lufs <= -8 && lufs >= -14.5 && tpDb <= -0.9 && clipped === 0;
+
+  // Vocal vs beat dominance is not measurable from the summed master alone.
+  const vocalDominance: number | undefined = mix ? undefined : undefined;
 
   const fatal = issues.some((i) => FATAL_ISSUES.includes(i));
   const softIssues = issues.filter((i) => !FATAL_ISSUES.includes(i));
@@ -54,7 +65,8 @@ export function runQc(master: PcmStereo, mix?: PcmStereo): QcResult {
       ...warnings,
       ...(!fatal && softIssues.length ? softIssues.map((i) => `soft_${i}`) : []),
     ],
-    metrics: { peak, rms, durationMs, vocalDominance },
+    metrics: { peak, rms, durationMs, vocalDominance, lufs, truePeakDbtp: tpDb, clippedSamples: clipped },
+    radioReady,
   };
 }
 

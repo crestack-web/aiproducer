@@ -105,6 +105,6 @@ export function processVocalChainDetailed(
   }
 
   addReverbStereo(out, decision.reverbSend);
-  addDelayStereo(out, decision.delaySend);
+  addDelayStereo(out, decision.delaySend, 120, decision.delayBpm ?? null);
   return { pcm: out, deessQc };
 }
