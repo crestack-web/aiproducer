@@ -3327,7 +3327,7 @@ export function ProducerView({
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AC) return null;
-      if (!audioCtxRef.current) audioCtxRef.current = new AC();
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") audioCtxRef.current = new AC();
       return audioCtxRef.current;
     } catch {
       return null;
@@ -4803,7 +4803,8 @@ export function ProducerView({
   }, [lyricsOpen, lyricCueKey, guideReplay]);
 
   const getCtx = useCallback(() => {
-    if (!audioCtxRef.current) {
+    // A closed context (e.g. after a remount) stays silent forever — replace it
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       const AC =
         typeof window !== "undefined"
           ? window.AudioContext ||
@@ -6645,10 +6646,11 @@ export function ProducerView({
     return () => {
       stopSources();
       try {
-        audioCtxRef.current?.close();
+        void audioCtxRef.current?.close().catch(() => undefined);
       } catch {
         /* */
       }
+      audioCtxRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -7430,6 +7432,31 @@ export function ProducerView({
           <LoopIcon />
         </button>
 
+        {/* Mobile: undo/redo live in the first row to fill its spare space */}
+        {isNarrow && (
+          <>
+            <button
+              type="button"
+              disabled={!undoEnabled}
+              onClick={() => consoleUndo()}
+              aria-label="Undo"
+              title="Undo"
+              style={{ ...iconBtn(border, surface, text), width: 36, height: 36, flexShrink: 0, opacity: undoEnabled ? 1 : 0.35 }}
+            >
+              ↺
+            </button>
+            <button
+              type="button"
+              disabled={!redoEnabled}
+              onClick={() => consoleRedo()}
+              aria-label="Redo"
+              title="Redo"
+              style={{ ...iconBtn(border, surface, text), width: 36, height: 36, flexShrink: 0, opacity: redoEnabled ? 1 : 0.35 }}
+            >
+              ↻
+            </button>
+          </>
+        )}
         {/* Mobile: one overflow control instead of a scrolling toolbar */}
         {isNarrow && (
           <button
@@ -7522,22 +7549,6 @@ export function ProducerView({
           }}
         >
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              disabled={!undoEnabled}
-              onClick={() => consoleUndo()}
-              style={{ ...iconBtn(border, surface, text), opacity: undoEnabled ? 1 : 0.35 }}
-            >
-              ↺
-            </button>
-            <button
-              type="button"
-              disabled={!redoEnabled}
-              onClick={() => consoleRedo()}
-              style={{ ...iconBtn(border, surface, text), opacity: redoEnabled ? 1 : 0.35 }}
-            >
-              ↻
-            </button>
             <button
               type="button"
               onClick={() => setAudioSetupOpen((o) => !o)}
