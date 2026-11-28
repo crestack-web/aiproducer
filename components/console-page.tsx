@@ -21,6 +21,7 @@ type TaskRow = {
   id: string;
   type?: string | null;
   title?: string | null;
+  instruction?: string | null;
   status?: string | null;
   selected_in_plan?: boolean | null;
   active?: boolean | null;
@@ -243,6 +244,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
                 0,
                 Number((meta as { media_offset_ms?: number }).media_offset_ms) || 0
               ),
+              lyric: tk.instruction || null,
               trackFx: tfRaw
                 ? ({
                     ...DEFAULT_TRACK_FX,

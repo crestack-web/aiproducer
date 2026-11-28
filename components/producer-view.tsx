@@ -18,6 +18,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
 import { getConsoleTransport, getCaptureLatencyCompMs } from "@/lib/audio/console-transport";
+import {
+  buildLyricTimeline,
+  currentLyricLine,
+  makeCountInPlan,
+  scheduleClipEdgeFades,
+} from "@/lib/audio/console-editing";
 import { openRecordingStream, createVocalRecorder,
   formatMicOpenError,
 } from "@/lib/audio/recording-engine";
@@ -302,6 +308,8 @@ export type ProducerLayer = {
   mediaOffsetMs?: number;
   /** Local take still in browser memory — server upload did not complete */
   uploadFailed?: boolean;
+  /** Section lyric / recording instruction supplied by the song plan. */
+  lyric?: string | null;
 };
 
 function clipsForLayer(l: ProducerLayer): ProducerClip[] {
@@ -1301,6 +1309,9 @@ export function ProducerView({
     return () => mq.removeEventListener("change", apply);
   }, []);
   const [isConsoleRecording, setIsConsoleRecording] = useState(false);
+  const [countInEnabled, setCountInEnabled] = useState(true);
+  const [countInBeat, setCountInBeat] = useState<number | null>(null);
+  const [lyricsOpen, setLyricsOpen] = useState(true);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [selectedMicId, setSelectedMicId] = useState("");
   const [selectedSpeakerId, setSelectedSpeakerId] = useState("__headphones__");
@@ -3135,6 +3146,31 @@ export function ProducerView({
     }
   }
 
+  async function playTempoCountIn(plan: NonNullable<ReturnType<typeof makeCountInPlan>>) {
+    const ctx = getCtx();
+    if (!ctx) return;
+    if (ctx.state !== "running") await ctx.resume().catch(() => undefined);
+    const startAt = ctx.currentTime + 0.06;
+    for (let i = 0; i < plan.beats; i++) {
+      const when = startAt + plan.clickOffsetsMs[i]! / 1000;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i === 0 ? 1320 : 880;
+      gain.gain.setValueAtTime(0.0001, when);
+      gain.gain.exponentialRampToValueAtTime(0.22, when + 0.003);
+      gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.075);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(when);
+      osc.stop(when + 0.08);
+      window.setTimeout(() => setCountInBeat(i + 1), Math.max(0, (when - ctx.currentTime) * 1000));
+    }
+    setEditMsg(`Count-in: ${plan.beats} beats at ${Math.round(plan.bpm)} BPM`);
+    await new Promise((resolve) => window.setTimeout(resolve, plan.durationMs + 60));
+    setCountInBeat(null);
+  }
+
   async function startConsoleRecord() {
     if (!projectId) {
       setEditMsg("Missing project");
@@ -3161,6 +3197,9 @@ export function ProducerView({
       setArmedTrackId(taskId);
       setSelectedTrackId(taskId);
       setEditMsg("Preparing recording…");
+
+      const countPlan = countInEnabled ? makeCountInPlan(tempoBpm, 4) : null;
+      if (countPlan) await playTempoCountIn(countPlan);
 
       // Start arrangement first so the artist hears the beat at the intended position
       try {
@@ -5034,35 +5073,22 @@ export function ProducerView({
     const ctx = getCtx();
     if (!ctx) return;
     const gen = ++playbackGenRef.current;
-
-    // Resume under the same user gesture as Play (required on iOS)
     if (ctx.state !== "running") {
-      try {
-        await ctx.resume();
-      } catch {
-        /* */
-      }
-      // Give the context a moment to actually start
-      const state = ctx.state as AudioContextState;
-      if (state !== "running") {
-        await new Promise((r) => setTimeout(r, 40));
-      }
+      try { await ctx.resume(); } catch { /* user can retry Play */ }
     }
     if (gen !== playbackGenRef.current) return;
 
-    // Stop prior sources only — keep live FX graphs for resume
     stopSources();
     setTransportPhase("preparing");
     offsetRef.current = Math.max(0, fromMs);
-    // Pin playhead visually without advancing until essential audio is ready
     applyPlayheadVisual(fromMs, true);
     playingRef.current = false;
     setPlaying(false);
 
-    const startSec = fromMs / 1000;
-    const beatProxy =
-      projectId && beatUrl ? `/api/projects/${projectId}/beat/download?preview=1` : null;
-
+    const startSec = Math.max(0, fromMs) / 1000;
+    const beatProxy = projectId && beatUrl
+      ? `/api/projects/${projectId}/beat/download?preview=1`
+      : null;
     type ClipSpec = {
       trackId: string;
       kind: "beat" | "vocal";
@@ -5074,41 +5100,24 @@ export function ProducerView({
       fx: TrackFx;
       on: boolean;
     };
-
     const specs: ClipSpec[] = [];
     for (const tr of tracks) {
+      const fx = (fxByIdRef.current[tr.id] || DEFAULT_TRACK_FX) as TrackFx;
       const on = isAudible(tr.id, tr.kind);
-      const fx = (fxByIdRef.current[tr.id] ||
-        fxById[tr.id] ||
-        DEFAULT_TRACK_FX) as TrackFx;
-
       if (tr.kind === "vocal") {
-        const parts =
-          tr.clips && tr.clips.length > 0
-            ? tr.clips
-            : tr.url
-              ? [
-                  {
-                    id: tr.id,
-                    startMs: tr.startMs,
-                    endMs: tr.endMs,
-                    audioUrl: tr.url,
-                    recordingId: tr.recordingId,
-                    offsetMs: tr.mediaOffsetMs || 0,
-                  },
-                ]
-              : [];
-        for (const clip of parts) {
-          const recordingProxy = clip.recordingId
-            ? `/api/recordings/${clip.recordingId}/audio`
-            : null;
-          const vocalProxy = `/api/recording-tasks/${tr.id}/audio`;
-          const loadUrl =
-            recordingProxy ||
-            vocalProxy ||
-            clip.audioUrl ||
-            null;
-          if (!loadUrl) continue;
+        for (const clip of clipsForLayer({
+          id: tr.id,
+          label: tr.label,
+          role: tr.label,
+          startMs: tr.startMs,
+          endMs: tr.endMs,
+          audioUrl: tr.url,
+          recordingId: tr.recordingId,
+          clips: tr.clips,
+          mediaOffsetMs: tr.mediaOffsetMs,
+        })) {
+          const recordingProxy = clip.recordingId ? `/api/recordings/${clip.recordingId}/audio` : null;
+          const loadUrl = recordingProxy || clip.audioUrl || `/api/recording-tasks/${tr.id}/audio`;
           specs.push({
             trackId: tr.id,
             kind: "vocal",
@@ -5116,306 +5125,125 @@ export function ProducerView({
             endMs: Number(clip.endMs) || tr.endMs,
             offsetMs: Number(clip.offsetMs) || 0,
             loadUrl,
-            fallback:
-              clip.audioUrl && clip.audioUrl !== loadUrl ? clip.audioUrl : null,
+            fallback: clip.audioUrl && clip.audioUrl !== loadUrl ? clip.audioUrl : null,
             fx,
             on,
           });
         }
-        continue;
-      }
-
-      if (!tr.url) continue;
-      const loadUrl = beatProxy || tr.url;
-      specs.push({
-        trackId: tr.id,
-        kind: "beat",
-        startMs: 0,
-        endMs: 0,
-        offsetMs: 0,
-        loadUrl,
-        fallback: tr.url !== loadUrl ? tr.url : null,
-        fx,
-        on,
-      });
-    }
-
-    // Beat plays via HTMLAudio (reliable on mobile). Vocals stay on the Web Audio graph.
-    const beatSpec = specs.find((s) => s.kind === "beat");
-    const vocalSpecs = specs.filter((s) => s.kind !== "beat");
-    specs.length = 0;
-    specs.push(...vocalSpecs);
-
-    // Soft-mute armed track during overdub so the artist hears the arrangement, not prior take
-    if (isConsoleRecording && muteArmedWhileRecord) {
-      const armed = armedTrackId || consoleRecRef.current?.taskId;
-      if (armed) {
-        for (const s of specs) {
-          if (s.trackId === armed) s.on = false;
-        }
+      } else if (tr.url) {
+        specs.push({
+          trackId: tr.id,
+          kind: "beat",
+          startMs: 0,
+          endMs: 0,
+          offsetMs: 0,
+          loadUrl: beatProxy || tr.url,
+          fallback: tr.url !== (beatProxy || tr.url) ? tr.url : null,
+          fx,
+          on,
+        });
       }
     }
 
-    // Essential = beat + clips that cover the current playhead (not entire project)
-    const essential = specs.filter((s) => {
-      if (s.kind === "beat") return true;
-      return s.startMs <= fromMs + 50 && s.endMs >= fromMs - 50;
-    });
-    for (const s of essential) {
+    // Decode only the beat and clips under the playhead before starting the clock.
+    const essential = specs.filter((s) =>
+      s.kind === "beat" || (s.startMs <= fromMs + 50 && s.endMs >= fromMs - 50)
+    );
+    const decoded = new Map<ClipSpec, AudioBuffer>();
+    await Promise.all(essential.map(async (spec) => {
       if (gen !== playbackGenRef.current) return;
-      let buf =
-        bufferCache.get(s.loadUrl) ||
-        (s.fallback ? bufferCache.get(s.fallback) : null) ||
-        null;
-      if (!buf) buf = await fetchDecode(ctx, s.loadUrl, s.fallback);
-      if (!buf) {
-        // Beat missing is hard failure for readiness; continue for vocals
-        if (s.kind === "beat") {
-          setTransportPhase("error");
-          setEditMsg("Could not load beat for playback");
-        }
-      }
-    }
+      let buf = bufferCache.get(spec.loadUrl) ||
+        (spec.fallback ? bufferCache.get(spec.fallback) : null) || null;
+      if (!buf) buf = await fetchDecode(ctx, spec.loadUrl, spec.fallback);
+      if (buf) decoded.set(spec, buf);
+      else if (spec.kind === "beat") setEditMsg("Could not load beat for playback");
+    }));
     if (gen !== playbackGenRef.current) {
       setTransportPhase("paused");
       return;
     }
 
-    // Hold the playhead until the beat is actually ready to sound.
-    // Clock starts only after HTMLAudio can play (or immediately if no beat).
-    const t0 = ctx.currentTime;
-    startedAtRef.current = t0;
-
-    const graphs = new Map<string, ReturnType<typeof createLiveTrackFxGraph>>();
-    // Rehydrate from existing live graphs (pause/resume)
-    for (const [id, g] of fxGraphRef.current) {
-      graphs.set(id, g);
-    }
-    let beatStartedInGraph = false;
-
-    const scheduleBuf = (
-      spec: ClipSpec,
-      buf: AudioBuffer,
-      graph: ReturnType<typeof createLiveTrackFxGraph>
-    ) => {
-      // Generation cancel only — playingRef is armed after prepare completes
-      if (gen !== playbackGenRef.current) return;
-      const src = ctx.createBufferSource();
-      let playBuf = buf;
+    // One AudioContext epoch drives beat, vocals, fades and the playhead. This avoids
+    // independent HTMLAudio clocks drifting apart on slower phones.
+    const t0 = ctx.currentTime + 0.035;
+    const graphs = new Map<string, LiveFxHandles>();
+    for (const spec of specs) {
+      if (graphs.has(spec.trackId)) continue;
+      let graph = fxGraphRef.current.get(spec.trackId);
+      if (!graph) {
+        graph = createLiveTrackFxGraph(ctx);
+        fxGraphRef.current.set(spec.trackId, graph);
+      }
       try {
-        if (
-          (Number(spec.fx.gate) || 0) > 0.02 ||
-          (Number(spec.fx.noiseReduce) || 0) > 0.02
-        ) {
-          playBuf = processPreviewBuffer(ctx, buf, {
+        graph.output.disconnect();
+        graph.output.connect(ctx.destination);
+      } catch { /* a later Play retries the connection */ }
+      graphs.set(spec.trackId, graph);
+    }
+
+    const scheduleBuf = (spec: ClipSpec, sourceBuf: AudioBuffer) => {
+      if (gen !== playbackGenRef.current) return;
+      const graph = graphs.get(spec.trackId);
+      if (!graph) return;
+      let playBuf = sourceBuf;
+      try {
+        if ((Number(spec.fx.gate) || 0) > 0.02 || (Number(spec.fx.noiseReduce) || 0) > 0.02) {
+          playBuf = processPreviewBuffer(ctx, sourceBuf, {
             gate: Number(spec.fx.gate) || 0,
             noiseReduce: Number(spec.fx.noiseReduce) || 0,
             deEss: Number(spec.fx.deEss) || 0,
             phraseCleanup: Number(spec.fx.phraseCleanup) || 0,
           });
         }
-      } catch {
-        playBuf = buf;
-      }
-      src.buffer = playBuf;
-      src.connect(graph.input);
+      } catch { playBuf = sourceBuf; }
 
-      // Song time (seconds) at this exact AudioContext moment
       const songNow = startSec + Math.max(0, ctx.currentTime - t0);
-
+      let when = t0;
+      let into = startSec;
+      let playDuration = Math.max(0, playBuf.duration - into);
       if (spec.kind === "vocal") {
         const layerStart = spec.startMs / 1000;
         const layerEnd = Math.max(layerStart + 0.05, spec.endMs / 1000);
         const mediaOff = Math.max(0, spec.offsetMs / 1000);
-        const clipDur = Math.max(0.05, layerEnd - layerStart);
         if (songNow >= layerEnd) return;
         if (songNow >= layerStart) {
-          const into = mediaOff + (songNow - layerStart);
-          const remain = Math.max(0.05, layerEnd - songNow);
-          if (into >= playBuf.duration) return;
-          src.start(
-            ctx.currentTime,
-            into,
-            Math.min(remain, playBuf.duration - into)
-          );
+          into = mediaOff + songNow - layerStart;
+          playDuration = Math.min(layerEnd - songNow, playBuf.duration - into);
         } else {
-          const when = t0 + (layerStart - startSec);
-          src.start(
-            Math.max(ctx.currentTime, when),
-            mediaOff,
-            Math.min(clipDur, playBuf.duration - mediaOff)
-          );
+          when = t0 + layerStart - startSec;
+          into = mediaOff;
+          playDuration = Math.min(layerEnd - layerStart, playBuf.duration - into);
         }
-      } else {
-        if (songNow >= playBuf.duration) return;
-        src.start(ctx.currentTime, songNow);
-        beatStartedInGraph = true;
       }
+      if (into < 0 || into >= playBuf.duration || playDuration <= 0.01) return;
+
+      const src = ctx.createBufferSource();
+      const edge = ctx.createGain();
+      src.buffer = playBuf;
+      src.connect(edge);
+      edge.connect(graph.input);
+      scheduleClipEdgeFades(edge.gain, when, playDuration);
+      src.start(Math.max(ctx.currentTime, when), into, playDuration);
       sourcesRef.current.push(src);
     };
 
-    // Warm-decode vocal buffers in the background only — do NOT schedule Web Audio
-    // sources here. Clock + audible playback use HTMLAudio (mobile-reliable). Scheduling
-    // before playingRef is armed used to abort play entirely (stuck on Preparing…).
-    void Promise.all(
-      specs.map(async (spec) => {
-        if (gen !== playbackGenRef.current) return;
-        if (bufferCache.has(spec.loadUrl)) return;
-        if (spec.fallback && bufferCache.has(spec.fallback)) return;
-        try {
-          await fetchDecode(ctx, spec.loadUrl, spec.fallback);
-        } catch {
-          /* non-fatal warm */
-        }
-      })
-    );
+    for (const [spec, buf] of decoded) scheduleBuf(spec, buf);
+    // Future clips decode in parallel and join the same transport epoch when ready.
+    void Promise.all(specs.filter((s) => !decoded.has(s)).map(async (spec) => {
+      let buf = bufferCache.get(spec.loadUrl) ||
+        (spec.fallback ? bufferCache.get(spec.fallback) : null) || null;
+      if (!buf) buf = await fetchDecode(ctx, spec.loadUrl, spec.fallback);
+      if (buf && gen === playbackGenRef.current) scheduleBuf(spec, buf);
+    })).catch(() => undefined);
 
-    if (gen !== playbackGenRef.current) {
-      stopSources();
-      setPlaying(false);
-      setTransportPhase("paused");
-      return;
-    }
-
-    // Primary beat player — HTMLAudio, same path as the library player
-    if (beatSpec && isAudible("beat", "beat")) {
-      try {
-        try {
-          monitorAudioRef.current?.pause();
-        } catch {
-          /* */
-        }
-        const previewUrl = projectId
-          ? `/api/projects/${projectId}/beat/download?preview=1`
-          : beatSpec.loadUrl;
-        const a = new Audio(previewUrl);
-        a.preload = "auto";
-        const songNow = startSec + Math.max(0, ctx.currentTime - t0);
-        const startBeat = () => {
-          try {
-            a.currentTime = Math.max(0, Math.min(songNow, (a.duration || songNow + 1) - 0.05));
-          } catch {
-            /* */
-          }
-          const bfx =
-            fxByIdRef.current["beat"] || fxById["beat"] || DEFAULT_TRACK_FX;
-          const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
-          // Headroom + vocal mix pad (same as syncMonitorLevels)
-          let anyVocal = false;
-          try {
-            for (const tr of tracks) {
-              if (tr.kind === "vocal" && isAudible(tr.id, "vocal")) {
-                anyVocal = true;
-                break;
-              }
-            }
-          } catch {
-            /* */
-          }
-          const lin =
-            Math.pow(10, (Number(bfx.gainDb) || 0) / 20) *
-            masterLin *
-            0.55 *
-            (anyVocal ? 0.72 : 1);
-          a.volume = Math.max(0, Math.min(1, lin));
-          void a.play().catch((e) => {
-            console.warn("[producer-view] beat HTMLAudio play", e);
-            setEditMsg("Beat could not play — try again or check your output device");
-          });
-        };
-        monitorAudioRef.current = a;
-        // Wait until the element can actually play before moving the playhead
-        await new Promise<void>((resolve) => {
-          if (a.readyState >= 3) { resolve(); return; }
-          const done = () => { a.removeEventListener("canplay", done); a.removeEventListener("error", done); resolve(); };
-          a.addEventListener("canplay", done, { once: true });
-          a.addEventListener("error", done, { once: true });
-          a.load();
-          // Safety: don't hang forever
-          setTimeout(done, 2500);
-        });
-        if (gen !== playbackGenRef.current) {
-          setTransportPhase("paused");
-          return;
-        }
-        startBeat();
-      } catch (e) {
-        console.warn("[producer-view] beat HTMLAudio", e);
-      }
-    }
-
-    // Now the beat is ready (or there is none) — start the clock and vocals together
-    if (gen !== playbackGenRef.current) {
-      setTransportPhase("paused");
-      return;
-    }
+    try { syncMonitorLevels(); } catch { /* static FX still applies */ }
     playingRef.current = true;
     setPlaying(true);
     setTransportPhase("playing");
-    startedAtRef.current = ctx.currentTime;
+    startedAtRef.current = t0;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(tickPlayhead);
-
-    // Vocal clips via HTMLAudio — reliable on mobile where Web Audio graph is silent
-    for (const spec of vocalSpecs) {
-      if (!spec.on) continue;
-      const songNow = startSec;
-      const layerStart = spec.startMs / 1000;
-      const layerEnd = Math.max(layerStart + 0.05, spec.endMs / 1000);
-      if (songNow >= layerEnd) continue;
-      const mediaOff = Math.max(0, spec.offsetMs / 1000);
-      const into = songNow >= layerStart ? mediaOff + (songNow - layerStart) : mediaOff;
-      const delayMs = songNow >= layerStart ? 0 : (layerStart - songNow) * 1000;
-      try {
-        const a = new Audio(spec.loadUrl);
-        a.preload = "auto";
-        const bfx = spec.fx;
-        const masterLin = Math.pow(10, (masterGainDbRef.current || 0) / 20);
-        // Match syncMonitorLevels: headroom so faders can raise vocals over the beat
-        const lin =
-          Math.pow(10, (Number(bfx.gainDb) || 0) / 20) * masterLin * 0.55;
-        a.volume = Math.max(0, Math.min(1, lin));
-        const startVocal = () => {
-          try {
-            a.currentTime = Math.max(0, into);
-          } catch {
-            /* */
-          }
-          void a.play().catch((e) => console.warn("[producer-view] vocal HTMLAudio", e));
-        };
-        try {
-          a.dataset.trackId = spec.trackId;
-        } catch {
-          /* */
-        }
-        vocalAudioRefs.current.push(a);
-        try {
-          a.dataset.trackId = spec.trackId;
-        } catch { /* */ }
-
-        if (delayMs > 40) {
-          window.setTimeout(() => {
-            if (gen !== playbackGenRef.current || !playingRef.current) return;
-            if (a.readyState >= 1) startVocal();
-            else a.addEventListener("loadedmetadata", startVocal, { once: true });
-          }, delayMs);
-        } else if (a.readyState >= 1) {
-          startVocal();
-        } else {
-          a.addEventListener("loadedmetadata", startVocal, { once: true });
-          a.load();
-        }
-      } catch (e) {
-        console.warn("[producer-view] vocal HTMLAudio setup", e);
-      }
-    }
   }
-
-      try {
-      syncMonitorLevels();
-    } catch {
-      /* */
-    }
 
   function fitTimelineToView() {
     const el = timelineScrollRef.current;
@@ -7323,6 +7151,24 @@ export function ProducerView({
           {tempoBpm != null && Number.isFinite(tempoBpm) ? `${Math.round(tempoBpm)} BPM` : "— BPM"}
         </div>
         )}
+
+        <button
+          type="button"
+          aria-pressed={countInEnabled}
+          aria-label="Tempo count-in"
+          title={tempoBpm ? `Four-click count-in at ${Math.round(tempoBpm)} BPM` : "Set a project BPM to use count-in"}
+          disabled={!makeCountInPlan(tempoBpm, 4)}
+          onClick={() => setCountInEnabled((v) => !v)}
+          style={{
+            ...iconBtn(border, surface, text),
+            color: countInBeat != null || countInEnabled ? brass : text,
+            borderColor: countInEnabled ? brass : border,
+            background: countInEnabled ? "rgba(193,122,18,0.15)" : surface,
+            opacity: makeCountInPlan(tempoBpm, 4) ? 1 : 0.45,
+          }}
+        >
+          {countInBeat != null ? `${countInBeat} / 4` : "Count-in"}
+        </button>
 
         <button
           type="button"
