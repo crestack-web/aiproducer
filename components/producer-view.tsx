@@ -11109,6 +11109,49 @@ placeholder="Ask AP anything…"
 
 
       
+      {/* Quick edit bar — one-tap DAW tools for the selected vocal track (no ⋮ menu needed) */}
+      {(() => {
+        const sel = tracks.find((x) => x.id === selectedTrackId);
+        if (!sel || sel.kind !== "vocal" || sel.id === "beat" || trackMenu) return null;
+        const btn = (label: string, key: string, fn: () => void, danger?: boolean, disabled?: boolean) => (
+          <button
+            key={label}
+            type="button"
+            title={`${label} (${key})`}
+            disabled={disabled}
+            onClick={(e) => { e.stopPropagation(); if (!disabled) fn(); }}
+            style={{
+              padding: "9px 14px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.1)",
+              background: danger ? "rgba(248,113,113,0.14)" : "rgba(255,255,255,0.06)",
+              color: danger ? "#F87171" : "#F5F6FA", fontSize: 13, fontWeight: 600,
+              whiteSpace: "nowrap", opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer",
+            }}
+          >
+            {label}
+          </button>
+        );
+        return (
+          <div
+            role="toolbar"
+            aria-label="Edit selected track"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed", left: "50%", transform: "translateX(-50%)",
+              bottom: "calc(90px + env(safe-area-inset-bottom))", zIndex: 205,
+              display: "flex", gap: 6, padding: 6, maxWidth: "calc(100vw - 16px)", overflowX: "auto",
+              borderRadius: 999, background: "linear-gradient(180deg, rgba(30,32,42,0.9), rgba(14,15,22,0.95))",
+              backdropFilter: "blur(20px) saturate(180%)", border: "1px solid rgba(255,255,255,0.12)",
+              boxShadow: "0 12px 32px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)",
+            }}
+          >
+            {btn("✂ Split", "S", () => void splitSelectedAtPlayhead(), false, takeEditBusy)}
+            {sel.url ? btn("↻ Replace section", "R", () => void beginTakeEdit(sel.id, sel.url)) : null}
+            {btn("⧉ Duplicate", "D", () => void duplicateLayer(sel.id))}
+            {btn("♩ Snap", "Q", () => void quantizeSelectedToBeat(1), false, takeEditBusy || tempoBpm == null)}
+            {btn("🗑 Delete", "Del", () => void deleteSelectedClipOrRecording(), true)}
+          </div>
+        );
+      })()}
       {trackMenu && (() => {
         const tr = tracks.find((x) => x.id === trackMenu.trackId);
         if (!tr) return null;
