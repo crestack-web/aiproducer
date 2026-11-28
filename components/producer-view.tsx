@@ -2310,17 +2310,26 @@ export function ProducerView({
     }
   }
 
-  /** Save a moved/cropped clip; retry once and tell the user if it still fails. */
-  async function saveClipGeometry(layerId: string, body: Record<string, unknown>) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+  /** Save a moved/cropped clip. Saves for the same clip run in order (an old retry can't
+   *  overwrite a newer edit); transient failures retry up to 3 times. */
+  const clipSaveChainRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  function saveClipGeometry(layerId: string, body: Record<string, unknown>) {
+    const snapshot = JSON.stringify(body);
+    const prev = clipSaveChainRef.current.get(layerId) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(() => sendClipGeometry(layerId, snapshot));
+    clipSaveChainRef.current.set(layerId, run);
+    return run;
+  }
+  async function sendClipGeometry(layerId: string, payload: string) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await fetch(`/api/recording-tasks/${layerId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: payload,
         });
         if (res.ok) return true;
-        if (res.status >= 400 && res.status < 500) {
+        if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
           const j = (await res.json().catch(() => ({}))) as ApiJson;
           setEditMsg(
             typeof j.error === "string" ? `Clip edit not saved: ${j.error}` : "Clip edit not saved"
@@ -2330,7 +2339,7 @@ export function ProducerView({
       } catch {
         /* network error — retry below */
       }
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
     }
     setEditMsg("Clip edit not saved — check your connection and try again");
     return false;
