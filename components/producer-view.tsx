@@ -6865,6 +6865,7 @@ export function ProducerView({
         {/* Desktop: title inline */}
         {!isNarrow && (
           <div
+            className="ap-console-title"
             style={{
               flex: 1,
               minWidth: 0,
@@ -7484,6 +7485,7 @@ export function ProducerView({
         {!isNarrow && (
           <a
             href={libraryHref || "/app"}
+            className="ap-console-dup-library"
             style={{
               ...iconBtn(border, surface, text),
               textDecoration: "none",
