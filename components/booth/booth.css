@@ -225,6 +225,11 @@ button.bx-rec:focus-visible{outline:2px solid var(--bx-accent);outline-offset:10
   box-shadow:inset 0 2px 6px rgba(255,255,255,.35),inset 0 -8px 18px rgba(120,20,40,.25),0 14px 40px -10px rgba(255,77,109,.75);
   animation:bx-rec-beat 1s cubic-bezier(.3,0,.3,1) infinite}
 .bx-rec-orb::before{background:conic-gradient(from 0deg,transparent,rgba(255,255,255,.22),transparent 40%);animation:bx-rec-fluid 6s linear infinite}
+/* iOS Safari: overflow:hidden + border-radius stops clipping while the orb animates,
+   so the rotating sheen above showed as a light square behind the button. Force a
+   circular clip and drop the blend mode so only the round button is visible. */
+.bx-rec-orb{clip-path:circle(50% at 50% 50%);-webkit-mask-image:-webkit-radial-gradient(white,black);transform:translateZ(0)}
+.bx-rec-orb::before{mix-blend-mode:normal}
 .bx-rec-mic{color:#fff}
 .bx-rec::before,.bx-rec::after{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid rgba(255,108,98,.55);
   animation:bx-rec-ring 2s ease-out infinite;pointer-events:none}
