@@ -12,6 +12,8 @@
  * Capture uses the same live pipeline as Booth (openRecordingStream + createVocalRecorder).
  */
 
+import "./producer-panels.css";
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/lib/theme";
 import { STUDIO_LOGO_URL } from "@/lib/brand";
@@ -6747,6 +6749,8 @@ export function ProducerView({
   return (
     <div
       style={{
+        "--ap-panel-bg": bg, "--ap-panel-surface": surface, "--ap-panel-border": border,
+        "--ap-panel-text": text, "--ap-panel-muted": mutedText, "--ap-panel-accent": brass,
         position: "fixed",
         inset: 0,
         zIndex: 9999,
@@ -6758,7 +6762,7 @@ export function ProducerView({
         color: text,
         fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
         overflow: "hidden",
-      }}
+      } as React.CSSProperties}
     >
       <div
         style={{
@@ -8569,7 +8573,8 @@ export function ProducerView({
 
                                 {stackMenuId === tr.id && tr.kind === "vocal" && !sidebarCollapsed && (
                   <div
-                    role="menu"
+                    className="ap-track-menu"
+              role="menu"
                     aria-label="Stack and choir options"
                     style={{
                       marginTop: 6,
@@ -9313,7 +9318,7 @@ export function ProducerView({
                       })
                     : null}
                   {isTakeEditing ? (
-                    <div
+                    <div className="ap-edit-toolbar"
                       style={{
                         position: "absolute",
                         left: msToX(tr.startMs),
@@ -10036,209 +10041,17 @@ export function ProducerView({
         </div>
       ) : null}
 
-            {/* AP working overlay — Suno-style generative studio */}
       {trackPromptBusy && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 60,
-            display: "grid",
-            placeItems: "center",
-            background:
-              "radial-gradient(ellipse at 50% 40%, rgba(193,122,18,0.18), transparent 55%), rgba(6,6,10,0.72)",
-            backdropFilter: "blur(18px)",
-            pointerEvents: "all",
-          }}
-        >
-          <style>{`
-            @keyframes apPulse {
-              0%, 100% { transform: scale(1); opacity: 0.85; }
-              50% { transform: scale(1.08); opacity: 1; }
-            }
-            @keyframes apOrbit {
-              from { transform: rotate(0deg); }
-              to { transform: rotate(360deg); }
-            }
-            @keyframes apBar {
-              0%, 100% { height: 18%; }
-              50% { height: 92%; }
-            }
-            @keyframes apShimmer {
-              0% { background-position: 0% 50%; }
-              100% { background-position: 200% 50%; }
-            }
-          `}</style>
-          <div
-            style={{
-              width: "min(360px, 92vw)",
-              padding: "28px 24px 24px",
-              borderRadius: 20,
-              border: "1px solid rgba(255,255,255,0.1)",
-              background: "rgba(18,18,24,0.92)",
-              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
-              textAlign: "center",
-            }}
-          >
-            <div
-              style={{
-                position: "relative",
-                width: 88,
-                height: 88,
-                margin: "0 auto 18px",
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: "50%",
-                  border: "2px solid transparent",
-                  borderTopColor: brass,
-                  borderRightColor: "rgba(193,122,18,0.35)",
-                  animation: "apOrbit 1.4s linear infinite",
-                }}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 10,
-                  borderRadius: "50%",
-                  background: `linear-gradient(135deg, ${brass}, #C17A12 40%, #A78BFA)`,
-                  backgroundSize: "200% 200%",
-                  animation: "apPulse 1.6s ease-in-out infinite, apShimmer 3s linear infinite",
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#0B0A0F",
-                  fontWeight: 900,
-                  fontSize: 15,
-                  letterSpacing: "0.06em",
-                }}
-              >
-                AP
-              </div>
+        <div className="ap-work-status" role="status" aria-live="polite">
+          <div className="ap-work-status-inner">
+            <img src={STUDIO_LOGO_URL} alt="" width={32} height={32} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong>{apSteps.find((step) => step.active)?.label || apSummary || "AP is working…"}</strong>
+              <small>{selectedTrackId && selectedTrackId !== "beat"
+                ? tracks.find((track) => track.id === selectedTrackId)?.label || "Track"
+                : "Session"}</small>
             </div>
-            {/* mini equalizer bars */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-end",
-                justifyContent: "center",
-                gap: 4,
-                height: 36,
-                marginBottom: 16,
-              }}
-            >
-              {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 5,
-                    borderRadius: 3,
-                    background: i % 2 === 0 ? brass : "#A78BFA",
-                    animation: `apBar ${0.7 + (i % 3) * 0.15}s ease-in-out ${i * 0.08}s infinite`,
-                    height: "40%",
-                  }}
-                />
-              ))}
-            </div>
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 700,
-                color: text,
-                marginBottom: 10,
-                minHeight: 22,
-              }}
-            >
-              {apSummary ||
-                [
-                  "Listening to your direction…",
-                  "Reading the session…",
-                  "Executing DAW moves…",
-                  "Shaping the sound…",
-                  "Finishing the pass…",
-                ][apPhase % 5]}
-            </div>
-            {apSteps.length > 0 ? (
-              <div
-                style={{
-                  textAlign: "left",
-                  maxWidth: 300,
-                  margin: "0 auto 12px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}
-              >
-                {apSteps.map((st, i) => (
-                  <div
-                    key={`${st.label}-${i}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontSize: 12,
-                      color: st.active ? brass : st.done ? mutedText : faint,
-                      fontWeight: st.active ? 700 : 500,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 999,
-                        border: `1.5px solid ${st.done || st.active ? brass : border}`,
-                        background: st.done ? brass : "transparent",
-                        color: st.done ? "#1A1208" : brass,
-                        fontSize: 10,
-                        fontWeight: 800,
-                        display: "grid",
-                        placeItems: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {st.done ? "✓" : st.active ? "·" : ""}
-                    </span>
-                    <span>{st.label}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: mutedText,
-                  lineHeight: 1.45,
-                  maxWidth: 280,
-                  margin: "0 auto",
-                }}
-              >
-                {selectedTrackId && selectedTrackId !== "beat"
-                  ? `Working on ${tracks.find((t) => t.id === selectedTrackId)?.label || "track"}`
-                  : "Session direction"}
-              </div>
-            )}
-            <div
-              style={{
-                marginTop: 14,
-                height: 3,
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.08)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  width: "40%",
-                  borderRadius: 999,
-                  background: `linear-gradient(90deg, transparent, ${brass}, transparent)`,
-                  backgroundSize: "200% 100%",
-                  animation: "apShimmer 1.2s linear infinite",
-                }}
-              />
-            </div>
+            <span className="ap-work-spinner" aria-hidden="true" />
           </div>
         </div>
       )}
@@ -10832,7 +10645,9 @@ placeholder="Ask AP anything…"
 
       {showAddTrack && (
         <div
+          className="ap-add-track-backdrop"
           role="dialog"
+          aria-modal="true"
           aria-label="Add track"
           style={{
             position: "fixed",
@@ -10845,7 +10660,7 @@ placeholder="Ask AP anything…"
           }}
           onClick={() => !addBusy && setShowAddTrack(false)}
         >
-          <div
+          <div className="ap-compact-sheet ap-add-track-body"
             style={{
               width: "100%",
               maxWidth: 420,
@@ -10879,7 +10694,7 @@ placeholder="Ask AP anything…"
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
               RECORDING
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            <div className="ap-track-options" style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
               {(
                 [
                   { id: "lead", label: "Lead vocal", hint: "Main vocal line" },
@@ -10929,7 +10744,7 @@ placeholder="Ask AP anything…"
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", opacity: 0.5, marginBottom: 8 }}>
               AUDIO FILE
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            <div className="ap-track-options" style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
               {(
                 [
                   { id: "audio", label: "Audio track", hint: "Upload any take" },
@@ -11144,6 +10959,7 @@ placeholder="Ask AP anything…"
         <div
           role="dialog"
           aria-modal="true"
+          aria-label="Track effects"
           style={{
             position: "fixed",
             inset: 0,
@@ -11155,7 +10971,7 @@ placeholder="Ask AP anything…"
           }}
           onClick={() => setFxOpenId(null)}
         >
-          <div
+          <div className="ap-compact-sheet"
             style={{
               width: "100%",
               maxWidth: 480,
@@ -12812,7 +12628,7 @@ function TrackFxPanel({
           }}
           onClick={() => setModalId(null)}
         >
-          <div
+          <div className="ap-compact-sheet"
             onClick={(e) => e.stopPropagation()}
             style={{
               width: "min(460px, 100%)",
@@ -12877,7 +12693,7 @@ function TrackFxPanel({
               </div>
             </div>
 
-            <div style={{ marginBottom: 14 }}>
+            <div className="ap-effect-preview" style={{ marginBottom: 14 }}>
               <MiniPreview id={modalDef.id} accent={modalDef.accent} />
             </div>
 
@@ -12987,7 +12803,7 @@ function TrackFxPanel({
 
       {/* Effects browser — Suno grid */}
       {addOpen && (
-        <div
+        <div role="dialog" aria-modal="true" aria-label="Add effect"
           style={{
             position: "fixed",
             inset: 0,
@@ -13000,7 +12816,7 @@ function TrackFxPanel({
           }}
           onClick={() => setAddOpen(false)}
         >
-          <div
+          <div className="ap-compact-sheet"
             onClick={(e) => e.stopPropagation()}
             style={{
               width: "min(560px, 100%)",
@@ -13035,7 +12851,7 @@ function TrackFxPanel({
                 ×
               </button>
             </div>
-            <div
+            <div className="ap-fx-browser-grid"
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 132px), 1fr))",
