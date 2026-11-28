@@ -43,3 +43,14 @@
  .ap-console-count-in,.ap-console-guide{width:auto!important;padding:0 10px!important;white-space:nowrap;font-size:12px!important}
  .ap-console-header>button[aria-label="Record vocal"],.ap-console-header>button[aria-label="Stop recording"]{width:36px!important;min-width:36px!important}
 }
+
+/* Desktop Console header: controls keep their size; only the song title flexes. */
+@media(min-width:721px){
+ .ap-console-header>*{flex-shrink:0!important}
+ .ap-console-header>.ap-console-title{flex:1 1 120px!important;min-width:120px!important}
+ /* The logo already links to Library — drop the duplicate text button */
+ .ap-console-dup-library{display:none!important}
+}
+@media(min-width:721px) and (max-width:1180px){
+ .ap-console-header{gap:6px!important;padding:0 8px!important}
+}
