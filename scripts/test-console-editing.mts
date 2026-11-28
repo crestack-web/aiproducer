@@ -4,6 +4,7 @@ import {
   currentLyricLine,
   makeCountInPlan,
   scheduleClipEdgeFades,
+  scoreTakeAssessment,
 } from "../lib/audio/console-editing";
 
 const plan = makeCountInPlan(120, 4);
@@ -33,5 +34,9 @@ assert.equal(lyrics.length, 2);
 assert.equal(currentLyricLine(lyrics, 1500)?.text, "First line");
 assert.equal(currentLyricLine(lyrics, 3500)?.text, "Second line");
 assert.equal(currentLyricLine(lyrics, 5000), null);
+
+assert(scoreTakeAssessment({ action: "KEEP", confidence: 0.8 }) > scoreTakeAssessment({ action: "RETAKE", confidence: 0.8 }));
+assert(scoreTakeAssessment({ action: "KEEP", clippingDetected: true }) < scoreTakeAssessment({ action: "TRIM", clippingDetected: false }));
+assert(scoreTakeAssessment({ action: "KEEP", silenceDetected: true }) < 50);
 
 console.log("console-editing: ok");

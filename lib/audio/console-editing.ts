@@ -100,3 +100,33 @@ export function currentLyricLine(
 ): LyricTimelineLine | null {
   return lines.find((line) => positionMs >= line.startMs && positionMs < line.endMs) || null;
 }
+
+export type TakeAssessment = {
+  action?: string | null;
+  confidence?: number | null;
+  clippingDetected?: boolean | null;
+  silenceDetected?: boolean | null;
+  onsetDeviationMs?: number | null;
+};
+
+/** Deterministic ranking for Best take; musical review remains available in the picker. */
+export function scoreTakeAssessment(assessment: TakeAssessment | null | undefined): number {
+  if (!assessment) return 0;
+  const actionScore: Record<string, number> = {
+    KEEP: 100,
+    TRIM: 72,
+    NEEDS_REVIEW: 45,
+    ADD_DOUBLE: 60,
+    ADD_HARMONY: 60,
+    ADD_BACKGROUND: 60,
+    ADD_ADLIB: 60,
+    RETAKE: 5,
+  };
+  let score = actionScore[String(assessment.action || "").toUpperCase()] ?? 25;
+  score += Math.max(0, Math.min(1, Number(assessment.confidence) || 0)) * 10;
+  if (assessment.clippingDetected) score -= 45;
+  if (assessment.silenceDetected) score -= 60;
+  const deviation = Math.abs(Number(assessment.onsetDeviationMs) || 0);
+  score -= Math.min(20, deviation / 100);
+  return score;
+}
