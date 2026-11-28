@@ -74,22 +74,19 @@ export function buildLyricTimeline(
       .map((line) => line.trim())
       .filter(Boolean);
     if (!textLines.length) continue;
-    const regions = layer.clips?.length
-      ? layer.clips
-      : [{ startMs: layer.startMs, endMs: layer.endMs }];
-    for (const region of regions) {
-      const start = Math.max(0, region.startMs);
-      const end = Math.max(start + 1, region.endMs);
-      const lineMs = (end - start) / textLines.length;
-      textLines.forEach((text, index) => {
-        lines.push({
-          text,
-          startMs: start + index * lineMs,
-          endMs: index === textLines.length - 1 ? end : start + (index + 1) * lineMs,
-          trackId: layer.id,
-        });
+    // Split clips are pieces of the same performance, not new copies of its words.
+    // Use the layer span so cutting a clip never duplicates the section's lyrics.
+    const start = Math.max(0, layer.startMs);
+    const end = Math.max(start + 1, layer.endMs);
+    const lineMs = (end - start) / textLines.length;
+    textLines.forEach((text, index) => {
+      lines.push({
+        text,
+        startMs: start + index * lineMs,
+        endMs: index === textLines.length - 1 ? end : start + (index + 1) * lineMs,
+        trackId: layer.id,
       });
-    }
+    });
   }
   return lines.sort((a, b) => a.startMs - b.startMs);
 }
