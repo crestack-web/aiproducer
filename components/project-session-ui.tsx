@@ -406,6 +406,9 @@ export default function ProjectDetailPage() {
   const [phase, setPhase] = useState<Phase>("ready");
   const [countdown, setCountdown] = useState(3);
   const [localBlobUrl, setLocalBlobUrl] = useState<string | null>(null);
+  // Mirror of localBlobUrl so async take loads never overwrite a fresh, unsaved take.
+  const localBlobUrlRef = useRef<string | null>(null);
+  useEffect(() => { localBlobUrlRef.current = localBlobUrl; }, [localBlobUrl]);
   /** Diagnostic-only: exact MediaRecorder Blob (untouched) for raw playback. */
   const rawTakeBlobRef = useRef<Blob | null>(null);
   const rawTakeAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -678,6 +681,8 @@ export default function ProjectDetailPage() {
       }[]
     ) => {
       if (!list.length) return;
+      // A just-recorded take (blob:) is what the artist must hear in review.
+      if (localBlobUrlRef.current?.startsWith("blob:")) return;
       const selected =
         list.find((t) => t.is_selected) ||
         list[list.length - 1];
@@ -1626,7 +1631,9 @@ export default function ProjectDetailPage() {
       stopLayerMonitors();
       const blob = new Blob(chunksRef.current, { type: mimeRef.current.split(";")[0] });
       const wallClockMs = Date.now() - startedAtRef.current;
-      setLocalBlobUrl(URL.createObjectURL(blob));
+      const freshUrl = URL.createObjectURL(blob);
+      localBlobUrlRef.current = freshUrl;
+      setLocalBlobUrl(freshUrl);
       void diagnoseRawCaptureBlob(blob, mimeRef.current, {
         ...(lastCaptureDeviceRef.current || {}),
         wallClockMs,
@@ -3175,6 +3182,7 @@ export default function ProjectDetailPage() {
   const reviewPlayer =
     current && localBlobUrl ? (
       <CompactAudioPlayer
+        key={localBlobUrl}
         src={localBlobUrl}
         label="Your take"
         seed={`take-${current.id}`}
