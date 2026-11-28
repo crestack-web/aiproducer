@@ -566,7 +566,7 @@ const TRACK_COLOR_PRESETS = [
   "#38BDF8",
   "#67E8F9",
   "#94A3B8",
-  "#E7A961",
+  "#C17A12",
   "#4ADE80",
   "#F87171",
 ];
@@ -6635,7 +6635,7 @@ export function ProducerView({
   const text = C.text || "#F4F1EC";
   const mutedText = C.textMuted || "#9B96A3";
   const faint = C.textFaint || "#5C5866";
-  const brass = C.brass || "#E7A961";
+  const brass = C.brass || "#C17A12";
 
   // Expanded rail must fit labels + M/S/FX without shrinking text (overflow, not scale)
   const sidebarW = sidebarCollapsed ? (isNarrow ? 44 : 56) : isNarrow ? 168 : 200;
@@ -6746,7 +6746,7 @@ export function ProducerView({
         width: "100vw",
         background: bg,
         color: text,
-        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
         overflow: "hidden",
       }}
     >
@@ -6755,9 +6755,11 @@ export function ProducerView({
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
-          background: surface,
+          background: "rgba(17,17,19,0.98)",
           borderBottom: `1px solid ${border}`,
           paddingTop: "max(8px, env(safe-area-inset-top))",
+          backdropFilter: "blur(18px)",
+          boxShadow: "0 8px 30px rgba(0,0,0,0.18)",
         }}
       >
       {/* Row 1 — tools. Mobile: minimal transport (no horizontal button dump). */}
@@ -6982,14 +6984,16 @@ export function ProducerView({
             aria-label="Mixer"
             style={{
               ...iconBtn(border, surface, text),
-              width: isNarrow ? 34 : 36,
-              height: isNarrow ? 34 : 36,
+              width: isNarrow ? 34 : "auto",
+              height: isNarrow ? 34 : 38,
               minWidth: isNarrow ? 34 : 36,
-              minHeight: isNarrow ? 34 : 36,
+              minHeight: isNarrow ? 34 : 38,
+              padding: isNarrow ? 0 : "0 13px",
+              gap: 7,
               flexShrink: 0,
               borderRadius: 999,
               border: mixerOpen ? `1px solid ${brass}` : `1px solid ${border}`,
-              background: mixerOpen ? "rgba(231,169,97,0.15)" : "rgba(255,255,255,0.06)",
+              background: mixerOpen ? "rgba(193,122,18,0.15)" : "rgba(255,255,255,0.06)",
               color: mixerOpen ? brass : text,
             }}
           >
@@ -7011,10 +7015,11 @@ export function ProducerView({
               <circle cx="12" cy="14" r="2" fill="currentColor" stroke="none" />
               <circle cx="18" cy="8" r="2" fill="currentColor" stroke="none" />
             </svg>
+            {!isNarrow && <span style={{ fontSize: 12, fontWeight: 700 }}>Mixer</span>}
           </button>
         ) : null}
 
-        {projectId ? (
+        {projectId && !isNarrow ? (
           <button
             type="button"
             onClick={() => void exportSessionBounce()}
@@ -7062,7 +7067,7 @@ export function ProducerView({
                   ? "rgba(255,255,255,0.1)"
                   : produceUi === "complete"
                     ? "rgba(52,211,153,0.2)"
-                    : `linear-gradient(180deg, #FFB089, ${brass})`,
+                    : `${brass}`,
               color:
                 produceUi === "producing"
                   ? mutedText
@@ -7173,7 +7178,7 @@ export function ProducerView({
                       ? "#F07167"
                       : liveLevel > 0.35
                         ? brass
-                        : "rgba(231,169,97,0.55)",
+                        : "rgba(193,122,18,0.55)",
                   transition: "width 50ms linear",
                 }}
               />
@@ -7185,22 +7190,26 @@ export function ProducerView({
           type="button"
           onClick={togglePlay}
           style={{
-            width: isNarrow ? 44 : 36,
-            height: isNarrow ? 44 : 36,
-            minWidth: isNarrow ? 44 : 36,
-            minHeight: isNarrow ? 44 : 36,
-            maxHeight: isNarrow ? 44 : 36,
+            width: isNarrow ? 44 : "auto",
+            height: isNarrow ? 44 : 40,
+            minWidth: isNarrow ? 44 : 40,
+            minHeight: isNarrow ? 44 : 40,
+            maxHeight: isNarrow ? 44 : 40,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 7,
             borderRadius: 999,
             border: "none",
-            background: `linear-gradient(180deg, #FFB089, ${brass})`,
-            color: "#1A1208",
+            background: `${brass}`,
+            color: "#0B0A0F",
             fontWeight: 800,
             fontSize: isNarrow ? 16 : 14,
             cursor: "pointer",
             flexShrink: 0,
             boxSizing: "border-box",
-            padding: 0,
-            boxShadow: isNarrow ? `0 0 0 3px rgba(231,169,97,0.25)` : undefined,
+            padding: isNarrow ? 0 : "0 15px",
+            boxShadow: isNarrow ? `0 0 0 3px rgba(193,122,18,0.25)` : `0 5px 18px rgba(193,122,18,0.2)`,
           }}
           aria-label={
             transportPhase === "preparing"
@@ -7218,7 +7227,10 @@ export function ProducerView({
                 : "Play"
           }
         >
-          {transportPhase === "preparing" ? "…" : playing ? "❚❚" : "▶"}
+          <span aria-hidden="true">{transportPhase === "preparing" ? "…" : playing ? "❚❚" : "▶"}</span>
+          {!isNarrow && transportPhase !== "preparing" && (
+            <span style={{ fontSize: 12, fontWeight: 800 }}>{playing ? "Pause" : "Play"}</span>
+          )}
         </button>
         {transportPhase === "preparing" ? (
           <span
@@ -7234,7 +7246,8 @@ export function ProducerView({
           </span>
         ) : null}
 
-        <div style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: mutedText, minWidth: 88, fontWeight: 600 }}>
+        <div aria-label="Playback position" style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: text, minWidth: 88, fontWeight: 650, padding: "5px 10px", borderRadius: 10, background: "rgba(255,255,255,0.045)", border: `1px solid ${border}` }}>
+          <span style={{ display: "block", fontSize: 8, letterSpacing: "0.12em", color: faint, marginBottom: 2 }}>POSITION</span>
           {formatPlayhead(playheadMs)}
           {typeof window !== "undefined" &&
           (() => {
@@ -7320,7 +7333,7 @@ export function ProducerView({
             ...iconBtn(border, surface, text),
             color: loopOn ? brass : text,
             borderColor: loopOn ? brass : border,
-            background: loopOn ? "rgba(231,169,97,0.15)" : surface,
+            background: loopOn ? "rgba(193,122,18,0.15)" : surface,
           }}
           aria-label={
             loopOn
@@ -7485,6 +7498,30 @@ export function ProducerView({
                 }}
               >
                 Sessions
+              </button>
+            ) : null}
+            {projectId ? (
+              <button
+                type="button"
+                disabled={exportBusy || produceUi === "producing" || produceUi === "starting"}
+                onClick={() => {
+                  setHeaderMoreOpen(false);
+                  void exportSessionBounce();
+                }}
+                style={{
+                  height: 36,
+                  padding: "0 14px",
+                  borderRadius: 999,
+                  border: `1px solid ${border}`,
+                  background: surface,
+                  color: text,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: exportBusy ? "wait" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {exportBusy ? "Exporting…" : "Export WAV"}
               </button>
             ) : null}
             {(boothHref || onClose) && (
@@ -7706,7 +7743,7 @@ export function ProducerView({
                           borderRadius: 999,
                           border: "none",
                           background: brass,
-                          color: "#1A1208",
+                          color: "#0B0A0F",
                           fontWeight: 700,
                           fontSize: 11,
                           cursor: "pointer",
@@ -7768,8 +7805,8 @@ export function ProducerView({
               display: "inline-block",
               padding: "12px 18px",
               borderRadius: 999,
-              background: `linear-gradient(180deg, #FFB089, ${brass})`,
-              color: "#1A1208",
+              background: `${brass}`,
+              color: "#0B0A0F",
               fontWeight: 800,
               cursor: planBusy ? "wait" : "pointer",
               opacity: planBusy ? 0.7 : 1,
@@ -7816,8 +7853,8 @@ export function ProducerView({
               padding: "10px 16px",
               borderRadius: 999,
               border: "none",
-              background: `linear-gradient(180deg, #FFB089, ${brass})`,
-              color: "#1A1208",
+              background: `${brass}`,
+              color: "#0B0A0F",
               fontWeight: 800,
               cursor: planBusy ? "wait" : "pointer",
               fontFamily: "inherit",
@@ -7971,7 +8008,7 @@ export function ProducerView({
               type="button"
               onClick={toggleSidebar}
               style={{
-                background: sidebarCollapsed ? "rgba(255,255,255,0.06)" : "rgba(231,169,97,0.12)",
+                background: sidebarCollapsed ? "rgba(255,255,255,0.06)" : "rgba(193,122,18,0.12)",
                 border: `1px solid ${sidebarCollapsed ? border : brass + "66"}`,
                 borderRadius: 8,
                 color: sidebarCollapsed ? mutedText : brass,
@@ -8063,7 +8100,7 @@ export function ProducerView({
                   padding: isNarrow ? "10px 12px" : "12px 14px",
                   borderRadius: 10,
                   border: `1px dashed ${brass}99`,
-                  background: "rgba(231,169,97,0.08)",
+                  background: "rgba(193,122,18,0.08)",
                   color: brass,
                   fontWeight: 700,
                   fontSize: isNarrow ? 12 : 13,
@@ -8602,7 +8639,7 @@ export function ProducerView({
                   padding: sidebarCollapsed ? "8px 0" : isNarrow ? "8px 10px" : "9px 12px",
                   borderRadius: 10,
                   border: `1px dashed ${brass}88`,
-                  background: "rgba(231,169,97,0.07)",
+                  background: "rgba(193,122,18,0.07)",
                   color: brass,
                   fontWeight: 700,
                   fontSize: sidebarCollapsed ? 16 : isNarrow ? 12 : 12.5,
@@ -8775,7 +8812,7 @@ export function ProducerView({
                     top: 6,
                     height: 28,
                     borderRadius: 8,
-                    background: "rgba(231,169,97,0.22)",
+                    background: "rgba(193,122,18,0.22)",
                     border: `1.5px solid ${brass}`,
                     fontSize: 11,
                     fontWeight: 700,
@@ -8890,7 +8927,7 @@ export function ProducerView({
                           position: "absolute",
                           inset: 0,
                           background:
-                            "linear-gradient(110deg, transparent 25%, rgba(231,169,97,0.14) 45%, rgba(123,235,212,0.12) 55%, transparent 75%)",
+                            "linear-gradient(110deg, transparent 25%, rgba(193,122,18,0.14) 45%, rgba(123,235,212,0.12) 55%, transparent 75%)",
                           backgroundSize: "200% 100%",
                           animation: "apTrackShimmer 1.4s ease-in-out infinite",
                         }}
@@ -8904,7 +8941,7 @@ export function ProducerView({
                           padding: "8px 14px",
                           borderRadius: 999,
                           background: "rgba(12,12,18,0.88)",
-                          border: `1px solid rgba(231,169,97,0.35)`,
+                          border: `1px solid rgba(193,122,18,0.35)`,
                           boxShadow: "0 8px 28px rgba(0,0,0,0.45)",
                         }}
                       >
@@ -8913,7 +8950,7 @@ export function ProducerView({
                             width: 14,
                             height: 14,
                             borderRadius: "50%",
-                            border: "2px solid rgba(231,169,97,0.25)",
+                            border: "2px solid rgba(193,122,18,0.25)",
                             borderTopColor: brass,
                             animation: "apTrackSpin 0.7s linear infinite",
                             flexShrink: 0,
@@ -9112,10 +9149,10 @@ export function ProducerView({
                           bottom: 0,
                           left: `${(Math.min(takeSel.startMs, takeSel.endMs) / takeDurationMs) * 100}%`,
                           width: `${(Math.abs(takeSel.endMs - takeSel.startMs) / takeDurationMs) * 100}%`,
-                          background: "rgba(231,169,97,0.32)",
+                          background: "rgba(193,122,18,0.32)",
                           borderLeft: `2px solid #fff`,
                           borderRight: `2px solid #fff`,
-                          boxShadow: "inset 0 0 0 1px rgba(231,169,97,0.8)",
+                          boxShadow: "inset 0 0 0 1px rgba(193,122,18,0.8)",
                           pointerEvents: "none",
                           zIndex: 3,
                         }}
@@ -9282,7 +9319,7 @@ export function ProducerView({
                       </button>
                       <button type="button" disabled={!isValidRegion(takeSel, takeDurationMs) || takeEditBusy || isConsoleRecording}
                         onClick={startRetakeRegion}
-                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${brass}`, background: retakeTarget ? "rgba(231,169,97,0.22)" : "rgba(255,255,255,0.06)", color: brass, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit", opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4 }}>
+                        style={{ height: 28, padding: "0 10px", borderRadius: 999, border: `1px solid ${brass}`, background: retakeTarget ? "rgba(193,122,18,0.22)" : "rgba(255,255,255,0.06)", color: brass, fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit", opacity: isValidRegion(takeSel, takeDurationMs) ? 1 : 0.4 }}>
                         Retake
                       </button>
                       <button type="button" disabled={takeUndoDepth === 0 || takeEditBusy}
@@ -9300,7 +9337,7 @@ export function ProducerView({
                         Cancel
                       </button>
                       <button type="button" onClick={() => void commitTakeEdit()} disabled={takeEditBusy}
-                        style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: `linear-gradient(180deg, #FFB089, ${brass})`, color: "#1A1208", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        style={{ height: 28, padding: "0 12px", borderRadius: 999, border: "none", background: `${brass}`, color: "#0B0A0F", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
                         {takeEditBusy ? "…" : "Done"}
                       </button>
                     </div>
@@ -9318,7 +9355,7 @@ export function ProducerView({
                   bottom: 0,
                   left: msToX(loopRange.startMs),
                   width: Math.max(2, msToX(loopRange.endMs) - msToX(loopRange.startMs)),
-                  background: "rgba(231,169,97,0.08)",
+                  background: "rgba(193,122,18,0.08)",
                   borderLeft: `1px solid ${brass}`,
                   borderRight: `1px solid ${brass}`,
                   pointerEvents: "none",
@@ -9579,7 +9616,7 @@ export function ProducerView({
                   ? "rgba(240,113,103,0.35)"
                   : produceUi === "complete"
                     ? "rgba(52,211,153,0.35)"
-                    : "rgba(231,169,97,0.35)"
+                    : "rgba(193,122,18,0.35)"
               }`,
               boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
               backdropFilter: "blur(12px)",
@@ -9619,7 +9656,7 @@ export function ProducerView({
                       height: "100%",
                       width: `${Math.max(8, produceProgress || 8)}%`,
                       borderRadius: 999,
-                      background: `linear-gradient(90deg, ${brass}, #FFB089)`,
+                      background: `linear-gradient(90deg, ${brass}, ${brass})`,
                       transition: "width 0.4s ease",
                     }}
                   />
@@ -9772,8 +9809,8 @@ export function ProducerView({
                           height: 40,
                           borderRadius: 999,
                           border: "none",
-                          background: `linear-gradient(180deg, #FFB089, ${brass})`,
-                          color: "#1A1208",
+                          background: `${brass}`,
+                          color: "#0B0A0F",
                           fontWeight: 800,
                           fontSize: 14,
                           cursor: "pointer",
@@ -9842,8 +9879,8 @@ export function ProducerView({
                       height: 36,
                       borderRadius: 999,
                       border: "none",
-                      background: `linear-gradient(180deg, #FFB089, ${brass})`,
-                      color: "#1A1208",
+                      background: `${brass}`,
+                      color: "#0B0A0F",
                       fontWeight: 800,
                       fontSize: 12,
                       cursor: downloadBusy ? "default" : "pointer",
@@ -9930,8 +9967,8 @@ export function ProducerView({
                     padding: "0 16px",
                     borderRadius: 999,
                     border: "none",
-                    background: `linear-gradient(180deg, #FFB089, ${brass})`,
-                    color: "#1A1208",
+                    background: `${brass}`,
+                    color: "#0B0A0F",
                     fontWeight: 800,
                     fontSize: 13,
                     cursor: "pointer",
@@ -9975,7 +10012,7 @@ export function ProducerView({
             display: "grid",
             placeItems: "center",
             background:
-              "radial-gradient(ellipse at 50% 40%, rgba(231,169,97,0.18), transparent 55%), rgba(6,6,10,0.72)",
+              "radial-gradient(ellipse at 50% 40%, rgba(193,122,18,0.18), transparent 55%), rgba(6,6,10,0.72)",
             backdropFilter: "blur(18px)",
             pointerEvents: "all",
           }}
@@ -10024,7 +10061,7 @@ export function ProducerView({
                   borderRadius: "50%",
                   border: "2px solid transparent",
                   borderTopColor: brass,
-                  borderRightColor: "rgba(231,169,97,0.35)",
+                  borderRightColor: "rgba(193,122,18,0.35)",
                   animation: "apOrbit 1.4s linear infinite",
                 }}
               />
@@ -10033,12 +10070,12 @@ export function ProducerView({
                   position: "absolute",
                   inset: 10,
                   borderRadius: "50%",
-                  background: `linear-gradient(135deg, ${brass}, #FFB089 40%, #A78BFA)`,
+                  background: `linear-gradient(135deg, ${brass}, #C17A12 40%, #A78BFA)`,
                   backgroundSize: "200% 200%",
                   animation: "apPulse 1.6s ease-in-out infinite, apShimmer 3s linear infinite",
                   display: "grid",
                   placeItems: "center",
-                  color: "#1A1208",
+                  color: "#0B0A0F",
                   fontWeight: 900,
                   fontSize: 15,
                   letterSpacing: "0.06em",
@@ -10187,8 +10224,8 @@ export function ProducerView({
             height: 48,
             borderRadius: 999,
             border: `1px solid ${border}`,
-            background: `linear-gradient(180deg, #FFB089, ${brass})`,
-            color: "#1A1208",
+            background: `${brass}`,
+            color: "#0B0A0F",
             fontWeight: 800,
             fontSize: 13,
             cursor: "pointer",
@@ -10320,7 +10357,7 @@ export function ProducerView({
                       : "1px solid rgba(255,255,255,0.12)",
                   background:
                     !selectedTrackId || selectedTrackId === "beat"
-                      ? "rgba(231,169,97,0.18)"
+                      ? "rgba(193,122,18,0.18)"
                       : "rgba(255,255,255,0.05)",
                   color:
                     !selectedTrackId || selectedTrackId === "beat" ? brass : mutedText,
@@ -10496,7 +10533,7 @@ placeholder="Ask AP anything…"
                   border: "none",
                   background:
                     !trackPromptBusy && trackPrompt.trim()
-                      ? "linear-gradient(180deg, #FFB089, #E7A961)"
+                      ? "#C17A12"
                       : "rgba(255,255,255,0.1)",
                   color:
                     !trackPromptBusy && trackPrompt.trim()
@@ -10568,7 +10605,7 @@ placeholder="Ask AP anything…"
                     onClick={() => void generateAiInstrument(inst)}
                     style={{
                       border: "1px solid rgba(255,255,255,0.14)",
-                      background: aiInstrumentBusy ? "rgba(255,255,255,0.06)" : "rgba(231,169,97,0.12)",
+                      background: aiInstrumentBusy ? "rgba(255,255,255,0.06)" : "rgba(193,122,18,0.12)",
                       color: "#F5E6D3",
                       borderRadius: 999,
                       padding: "8px 12px",
@@ -10633,7 +10670,7 @@ placeholder="Ask AP anything…"
                   padding: "14px 12px",
                   borderRadius: 12,
                   border: `1px solid ${brass}`,
-                  background: "rgba(231,169,97,0.12)",
+                  background: "rgba(193,122,18,0.12)",
                   color: text,
                   marginBottom: 8,
                   cursor: "pointer",
@@ -10885,7 +10922,7 @@ placeholder="Ask AP anything…"
                       padding: "12px 14px",
                       borderRadius: 12,
                       border: active ? `1.5px solid ${brass}` : `1px solid ${border}`,
-                      background: active ? "rgba(231,169,97,0.12)" : "rgba(255,255,255,0.04)",
+                      background: active ? "rgba(193,122,18,0.12)" : "rgba(255,255,255,0.04)",
                       color: text,
                       cursor: "pointer",
                       fontFamily: "inherit",
@@ -10943,8 +10980,8 @@ placeholder="Ask AP anything…"
                     padding: "12px",
                     borderRadius: 12,
                     border: "none",
-                    background: "linear-gradient(180deg, #FFB089, #E7A961)",
-                    color: "#1A1208",
+                    background: "#C17A12",
+                    color: "#0B0A0F",
                     fontWeight: 750,
                     cursor: addBusy ? "wait" : "pointer",
                     fontFamily: "inherit",
@@ -10969,7 +11006,7 @@ placeholder="Ask AP anything…"
                   onClick={() => void generateAiInstrument(inst)}
                   style={{
                     border: `1px solid ${border}`,
-                    background: "rgba(231,169,97,0.1)",
+                    background: "rgba(193,122,18,0.1)",
                     color: text,
                     borderRadius: 999,
                     padding: "8px 12px",
@@ -12474,7 +12511,7 @@ function TrackFxPanel({
                 borderRadius: 999,
                 border: "none",
                 background: accent,
-                color: "#1A1208",
+                color: "#0B0A0F",
                 fontWeight: 700,
                 fontSize: 12,
                 cursor: "pointer",
@@ -13115,7 +13152,7 @@ function miniChip(
     height: h,
     borderRadius: 6,
     border: `1px solid ${on ? brass : border}`,
-    background: on ? "rgba(231,169,97,0.2)" : "transparent",
+    background: on ? "rgba(193,122,18,0.2)" : "transparent",
     color: text,
     fontSize: compact ? 9 : 10,
     fontWeight: 800,

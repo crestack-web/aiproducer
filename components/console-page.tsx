@@ -368,7 +368,7 @@ export default function ConsolePage({ projectId }: { projectId: string }) {
       <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#0B0A0F", color: "#F4F1EC", fontFamily: "system-ui, sans-serif", padding: 24, textAlign: "center" }}>
         <div>
           <p style={{ color: "#F07167" }}>{error}</p>
-          <button type="button" onClick={() => router.push(`/app/studio/${projectId}`)} style={{ marginTop: 16, padding: "10px 16px", borderRadius: 999, border: "none", background: "#E7A961", color: "#1A1208", fontWeight: 700, cursor: "pointer" }}>
+          <button type="button" onClick={() => router.push(`/app/studio/${projectId}`)} style={{ marginTop: 16, padding: "10px 16px", borderRadius: 999, border: "none", background: "#C17A12", color: "#0B0A0F", fontWeight: 700, cursor: "pointer" }}>
             Back to Booth
           </button>
         </div>
