@@ -251,3 +251,13 @@ button.bx-rec:focus-visible{outline:2px solid var(--bx-accent);outline-offset:10
 @keyframes bx-thump{0%{scale:1}10%{scale:1.06}35%{scale:.99}100%{scale:1}}
 @keyframes bx-wave{0%{opacity:.8;transform:scale(1)}100%{opacity:0;transform:scale(1.45)}}
 @media (prefers-reduced-motion:reduce){.bx-orb,.bx-orb::before,.bx-orb::after,.bx-rec::before,.bx-rec::after,.bx-rec-halo,.bx-rec-orb{animation:none}}
+
+/* ---- Recording flow consistency: one brand gradient + one beat tempo across count-in, live and review ---- */
+.bx-stage .bx-count{background:linear-gradient(135deg,#ff8a5c,#ff4d6d);-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:bx-pop .35s cubic-bezier(.2,.9,.25,1) both}
+.bx-stage .bx-beats i{transition:background .15s,transform .15s}
+.bx-stage .bx-beats i[data-on="true"]{background:linear-gradient(135deg,#ff8a5c,#ff4d6d);transform:scale(1.15);box-shadow:0 0 12px rgba(255,77,109,.6)}
+.bx-stage .bx-rec-label i{background:#ff4d6d;box-shadow:0 0 12px rgba(255,77,109,.8);animation-duration:.5s}
+.bx-stage .bx-ghost{background:rgba(255,255,255,.08);border:1px solid rgba(255,138,92,.25)}
+.bx-stage .bx-review .bx-cta.glow,.bx-stage .bx-cta.glow{background:linear-gradient(135deg,#ff8a5c,#ff4d6d);color:#fff}
+.bx-stage .bx-viz{animation:bx-pop .3s ease-out both}
