@@ -7336,6 +7336,7 @@ export function ProducerView({
             borderColor: countInEnabled ? brass : border,
             background: countInEnabled ? "rgba(193,122,18,0.15)" : surface,
             opacity: makeCountInPlan(tempoBpm, 4) ? 1 : 0.45,
+            width: "auto", minWidth: "max-content", padding: "0 12px", whiteSpace: "nowrap", flexShrink: 0, fontSize: 12, fontWeight: 700,
           }}
         >
           {countInBeat != null ? `${countInBeat} / 4` : "Count-in"}
@@ -7352,6 +7353,7 @@ export function ProducerView({
               ...iconBtn(border, surface, text),
               color: lyricsOpen ? brass : text,
               borderColor: lyricsOpen ? brass : border,
+              width: "auto", minWidth: "max-content", padding: "0 12px", whiteSpace: "nowrap", flexShrink: 0, fontSize: 12, fontWeight: 700,
             }}
           >
             AI guide
