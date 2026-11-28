@@ -67,6 +67,21 @@ export async function POST(req: Request, ctx: Ctx) {
 
   const now = new Date().toISOString();
   let copied = 0;
+  /** Console parts created by this request, removed again if the hand-off fails. */
+  const createdTaskIds: string[] = [];
+  const rollback = async () => {
+    if (createdTaskIds.length === 0) return;
+    const { error: recDelErr } = await supabase
+      .from("recordings")
+      .delete()
+      .in("task_id", createdTaskIds);
+    if (recDelErr) console.error("[handoff-console] rollback recordings failed", recDelErr.message);
+    const { error: taskDelErr } = await supabase
+      .from("recording_tasks")
+      .delete()
+      .in("id", createdTaskIds);
+    if (taskDelErr) console.error("[handoff-console] rollback parts failed", taskDelErr.message);
+  };
   for (const src of boothParts) {
     const srcMeta =
       src.metadata && typeof src.metadata === "object" && !Array.isArray(src.metadata)
@@ -105,9 +120,11 @@ export async function POST(req: Request, ctx: Ctx) {
     }
     if (ins.error || !ins.data) {
       console.error("[handoff-console] copy failed", src.id, ins.error?.message);
+      await rollback();
       return NextResponse.json({ error: "Could not copy Booth parts to Console" }, { status: 500 });
     }
     const newId = (ins.data as { id: string }).id;
+    createdTaskIds.push(newId);
     copied += 1;
 
     // Bring over the chosen take (selected one, else the newest).
@@ -153,11 +170,20 @@ export async function POST(req: Request, ctx: Ctx) {
         const { is_selected: _s, ...slimRec } = copy;
         recIns = await supabase.from("recordings").insert(slimRec);
       }
-      if (!recIns.error) {
-        await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", newId);
-      } else {
-        console.warn("[handoff-console] take copy failed", recIns.error.message);
+      if (recIns.error) {
+        // Don't report success with an empty Console part: undo this hand-off
+        // (the song stays in Booth) so the user can retry without duplicates.
+        console.error("[handoff-console] take copy failed", src.id, recIns.error.message);
+        await rollback();
+        return NextResponse.json(
+          {
+            error: "Could not copy your Booth take to Console. Your song is still in Booth; please try again.",
+            task_id: src.id,
+          },
+          { status: 500 }
+        );
       }
+      await supabase.from("recording_tasks").update({ status: "completed" }).eq("id", newId);
     }
   }
 
@@ -166,6 +192,7 @@ export async function POST(req: Request, ctx: Ctx) {
     .update({ edit_mode: "console" })
     .eq("id", projectId);
   if (upErr) {
+    await rollback();
     return NextResponse.json(
       { error: `Could not switch song to Console: ${upErr.message}` },
       { status: 500 }
